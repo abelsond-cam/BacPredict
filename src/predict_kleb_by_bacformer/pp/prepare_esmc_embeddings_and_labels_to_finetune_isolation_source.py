@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import torch
 from tqdm import tqdm
@@ -16,6 +15,7 @@ from predict_kleb_by_bacformer.pp.isolation_source_cli_parsing import (
     slugify_isolation_source_token,
     validate_and_resolve_tokens,
 )
+from predict_kleb_by_bacformer.pp.split_utils import add_splits
 
 EMBEDDINGS_DIR_DEFAULT = Path(
     "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/klebsiella_esm_embeddings"
@@ -59,29 +59,6 @@ def filter_and_create_pair_label(
     filtered[label_column] = (filtered[isolation_col] == resolved_1).astype(int)
     return filtered, isolation_col, resolved_1, resolved_2
 
-
-def add_splits(df: pd.DataFrame, seed: int = 1) -> pd.DataFrame:
-    """Add train_val_eval column with a 70/10/20 split over unique Sample IDs."""
-    rng = np.random.default_rng(seed)
-    sample_ids = df["Sample"].unique()
-    rng.shuffle(sample_ids)
-
-    n_total = len(sample_ids)
-    n_train = int(0.7 * n_total)
-    n_val = int(0.1 * n_total)
-    train_ids = set(sample_ids[:n_train])
-    val_ids = set(sample_ids[n_train:n_train + n_val])
-
-    def _assign_split(sample_id: str) -> str:
-        if sample_id in train_ids:
-            return "train"
-        if sample_id in val_ids:
-            return "validate"
-        return "evaluate"
-
-    out = df.copy()
-    out["train_val_eval"] = out["Sample"].map(_assign_split)
-    return out
 
 
 def validate_embeddings_and_prune(

@@ -31,9 +31,6 @@ dependencies = [
   "bacformer",
   "biopython>=1.83",
   "blitzgsea>=1.3.54",
-  "cudf-cu12>=25.10.0",
-  "cugraph-cu12>=25.10.1",
-  "cuml-cu12>=25.10.0",
   "dataclasses>=0.6",
   "dataclasses-json>=0.6.1",
   "datasets>=2.18.0",
@@ -46,7 +43,6 @@ dependencies = [
   "pandas>=2.2.3",
   "pyarrow>=19.0.1",
   "pysymlog>=1.0.1",
-  "rapids-singlecell>=0.13.1",
   "scanpy>=1.11.1",
   "seaborn>=0.13.2",
   # for debug logging (referenced from the issue template)
@@ -61,6 +57,14 @@ dependencies = [
 urls.Documentation = "https://predict_kleb_by_bacformer.readthedocs.io/"
 urls.Homepage = "https://github.com/abelsond-cam/predict_kleb_by_bacformer"
 urls.Source = "https://github.com/abelsond-cam/predict_kleb_by_bacformer"
+
+[project.optional-dependencies]
+hpc = [
+  "cudf-cu12>=25.10.0; sys_platform == 'linux'",
+  "cugraph-cu12>=25.10.1; sys_platform == 'linux'",
+  "cuml-cu12>=25.10.0; sys_platform == 'linux'",
+  "rapids-singlecell>=0.13.1; sys_platform == 'linux'",
+]
 
 [dependency-groups]
 dev = [
@@ -89,7 +93,7 @@ doc = [
 allow-direct-references = true
 
 [tool.uv.sources]
-bacformer = { path = "../Bacformer", editable = true }
+bacformer = { git = "https://github.com/abelsond-cam/Bacformer" }
 
 [tool.hatch.envs.default]
 installer = "uv"

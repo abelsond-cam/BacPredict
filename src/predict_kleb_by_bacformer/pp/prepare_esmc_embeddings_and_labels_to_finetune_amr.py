@@ -8,10 +8,11 @@ Bacformer fine-tuning.
 import argparse
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import torch
 from tqdm import tqdm
+
+from predict_kleb_by_bacformer.pp.split_utils import add_splits
 
 
 AST_CSV_DEFAULT = Path(
@@ -37,31 +38,6 @@ def load_ast_sheet(ast_csv: Path) -> pd.DataFrame:
     df["Sample"] = df["phenotype-BioSample_ID"].astype(str)
     return df
 
-
-def add_splits(df: pd.DataFrame, seed: int = 1) -> pd.DataFrame:
-    """Add train_val_eval column with 70/10/20 split over unique Sample IDs."""
-    rng = np.random.default_rng(seed)
-    sample_ids = df["Sample"].unique()
-    rng.shuffle(sample_ids)
-
-    n_total = len(sample_ids)
-    n_train = int(0.7 * n_total)
-    n_val = int(0.1 * n_total)
-    # Remaining go to eval
-    train_ids = set(sample_ids[:n_train])
-    val_ids = set(sample_ids[n_train : n_train + n_val])
-    eval_ids = set(sample_ids[n_train + n_val :])
-
-    def _assign_split(sample_id: str) -> str:
-        if sample_id in train_ids:
-            return "train"
-        if sample_id in val_ids:
-            return "validate"
-        return "evaluate"
-
-    df = df.copy()
-    df["train_val_eval"] = df["Sample"].map(_assign_split)
-    return df
 
 
 def get_antibiotic_columns(df: pd.DataFrame) -> list[str]:

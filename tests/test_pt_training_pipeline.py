@@ -1,9 +1,9 @@
 """Tests for the .pt-based AMR training pipeline."""
 
 from predict_kleb_by_bacformer.pp.prepare_esmc_embeddings_and_labels_to_finetune_amr import (
-    add_splits,
     get_antibiotic_columns,
 )
+from predict_kleb_by_bacformer.pp.split_utils import add_splits
 from predict_kleb_by_bacformer.tl.train_amr import PyTorchFileDataset
 
 
