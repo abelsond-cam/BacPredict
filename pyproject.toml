@@ -65,6 +65,7 @@ urls.Source = "https://github.com/abelsond-cam/predict_kleb_by_bacformer"
 [dependency-groups]
 dev = [
   "pre-commit",
+  "ruff",
   "twine>=4.0.2",
 ]
 test = [

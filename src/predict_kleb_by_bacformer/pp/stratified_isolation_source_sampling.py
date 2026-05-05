@@ -18,7 +18,7 @@ Sampling Strategy:
      the matched categories (and their sample counts).
    - The script prints an `Isolation Source Token Mapping` block early in the log
      for provenance (token -> matched `isolation_source_category`).
-   - Optional `--refseq-genomes` pre-filter restricts rows to `is_refseq == True`
+   - Optional `--complete-genomes` pre-filter restricts rows to `is_refseq == True`
      before the existing isolation source / host / study-setting filters and thread split.
    - Filter to host_category == "human"
    - Optional filter to study_setting containing "Hospital"
@@ -58,8 +58,8 @@ Output:
 - Each country contributes samples from both isolation sources (when available)
 - Study type distributions are preserved within geographic strata
 - Final ratio approximates target ratio across all countries
-- If `--refseq-genomes` is used and `--output-file` is omitted, the default output
-  filename is `stratified_selected_isolation_source_metadata_refseq.tsv`
+- If `--complete-genomes` is used, output is routed to `train_on_complete_genomes/`
+  instead of `train_on_sr_mags/`, and the `is_refseq` filter is applied automatically.
 
 Statistical Properties:
 - Sampling is stratified by country AND study type
@@ -88,8 +88,9 @@ from predict_kleb_by_bacformer.pp.isolation_source_cli_parsing import validate_a
 DEFAULT_RATIO = 2.0
 TEST_RATIOS = [1.0, 2.0, 2.5, 3.0]
 DEFAULT_OUTPUT_FILE = "stratified_selected_isolation_source_metadata.tsv"
-DEFAULT_OUTPUT_REFSEQ_FILE = "stratified_selected_isolation_source_metadata_refseq.tsv"
-DEFAULT_OUTPUT_BASE_DIR = "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed"
+_PROCESSED = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed")
+DEFAULT_OUTPUT_BASE_DIR = _PROCESSED / "train_on_sr_mags"
+COMPLETE_GENOMES_BASE_DIR = _PROCESSED / "train_on_complete_genomes"
 
 
 def setup_logging(log_file: str = "stratify_isolation_source_sampling.log"):
@@ -162,8 +163,8 @@ def _log_final_country_table(
     source_categories: list[str],
     source_labels: list[str],
 ) -> None:
-    """
-    Log final table by country using user labels:
+    """Log final table by country using user labels.
+
     Country | Source1 (Init -> Sample) | Source2 (Init -> Sample) | Sampled ratio
     """
     if df_final.empty or "country_parsed" not in df_final.columns:
@@ -250,8 +251,8 @@ def load_and_filter_data(
     filter_by_study_setting: bool = False,
     refseq_genomes: bool = False,
 ) -> tuple[pd.DataFrame, dict[str, int]]:
-    """
-    Load metadata and apply initial filters.
+    """Load metadata and apply initial filters.
+
     Does NOT filter by amr_study - that split is done in main for dual-thread stratification.
 
     Args:
@@ -281,7 +282,7 @@ def load_and_filter_data(
     else:
         filter_counts["after_refseq"] = len(df)
         logging.info(
-            f"RefSeq filter: NOT APPLIED (--refseq-genomes not set). All {len(df):,} samples retained."
+            f"RefSeq filter: NOT APPLIED (--complete-genomes not set). All {len(df):,} samples retained."
         )
 
     # Filter 1: Isolation source category
@@ -348,7 +349,7 @@ def load_and_filter_data(
     # Summary of isolation sources in retained df
     logging.info("\nBreakdown by isolation source (after pre-amr filters):")
     source_counts = df["isolation_source_category"].value_counts()
-    for label, category in zip(source_labels, source_categories):
+    for label, category in zip(source_labels, source_categories, strict=True):
         logging.info(f"  {label}: {int(source_counts.get(category, 0)):,}")
 
     return df, filter_counts
@@ -357,8 +358,8 @@ def load_and_filter_data(
 def sample_to_ratio(
     df: pd.DataFrame, ratio: float, isolation_sources: list[str], isolation_col: str = "isolation_source_category"
 ) -> pd.DataFrame:
-    """
-    Keep all samples from the smaller group and sample from the larger group.
+    """Keep all samples from the smaller group and sample from the larger group.
+
     Target: larger_sampled = ratio * smaller_count (capped at available).
 
     E.g. 67 source1, 436 source2 with ratio=3: keep all 67 source1, sample 3*67=201 source2.
@@ -401,9 +402,9 @@ def stratify_by_country(
     isolation_sources: list[str],
     thread_label: str = "",
 ) -> tuple[pd.DataFrame, list[dict]]:
-    """
-    Apply country-level stratification. All countries with both isolation sources
-    are processed; none are deferred to region.
+    """Apply country-level stratification.
+
+    All countries with both isolation sources are processed; none are deferred to region.
 
     Args:
         df: Input dataframe
@@ -529,7 +530,7 @@ def stratify_by_location(
     if not final_df.empty:
         final_counts = final_df["isolation_source_category"].value_counts()
         logging.info("\nFinal breakdown by isolation source:")
-        for label, category in zip(source_labels, isolation_sources):
+        for label, category in zip(source_labels, isolation_sources, strict=True):
             logging.info(f"  {label}: {int(final_counts.get(category, 0)):,}")
 
         n_source1 = final_counts.get(source1, 0)
@@ -676,11 +677,11 @@ Examples:
   # Blood vs faeces/rectal swabs
   %(prog)s --isolation-sources blood faeces --metadata-file data.tsv \
     --output-file train_blood_vs_faeces/stratified_selected_isolation_source_metadata.tsv
-  
+
   # Blood vs respiratory
   %(prog)s --isolation-sources blood respiratory --metadata-file data.tsv \
     --output-file train_blood_vs_respiratory/stratified_selected_isolation_source_metadata.tsv
-  
+
   # Blood vs urine
   %(prog)s --isolation-sources blood urine --metadata-file data.tsv --ratio 2.5
         """,
@@ -724,16 +725,22 @@ Examples:
         "--test-all-ratios", action="store_true", help="Test all predefined ratios instead of just the specified one"
     )
     parser.add_argument(
-        "--refseq-genomes",
+        "--complete-genomes",
         action="store_true",
-        help="Limit to RefSeq genomes only (is_refseq == True)",
+        help=(
+            "Restrict to complete (RefSeq) genomes only (is_refseq == True) and write output "
+            "under train_on_complete_genomes/ instead of train_on_sr_mags/."
+        ),
     )
     parser.add_argument(
         "--output-file",
         type=str,
         default=None,
-        help="Path to output TSV file. If omitted, writes to "
-        f"{DEFAULT_OUTPUT_BASE_DIR}/training_<token1>_<token2>/{DEFAULT_OUTPUT_FILE}",
+        help=(
+            "Path to output TSV file. If omitted, writes to "
+            "train_on_sr_mags/ (or train_on_complete_genomes/ with --complete-genomes)/"
+            f"training_<token1>_<token2>/{DEFAULT_OUTPUT_FILE}"
+        ),
     )
 
     args = parser.parse_args()
@@ -742,9 +749,9 @@ Examples:
     if args.output_file:
         output_path = Path(args.output_file)
     else:
-        output_dir = Path(DEFAULT_OUTPUT_BASE_DIR) / f"training_{_slugify_token(token1)}_{_slugify_token(token2)}"
-        default_output_file = DEFAULT_OUTPUT_REFSEQ_FILE if args.refseq_genomes else DEFAULT_OUTPUT_FILE
-        output_path = output_dir / default_output_file
+        base = COMPLETE_GENOMES_BASE_DIR if args.complete_genomes else DEFAULT_OUTPUT_BASE_DIR
+        output_dir = base / f"training_{_slugify_token(token1)}_{_slugify_token(token2)}"
+        output_path = output_dir / DEFAULT_OUTPUT_FILE
     output_path.parent.mkdir(parents=True, exist_ok=True)
     log_path = output_path.parent / Path(args.log_file).name
 
@@ -782,7 +789,7 @@ Examples:
             isolation_sources,
             source_labels,
             filter_by_study_setting=args.filter_by_study_setting,
-            refseq_genomes=args.refseq_genomes,
+            refseq_genomes=args.complete_genomes,
         )
 
         if df.empty:
