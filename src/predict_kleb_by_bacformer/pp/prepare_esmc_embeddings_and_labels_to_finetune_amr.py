@@ -178,6 +178,15 @@ def main() -> None:
         action="store_true",
         help="Skip writing samples whose output .pt file already exists (useful for resuming after timeout).",
     )
+    parser.add_argument(
+        "--write-pt-files",
+        action="store_true",
+        default=False,
+        help=(
+            "Write per-sample .pt files with embeddings + labels to train/validate/evaluate dirs. "
+            "Off by default: the split CSV alone is sufficient for training with LabelInjectingFileDataset."
+        ),
+    )
     args = parser.parse_args()
 
     print(f"Loading AST sheet from: {args.ast_csv}")
@@ -206,8 +215,15 @@ def main() -> None:
     print(f"Writing pruned AST sheet with splits to: {split_csv_path}")
     pruned_df.to_csv(split_csv_path, index=False)
 
-    print("Writing per-sample pytorch (.pt) files with embeddings and AST labels...")
-    write_split_files(pruned_df, args.embeddings_dir, args.output_base, skip_existing=args.skip_existing)
+    if args.write_pt_files:
+        print("Writing per-sample pytorch (.pt) files with embeddings and AST labels...")
+        write_split_files(pruned_df, args.embeddings_dir, args.output_base, skip_existing=args.skip_existing)
+    else:
+        print(
+            "Skipping .pt file generation (default). "
+            "Pass --write-pt-files to write embedding copies. "
+            f"To train, point --embeddings-dir at the original embeddings directory and --sheet-path at {split_csv_path}"
+        )
 
     print("Done.")
 

@@ -189,6 +189,15 @@ def main() -> None:
             "instead of train_on_sr_mags/ when --input-metadata-file is omitted."
         ),
     )
+    parser.add_argument(
+        "--write-pt-files",
+        action="store_true",
+        default=False,
+        help=(
+            "Write per-sample .pt files with embeddings + label to train/validate/evaluate dirs. "
+            "Off by default: the split CSV alone is sufficient for training with LabelInjectingFileDataset."
+        ),
+    )
     args = parser.parse_args()
 
     token1, token2 = args.isolation_sources
@@ -247,19 +256,26 @@ def main() -> None:
     print(f"Writing pruned sheet with splits to: {split_csv_path}")
     pruned_df.to_csv(split_csv_path, index=False)
 
-    print(f"Writing per-sample pytorch (.pt) files with suffix {pt_suffix}...")
-    write_split_files(
-        df_with_splits=pruned_df,
-        embeddings_dir=args.embeddings_dir,
-        output_base=output_base,
-        label_column=label_column,
-        pt_suffix=pt_suffix,
-    )
+    if args.write_pt_files:
+        print(f"Writing per-sample pytorch (.pt) files with suffix {pt_suffix}...")
+        write_split_files(
+            df_with_splits=pruned_df,
+            embeddings_dir=args.embeddings_dir,
+            output_base=output_base,
+            label_column=label_column,
+            pt_suffix=pt_suffix,
+        )
+        print(f"  Split .pt files: {output_base / 'train'}, {output_base / 'validate'}, {output_base / 'evaluate'}")
+    else:
+        print(
+            "Skipping .pt file generation (default). "
+            "Pass --write-pt-files to write embedding copies. "
+            f"To train, point --embeddings-dir at the original embeddings directory and --sheet-path at {split_csv_path}"
+        )
     print("Saved outputs:")
     print(f"  Training directory: {output_base}")
     print(f"  Binary labels: {binary_path}")
     print(f"  Labels with split: {split_csv_path}")
-    print(f"  Split .pt files: {output_base / 'train'}, {output_base / 'validate'}, {output_base / 'evaluate'}")
     print("Done.")
 
 
