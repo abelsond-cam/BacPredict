@@ -1,21 +1,21 @@
 """Tests for the .pt-based AMR training pipeline."""
 
-from predict_kleb_by_bacformer.pp.prepare_klebsiella_ast_splits_as_pt import (
+from predict_kleb_by_bacformer.pp.prepare_esmc_embeddings_and_labels_to_finetune_amr import (
     add_splits,
     get_antibiotic_columns,
 )
-from predict_kleb_by_bacformer.tl.train_amr_from_pt import PTFileDataset
+from predict_kleb_by_bacformer.tl.train_amr import PyTorchFileDataset
 
 
 def test_pt_pipeline_imports():
-    """Verify all new pipeline modules can be imported."""
-    from predict_kleb_by_bacformer.pp import prepare_klebsiella_ast_splits_as_pt  # noqa: F401
-    from predict_kleb_by_bacformer.tl import train_amr_from_pt  # noqa: F401
+    """Verify all pipeline modules can be imported."""
+    from predict_kleb_by_bacformer.pp import prepare_esmc_embeddings_and_labels_to_finetune_amr  # noqa: F401
+    from predict_kleb_by_bacformer.tl import train_amr  # noqa: F401
 
 
 def test_pt_file_dataset_empty():
-    """PTFileDataset with empty file list has length 0."""
-    ds = PTFileDataset(file_paths=[], drug="ceftriaxone")
+    """PyTorchFileDataset with empty file list has length 0."""
+    ds = PyTorchFileDataset(file_paths=[], drug="ceftriaxone")
     assert len(ds) == 0
 
 

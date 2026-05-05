@@ -50,13 +50,16 @@ Paths are hardcoded in each script (no central data_paths module). Check the top
 | Module | Purpose |
 |---|---|
 | `src/predict_kleb_by_bacformer/pp/preprocess_ebi_amr_records.py` | Parse EBI AST CSV → binary resistance labels per sample |
-| `src/predict_kleb_by_bacformer/pp/prepare_esmc_embeddings_and_labels_to_finetune_amr.py` | Merge AST labels + embeddings → per-sample `.pt` with 70/10/20 split |
-| `src/predict_kleb_by_bacformer/tl/train_amr.py` | Fine-tune Bacformer for one antibiotic (Slurm: `train_on_slurm_amr.sh`) |
+| `src/predict_kleb_by_bacformer/pp/prepare_esmc_embeddings_and_labels_to_finetune_amr.py` | Merge AST labels + embeddings → per-sample `.pt` with 70/10/20 split; exposes `add_splits`, `get_antibiotic_columns` |
+| `src/predict_kleb_by_bacformer/tl/train_amr.py` | Fine-tune Bacformer for one antibiotic; `PyTorchFileDataset` class (Slurm: `train_on_slurm_amr.sh`) |
 | `src/predict_kleb_by_bacformer/pp/stratified_isolation_source_sampling.py` | Select balanced cohort for an isolation-source pair |
 | `src/predict_kleb_by_bacformer/pp/prepare_esmc_embeddings_and_labels_to_finetune_isolation_source.py` | Merge isolation-source labels + embeddings → per-sample `.pt` |
 | `src/predict_kleb_by_bacformer/tl/train_isolation_source.py` | Fine-tune Bacformer for an isolation-source pair (Slurm: `train_isolation_source.sh`) |
 | `src/predict_kleb_by_bacformer/pp/generate_bacformer_embeddings.py` | Generate ESM embeddings from protein sequences |
 | `src/predict_kleb_by_bacformer/pp/preprocess_assemblies_to_protein_sequences.py` | GFF/assembly → `.faa` protein sequences |
+| `src/predict_kleb_by_bacformer/pp/genome_assemblies_from_bacformer_embeddings.py` | Identify which assemblies have/lack embeddings |
+| `src/predict_kleb_by_bacformer/pp/filter_esmc_embeddings_by_klebsiella.py` | Filter embedding set to KPSC-only samples |
+| `src/predict_kleb_by_bacformer/pp/extract_anndata_with_bacformer_protein_embeddings.py` | Extract AnnData from Bacformer embeddings for EDA |
 
 ## Commands
 
