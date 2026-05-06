@@ -105,3 +105,49 @@ def test_label_injecting_dataset_label_values(tmp_path):
     ds = LabelInjectingFileDataset(list(labels.keys()), embeddings_dir, labels, "drug")
     retrieved = {ds.sample_ids[i]: ds[i]["labels"].item() for i in range(len(ds))}
     assert retrieved == {k: float(v) for k, v in labels.items()}
+
+
+# ── k-fold integration (Step 6) ───────────────────────────────────────────────
+
+
+def test_kfold_validate_sets_non_overlapping():
+    """Fold 0 and fold 4 validation sets are disjoint (each sample validates exactly once)."""
+    from predict_kleb_by_bacformer.pp.split_utils import generate_kfold_splits
+
+    df = pd.DataFrame({"Sample": [f"S{i:03d}" for i in range(50)], "drug": [i % 2 for i in range(50)]})
+    _, folds = generate_kfold_splits(df, n_folds=5, seed=1)
+    _, val0 = folds[0]
+    _, val4 = folds[4]
+    assert val0.isdisjoint(val4), "Fold 0 and fold 4 validation sets unexpectedly overlap"
+
+
+def test_kfold_evaluate_stable_between_fold_and_seed():
+    """Evaluate set is identical for fold=0/seed=1 and fold=3/seed=2 with same evaluate_seed."""
+    from predict_kleb_by_bacformer.pp.split_utils import generate_kfold_splits
+
+    df = pd.DataFrame({"Sample": [f"S{i:03d}" for i in range(50)], "drug": [i % 2 for i in range(50)]})
+    eval1, _ = generate_kfold_splits(df, n_folds=5, seed=1, evaluate_seed=42)
+    eval2, _ = generate_kfold_splits(df, n_folds=5, seed=2, evaluate_seed=42)
+    assert eval1 == eval2
+
+
+def test_kfold_legacy_csv_mode_preserved(tmp_path):
+    """With n_folds=None, train_val_eval column from CSV is used (backward compat)."""
+    from predict_kleb_by_bacformer.pp.split_utils import add_splits
+
+    sample_ids = ["S001", "S002", "S003", "S004", "S005"]
+    embeddings_dir = tmp_path / "embeddings"
+    embeddings_dir.mkdir()
+    for sid in sample_ids:
+        _write_embedding(embeddings_dir / f"{sid}_esm_embeddings.pt")
+
+    df = pd.DataFrame({"Sample": sample_ids, "amikacin": [0, 1, 0, 1, 0]})
+    df = add_splits(df, seed=1)
+    sheet = tmp_path / "sheet.csv"
+    df.to_csv(sheet, index=False)
+
+    loaded = pd.read_csv(sheet)
+    assert "train_val_eval" in loaded.columns
+    train_ids = loaded[loaded["train_val_eval"] == "train"]["Sample"].tolist()
+    val_ids = loaded[loaded["train_val_eval"] == "validate"]["Sample"].tolist()
+    assert set(train_ids).isdisjoint(set(val_ids))

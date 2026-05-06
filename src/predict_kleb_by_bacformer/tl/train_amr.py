@@ -22,6 +22,7 @@ from transformers import (
     TrainingArguments,
 )
 
+from predict_kleb_by_bacformer.pp.split_utils import generate_kfold_splits
 from predict_kleb_by_bacformer.tl.datasets import LabelInjectingFileDataset
 
 EMBEDDINGS_DIR_DEFAULT = Path(
@@ -162,6 +163,9 @@ def run(
     num_workers: int = 16,
     warmup_proportion: float = 0.1,
     max_steps: int = 20000,
+    n_folds: int | None = None,
+    fold: int = 0,
+    evaluate_seed: int = 1,
     # deprecated — ignored; kept for call-site backward compat
     train_data_dir: str | None = None,
     val_data_dir: str | None = None,
@@ -174,6 +178,9 @@ def run(
             DeprecationWarning,
             stacklevel=2,
         )
+
+    if n_folds is not None:
+        output_dir = f"{output_dir}_fold{fold:02d}_seed{seed}"
 
     print(f"Loading model from: {model_name_or_path}")
     print(f"Predicting AMR for drug: {drug}")
@@ -190,6 +197,8 @@ def run(
     print(f"Warmup proportion: {warmup_proportion}")
     print(f"Output directory: {output_dir}")
     print(f"AST sheet: {ast_sheet_path}")
+    if n_folds is not None:
+        print(f"K-fold: n_folds={n_folds}, fold={fold}, seed={seed}, evaluate_seed={evaluate_seed}")
     print("------------------------------------------------\n")
 
     if not ast_sheet_path:
@@ -198,9 +207,10 @@ def run(
         raise FileNotFoundError(f"AST sheet not found at {ast_sheet_path}")
 
     ast_df = pd.read_csv(ast_sheet_path)
-    if "train_val_eval" not in ast_df.columns:
+    if n_folds is None and "train_val_eval" not in ast_df.columns:
         raise ValueError(
-            "AST sheet must contain 'train_val_eval' column. Run prepare_esmc_embeddings_and_labels_to_finetune_amr.py first."
+            "AST sheet must contain 'train_val_eval' column. Run prepare_esmc_embeddings_and_labels_to_finetune_amr.py first, "
+            "or use --n-folds to generate splits dynamically."
         )
     if "Sample" not in ast_df.columns:
         if "phenotype-BioSample_ID" in ast_df.columns:
@@ -212,11 +222,6 @@ def run(
 
     labeled = ast_df[ast_df[drug].notna()].copy()
     labeled["Sample"] = labeled["Sample"].astype(str)
-    counts = labeled.groupby("train_val_eval")["Sample"].nunique().to_dict()
-    print(
-        f"Samples with non-missing '{drug}' - train: {counts.get('train', 0)}, "
-        f"validate: {counts.get('validate', 0)}, evaluate: {counts.get('evaluate', 0)}"
-    )
 
     label_map: dict[str, int] = {row["Sample"]: int(row[drug]) for _, row in labeled.iterrows()}
     embeddings_path = Path(embeddings_dir)
@@ -226,12 +231,28 @@ def run(
 
     if n_samples == 10:
         print("Using dummy test mode with 10 samples.")
-        train_ids = build_sample_ids("train")[:10]
+        train_ids = (build_sample_ids("train") if "train_val_eval" in labeled.columns else list(labeled["Sample"]))[:10]
         val_ids = train_ids
         eval_strategy = "epoch"
         use_epochs = True
         num_train_epochs = 100
+    elif n_folds is not None:
+        print(f"K-fold mode: generating splits (n_folds={n_folds}, fold={fold}, seed={seed})")
+        evaluate_ids, folds = generate_kfold_splits(
+            labeled, n_folds=n_folds, seed=seed, evaluate_seed=evaluate_seed
+        )
+        train_ids_set, val_ids_set = folds[fold]
+        train_ids = [sid for sid in labeled["Sample"].tolist() if sid in train_ids_set]
+        val_ids = [sid for sid in labeled["Sample"].tolist() if sid in val_ids_set]
+        print(f"  train: {len(train_ids)}, val: {len(val_ids)}, evaluate holdout: {len(evaluate_ids)}")
+        eval_strategy = "steps"
+        use_epochs = False
     else:
+        counts = labeled.groupby("train_val_eval")["Sample"].nunique().to_dict()
+        print(
+            f"Samples with non-missing '{drug}' - train: {counts.get('train', 0)}, "
+            f"validate: {counts.get('validate', 0)}, evaluate: {counts.get('evaluate', 0)}"
+        )
         print("Full set mode using LabelInjectingFileDataset")
         train_ids = build_sample_ids("train")
         val_ids = build_sample_ids("validate")
@@ -319,7 +340,7 @@ def run(
     }
 
     if use_epochs:
-        total_batches = len(train_files) // batch_size
+        total_batches = len(train_ids) // batch_size
         steps_per_epoch = max(1, total_batches // grad_accumulation_steps)
         calculated_max_steps = max(1, steps_per_epoch * num_train_epochs)
         training_args_dict["max_steps"] = calculated_max_steps
@@ -380,6 +401,12 @@ class ArgumentParser(Tap):
     eval_steps: int = 250
     num_workers: int = 15
     warmup_proportion: float = 0.1
+    n_folds: int | None = None
+    """Number of CV folds. When set, splits are generated dynamically; overrides train_val_eval column."""
+    fold: int = 0
+    """Which fold to use as validation set (0-indexed)."""
+    evaluate_seed: int = 1
+    """Seed controlling the fixed holdout set — do not change between folds/seeds in one experiment."""
 
 
 if __name__ == "__main__":
@@ -405,4 +432,7 @@ if __name__ == "__main__":
         num_workers=args.num_workers,
         warmup_proportion=args.warmup_proportion,
         max_steps=args.max_steps,
+        n_folds=args.n_folds,
+        fold=args.fold,
+        evaluate_seed=args.evaluate_seed,
     )
