@@ -1,10 +1,20 @@
 """Tests for the .pt-based AMR training pipeline."""
 
+from pathlib import Path
+
+import pandas as pd
+import torch
+
 from predict_kleb_by_bacformer.pp.prepare_esmc_embeddings_and_labels_to_finetune_amr import (
     get_antibiotic_columns,
 )
 from predict_kleb_by_bacformer.pp.split_utils import add_splits
+from predict_kleb_by_bacformer.tl.datasets import LabelInjectingFileDataset
 from predict_kleb_by_bacformer.tl.train_amr import PyTorchFileDataset
+
+
+def _write_embedding(path: Path, n_proteins: int = 6) -> None:
+    torch.save({"prot_embeddings": torch.randn(n_proteins, 8), "attention_mask": torch.ones(n_proteins)}, path)
 
 
 def test_pt_pipeline_imports():
@@ -43,8 +53,6 @@ def test_add_splits():
 
 def test_get_antibiotic_columns():
     """get_antibiotic_columns excludes ID/split columns."""
-    import pandas as pd
-
     df = pd.DataFrame({
         "phenotype-BioSample_ID": ["A"],
         "Sample": ["A"],
@@ -57,3 +65,43 @@ def test_get_antibiotic_columns():
     assert "ampicillin" in cols
     assert "Sample" not in cols
     assert "train_val_eval" not in cols
+
+
+def test_label_injecting_dataset_from_csv(tmp_path):
+    """LabelInjectingFileDataset loads correct label when built from a split CSV."""
+    sample_ids = ["S001", "S002", "S003"]
+    embeddings_dir = tmp_path / "embeddings"
+    embeddings_dir.mkdir()
+    for sid in sample_ids:
+        _write_embedding(embeddings_dir / f"{sid}_esm_embeddings.pt")
+
+    df = pd.DataFrame({
+        "Sample": sample_ids,
+        "train_val_eval": ["train", "train", "validate"],
+        "amikacin": [0, 1, 0],
+    })
+    label_map = {row["Sample"]: int(row["amikacin"]) for _, row in df.iterrows() if pd.notna(row["amikacin"])}
+
+    train_ids = df[df["train_val_eval"] == "train"]["Sample"].tolist()
+    ds = LabelInjectingFileDataset(train_ids, embeddings_dir, label_map, "amikacin")
+
+    assert len(ds) == 2
+
+    item0 = ds[0]
+    assert item0["labels"].item() == label_map["S001"]
+    assert "protein_embeddings" in item0
+    assert "attention_mask" in item0
+    assert "contig_ids" in item0
+
+
+def test_label_injecting_dataset_label_values(tmp_path):
+    """LabelInjectingFileDataset returns the correct label for each sample."""
+    embeddings_dir = tmp_path / "embeddings"
+    embeddings_dir.mkdir()
+    labels = {"SA": 1, "SB": 0, "SC": 1}
+    for sid in labels:
+        _write_embedding(embeddings_dir / f"{sid}_esm_embeddings.pt")
+
+    ds = LabelInjectingFileDataset(list(labels.keys()), embeddings_dir, labels, "drug")
+    retrieved = {ds.sample_ids[i]: ds[i]["labels"].item() for i in range(len(ds))}
+    assert retrieved == {k: float(v) for k, v in labels.items()}

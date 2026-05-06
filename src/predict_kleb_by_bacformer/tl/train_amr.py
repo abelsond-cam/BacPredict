@@ -1,9 +1,12 @@
 """
-Train Bacformer AMR model from pytorch (.pt) files (native PyTorch tensors) instead of parquet.
+Train Bacformer AMR model.
 
-Uses a custom PyTorch Dataset to load pytorch (.pt) files directly, bypassing HuggingFace datasets.
+Labels are injected at load time from the split CSV; no pre-built per-experiment
+``.pt`` copies are required. Pass ``--embeddings-dir`` pointing at the original
+``klebsiella_esm_embeddings/`` directory.
 """
 import os
+import warnings
 from datetime import datetime
 from pathlib import Path
 
@@ -17,6 +20,12 @@ from transformers import (
     EarlyStoppingCallback,
     EvalPrediction,
     TrainingArguments,
+)
+
+from predict_kleb_by_bacformer.tl.datasets import LabelInjectingFileDataset
+
+EMBEDDINGS_DIR_DEFAULT = Path(
+    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/klebsiella_esm_embeddings"
 )
 
 
@@ -136,8 +145,7 @@ def compute_metrics_binary_genome_pred(
 
 def run(
     model_name_or_path: str,
-    train_data_dir: str,
-    val_data_dir: str,
+    embeddings_dir: str,
     output_dir: str,
     ast_sheet_path: str,
     lr: float = 0.00015,
@@ -154,12 +162,22 @@ def run(
     num_workers: int = 16,
     warmup_proportion: float = 0.1,
     max_steps: int = 20000,
+    # deprecated — ignored; kept for call-site backward compat
+    train_data_dir: str | None = None,
+    val_data_dir: str | None = None,
 ):
-    """Fine-tune Bacformer on AMR data using pytorch (.pt) files directly."""
+    """Fine-tune Bacformer on AMR data with dynamic label injection."""
+    if train_data_dir or val_data_dir:
+        warnings.warn(
+            "--train-data-dir and --val-data-dir are deprecated and ignored. "
+            "Use --embeddings-dir instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
     print(f"Loading model from: {model_name_or_path}")
     print(f"Predicting AMR for drug: {drug}")
-    print(f"Training set (PT): {train_data_dir}")
-    print(f"Validation set (PT): {val_data_dir}")
+    print(f"Embeddings dir: {embeddings_dir}")
     print(f"n_samples = {n_samples}")
     print(f"Freezing encoder: {freeze_encoder}")
     print(f"Learning rate: {lr}")
@@ -192,79 +210,44 @@ def run(
     if drug not in ast_df.columns:
         raise ValueError(f"Drug column '{drug}' not found in AST sheet.")
 
-    counts = (
-        ast_df.loc[ast_df[drug].notna()]
-        .groupby("train_val_eval")["Sample"]
-        .nunique()
-        .to_dict()
-    )
-    train_count = counts.get("train", 0)
-    val_count = counts.get("validate", 0)
-    eval_count = counts.get("evaluate", 0)
+    labeled = ast_df[ast_df[drug].notna()].copy()
+    labeled["Sample"] = labeled["Sample"].astype(str)
+    counts = labeled.groupby("train_val_eval")["Sample"].nunique().to_dict()
     print(
-        f"Samples with non-missing '{drug}' - train: {train_count}, validate: {val_count}, evaluate: {eval_count}"
+        f"Samples with non-missing '{drug}' - train: {counts.get('train', 0)}, "
+        f"validate: {counts.get('validate', 0)}, evaluate: {counts.get('evaluate', 0)}"
     )
 
-    # Build file lists: pytorch (.pt) files named {sample_id}_with_ast.pt
-    train_dir = Path(train_data_dir)
-    val_dir = Path(val_data_dir)
+    label_map: dict[str, int] = {row["Sample"]: int(row[drug]) for _, row in labeled.iterrows()}
+    embeddings_path = Path(embeddings_dir)
 
-    def build_file_list(split_name: str) -> list[Path]:
-        ids = (
-            ast_df[(ast_df["train_val_eval"] == split_name) & ast_df[drug].notna()]["Sample"]
-            .astype(str)
-            .unique()
-        )
-        base_dir = train_dir if split_name == "train" else val_dir
-        if split_name not in ("train", "validate"):
-            return []
-        files = []
-        for sid in ids:
-            path = base_dir / f"{sid}_with_ast.pt"
-            if path.exists():
-                files.append(path)
-            else:
-                print(f"WARNING: Expected pytorch (.pt) file missing for Sample {sid}: {path}")
-        return files
-
-    if not train_dir.exists():
-        raise FileNotFoundError(f"Train data directory {train_data_dir} does not exist")
-    if not val_dir.exists():
-        raise FileNotFoundError(f"Validation data directory {val_data_dir} does not exist")
+    def build_sample_ids(split_name: str) -> list[str]:
+        return labeled[labeled["train_val_eval"] == split_name]["Sample"].tolist()
 
     if n_samples == 10:
         print("Using dummy test mode with 10 samples.")
-        train_ids = (
-            ast_df[(ast_df["train_val_eval"] == "train") & ast_df[drug].notna()]["Sample"]
-            .astype(str)
-            .unique()[:10]
-        )
-        train_files = [
-            train_dir / f"{sid}_with_ast.pt"
-            for sid in train_ids
-            if (train_dir / f"{sid}_with_ast.pt").exists()
-        ]
-        val_files = train_files
+        train_ids = build_sample_ids("train")[:10]
+        val_ids = train_ids
         eval_strategy = "epoch"
         use_epochs = True
         num_train_epochs = 100
     else:
-        print("Full set mode: loading pytorch (.pt) files via PyTorchFileDataset")
-        train_files = build_file_list("train")
-        val_files = build_file_list("validate")
+        print("Full set mode using LabelInjectingFileDataset")
+        train_ids = build_sample_ids("train")
+        val_ids = build_sample_ids("validate")
         eval_strategy = "steps"
         use_epochs = False
 
-    if not train_files:
+    if not train_ids:
         raise RuntimeError(
-            f"No pytorch (.pt) files found for training (check AST sheet, drug column, and {train_data_dir})"
+            f"No training samples found (check AST sheet, '{drug}' column, and train_val_eval split)."
         )
 
-    print(f"Number of train files (samples with '{drug}'): {len(train_files)}")
-    print(f"Number of validation files: {len(val_files)}")
+    print(f"Number of train samples (with '{drug}'): {len(train_ids)}")
+    print(f"Number of validation samples: {len(val_ids)}")
 
-    train_dataset = PyTorchFileDataset(train_files, drug=drug)
-    val_dataset = PyTorchFileDataset(val_files, drug=drug)
+    train_dataset = LabelInjectingFileDataset(train_ids, embeddings_path, label_map, drug)
+    val_dataset = LabelInjectingFileDataset(val_ids, embeddings_path, label_map, drug)
 
     # Verify structure
     try:
@@ -371,14 +354,16 @@ def run(
 
 
 class ArgumentParser(Tap):
-    """Argument parser for training Bacformer from pytorch (.pt) files."""
+    """Argument parser for Bacformer AMR fine-tuning with dynamic label injection."""
 
     def __init__(self):
         super().__init__(underscores_to_dashes=True)
 
     model_name_or_path: str = "macwiatrak/bacformer-large-masked-MAG"
-    train_data_dir: str = "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/ast_training/train"
-    val_data_dir: str = "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/ast_training/validate"
+    embeddings_dir: str = str(EMBEDDINGS_DIR_DEFAULT)
+    # deprecated — kept for backward compat; ignored if present
+    train_data_dir: str | None = None
+    val_data_dir: str | None = None
     output_dir: str = "/tmp/train-output/"
     batch_size: int = 1
     grad_accumulation_steps: int = 8
@@ -399,12 +384,11 @@ class ArgumentParser(Tap):
 
 if __name__ == "__main__":
     args = ArgumentParser().parse_args()
-    print("Running finetuning from pytorch (.pt) files")
+    print("Running AMR finetuning with dynamic label injection")
     print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     run(
         model_name_or_path=args.model_name_or_path,
-        train_data_dir=args.train_data_dir,
-        val_data_dir=args.val_data_dir,
+        embeddings_dir=args.embeddings_dir,
         output_dir=args.output_dir,
         ast_sheet_path=args.ast_sheet_path,
         lr=args.lr,

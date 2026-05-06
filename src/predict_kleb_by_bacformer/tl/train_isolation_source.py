@@ -1,11 +1,13 @@
 """
-Train Bacformer for a binary isolation-source pair from pytorch (.pt) files.
+Train Bacformer for a binary isolation-source pair.
 
-Paths and filenames follow ``prepare_esmc_embeddings_and_labels_to_finetune_isolation_source.py``:
-``training_<slug1>_<slug2>/{train,validate,evaluate}/`` and ``binary_<pair_slug>_with_split.csv``.
+Labels are injected at load time from the split CSV; no pre-built per-experiment
+``.pt`` copies are required. Pass ``--embeddings-dir`` pointing at the original
+``klebsiella_esm_embeddings/`` directory.
 """
 import argparse
 import os
+import warnings
 from datetime import datetime
 from pathlib import Path
 
@@ -24,10 +26,12 @@ from predict_kleb_by_bacformer.pp.isolation_source_cli_parsing import (
     sanitize_pair_name,
     slugify_isolation_source_token,
 )
+from predict_kleb_by_bacformer.tl.datasets import LabelInjectingFileDataset
 
 PROCESSED_BASE_DIR_DEFAULT = Path(
     "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed"
 )
+EMBEDDINGS_DIR_DEFAULT = PROCESSED_BASE_DIR_DEFAULT / "klebsiella_esm_embeddings"
 
 
 ############################################################## PyTorchFileDataset ##############################################################
@@ -137,12 +141,10 @@ def compute_metrics_binary_genome_pred(
 
 def run(
     model_name_or_path: str,
-    train_data_dir: str,
-    val_data_dir: str,
+    embeddings_dir: str,
     output_dir: str,
     sheet_path: str,
     label_column: str,
-    pt_suffix: str,
     lr: float = 0.00015,
     batch_size: int = 1,
     grad_accumulation_steps: int = 8,
@@ -156,13 +158,26 @@ def run(
     num_workers: int = 16,
     warmup_proportion: float = 0.1,
     max_steps: int = 20000,
+    # deprecated — ignored; kept for call-site backward compat
+    train_data_dir: str | None = None,
+    val_data_dir: str | None = None,
+    pt_suffix: str | None = None,
 ):
-    """Fine-tune Bacformer on a pair-specific isolation-source label using pytorch (.pt) files."""
+    """Fine-tune Bacformer on a pair-specific isolation-source label.
+
+    Labels are injected at load time; no pre-built per-experiment .pt copies needed.
+    """
+    if train_data_dir or val_data_dir or pt_suffix:
+        warnings.warn(
+            "--train-data-dir, --val-data-dir, and pt_suffix are deprecated and ignored. "
+            "Use --embeddings-dir instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
     print(f"Loading model from: {model_name_or_path}")
     print(f"Predicting {label_column}")
-    print(f"Training set (PT): {train_data_dir}")
-    print(f"Validation set (PT): {val_data_dir}")
-    print(f"PT filename suffix: {pt_suffix}")
+    print(f"Embeddings dir: {embeddings_dir}")
     print(f"n_samples = {n_samples}")
     print(f"Freezing encoder: {freeze_encoder}")
     print(f"Learning rate: {lr}")
@@ -200,79 +215,46 @@ def run(
     if label_column not in df.columns:
         raise ValueError(f"Label column '{label_column}' not found in sheet.")
 
-    counts = (
-        df.loc[df[label_column].notna()]
-        .groupby("train_val_eval")["Sample"]
-        .nunique()
-        .to_dict()
-    )
-    train_count = counts.get("train", 0)
-    val_count = counts.get("validate", 0)
-    eval_count = counts.get("evaluate", 0)
+    labeled = df[df[label_column].notna()].copy()
+    labeled["Sample"] = labeled["Sample"].astype(str)
+    counts = labeled.groupby("train_val_eval")["Sample"].nunique().to_dict()
     print(
-        f"Samples with non-missing '{label_column}' - train: {train_count}, "
-        f"validate: {val_count}, evaluate: {eval_count}"
+        f"Samples with non-missing '{label_column}' - train: {counts.get('train', 0)}, "
+        f"validate: {counts.get('validate', 0)}, evaluate: {counts.get('evaluate', 0)}"
     )
 
-    train_dir = Path(train_data_dir)
-    val_dir = Path(val_data_dir)
+    label_map: dict[str, int] = {
+        row["Sample"]: int(row[label_column]) for _, row in labeled.iterrows()
+    }
+    embeddings_path = Path(embeddings_dir)
 
-    def build_file_list(split_name: str) -> list[Path]:
-        ids = (
-            df[(df["train_val_eval"] == split_name) & df[label_column].notna()]["Sample"]
-            .astype(str)
-            .unique()
-        )
-        base_dir = train_dir if split_name == "train" else val_dir
-        if split_name not in ("train", "validate"):
-            return []
-        files = []
-        for sid in ids:
-            path = base_dir / f"{sid}{pt_suffix}"
-            if path.exists():
-                files.append(path)
-            else:
-                print(f"WARNING: Expected pytorch (.pt) file missing for Sample {sid}: {path}")
-        return files
-
-    if not train_dir.exists():
-        raise FileNotFoundError(f"Train data directory {train_data_dir} does not exist")
-    if not val_dir.exists():
-        raise FileNotFoundError(f"Validation data directory {val_data_dir} does not exist")
+    def build_sample_ids(split_name: str) -> list[str]:
+        return labeled[labeled["train_val_eval"] == split_name]["Sample"].tolist()
 
     if n_samples == 10:
         print("Using dummy test mode with 10 samples.")
-        train_ids = (
-            df[(df["train_val_eval"] == "train") & df[label_column].notna()]["Sample"]
-            .astype(str)
-            .unique()[:10]
-        )
-        train_files = [
-            train_dir / f"{sid}{pt_suffix}"
-            for sid in train_ids
-            if (train_dir / f"{sid}{pt_suffix}").exists()
-        ]
-        val_files = train_files
+        train_ids = build_sample_ids("train")[:10]
+        val_ids = train_ids
         eval_strategy = "epoch"
         use_epochs = True
         num_train_epochs = 100
     else:
-        print("Full set mode: loading pytorch (.pt) files via PyTorchFileDataset")
-        train_files = build_file_list("train")
-        val_files = build_file_list("validate")
+        print("Full set mode using LabelInjectingFileDataset")
+        train_ids = build_sample_ids("train")
+        val_ids = build_sample_ids("validate")
         eval_strategy = "steps"
         use_epochs = False
 
-    if not train_files:
+    if not train_ids:
         raise RuntimeError(
-            f"No pytorch (.pt) files found for training (check sheet, {label_column}, and {train_data_dir})"
+            f"No training samples found (check sheet, '{label_column}' column, and train_val_eval split)."
         )
 
-    print(f"Number of train files (samples with '{label_column}'): {len(train_files)}")
-    print(f"Number of validation files: {len(val_files)}")
+    print(f"Number of train samples (with '{label_column}'): {len(train_ids)}")
+    print(f"Number of validation samples: {len(val_ids)}")
 
-    train_dataset = PyTorchFileDataset(train_files, label_column=label_column)
-    val_dataset = PyTorchFileDataset(val_files, label_column=label_column)
+    train_dataset = LabelInjectingFileDataset(train_ids, embeddings_path, label_map, label_column)
+    val_dataset = LabelInjectingFileDataset(val_ids, embeddings_path, label_map, label_column)
 
     try:
         sample = train_dataset[0]
@@ -389,16 +371,22 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Directory containing training_<slug1>_<slug2>/ (default matches prepare script).",
     )
     p.add_argument(
+        "--embeddings-dir",
+        type=str,
+        default=str(EMBEDDINGS_DIR_DEFAULT),
+        help="Directory containing {sample_id}_esm_embeddings.pt files (original, shared across experiments).",
+    )
+    p.add_argument(
         "--train-data-dir",
         type=str,
         default=None,
-        help="Override train split directory (default: <base>/training_<slug1>_<slug2>/train).",
+        help="[DEPRECATED — ignored] Previously the train split .pt directory.",
     )
     p.add_argument(
         "--val-data-dir",
         type=str,
         default=None,
-        help="Override validation split directory (default: .../validate).",
+        help="[DEPRECATED — ignored] Previously the validation split .pt directory.",
     )
     p.add_argument(
         "--sheet-path",
@@ -436,53 +424,42 @@ def _resolve_paths_from_tokens(
     token1: str,
     token2: str,
     processed_base_dir: str,
-    train_data_dir: str | None,
-    val_data_dir: str | None,
     sheet_path: str | None,
     output_dir: str | None,
     lr: float,
-) -> tuple[str, str, str, str, str, str]:
+) -> tuple[str, str, str]:
     pair_slug = sanitize_pair_name(token1, token2)
     slug1 = slugify_isolation_source_token(token1)
     slug2 = slugify_isolation_source_token(token2)
     base = Path(processed_base_dir) / f"training_{slug1}_{slug2}"
-    train_dir = train_data_dir or str(base / "train")
-    val_dir = val_data_dir or str(base / "validate")
     sheet = sheet_path or str(base / f"binary_{pair_slug}_with_split.csv")
     label_column = f"{pair_slug}_label"
-    pt_suffix = f"_with_{pair_slug}.pt"
     output_subdir = output_dir or f"bacformer_finetuned_lr_{lr}"
     out = str(base / output_subdir)
-    return train_dir, val_dir, sheet, out, label_column, pt_suffix
+    return sheet, out, label_column
 
 
 if __name__ == "__main__":
     parser = _build_arg_parser()
     args = parser.parse_args()
     token1, token2 = args.isolation_sources
-    train_data_dir, val_data_dir, sheet_path, output_dir, label_column, pt_suffix = (
-        _resolve_paths_from_tokens(
-            token1,
-            token2,
-            args.processed_base_dir,
-            args.train_data_dir,
-            args.val_data_dir,
-            args.sheet_path,
-            args.output_dir,
-            args.lr,
-        )
+    sheet_path, output_dir, label_column = _resolve_paths_from_tokens(
+        token1,
+        token2,
+        args.processed_base_dir,
+        args.sheet_path,
+        args.output_dir,
+        args.lr,
     )
-    print("Isolation-source pair finetuning from pytorch (.pt) files")
+    print("Isolation-source pair finetuning with dynamic label injection")
     print(f"Tokens: {token1!r}, {token2!r} -> pair_slug={sanitize_pair_name(token1, token2)!r}")
     print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     run(
         model_name_or_path=args.model_name_or_path,
-        train_data_dir=train_data_dir,
-        val_data_dir=val_data_dir,
+        embeddings_dir=args.embeddings_dir,
         output_dir=output_dir,
         sheet_path=sheet_path,
         label_column=label_column,
-        pt_suffix=pt_suffix,
         lr=args.lr,
         batch_size=args.batch_size,
         grad_accumulation_steps=args.grad_accumulation_steps,

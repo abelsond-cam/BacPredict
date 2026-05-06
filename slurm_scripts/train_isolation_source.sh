@@ -52,8 +52,11 @@ echo "Node: $SLURMD_NODENAME, GPU: $CUDA_VISIBLE_DEVICES"
 echo "========================================================================"
 echo ""
 
+embeddings_dir="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/klebsiella_esm_embeddings"
+
 uv run python "$python_script" \
   --isolation-sources $isolation_sources \
+  --embeddings-dir "$embeddings_dir" \
   --lr "$lr" \
   --output-dir "$output_dir" \
   --model-name-or-path "$model_name_or_path" \
