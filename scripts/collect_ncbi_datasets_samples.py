@@ -9,10 +9,13 @@ Flow:
 2. Skip-existing: load the most recent biosample_to_accession_*.tsv cache (if any)
    and drop BioSamples whose mapped accession already has a populated dir under
    --output-dir
-3. Resolve remaining BioSamples to assembly accessions in one batched call:
-       datasets summary genome accession --inputfile <file> --as-json-lines
-   then pick the best record per BioSample (prefer GCF_ over GCA_, higher
-   assembly_level, then most recent release_date)
+3. Resolve remaining BioSamples to assembly accessions via NCBI Entrez E-utilities
+   (esearch on db=assembly with BioSamples as the query term, then esummary on the
+   resulting UIDs). The datasets CLI's `summary genome accession` subcommand only
+   accepts Assembly/BioProject accessions, not BioSamples, so we use Entrez for
+   the lookup and feed the resolved GCF_/GCA_ accessions into the datasets CLI
+   for the actual download. We then pick the best record per BioSample
+   (prefer GCF_ over GCA_, higher assembly_level, then most recent release_date)
 4. Write a fresh biosample_to_accession_*.tsv (cache for next run)
 5. Write missing_samples_*.tsv for BioSamples with no resolvable accession
 6. Write batch files of unique accessions for the datasets CLI
@@ -21,10 +24,12 @@ Never mutates the input CSV.
 """
 
 import argparse
-import json
-import subprocess
+import os
 import sys
-import tempfile
+import time
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pandas as pd
@@ -204,46 +209,128 @@ def parse_records_to_mapping(
     return rows, missing
 
 
-def resolve_biosamples_via_datasets_cli(biosamples: list[str]) -> list[dict]:
-    """Call `datasets summary genome accession --inputfile X --as-json-lines`.
+EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 
-    Returns parsed JSONL records (one per assembly hit). Empty list on failure.
+
+def _entrez_get(endpoint: str, params: dict) -> bytes:
+    """Single GET against NCBI E-utilities. Honours NCBI_API_KEY if set."""
+    api_key = os.environ.get("NCBI_API_KEY")
+    if api_key:
+        params = {**params, "api_key": api_key}
+    url = f"{EUTILS}/{endpoint}?{urllib.parse.urlencode(params)}"
+    with urllib.request.urlopen(url, timeout=60) as resp:
+        return resp.read()
+
+
+def _entrez_sleep() -> None:
+    """Rate-limit: 3 req/s without API key, 10 req/s with."""
+    time.sleep(0.11 if os.environ.get("NCBI_API_KEY") else 0.34)
+
+
+def _esearch_assembly_uids(biosamples: list[str], batch_size: int = 100) -> set[str]:
+    """Return the set of assembly UIDs linked to any biosample in the input.
+
+    Batches biosamples into OR-joined query terms so we make ~1 esearch call per
+    `batch_size` BioSamples instead of one per BioSample.
+    """
+    uids: set[str] = set()
+    for i in range(0, len(biosamples), batch_size):
+        chunk = biosamples[i : i + batch_size]
+        term = " OR ".join(chunk)
+        xml = _entrez_get(
+            "esearch.fcgi",
+            {"db": "assembly", "term": term, "retmax": "100000"},
+        )
+        try:
+            root = ET.fromstring(xml)
+        except ET.ParseError as exc:
+            print(f"WARNING: esearch XML parse error on batch {i}-{i + len(chunk)}: {exc}",
+                  file=sys.stderr)
+            _entrez_sleep()
+            continue
+        for el in root.findall(".//IdList/Id"):
+            if el.text:
+                uids.add(el.text)
+        _entrez_sleep()
+    return uids
+
+
+def _esummary_assemblies(uids: list[str], batch_size: int = 200) -> list[dict]:
+    """Fetch assembly metadata for `uids` and shape it into records compatible
+    with `pick_best_record` / `extract_biosample_id`.
+
+    Each returned record has the keys our parser expects:
+      - accession (GCF_/GCA_)
+      - assembly_info.assembly_level
+      - assembly_info.release_date
+      - assembly_info.biosample.accession
+    """
+    records: list[dict] = []
+    for i in range(0, len(uids), batch_size):
+        chunk = uids[i : i + batch_size]
+        xml = _entrez_get(
+            "esummary.fcgi",
+            {"db": "assembly", "id": ",".join(chunk), "version": "2.0"},
+        )
+        try:
+            root = ET.fromstring(xml)
+        except ET.ParseError as exc:
+            print(f"WARNING: esummary XML parse error on batch {i}-{i + len(chunk)}: {exc}",
+                  file=sys.stderr)
+            _entrez_sleep()
+            continue
+        for doc in root.findall(".//DocumentSummary"):
+            acc = (doc.findtext("AssemblyAccession") or "").strip()
+            if not acc:
+                continue
+            level = (doc.findtext("AssemblyStatus") or "").strip()
+            # SeqReleaseDate / SubmissionDate look like "2022/01/20 00:00";
+            # keep them as ISO-ish strings - lexicographic compare still orders correctly.
+            release_date = (
+                (doc.findtext("SeqReleaseDate") or "").strip()
+                or (doc.findtext("SubmissionDate") or "").strip()
+            )
+            biosample_acc = (doc.findtext("BioSampleAccn") or "").strip()
+            records.append({
+                "accession": acc,
+                "assembly_info": {
+                    "assembly_level": level,
+                    "release_date": release_date,
+                    "biosample": {"accession": biosample_acc},
+                },
+            })
+        _entrez_sleep()
+    return records
+
+
+def resolve_biosamples_via_entrez(biosamples: list[str]) -> list[dict]:
+    """Resolve BioSamples -> assembly metadata via NCBI Entrez E-utilities.
+
+    The NCBI datasets CLI's `summary genome accession` only accepts Assembly /
+    BioProject accessions (not BioSamples), so we use Entrez E-utilities for
+    the BioSample -> Assembly mapping:
+
+      1. esearch(db=assembly, term=<biosample1> OR <biosample2> OR ...)
+         -> assembly UIDs
+      2. esummary(db=assembly, id=<uid1>,<uid2>,...)
+         -> assembly metadata including BioSampleAccn
+
+    Returns records in the shape expected by pick_best_record. Empty list on
+    network failure for any specific call (other batches still tried).
+
+    Honours NCBI_API_KEY env var for higher rate limits (10 req/s vs 3 req/s).
     """
     if not biosamples:
         return []
-    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as fh:
-        fh.write("\n".join(biosamples) + "\n")
-        input_path = fh.name
-    try:
-        print(f"Calling: datasets summary genome accession --inputfile <{len(biosamples):,} BioSamples> "
-              f"--as-json-lines", file=sys.stderr)
-        proc = subprocess.run(
-            [
-                "datasets", "summary", "genome", "accession",
-                "--inputfile", input_path,
-                "--as-json-lines",
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if proc.returncode != 0:
-            print(f"WARNING: datasets summary exit={proc.returncode}", file=sys.stderr)
-            if proc.stderr:
-                print(proc.stderr, file=sys.stderr)
-        records = []
-        for line in proc.stdout.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                records.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-        print(f"Parsed {len(records):,} assembly records from datasets summary", file=sys.stderr)
-        return records
-    finally:
-        Path(input_path).unlink(missing_ok=True)
+    print(f"Resolving {len(biosamples):,} BioSamples via NCBI Entrez "
+          f"(esearch + esummary on db=assembly)...", file=sys.stderr)
+    uids = _esearch_assembly_uids(biosamples)
+    print(f"esearch returned {len(uids):,} unique assembly UIDs", file=sys.stderr)
+    if not uids:
+        return []
+    records = _esummary_assemblies(sorted(uids))
+    print(f"esummary returned metadata for {len(records):,} assemblies", file=sys.stderr)
+    return records
 
 
 def write_mapping_tsv(rows: list[dict], path: Path) -> None:
@@ -305,7 +392,7 @@ def run(
     batch_dir: Path | None,
     batch_size: int,
     output: Path | None,
-    resolver=resolve_biosamples_via_datasets_cli,
+    resolver=resolve_biosamples_via_entrez,
 ) -> None:
     """Main entry point - factored for testability (resolver injectable)."""
     full_df, biosamples = load_biosamples(metadata)
