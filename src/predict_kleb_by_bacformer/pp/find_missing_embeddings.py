@@ -13,6 +13,7 @@ The output CSV is the input contract for the format-aware
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -45,10 +46,16 @@ def find_missing(
     kpsc = df[df["kpsc_final_list"].astype(bool)].copy()
     kpsc = kpsc.drop_duplicates(subset=["Sample"])
 
-    has_embedding = kpsc["Sample"].apply(
-        lambda s: (embeddings_dir / f"{s}_esm_embeddings.pt").exists()
-    )
-    missing = kpsc.loc[~has_embedding, ["Sample", "assembly_file", "gff_file"]].copy()
+    # Single directory listing -> O(1) set lookup per sample (RDS stat-per-file is glacial).
+    suffix = "_esm_embeddings.pt"
+    existing = {
+        name[: -len(suffix)]
+        for name in os.listdir(embeddings_dir)
+        if name.endswith(suffix)
+    }
+    missing = kpsc.loc[
+        ~kpsc["Sample"].isin(existing), ["Sample", "assembly_file", "gff_file"]
+    ].copy()
     return missing
 
 
