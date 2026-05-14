@@ -5,6 +5,7 @@ buck-out/
 /core
 
 # Compiled files
+.venv
 .venv/
 __pycache__/
 .*cache/
