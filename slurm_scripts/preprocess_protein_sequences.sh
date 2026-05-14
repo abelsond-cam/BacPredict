@@ -9,11 +9,14 @@
 #SBATCH --cpus-per-task=76
 #SBATCH --mem=200G
 
-# Script to run protein sequence extraction on HPC with CPU parallelization
+# Script to run protein-sequence extraction on HPC with CPU parallelization.
+# The python script reads a CSV of (Sample, assembly_file, gff_file) — generate it
+# first with `find_missing_embeddings.py`.
+#
 # Usage:
-#   sbatch src/predict_kleb_by_bacformer/pp/pp_batch_scripts/preprocess_protein_sequences.sh --n 10  # Test with 10 files
-#   sbatch src/predict_kleb_by_bacformer/pp/pp_batch_scripts/preprocess_protein_sequences.sh         # Process all files
-#   sbatch src/predict_kleb_by_bacformer/pp/pp_batch_scripts/preprocess_protein_sequences.sh --skip-existing  # Resume
+#   sbatch slurm_scripts/preprocess_protein_sequences.sh --n 5                    # dry-run on 5 samples
+#   sbatch slurm_scripts/preprocess_protein_sequences.sh --skip-existing          # resume
+#   sbatch slurm_scripts/preprocess_protein_sequences.sh --input-csv /path/to/missing.csv
 
 # Force Python unbuffered output for real-time logging
 export PYTHONUNBUFFERED=1

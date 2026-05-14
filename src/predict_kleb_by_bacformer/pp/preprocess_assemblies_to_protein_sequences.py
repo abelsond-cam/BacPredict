@@ -1,9 +1,15 @@
-"""Generate protein sequences from Klebsiella genome assemblies (CPU-only).
+"""Generate protein sequences from Klebsiella genome annotations (CPU-only).
 
-This script extracts protein sequences from .bakta.gbff.gz files using parallel processing.
-It runs Step 1 of the Bacformer pipeline (preprocess_genome_assembly) only.
+Reads a CSV of samples + per-sample annotation paths (produced by
+`find_missing_embeddings.py`) and writes one `{Sample}_protein_sequences.parquet`
+per sample for downstream GPU embedding generation.
 
-The output protein sequences can then be used as input for GPU-based embedding generation.
+Per-sample extractor is chosen by file extension on the `gff_file` column:
+- `.gff` / `.gff3` / `.gff.gz` / `.gff3.gz`: parse CDS features, splice from
+  the sibling FASTA (`assembly_file`), translate with codon table 11.
+- `.gbff` / `.gbff.gz`: fall back to bacformer's
+  `preprocess_genome_assembly` (retained for completeness; new samples are
+  expected to come in via GFF + FNA).
 """
 
 import argparse
@@ -18,11 +24,16 @@ import pandas as pd
 from bacformer.pp import preprocess_genome_assembly
 from tqdm import tqdm
 
-RDS_ROOT = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw")
-GBFF_DIR = RDS_ROOT / "david" / "raw" / "klebsiella_gbff"
-PROTEIN_SEQUENCES_DIR = RDS_ROOT / "david" / "processed" / "klebsiella_protein_sequences"
+from predict_kleb_by_bacformer.pp.extract_proteins_from_gff_fna import (
+    extract_proteins_from_gff_fna,
+    is_gbff_path,
+    is_gff_path,
+)
 
-# Configure logging
+RDS_ROOT = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw")
+PROTEIN_SEQUENCES_DIR = RDS_ROOT / "david" / "processed" / "klebsiella_protein_sequences"
+INPUT_CSV_DEFAULT = RDS_ROOT / "david" / "processed" / "missing_embeddings_kpsc.csv"
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -34,117 +45,79 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def find_gbff_files(input_dir: Path, limit: int | None = None) -> list[Path]:
-    """Recursively find all .bakta.gbff.gz files in the input directory.
-
-    Args:
-        input_dir: Directory to search for gbff files
-        limit: Optional limit on number of files to return (must be positive)
-
-    Returns
-    -------
-        List of paths to gbff files
-    """
-    logger.info(f"Searching for .bakta.gbff.gz files in {input_dir}")
-
+def load_input_csv(input_csv: Path, limit: int | None = None) -> pd.DataFrame:
+    """Load the (Sample, assembly_file, gff_file) input CSV produced upstream."""
+    df = pd.read_csv(input_csv)
+    required = {"Sample", "assembly_file", "gff_file"}
+    missing_cols = required - set(df.columns)
+    if missing_cols:
+        raise ValueError(f"Input CSV {input_csv} is missing columns: {missing_cols}")
+    df = df.dropna(subset=["Sample"]).copy()
+    df["Sample"] = df["Sample"].astype(str)
     if limit is not None and limit > 0:
-        # If limit is set to a positive number, only find the first n files (more efficient)
-        logger.info(f"Looking for first {limit} files (early stopping enabled)")
-        gbff_files = []
-        for filepath in input_dir.rglob("*.bakta.gbff.gz"):
-            gbff_files.append(filepath)
-            if len(gbff_files) >= limit:
-                break
-        gbff_files = sorted(gbff_files)
-    else:
-        # Find all files (when limit is None, 0, or negative)
-        if limit is not None and limit <= 0:
-            logger.info(f"Limit is {limit}, processing all files")
-        gbff_files = sorted(input_dir.rglob("*.bakta.gbff.gz"))
-
-    logger.info(f"Found {len(gbff_files)} files to process")
-    return gbff_files
-
-
-def extract_sample_id(filepath: Path) -> str:
-    """Extract sample ID from filepath.
-
-    Example: /path/to/D000/SAMD00052611/SAMD00052611.bakta.gbff.gz -> SAMD00052611
-
-    Args:
-        filepath: Path to the gbff file
-
-    Returns
-    -------
-        Sample ID string
-    """
-    # The sample ID is the parent directory name
-    return filepath.parent.name
+        df = df.head(limit)
+    return df.reset_index(drop=True)
 
 
 def check_output_exists(sample_id: str, output_dir: Path) -> bool:
-    """Check if protein sequences file already exists for a given sample.
-
-    Args:
-        sample_id: Sample identifier
-        output_dir: Output directory for protein sequences
-
-    Returns
-    -------
-        True if output file exists, False otherwise
-    """
-    protein_file = output_dir / f"{sample_id}_protein_sequences.parquet"
-    return protein_file.exists()
+    """Check if the protein-sequences parquet already exists for a sample."""
+    return (output_dir / f"{sample_id}_protein_sequences.parquet").exists()
 
 
 def save_to_parquet(data_dict: dict, output_path: Path) -> None:
-    """Save data dictionary to parquet file.
-
-    Args:
-        data_dict: Dictionary containing data to save
-        output_path: Path where parquet file should be saved
-    """
-    # Convert dict to DataFrame for parquet serialization
+    """Save a single-row dict as a parquet file."""
     df = pd.DataFrame([data_dict])
     df.to_parquet(output_path, engine="pyarrow", compression="snappy")
 
 
-def process_single_genome(args_tuple: tuple) -> tuple[str, bool, str, float]:
-    """Process a single genome file - extract protein sequences.
+def _extract_genome_info(sample_id: str, assembly_file: str, gff_file: str) -> dict:
+    """Dispatch to the correct extractor based on the `gff_file` extension."""
+    if gff_file and is_gff_path(gff_file):
+        if not assembly_file:
+            raise ValueError(
+                f"{sample_id}: gff_file is set but assembly_file is empty; "
+                "GFF+FNA extractor needs both."
+            )
+        return extract_proteins_from_gff_fna(gff_file, assembly_file)
+    if gff_file and is_gbff_path(gff_file):
+        return preprocess_genome_assembly(filepath=str(gff_file))
+    if assembly_file and is_gbff_path(assembly_file):
+        return preprocess_genome_assembly(filepath=str(assembly_file))
+    raise ValueError(
+        f"{sample_id}: no recognised annotation file. "
+        f"gff_file={gff_file!r}, assembly_file={assembly_file!r}"
+    )
 
-    Args:
-        args_tuple: Tuple of (gbff_path, output_dir, skip_existing)
+
+def process_single_genome(args_tuple: tuple) -> tuple[str, bool, str, float]:
+    """Worker: extract proteins for one sample and write its parquet.
 
     Returns
     -------
-        Tuple of (sample_id, success, error_message, processing_time)
+    tuple
+        ``(sample_id, success, error_message, processing_time)``.
     """
-    gbff_path, output_dir, skip_existing = args_tuple
-    sample_id = extract_sample_id(gbff_path)
+    sample_id, assembly_file, gff_file, output_dir, skip_existing = args_tuple
     start_time = time.time()
 
     try:
-        # Check if already processed
         if skip_existing and check_output_exists(sample_id, output_dir):
             return sample_id, True, "Already exists (skipped)", 0.0
 
-        # Preprocess genome assembly to extract protein sequences
-        genome_info = preprocess_genome_assembly(filepath=str(gbff_path))
+        genome_info = _extract_genome_info(sample_id, assembly_file, gff_file)
 
-        # Remove 'strain_name', 'accession_name', 'protein_name' keys from genome_info
-        genome_info.pop("strain_name", None)
-        genome_info.pop("accession_name", None)
-        genome_info.pop("protein_name", None)
-        # Add sample accession to the result as the first key
+        # Strip metadata-only keys that the downstream embedding step does not consume.
+        for k in ("strain_name", "accession_name", "protein_name", "accession_id"):
+            genome_info.pop(k, None)
         genome_info = {"sample_id": sample_id, **genome_info}
-        # Save to parquet
+
         protein_output_path = output_dir / f"{sample_id}_protein_sequences.parquet"
         save_to_parquet(genome_info, protein_output_path)
         elapsed = time.time() - start_time
         return sample_id, True, "", elapsed
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — per-worker boundary; collect & continue
         elapsed = time.time() - start_time
-        error_msg = f"Error processing {sample_id}: {str(e)}"
+        error_msg = f"Error processing {sample_id}: {e}"
         logger.error(error_msg)
         return sample_id, False, error_msg, elapsed
 
@@ -155,98 +128,97 @@ def main():
     sys.stdout.flush()
 
     parser = argparse.ArgumentParser(
-        description="Generate protein sequences from Klebsiella genomes (CPU-only)"
+        description="Generate protein-sequence parquets from a CSV of (Sample, assembly_file, gff_file)."
     )
     parser.add_argument(
-        "--n",
-        type=int,
-        default=None,
-        help="Limit number of genomes to process (for testing)",
+        "--input-csv",
+        type=Path,
+        default=INPUT_CSV_DEFAULT,
+        help="CSV with columns Sample, assembly_file, gff_file (default: missing_embeddings_kpsc.csv).",
     )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=PROTEIN_SEQUENCES_DIR,
+        help="Where to write {Sample}_protein_sequences.parquet files.",
+    )
+    parser.add_argument("--n", type=int, default=None, help="Limit number of samples (for testing)")
     parser.add_argument(
         "--skip-existing",
         action="store_true",
-        help="Skip genomes that have already been processed",
+        help="Skip samples whose parquet already exists",
     )
-    parser.add_argument(
-        "--workers",
-        type=int,
-        default=76,
-        help="Number of parallel workers (default: 76)",
-    )
+    parser.add_argument("--workers", type=int, default=76, help="Number of parallel workers")
 
     args = parser.parse_args()
 
-    # Setup paths
-    input_dir = GBFF_DIR
-    output_dir = PROTEIN_SEQUENCES_DIR
-
-    # Create output directory if it doesn't exist
+    output_dir = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info("=" * 60)
     logger.info("PHASE 1: Setup")
     logger.info("=" * 60)
-    logger.info(f"Input directory: {input_dir}")
+    logger.info(f"Input CSV: {args.input_csv}")
     logger.info(f"Output directory: {output_dir}")
     logger.info(f"Workers requested: {args.workers}")
     sys.stdout.flush()
 
-    # Find input files
     logger.info("")
-    logger.info("PHASE 2: Discovering .bakta.gbff.gz files (this may take a while)")
+    logger.info("PHASE 2: Loading input CSV")
     sys.stdout.flush()
-    gbff_files = find_gbff_files(input_dir, limit=args.n)
+    df = load_input_csv(args.input_csv, limit=args.n)
+    logger.info(f"Loaded {len(df)} rows from {args.input_csv}")
 
-    if not gbff_files:
-        logger.error(f"No .bakta.gbff.gz files found in {input_dir}")
+    if df.empty:
+        logger.error(f"No rows in {args.input_csv}")
         sys.exit(1)
 
-    # Filter out already processed files if requested
     logger.info("")
     logger.info("PHASE 3: Filtering (skip-existing check)")
     sys.stdout.flush()
     if args.skip_existing:
-        original_count = len(gbff_files)
-        gbff_files = [
-            f for f in gbff_files if not check_output_exists(extract_sample_id(f), output_dir)
-        ]
-        skipped = original_count - len(gbff_files)
+        before = len(df)
+        df = df[~df["Sample"].apply(lambda s: check_output_exists(s, output_dir))]
+        skipped = before - len(df)
         if skipped > 0:
-            logger.info(f"Skipping {skipped} already processed genomes")
+            logger.info(f"Skipping {skipped} samples with existing parquets")
 
-    if not gbff_files:
-        logger.info("All genomes have already been processed")
+    if df.empty:
+        logger.info("All samples already have protein-sequence parquets")
         return
 
-    # Determine number of workers
-    num_workers = min(args.workers, cpu_count(), len(gbff_files))
+    num_workers = min(args.workers, cpu_count(), len(df))
 
     logger.info("")
     logger.info("=" * 60)
     logger.info("PHASE 4: Parallel processing")
     logger.info("=" * 60)
-    logger.info(f"Total samples to process: {len(gbff_files)}")
+    logger.info(f"Total samples to process: {len(df)}")
     logger.info(f"Worker processes: {num_workers}")
     logger.info(f"Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 60)
     sys.stdout.flush()
 
-    # Prepare arguments for parallel processing
-    process_args = [(f, output_dir, args.skip_existing) for f in gbff_files]
+    process_args = [
+        (
+            row["Sample"],
+            str(row["assembly_file"]) if pd.notna(row["assembly_file"]) else "",
+            str(row["gff_file"]) if pd.notna(row["gff_file"]) else "",
+            output_dir,
+            args.skip_existing,
+        )
+        for _, row in df.iterrows()
+    ]
 
-    # Record start time
     overall_start_time = time.time()
 
-    # Process genomes in parallel
     results = {"success": [], "failed": []}
     error_log = []
     genome_times = []
 
-    # tqdm: use file=sys.stdout and mininterval for batch/SLURM-friendly output
     with Pool(processes=num_workers) as pool:
         pbar = tqdm(
-            total=len(gbff_files),
+            total=len(df),
             desc="Processing genomes",
             unit="sample",
             file=sys.stdout,
@@ -259,9 +231,9 @@ def main():
         ):
             if success:
                 results["success"].append(sample_id)
-                if elapsed > 0:  # Don't count skipped files
+                if elapsed > 0:
                     genome_times.append(elapsed)
-                if error_msg:  # "Already exists (skipped)"
+                if error_msg:
                     logger.debug(f"{sample_id}: {error_msg}")
                 else:
                     logger.info(f"{sample_id}: SUCCESS ({elapsed:.1f}s)")
@@ -272,14 +244,13 @@ def main():
 
             pbar.update(1)
 
-            # Log progress and timing estimates periodically (every 25 samples)
             completed = len(results["success"]) + len(results["failed"])
             if len(genome_times) > 0 and completed % 25 == 0:
                 avg_time = sum(genome_times) / len(genome_times)
-                remaining = len(gbff_files) - completed
+                remaining = len(df) - completed
                 est_remaining = timedelta(seconds=int(avg_time * remaining / num_workers))
                 logger.info(
-                    f"Progress: {completed}/{len(gbff_files)} samples | "
+                    f"Progress: {completed}/{len(df)} samples | "
                     f"Avg {avg_time:.1f}s/sample | "
                     f"Est. remaining: {est_remaining}"
                 )
@@ -287,10 +258,8 @@ def main():
 
         pbar.close()
 
-    # Calculate total elapsed time
     overall_elapsed = time.time() - overall_start_time
 
-    # Summary
     logger.info("")
     logger.info("=" * 60)
     logger.info("PHASE 5: Summary")
@@ -309,7 +278,7 @@ def main():
         logger.info(f"  - Min: {min_time:.1f}s")
         logger.info(f"  - Max: {max_time:.1f}s")
         logger.info(f"  - Total genomes processed: {len(genome_times)}")
-        logger.info(f"  - Throughput: {len(genome_times)/overall_elapsed*60:.1f} genomes/minute")
+        logger.info(f"  - Throughput: {len(genome_times) / overall_elapsed * 60:.1f} genomes/minute")
 
     if error_log:
         error_log_path = Path("protein_sequences_errors.log")
