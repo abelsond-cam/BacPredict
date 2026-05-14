@@ -1,0 +1,7 @@
+{"accession": "GCF_000000001.1", "paired_accession": "GCA_000000001.1", "assembly_info": {"assembly_level": "Complete Genome", "release_date": "2018-06-12", "biosample": {"accession": "SAMN00000001"}}}
+{"accession": "GCA_000000001.1", "paired_accession": "GCF_000000001.1", "assembly_info": {"assembly_level": "Scaffold", "release_date": "2018-06-12", "biosample": {"accession": "SAMN00000001"}}}
+{"accession": "GCA_000000002.1", "assembly_info": {"assembly_level": "Complete Genome", "release_date": "2020-01-15", "biosample": {"accession": "SAMN00000002"}}}
+{"accession": "GCA_000000002.2", "assembly_info": {"assembly_level": "Complete Genome", "release_date": "2022-08-30", "biosample": {"accession": "SAMN00000002"}}}
+{"accession": "GCA_000000003.1", "assembly_info": {"assembly_level": "Contig", "release_date": "2019-03-10", "biosample": {"accession": "SAMN00000003"}}}
+{"accession": "GCA_000000003.2", "assembly_info": {"assembly_level": "Scaffold", "release_date": "2019-04-22", "biosample": {"accession": "SAMN00000003"}}}
+{"accession": "GCA_000000005.1", "assembly_info": {"assembly_level": "Complete Genome", "release_date": "2021-07-01", "biosample_accession": "SAMN00000005"}}
