@@ -62,6 +62,7 @@ def parse_number_section(number_section):
 _number_section_pattern = re.compile(r"^\d*\.?\d+(?:/\d+.*)?$")
 
 VALID_OPERATORS = {">", "<", ">=", "<=", "=", "=="}
+BRACKETED_OPERATOR = ">,<"  # "MIC strictly between X and Y", e.g. ">,< 1,2 mg/L"
 
 def convert_ebi_mic_data(ast_data, ebi_mic_column="phenotype-gen_measurement"):
     """Convert EBI MIC data to log-scale MIC values with adjustments for inequality operators.
@@ -71,6 +72,10 @@ def convert_ebi_mic_data(ast_data, ebi_mic_column="phenotype-gen_measurement"):
     - For "<" values: log_mic is reduced by 1 (equivalent to dividing MIC by 10)
     - For ">" values: log_mic is increased by 1 (equivalent to multiplying MIC by 10)
     - For other operators (=, ==, <=, >=): log_mic uses the exact value
+    - For ">,< X,Y" (bracketed MIC, e.g. ">,< 1,2 mg/L" meaning 1 < MIC < 2):
+      MIC_meaning is set to "~", MIC_value is the geometric mean sqrt(X*Y), and
+      log_mic = log10(sqrt(X*Y)) with no censoring adjustment (this is a point
+      estimate on the log scale, not a censored bound).
 
     Parameters
     ----------
@@ -78,7 +83,8 @@ def convert_ebi_mic_data(ast_data, ebi_mic_column="phenotype-gen_measurement"):
         DataFrame containing AST (Antimicrobial Susceptibility Testing) data
     ebi_mic_column : str, default="phenotype-gen_measurement"
         Column name containing MIC values in format "operator number_section units"
-        (space-separated; number_section can be e.g. "32", ".25", "64/4")
+        (space-separated; number_section can be e.g. "32", ".25", "64/4", or
+        "X,Y" when the operator is ">,<").
 
     Returns
     -------
@@ -115,6 +121,35 @@ def convert_ebi_mic_data(ast_data, ebi_mic_column="phenotype-gen_measurement"):
             log_mic.append(np.nan)
             continue
         operator, number_section = parts[0], parts[1]
+        if operator == BRACKETED_OPERATOR:
+            # Bracketed MIC: ">,< X,Y unit" means X < MIC < Y. Use geometric mean
+            # (log midpoint) as the point estimate; no censoring adjustment.
+            bounds = number_section.split(",")
+            if len(bounds) != 2:
+                unparsable.append({"index": idx, "raw": raw, "reason": f"bracketed MIC needs 2 bounds, got {number_section!r}"})
+                mic_meaning.append(pd.NA)
+                mic_value.append(np.nan)
+                log_mic.append(np.nan)
+                continue
+            try:
+                lower, upper = float(bounds[0]), float(bounds[1])
+            except ValueError:
+                unparsable.append({"index": idx, "raw": raw, "reason": f"bracketed MIC bounds not numeric: {number_section!r}"})
+                mic_meaning.append(pd.NA)
+                mic_value.append(np.nan)
+                log_mic.append(np.nan)
+                continue
+            if lower <= 0 or upper <= 0:
+                unparsable.append({"index": idx, "raw": raw, "reason": f"bracketed MIC bounds must be positive: {number_section!r}"})
+                mic_meaning.append(pd.NA)
+                mic_value.append(np.nan)
+                log_mic.append(np.nan)
+                continue
+            geo_mean = (lower * upper) ** 0.5
+            mic_meaning.append("~")
+            mic_value.append(geo_mean)
+            log_mic.append(np.log10(geo_mean))
+            continue
         if operator not in VALID_OPERATORS:
             unparsable.append({"index": idx, "raw": raw, "reason": f"invalid operator {operator!r}"})
             mic_meaning.append(pd.NA)
@@ -564,8 +599,8 @@ def create_klebsiella_antibiogram(antibiotic_stats_df, output_path, figsize=(14,
     matplotlib.figure.Figure or None
         The generated figure object, or None if no antibiotics meet the threshold
     """
-    import matplotlib.pyplot as plt
     import matplotlib.cm as cm
+    import matplotlib.pyplot as plt
 
     print(f"\n=== Creating Klebsiella Antibiogram ===")
 
@@ -582,7 +617,7 @@ def create_klebsiella_antibiogram(antibiotic_stats_df, output_path, figsize=(14,
 
     # Bars: height = % resistant, colour = % susceptible (0 = red, 1 = green)
     x_pos = range(len(stats_df))
-    cmap = cm.get_cmap("RdYlGn")
+    cmap = plt.get_cmap("RdYlGn")
     colors = [cmap(sus / 100.0) for sus in stats_df["susceptible_pct"]]
     ax.bar(x_pos, stats_df["resistance_pct"], color=colors, edgecolor="black", linewidth=0.5)
 
