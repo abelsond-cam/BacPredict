@@ -18,20 +18,24 @@ from pathlib import Path
 
 import pandas as pd
 
-METADATA_DEFAULT = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/final/metadata_final_curated_slimmed.tsv"
-)
-EMBEDDINGS_DIR_DEFAULT = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/klebsiella_esm_embeddings"
-)
-OUT_CSV_DEFAULT = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/missing_embeddings_kpsc.csv"
-)
+RDS_ROOT = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw")
+METADATA_DEFAULT = RDS_ROOT / "david" / "final" / "metadata_final_curated_slimmed.tsv"
+EMBEDDINGS_DIR_DEFAULT = RDS_ROOT / "david" / "processed" / "klebsiella_esm_embeddings"
+OUT_CSV_DEFAULT = RDS_ROOT / "david" / "processed" / "missing_embeddings_kpsc.csv"
+
+
+def _abs_path(value: str | float, root: Path) -> str | float:
+    """Resolve RDS-relative paths to absolute; pass through NaN/absolute unchanged."""
+    if not isinstance(value, str) or not value:
+        return value
+    p = Path(value)
+    return str(p if p.is_absolute() else root / p)
 
 
 def find_missing(
     metadata_tsv: Path,
     embeddings_dir: Path,
+    rds_root: Path = RDS_ROOT,
 ) -> pd.DataFrame:
     """Return rows of kpsc_final_list samples that lack an embedding file."""
     df = pd.read_csv(metadata_tsv, sep="\t", low_memory=False)
@@ -56,6 +60,8 @@ def find_missing(
     missing = kpsc.loc[
         ~kpsc["Sample"].isin(existing), ["Sample", "assembly_file", "gff_file"]
     ].copy()
+    missing["assembly_file"] = missing["assembly_file"].map(lambda v: _abs_path(v, rds_root))
+    missing["gff_file"] = missing["gff_file"].map(lambda v: _abs_path(v, rds_root))
     return missing
 
 
