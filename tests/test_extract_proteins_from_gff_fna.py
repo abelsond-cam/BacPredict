@@ -112,6 +112,58 @@ def test_extract_proteins_alt_start_codon(tmp_path: Path) -> None:
     assert out["protein_sequence"] == [["MK"], ["MK"]]
 
 
+def test_extract_proteins_phase_trim(tmp_path: Path) -> None:
+    """A CDS with phase=1 has its first base trimmed before translation.
+
+    Forward strand:
+      raw NT = N-ATG-AAA-TAA (10 bases, phase=1 -> drop first base)
+      after phase trim = ATG-AAA-TAA -> "MK*"
+      result: "MK"  (M promotion not applied because CDS is 5'-partial)
+
+    Reverse strand:
+      Genome interval TTA-TTT-CAT-N rev-comp -> N-ATG-AAA-TAA, same handling.
+    """
+    gff = tmp_path / "sample.gff"
+    fna = tmp_path / "sample.fna"
+    gff.write_text(
+        "##gff-version 3\n"
+        # phase=1 in column 8 (index 7)
+        "c1\tprodigal\tCDS\t1\t10\t.\t+\t1\tID=cds-partial;locus_tag=PART_GENE\n"
+    )
+    fna.write_text(">c1\nNATGAAATAA\n")
+    out = extract_proteins_from_gff_fna(gff, fna)
+    assert out["protein_sequence"] == [["MK"]]
+
+
+def test_extract_proteins_partial_attr_blocks_m_promotion(tmp_path: Path) -> None:
+    """`partial=true` in attrs means no start codon promotion."""
+    gff = tmp_path / "sample.gff"
+    fna = tmp_path / "sample.fna"
+    # GTG-AAA-TAA: raw -> "VK", default rule promotes to "MK".
+    # With partial=true, the V must stay.
+    gff.write_text(
+        "##gff-version 3\n"
+        "c1\tprodigal\tCDS\t1\t9\t.\t+\t0\tID=cds;locus_tag=PG;partial=true\n"
+    )
+    fna.write_text(">c1\nGTGAAATAA\n")
+    out = extract_proteins_from_gff_fna(gff, fna)
+    assert out["protein_sequence"] == [["VK"]]
+
+
+def test_extract_proteins_non_multiple_of_three_trimmed(tmp_path: Path) -> None:
+    """Trailing bases that don't form a full codon are dropped (no partial-codon warning)."""
+    gff = tmp_path / "sample.gff"
+    fna = tmp_path / "sample.fna"
+    # 11 bases - phase=0 - trim 2 trailing -> 9 bases -> MK + stop -> "MK"
+    gff.write_text(
+        "##gff-version 3\n"
+        "c1\tprodigal\tCDS\t1\t11\t.\t+\t0\tID=cds;locus_tag=G\n"
+    )
+    fna.write_text(">c1\nATGAAATAAGG\n")
+    out = extract_proteins_from_gff_fna(gff, fna)
+    assert out["protein_sequence"] == [["MK"]]
+
+
 def test_path_extension_helpers() -> None:
     """Extension detectors handle the relevant suffix variants."""
     assert is_gff_path("a/b.gff")

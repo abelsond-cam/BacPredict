@@ -125,6 +125,11 @@ def extract_proteins_from_gff_fna(
             except ValueError:
                 continue
             strand = parts[6]
+            phase_raw = parts[7]
+            try:
+                phase = int(phase_raw) if phase_raw and phase_raw != "." else 0
+            except ValueError:
+                phase = 0
             attrs = _parse_gff_attributes(parts[8])
 
             if attrs.get("pseudo", "").lower() in {"true", "1"}:
@@ -140,6 +145,22 @@ def extract_proteins_from_gff_fna(
             if strand == "-":
                 nt = nt.reverse_complement()
 
+            # Phase column: drop this many bases from the start of the CDS to reach
+            # the next codon boundary. Non-zero phase means the CDS is partial at
+            # the 5' end (gene continues before this region), so there is no real
+            # start codon to promote.
+            if phase:
+                nt = nt[phase:]
+            # Trim trailing bases so the sequence is a clean multiple of 3
+            # (prevents BiopythonWarning: "Partial codon").
+            remainder = len(nt) % 3
+            if remainder:
+                nt = nt[:-remainder]
+            if len(nt) < 3:
+                continue
+
+            is_partial_5p = phase != 0 or attrs.get("partial", "").lower() in {"true", "1", "10", "11"}
+
             protein = str(nt.translate(table=translation_table, to_stop=False))
             if protein.endswith("*"):
                 protein = protein[:-1]
@@ -148,10 +169,15 @@ def extract_proteins_from_gff_fna(
                 continue
             if not protein:
                 continue
-            # Promote alternative start codons to M (see _BACTERIAL_INITIATORS docstring).
-            if len(nt) >= 3 and str(nt[:3]).upper() in _BACTERIAL_INITIATORS:
-                if protein[0] != "M":
-                    protein = "M" + protein[1:]
+            # Promote alternative start codons to M only when the CDS isn't
+            # 5'-partial (a partial CDS does not begin at a real start codon).
+            if (
+                not is_partial_5p
+                and len(nt) >= 3
+                and str(nt[:3]).upper() in _BACTERIAL_INITIATORS
+                and protein[0] != "M"
+            ):
+                protein = "M" + protein[1:]
 
             if seqid not in per_contig:
                 contig_order.append(seqid)
