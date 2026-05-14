@@ -580,8 +580,12 @@ def create_antibiotic_pivot_tables(ast_data, value_column, index_col="phenotype-
     return pivot_df
 
 
-def create_klebsiella_antibiogram(antibiotic_stats_df, output_path, figsize=(14, 8), min_samples=1000):
-    """Create antibiogram visualization for Klebsiella showing resistance rates per antibiotic.
+def create_klebsiella_antibiogram(antibiotic_stats_df, output_path, figsize=(14, 8), min_samples=2000):
+    """Create antibiogram visualization showing resistance rates per antibiotic.
+
+    Bars are coloured by total sample count (log-scaled viridis) and annotated
+    above each column with the n value. Antibiotics with fewer than
+    ``min_samples`` tests are dropped from the figure.
 
     Parameters
     ----------
@@ -591,8 +595,8 @@ def create_klebsiella_antibiogram(antibiotic_stats_df, output_path, figsize=(14,
         Path to save the output figure
     figsize : tuple, default=(14, 8)
         Figure size (width, height)
-    min_samples : int, default=1000
-        Minimum number of samples with data required to display an antibiotic
+    min_samples : int, default=2000
+        Minimum number of tests required to display an antibiotic.
 
     Returns
     -------
@@ -600,13 +604,14 @@ def create_klebsiella_antibiogram(antibiotic_stats_df, output_path, figsize=(14,
         The generated figure object, or None if no antibiotics meet the threshold
     """
     import matplotlib.cm as cm
+    import matplotlib.colors as mcolors
     import matplotlib.pyplot as plt
 
-    print(f"\n=== Creating Klebsiella Antibiogram ===")
+    print(f"\n=== Creating Antibiogram (min_samples={min_samples}) ===")
 
     # Filter to antibiotics with at least min_samples tests
     stats_df = antibiotic_stats_df.copy()
-    stats_df = stats_df[stats_df["n_total"] > min_samples].sort_values("resistance_pct", ascending=False)
+    stats_df = stats_df[stats_df["n_total"] >= min_samples].sort_values("resistance_pct", ascending=False)
 
     if stats_df.empty:
         print(f"No antibiotics with at least {min_samples} samples; skipping antibiogram.")
@@ -615,41 +620,53 @@ def create_klebsiella_antibiogram(antibiotic_stats_df, output_path, figsize=(14,
     # Create figure
     fig, ax = plt.subplots(figsize=figsize)
 
-    # Bars: height = % resistant, colour = % susceptible (0 = red, 1 = green)
-    x_pos = range(len(stats_df))
-    cmap = plt.get_cmap("RdYlGn")
-    colors = [cmap(sus / 100.0) for sus in stats_df["susceptible_pct"]]
-    ax.bar(x_pos, stats_df["resistance_pct"], color=colors, edgecolor="black", linewidth=0.5)
+    # Colour bars by total sample count (log-scaled viridis: dark = few, bright = many)
+    x_pos = list(range(len(stats_df)))
+    n_total = stats_df["n_total"].to_numpy()
+    cmap = plt.get_cmap("viridis")
+    vmin, vmax = int(n_total.min()), int(n_total.max())
+    norm = mcolors.LogNorm(vmin=max(vmin, 1), vmax=max(vmax, vmin + 1))
+    colors = [cmap(norm(n)) for n in n_total]
+    bars = ax.bar(x_pos, stats_df["resistance_pct"], color=colors, edgecolor="black", linewidth=0.5)
+
+    # Annotate each bar with n=...
+    for bar, n in zip(bars, n_total, strict=True):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 1.0,
+            f"n={n:,}",
+            ha="center",
+            va="bottom",
+            fontsize=7,
+        )
 
     # Set labels and title
     ax.set_xlabel("Antibiotic", fontsize=12, fontweight="bold")
     ax.set_ylabel("Resistance Percentage (%)", fontsize=12, fontweight="bold")
-    ax.set_title("Klebsiella Antibiogram - Resistance Rates", fontsize=14, fontweight="bold")
+    ax.set_title("Antibiogram - Resistance Rates by Antibiotic", fontsize=14, fontweight="bold")
 
     # X-axis labels: antibiotic names only
     labels = [row["antibiotic"] for _, row in stats_df.iterrows()]
     ax.set_xticks(x_pos)
     ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=9)
 
-    # Set y-axis limits
-    ax.set_ylim(0, 100)
+    # Y range: 0..105 to leave headroom for n= labels
+    ax.set_ylim(0, 105)
 
     # Add horizontal grid lines
     ax.yaxis.grid(True, linestyle="--", alpha=0.7)
     ax.set_axisbelow(True)
 
-    # Add colour legend for % susceptible
-    import matplotlib.colors as mcolors
-
-    norm = mcolors.Normalize(vmin=0, vmax=100)
+    # Add colour legend for sample count
     sm = cm.ScalarMappable(norm=norm, cmap=cmap)
     sm.set_array([])
     cbar = plt.colorbar(sm, ax=ax)
-    cbar.set_label("% Susceptible", fontsize=10)
+    cbar.set_label("Total tests (log scale)", fontsize=10)
 
     # Add note explaining denominators
     note_text = (
-        "Note: % susceptible = susceptible / all tests (resistant + susceptible + intermediate)."
+        f"Note: only antibiotics with >= {min_samples:,} tests shown. "
+        "Bar colour = total tests (log-scaled); n above each bar = total tests."
     )
     plt.figtext(0.5, 0.02, note_text, ha="center", fontsize=9, style="italic")
 
@@ -696,6 +713,7 @@ def process_klebsiella_ast_data(
     top_n=None,
     output_dir=None,
     viz_dir=None,
+    antibiogram_min_samples=2000,
 ):
     """Main processing function for EBI AST data (organism-agnostic).
 
@@ -728,6 +746,9 @@ def process_klebsiella_ast_data(
         Defaults to ``DEFAULT_OUTPUT_DIR``.
     viz_dir : Path or str, optional
         Directory for antibiogram PNG outputs. Defaults to ``DEFAULT_VIZ_DIR``.
+    antibiogram_min_samples : int, default=2000
+        Minimum tests for an antibiotic to be displayed in the antibiogram.
+        Does not affect the saved pivot tables or stats CSV — only the figure.
 
     Returns
     -------
@@ -892,17 +913,25 @@ def process_klebsiella_ast_data(
     regression_log_mic_df.to_csv(regression_path)
     print(f"✓ Regression log_mic saved: {regression_path}")
 
-    # Step 9: Generate antibiogram
-    # antibiotic_stats_df already reflects the kept set from Step 4, so don't re-filter here.
-    print("\n[STEP 9] Generating antibiogram visualization...")
+    # Save per-antibiotic stats (n_total, n_resistant, n_susceptible, n_intermediate,
+    # n_nan, resistance_pct, susceptible_pct) for the kept antibiotic set.
+    stats_path = output_dir / "antibiotic_testing_stats.csv"
+    antibiotic_stats_df.to_csv(stats_path, index=False)
+    print(f"✓ Antibiotic stats saved: {stats_path}")
+
+    # Step 9: Generate antibiogram (filtered to antibiogram_min_samples)
+    print(f"\n[STEP 9] Generating antibiogram (min_samples={antibiogram_min_samples})...")
     antibiogram_path = viz_dir / "antibiogram.png"
-    fig = create_klebsiella_antibiogram(antibiotic_stats_df, antibiogram_path, min_samples=0)
+    fig = create_klebsiella_antibiogram(
+        antibiotic_stats_df, antibiogram_path, min_samples=antibiogram_min_samples
+    )
 
     paths = {
         'metadata': metadata_path,
         'binary_ast': binary_path,
         'regression_log_mic': regression_path,
-        'antibiogram': antibiogram_path
+        'antibiotic_stats': stats_path,
+        'antibiogram': antibiogram_path,
     }
 
     # Optional: repeat stats table and antibiogram with reporting_size threshold
@@ -987,6 +1016,14 @@ def main():
         help="If set, repeat stats table and antibiogram for antibiotics with >= N tests; "
         "save antibiogram as antibiogram_n_N.png",
     )
+    parser.add_argument(
+        "--antibiogram-min-samples",
+        type=int,
+        default=2000,
+        metavar="N",
+        help="Minimum tests for an antibiotic to be displayed in the antibiogram figure "
+        "(default: 2000). Does not affect saved pivot tables or stats CSV.",
+    )
     args = parser.parse_args()
 
     process_klebsiella_ast_data(
@@ -996,6 +1033,7 @@ def main():
         top_n=args.top_n,
         output_dir=args.output_dir,
         viz_dir=args.viz_dir,
+        antibiogram_min_samples=args.antibiogram_min_samples,
     )
 
 
