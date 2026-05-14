@@ -338,9 +338,9 @@ def convert_resistance_to_binary(ast_data, resistance_column="phenotype-resistan
     return ast_data
 
 
-def filter_antibiotics_by_count(ast_data, antibiotic_column="phenotype-antibiotic_name", min_count=1000):
-    """Filter antibiotics to those with at least min_count MIC measurements.
-    
+def filter_antibiotics_by_count(ast_data, antibiotic_column="phenotype-antibiotic_name", min_count=1000, top_n=None):
+    """Filter antibiotics by minimum measurement count, or to the top-N most-tested.
+
     Parameters
     ----------
     ast_data : pandas.DataFrame
@@ -348,42 +348,52 @@ def filter_antibiotics_by_count(ast_data, antibiotic_column="phenotype-antibioti
     antibiotic_column : str, default="phenotype-antibiotic_name"
         Column name containing antibiotic names
     min_count : int, default=1000
-        Minimum number of measurements required to keep an antibiotic
-        
+        Minimum number of measurements required to keep an antibiotic.
+        Ignored when ``top_n`` is supplied.
+    top_n : int, optional
+        If provided, keep only the top-N most-tested antibiotics. Overrides ``min_count``.
+
     Returns
     -------
     tuple
         (filtered_dataframe, list_of_kept_antibiotics)
     """
-    print(f"\n=== Filtering Antibiotics by Count (min={min_count}) ===")
-    
-    # Count measurements per antibiotic
+    if top_n is not None:
+        print(f"\n=== Filtering Antibiotics: top {top_n} most-tested ===")
+    else:
+        print(f"\n=== Filtering Antibiotics by Count (min={min_count}) ===")
+
     antibiotic_counts = ast_data[antibiotic_column].value_counts()
-    
+
     print(f"Total unique antibiotics: {len(antibiotic_counts)}")
     print(f"Antibiotic counts range: {antibiotic_counts.min()} to {antibiotic_counts.max()}")
-    
-    # Filter to antibiotics with >= min_count
-    kept_antibiotics = antibiotic_counts[antibiotic_counts >= min_count].index.tolist()
-    dropped_antibiotics = antibiotic_counts[antibiotic_counts < min_count].index.tolist()
-    
-    print(f"Antibiotics kept (>= {min_count}): {len(kept_antibiotics)}")
-    print(f"Antibiotics dropped (< {min_count}): {len(dropped_antibiotics)}")
-    
+
+    if top_n is not None:
+        kept_series = antibiotic_counts.head(top_n)
+        kept_antibiotics = kept_series.index.tolist()
+        dropped_with_count = antibiotic_counts.iloc[top_n:]
+        min_kept = int(kept_series.min()) if len(kept_series) > 0 else 0
+        print(f"Antibiotics kept (top {top_n}): {len(kept_antibiotics)} (min count in kept set: {min_kept:,})")
+        print(f"Antibiotics dropped: {len(dropped_with_count)}")
+    else:
+        kept_antibiotics = antibiotic_counts[antibiotic_counts >= min_count].index.tolist()
+        dropped_with_count = antibiotic_counts[antibiotic_counts < min_count]
+        print(f"Antibiotics kept (>= {min_count}): {len(kept_antibiotics)}")
+        print(f"Antibiotics dropped (< {min_count}): {len(dropped_with_count)}")
+
     # Print all dropped antibiotics with count > 500, as "antibiotic (n=...)"
-    dropped_with_count = antibiotic_counts[antibiotic_counts < min_count]
     dropped_gt_500 = dropped_with_count[dropped_with_count > 500]
     if len(dropped_gt_500) > 0:
         print(f"\nDropped antibiotics with n > 500:")
         for ab, count in dropped_gt_500.items():
             print(f"  {ab} (n={count:,})")
-    
+
     # Filter dataframe
     filtered_data = ast_data[ast_data[antibiotic_column].isin(kept_antibiotics)].copy()
-    
+
     print(f"\nRows before filter: {len(ast_data)}")
     print(f"Rows after filter: {len(filtered_data)}")
-    
+
     return filtered_data, kept_antibiotics
 
 
@@ -644,14 +654,21 @@ def print_antibiotic_stats_table(antibiotic_stats_df, title_suffix=""):
         )
 
 
-def process_klebsiella_ast_data(input_file=None, min_antibiotic_count=1000, reporting_size=None):
-    """Main processing function for Klebsiella AST data.
+def process_klebsiella_ast_data(
+    input_file=None,
+    min_antibiotic_count=1000,
+    reporting_size=None,
+    top_n=None,
+    output_dir=None,
+    viz_dir=None,
+):
+    """Main processing function for EBI AST data (organism-agnostic).
 
     This function performs the complete pipeline:
     1. Load AST data
     2. Convert resistance phenotype to binary
     3. Convert MIC values to log scale
-    4. Filter antibiotics by sample count
+    4. Filter antibiotics (by min count, or to top-N most-tested if ``top_n`` is set)
     5. Create metadata table
     6. Create pivot tables (binary and log MIC)
     7. Print comprehensive statistics
@@ -662,18 +679,28 @@ def process_klebsiella_ast_data(input_file=None, min_antibiotic_count=1000, repo
     Parameters
     ----------
     input_file : Path or str, optional
-        Path to input CSV file. If None, uses default.
+        Path to input CSV file. If None, uses ``DEFAULT_INPUT``.
     min_antibiotic_count : int, default=1000
-        Minimum number of measurements required to keep an antibiotic
+        Minimum number of measurements required to keep an antibiotic.
+        Ignored when ``top_n`` is supplied.
     reporting_size : int, optional
         If set, repeat the antibiotic stats table and antibiogram using this as the
-        minimum test count; antibiogram is saved as klebsiella_antibiogram_n_{reporting_size}.png
+        minimum test count; antibiogram is saved as antibiogram_n_{reporting_size}.png
+    top_n : int, optional
+        If set, keep only the top-N most-tested antibiotics (overrides ``min_antibiotic_count``).
+    output_dir : Path or str, optional
+        Directory for CSV outputs (metadata, binary_ast, regression_log_mic).
+        Defaults to ``DEFAULT_OUTPUT_DIR``.
+    viz_dir : Path or str, optional
+        Directory for antibiogram PNG outputs. Defaults to ``DEFAULT_VIZ_DIR``.
 
     Returns
     -------
     dict
         Dictionary containing all output dataframes and paths
     """
+    output_dir = pathlib.Path(output_dir) if output_dir is not None else DEFAULT_OUTPUT_DIR
+    viz_dir = pathlib.Path(viz_dir) if viz_dir is not None else DEFAULT_VIZ_DIR
     print("=" * 80)
     print("KLEBSIELLA AST DATA PROCESSING PIPELINE")
     print("=" * 80)
@@ -698,8 +725,9 @@ def process_klebsiella_ast_data(input_file=None, min_antibiotic_count=1000, repo
     # Step 4: Filter antibiotics
     print("\n[STEP 4] Filtering antibiotics...")
     ast_data, kept_antibiotics = filter_antibiotics_by_count(
-        ast_data, 
-        min_count=min_antibiotic_count
+        ast_data,
+        min_count=min_antibiotic_count,
+        top_n=top_n,
     )
     
     # Step 5: Create metadata table
@@ -811,28 +839,29 @@ def process_klebsiella_ast_data(input_file=None, min_antibiotic_count=1000, repo
     print("=" * 80)
     
     # Ensure directories exist
-    DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    DEFAULT_VIZ_DIR.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    viz_dir.mkdir(parents=True, exist_ok=True)
 
     # Save metadata
-    metadata_path = DEFAULT_OUTPUT_DIR / "klebsiella_ebi_metadata.csv"
+    metadata_path = output_dir / "ebi_parsed_ast_metadata.csv"
     metadata_df.to_csv(metadata_path, index=False)
     print(f"✓ Metadata saved: {metadata_path}")
 
     # Save binary AST
-    binary_path = DEFAULT_OUTPUT_DIR / "binary_ast.csv"
+    binary_path = output_dir / "binary_ast.csv"
     binary_ast_df.to_csv(binary_path)
     print(f"✓ Binary AST saved: {binary_path}")
 
     # Save regression log_mic
-    regression_path = DEFAULT_OUTPUT_DIR / "regression_log_mic.csv"
+    regression_path = output_dir / "regression_log_mic.csv"
     regression_log_mic_df.to_csv(regression_path)
     print(f"✓ Regression log_mic saved: {regression_path}")
 
     # Step 9: Generate antibiogram
+    # antibiotic_stats_df already reflects the kept set from Step 4, so don't re-filter here.
     print("\n[STEP 9] Generating antibiogram visualization...")
-    antibiogram_path = DEFAULT_VIZ_DIR / "klebsiella_antibiogram.png"
-    fig = create_klebsiella_antibiogram(antibiotic_stats_df, antibiogram_path)
+    antibiogram_path = viz_dir / "antibiogram.png"
+    fig = create_klebsiella_antibiogram(antibiotic_stats_df, antibiogram_path, min_samples=0)
 
     paths = {
         'metadata': metadata_path,
@@ -856,9 +885,7 @@ def process_klebsiella_ast_data(input_file=None, min_antibiotic_count=1000, repo
             antibiotic_stats_reporting,
             title_suffix=f"(n >= {reporting_size})"
         )
-        antibiogram_reporting_path = (
-            DEFAULT_VIZ_DIR / f"klebsiella_antibiogram_n_{reporting_size}.png"
-        )
+        antibiogram_reporting_path = viz_dir / f"antibiogram_n_{reporting_size}.png"
         print(f"\nGenerating antibiogram for n >= {reporting_size}...")
         create_klebsiella_antibiogram(
             antibiotic_stats_reporting,
@@ -882,28 +909,48 @@ def process_klebsiella_ast_data(input_file=None, min_antibiotic_count=1000, repo
 
 
 def main():
-    """Load AST data and run the Klebsiella processing pipeline from the command line."""
+    """Load AST data and run the EBI AST processing pipeline from the command line."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="Process Klebsiella EBI AST data: print reports and save tables.")
+    parser = argparse.ArgumentParser(description="Process EBI AST data: print reports and save tables.")
     parser.add_argument(
         "--input",
         type=pathlib.Path,
         default=None,
-        help="Path to AST CSV file (default: raw/klebsiella_ebi_amr_records_20260216.csv)",
+        help=f"Path to AST CSV file (default: {DEFAULT_INPUT})",
     )
     parser.add_argument(
         "--min-antibiotic-count",
         type=int,
         default=1000,
-        help="Minimum number of measurements to keep an antibiotic (default: 1000)",
+        help="Minimum number of measurements to keep an antibiotic (default: 1000). Ignored if --top-n is set.",
+    )
+    parser.add_argument(
+        "--top-n",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Keep only the top-N most-tested antibiotics. Overrides --min-antibiotic-count.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=pathlib.Path,
+        default=None,
+        help=f"Directory for CSV outputs (metadata, binary_ast, regression_log_mic). Default: {DEFAULT_OUTPUT_DIR}",
+    )
+    parser.add_argument(
+        "--viz-dir",
+        type=pathlib.Path,
+        default=None,
+        help=f"Directory for antibiogram PNGs. Default: {DEFAULT_VIZ_DIR}",
     )
     parser.add_argument(
         "--reporting-size",
         type=int,
         default=None,
         metavar="N",
-        help="If set, repeat stats table and antibiogram for antibiotics with >= N tests; save antibiogram as klebsiella_antibiogram_n_N.png",
+        help="If set, repeat stats table and antibiogram for antibiotics with >= N tests; "
+        "save antibiogram as antibiogram_n_N.png",
     )
     args = parser.parse_args()
 
@@ -911,6 +958,9 @@ def main():
         input_file=args.input,
         min_antibiotic_count=args.min_antibiotic_count,
         reporting_size=args.reporting_size,
+        top_n=args.top_n,
+        output_dir=args.output_dir,
+        viz_dir=args.viz_dir,
     )
 
 

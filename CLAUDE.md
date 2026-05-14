@@ -41,9 +41,13 @@ All data lives under:
 | Completed SR MAG experiments | `processed/train_on_sr_mags/` |
 | Completed genome experiments | `processed/train_on_complete_genomes/` (currently empty — next task) |
 | Complete vs SR analysis | `processed/complete_vs_sr_genomes/` |
-| AMR preprocessed CSVs | `processed/binary_ast.csv`, `processed/binary_ast_with_split.csv` |
+| AMR preprocessed CSVs (Kleb) | `processed/binary_ast.csv`, `processed/binary_ast_with_split.csv` |
+| TB AMR raw records | `raw/tb/ebi_tb_amr_records.csv` |
+| TB processed outputs | `processed/tb/` (binary_ast, regression_log_mic, metadata, antibiograms) |
 
 Paths are hardcoded in each script (no central data_paths module). Check the top of any script before running.
+
+The project is expanding beyond Klebsiella to include **M. tuberculosis**; scripts are being made organism-agnostic. The folder/package name `predict_kleb_by_bacformer` will be renamed later.
 
 ## Package layout
 
