@@ -583,10 +583,11 @@ def create_antibiotic_pivot_tables(ast_data, value_column, index_col="phenotype-
 def create_klebsiella_antibiogram(antibiotic_stats_df, output_path, figsize=(14, 8), min_samples=2000):
     """Create antibiogram visualization showing resistance rates per antibiotic.
 
-    Bars are coloured by total sample count (linear-scaled viridis) and
-    annotated above each column with two lines: ``n=<total tests>`` and
-    ``n(R)=<resistant count>``. Antibiotics with fewer than ``min_samples``
-    tests are dropped from the figure.
+    Bars are coloured by total sample count (linear plasma, fixed 0..45,000
+    range) and annotated above each column with ``R=<resistant count>``.
+    Total tests is shown via the colour bar, not duplicated in the
+    annotation. Antibiotics with fewer than ``min_samples`` tests are
+    dropped from the figure.
 
     Parameters
     ----------
@@ -621,26 +622,25 @@ def create_klebsiella_antibiogram(antibiotic_stats_df, output_path, figsize=(14,
     # Create figure
     fig, ax = plt.subplots(figsize=figsize)
 
-    # Colour bars by total sample count (linear-scaled viridis: dark = few, bright = many)
+    # Colour bars by total sample count (linear scale, fixed 0..45000 range).
+    # Plasma gives more visual differentiation at the low end than viridis.
     x_pos = list(range(len(stats_df)))
     n_total = stats_df["n_total"].to_numpy()
     n_resistant = stats_df["n_resistant"].to_numpy()
-    cmap = plt.get_cmap("viridis")
-    vmin, vmax = int(n_total.min()), int(n_total.max())
-    norm = mcolors.Normalize(vmin=vmin, vmax=max(vmax, vmin + 1))
+    cmap = plt.get_cmap("plasma")
+    norm = mcolors.Normalize(vmin=0, vmax=45000)
     colors = [cmap(norm(n)) for n in n_total]
     bars = ax.bar(x_pos, stats_df["resistance_pct"], color=colors, edgecolor="black", linewidth=0.5)
 
-    # Annotate each bar with n=... (total tests) and n(R)=... (resistant count) on two lines
-    for bar, n, n_r in zip(bars, n_total, n_resistant, strict=True):
+    # Annotate each bar with R=<resistant count>. Total tests is shown via the colour bar.
+    for bar, n_r in zip(bars, n_resistant, strict=True):
         ax.text(
             bar.get_x() + bar.get_width() / 2,
             bar.get_height() + 1.0,
-            f"n={n:,}\nn(R)={n_r:,}",
+            f"R={n_r:,}",
             ha="center",
             va="bottom",
             fontsize=7,
-            linespacing=1.0,
         )
 
     # Set labels and title
@@ -653,8 +653,8 @@ def create_klebsiella_antibiogram(antibiotic_stats_df, output_path, figsize=(14,
     ax.set_xticks(x_pos)
     ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=9)
 
-    # Y range: 0..112 to leave headroom for two-line n= / n(R)= labels
-    ax.set_ylim(0, 112)
+    # Y range: 0..105 to leave headroom for the R= label
+    ax.set_ylim(0, 105)
 
     # Add horizontal grid lines
     ax.yaxis.grid(True, linestyle="--", alpha=0.7)
@@ -669,7 +669,7 @@ def create_klebsiella_antibiogram(antibiotic_stats_df, output_path, figsize=(14,
     # Add note explaining denominators
     note_text = (
         f"Note: only antibiotics with >= {min_samples:,} tests shown. "
-        "Bar colour = total tests (linear); n = total tests, n(R) = resistant count."
+        "Bar colour = total tests (linear, 0-45,000); R = resistant count."
     )
     plt.figtext(0.5, 0.02, note_text, ha="center", fontsize=9, style="italic")
 
