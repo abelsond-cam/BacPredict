@@ -62,7 +62,7 @@ ASSEMBLY_LEVEL_RANK = {
 
 # ATB v0.2 hosts every assembly as <BIOSAMPLE>.fa.gz on AWS S3.
 ATB_S3_BASE = "https://allthebacteria-assemblies.s3.eu-west-2.amazonaws.com"
-ATB_FILE_LIST_URL = "https://osf.io/download/4yv85"  # file_list.all.latest.tsv.gz
+ATB_FILE_LIST_URL = "https://osf.io/download/r6gcp"  # all-files index TSV (per ATB docs)
 ATB_FILE_LIST_NAME = "_atb_file_list.tsv.gz"
 
 
