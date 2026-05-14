@@ -96,6 +96,22 @@ def test_extract_proteins_missing_contig(tmp_path: Path) -> None:
     assert out["protein_sequence"] == [["MK"]]
 
 
+def test_extract_proteins_alt_start_codon(tmp_path: Path) -> None:
+    """GTG/TTG starts are promoted to M (bacterial initiator semantics)."""
+    gff = tmp_path / "sample.gff"
+    fna = tmp_path / "sample.fna"
+    # GTG-AAA-TAA -> raw translate=V K *, promoted -> "MK"
+    # TTG-AAA-TAA -> raw translate=L K *, promoted -> "MK"
+    gff.write_text(
+        "##gff-version 3\n"
+        "c1\tprodigal\tCDS\t1\t9\t.\t+\t0\tID=cds-gtg;locus_tag=GTG_GENE\n"
+        "c2\tprodigal\tCDS\t1\t9\t.\t+\t0\tID=cds-ttg;locus_tag=TTG_GENE\n"
+    )
+    fna.write_text(">c1\nGTGAAATAA\n>c2\nTTGAAATAA\n")
+    out = extract_proteins_from_gff_fna(gff, fna)
+    assert out["protein_sequence"] == [["MK"], ["MK"]]
+
+
 def test_path_extension_helpers() -> None:
     """Extension detectors handle the relevant suffix variants."""
     assert is_gff_path("a/b.gff")

@@ -23,6 +23,13 @@ logger = logging.getLogger(__name__)
 _GFF_SUFFIXES = (".gff", ".gff3", ".gff.gz", ".gff3.gz")
 _GBFF_SUFFIXES = (".gbff", ".gbff.gz")
 
+# Bacterial initiator codons (table 11). BioPython's default translate() renders
+# GTG/TTG as V/L because it treats every codon as an internal codon. CDSs whose
+# nucleotide sequence begins with any of these should have their first amino acid
+# rewritten as M to match initiator-codon biology and the BakRep/GBFF cohort,
+# whose translations already start with M.
+_BACTERIAL_INITIATORS = frozenset({"ATG", "GTG", "TTG", "CTG", "ATT", "ATC", "ATA"})
+
 
 def is_gff_path(path: str | Path) -> bool:
     """Return True if `path` ends with a GFF/GFF3 extension (gzipped or not)."""
@@ -141,6 +148,10 @@ def extract_proteins_from_gff_fna(
                 continue
             if not protein:
                 continue
+            # Promote alternative start codons to M (see _BACTERIAL_INITIATORS docstring).
+            if len(nt) >= 3 and str(nt[:3]).upper() in _BACTERIAL_INITIATORS:
+                if protein[0] != "M":
+                    protein = "M" + protein[1:]
 
             if seqid not in per_contig:
                 contig_order.append(seqid)
