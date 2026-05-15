@@ -62,7 +62,10 @@ ASSEMBLY_LEVEL_RANK = {
 
 # ATB v0.2 hosts every assembly as <BIOSAMPLE>.fa.gz on AWS S3.
 ATB_S3_BASE = "https://allthebacteria-assemblies.s3.eu-west-2.amazonaws.com"
-ATB_FILE_LIST_URL = "https://osf.io/download/r6gcp"  # all-files index TSV (per ATB docs)
+# file_list.all.latest.tsv.gz under AllTheBacteria/Assembly on OSF.
+# Discoverable by downloading https://osf.io/download/r6gcp (the project-wide
+# meta-index) and grepping for filename 'file_list.all.latest.tsv.gz'.
+ATB_FILE_LIST_URL = "https://osf.io/download/69a040c86a4dd653508ac769/"
 ATB_FILE_LIST_NAME = "_atb_file_list.tsv.gz"
 
 
@@ -125,12 +128,12 @@ def _http_get_bytes(url: str, timeout: int = 600) -> bytes:
 
 
 def load_atb_biosamples(cache_path: Path) -> set[str]:
-    """Return the set of BioSamples present in ATB v0.2.
+    """Return the set of BioSamples present in ATB.
 
     Downloads file_list.all.latest.tsv.gz to `cache_path` if it doesn't already
-    exist, then parses the BioSample column from it. The ATB file_list TSV has
-    columns: project, project_id, filename, URL, MD5, size. Per-sample assembly
-    rows have filenames like '<BIOSAMPLE>.fa.gz' under the assemblies project.
+    exist, then parses BioSamples from the `sample` column (the file lists one
+    row per BioSample assembly; columns: sample, sylph_species, filename_in_tar_xz,
+    tar_xz, tar_xz_url, tar_xz_md5, tar_xz_size_MB).
     """
     if not cache_path.exists():
         print(f"Downloading ATB file_list to {cache_path}...", file=sys.stderr)
@@ -140,23 +143,15 @@ def load_atb_biosamples(cache_path: Path) -> set[str]:
     else:
         print(f"Using cached ATB file_list: {cache_path}", file=sys.stderr)
 
-    print("Parsing ATB file_list...", file=sys.stderr)
+    print("Parsing ATB file_list (one row per BioSample; ~2.7M rows)...", file=sys.stderr)
+    # The gzipped file expands to ~580 MB; usecols=[0] keeps it light.
     with gzip.open(cache_path, "rt") as fh:
-        df = pd.read_csv(fh, sep="\t", low_memory=False, dtype=str)
-
-    # The file_list has one row per file in OSF; we want the per-sample assemblies.
-    # Filenames look like '<BIOSAMPLE>.fa.gz' (e.g. 'SAMD00000344.fa.gz') for the
-    # individual-sample assembly files.
-    fname_col = next((c for c in df.columns if c.lower() in {"filename", "name", "file"}), None)
-    if fname_col is None:
-        print(f"ERROR: could not find filename column in {cache_path}; columns: {list(df.columns)}",
-              file=sys.stderr)
-        sys.exit(1)
-
-    names = df[fname_col].astype(str).str.strip()
-    mask = names.str.startswith("SAM") & names.str.endswith(".fa.gz")
-    biosamples = {n[:-len(".fa.gz")] for n in names[mask]}
-    print(f"  ATB has {len(biosamples):,} per-sample FASTAs", file=sys.stderr)
+        df = pd.read_csv(fh, sep="\t", usecols=[0], low_memory=False, dtype=str)
+    sample_col = df.columns[0]
+    samples = df[sample_col].astype(str).str.strip()
+    mask = samples.str.startswith("SAM")
+    biosamples = set(samples[mask])
+    print(f"  ATB has {len(biosamples):,} BioSamples in {cache_path.name}", file=sys.stderr)
     return biosamples
 
 
