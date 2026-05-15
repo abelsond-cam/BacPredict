@@ -2,7 +2,7 @@
 #SBATCH --job-name=download_assemblies
 #SBATCH --output=download_assemblies_%j.out
 #SBATCH --error=download_assemblies_%j.err
-#SBATCH --partition=icelake
+#SBATCH --partition=icelake-himem
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=76

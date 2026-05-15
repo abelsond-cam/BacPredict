@@ -2,7 +2,7 @@
 #SBATCH --job-name=download_bakrep
 #SBATCH --output=download_bakrep_%j.out
 #SBATCH --error=download_bakrep_%j.err
-#SBATCH --partition=icelake
+#SBATCH --partition=icelake-himem
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=76
