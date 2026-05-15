@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=bakrep_download
-#SBATCH --output=bakrep_download_%j.out
-#SBATCH --error=bakrep_download_%j.err
+#SBATCH --job-name=download_bakrep
+#SBATCH --output=download_bakrep_%j.out
+#SBATCH --error=download_bakrep_%j.err
 #SBATCH --partition=icelake
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -33,11 +33,11 @@
 #   Reuses the `bakrep_download` micromamba env (pandas + bakrep CLI).
 #
 # Manual smoke test:
-#   bash scripts/download_bakrep.sh --n 10 --batch-size 10
+#   bash scripts/run_download_bakrep.sh --n 10 --batch-size 10
 #
 # Usage:
-#   sbatch scripts/download_bakrep.sh [OPTIONS]
-#   bash   scripts/download_bakrep.sh [OPTIONS]
+#   sbatch scripts/run_download_bakrep.sh [OPTIONS]
+#   bash   scripts/run_download_bakrep.sh [OPTIONS]
 #
 # Options:
 #   --metadata <path>          TB AMR records CSV (default below)
@@ -87,8 +87,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] === download_bakrep.sh START ==="
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] === download_bakrep.sh START ===" >&2
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] === run_download_bakrep.sh START ==="
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] === run_download_bakrep.sh START ===" >&2
 
 # cd to project root so relative paths resolve consistently
 cd /home/dca36/workspace/predict_kleb_by_bacformer

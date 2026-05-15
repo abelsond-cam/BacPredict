@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Collect BioSamples from the TB AMR records CSV and prepare BakRep batches.
 
-Standalone helper for download_bakrep.sh. Runs under the `bakrep_download`
+Standalone helper for run_download_bakrep.sh. Runs under the `bakrep_download`
 micromamba env (pandas only - no project imports, no uv).
 
 Two modes:
