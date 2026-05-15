@@ -25,6 +25,11 @@
 # downstream code can locate an assembly by BioSample alone regardless of source.
 # A manifest TSV records the source for each BioSample.
 #
+# Transient network failures always leave a fraction of samples undownloaded
+# on any single pass, so the plan->ATB->NCBI cycle runs in a loop: each pass
+# re-plans only BioSamples still missing on disk (skip-existing) and the loop
+# stops when a pass adds zero new .fa.gz files or nothing is left to fetch.
+#
 # Inputs:
 #   --metadata path/to/ebi_tb_amr_records.csv (default below)
 #
@@ -48,6 +53,7 @@
 #   --metadata <path>       TB AMR records CSV
 #   --n <number>            -1 = all (default); >0 = test subset
 #   --batch-size <size>     Items per batch (default: 100)
+#   --max-passes <number>   Max plan->download retry passes (default: 10)
 #   --skip-atb              Skip the ATB stage
 #   --skip-ncbi             Skip the NCBI fallback stage
 # =============================================================================
@@ -60,6 +66,7 @@ METADATA="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/raw/tb/ebi_tb_am
 OUTPUT_DIR="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/raw/tb/assemblies"
 NCORES=76
 BATCH_SIZE=100
+MAX_PASSES=10
 SKIP_ATB=false
 SKIP_NCBI=false
 
@@ -70,6 +77,7 @@ while [[ $# -gt 0 ]]; do
         --metadata)   METADATA="$2"; shift 2 ;;
         --n)          N="$2"; shift 2 ;;
         --batch-size) BATCH_SIZE="$2"; shift 2 ;;
+        --max-passes) MAX_PASSES="$2"; shift 2 ;;
         --skip-atb)   SKIP_ATB=true; shift ;;
         --skip-ncbi)  SKIP_NCBI=true; shift ;;
         *)
@@ -78,6 +86,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --metadata <path>   TB AMR records CSV (default: ${METADATA})"
             echo "  --n <number>        -1=all (default), >0=test subset"
             echo "  --batch-size <size> Items per batch (default: 100)"
+            echo "  --max-passes <num>  Max plan->download retry passes (default: 10)"
             echo "  --skip-atb          Skip the ATB stage"
             echo "  --skip-ncbi         Skip the NCBI fallback stage"
             exit 1
@@ -92,11 +101,11 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S')] PWD=$(pwd)" >&2
 
 mkdir -p "$OUTPUT_DIR"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-LOG_DIR="${OUTPUT_DIR}/logs_${TIMESTAMP}"
-ATB_BATCH_DIR=$(mktemp -d)
-NCBI_BATCH_DIR=$(mktemp -d)
-mkdir -p "$LOG_DIR"
+LOG_ROOT="${OUTPUT_DIR}/logs_${TIMESTAMP}"
+mkdir -p "$LOG_ROOT"
 
+# Canonical (latest) output paths; each pass also writes its own copies under
+# LOG_ROOT/passNN.* and the last pass's are copied here at the end.
 MANIFEST="${OUTPUT_DIR}/manifest_${TIMESTAMP}.tsv"
 ACCESSION_MAP="${OUTPUT_DIR}/biosample_to_accession_${TIMESTAMP}.tsv"
 MISSING_OUTPUT="${OUTPUT_DIR}/missing_samples_${TIMESTAMP}.tsv"
@@ -105,32 +114,12 @@ EXTRA_FLAGS=""
 [ "$SKIP_ATB"  = true ] && EXTRA_FLAGS="$EXTRA_FLAGS --skip-atb"
 [ "$SKIP_NCBI" = true ] && EXTRA_FLAGS="$EXTRA_FLAGS --skip-ncbi"
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Planning download (micromamba ncbi-datasets)..." >&2
-micromamba run -n ncbi-datasets python scripts/download_assemblies.py \
-    --metadata "$METADATA" \
-    --output-dir "$OUTPUT_DIR" \
-    --atb-batch-dir "$ATB_BATCH_DIR" \
-    --ncbi-batch-dir "$NCBI_BATCH_DIR" \
-    --manifest "$MANIFEST" \
-    --accession-map "$ACCESSION_MAP" \
-    --missing-output "$MISSING_OUTPUT" \
-    --n "$N" \
-    --batch-size "$BATCH_SIZE" \
-    $EXTRA_FLAGS
-EXIT_PLAN=$?
-if [[ $EXIT_PLAN -ne 0 ]]; then
-    echo "ERROR: download_assemblies.py failed (exit $EXIT_PLAN)."
-    rm -rf "$ATB_BATCH_DIR" "$NCBI_BATCH_DIR"
-    exit $EXIT_PLAN
-fi
+# Count <BIOSAMPLE>.fa.gz files currently on disk (convergence signal).
+count_fa_gz() {
+    find "$OUTPUT_DIR" -maxdepth 1 -name '*.fa.gz' -type f -size +0 2>/dev/null | wc -l
+}
 
-ATB_TOTAL=$(find "$ATB_BATCH_DIR"  -name 'batch_*' -exec cat {} + 2>/dev/null | wc -l)
-NCBI_TOTAL=$(find "$NCBI_BATCH_DIR" -name 'batch_*' -exec cat {} + 2>/dev/null | wc -l)
-ATB_BATCHES=$(find  "$ATB_BATCH_DIR"  -name 'batch_*' -type f 2>/dev/null | wc -l)
-NCBI_BATCHES=$(find "$NCBI_BATCH_DIR" -name 'batch_*' -type f 2>/dev/null | wc -l)
-echo "Planned: ATB=${ATB_TOTAL} BioSamples (${ATB_BATCHES} batches); NCBI=${NCBI_TOTAL} accessions (${NCBI_BATCHES} batches)"
-
-# ── ATB stage ────────────────────────────────────────────────────────────────
+# ── ATB stage helpers ────────────────────────────────────────────────────────
 # Each BioSample maps to one HTTPS URL on AWS S3. xargs parallelism over the
 # per-BioSample curl calls (one process per sample) inside each batch.
 
@@ -173,17 +162,7 @@ run_atb_batch() {
 }
 export -f run_atb_batch
 
-if [[ "$SKIP_ATB" != true && "$ATB_BATCHES" -gt 0 ]]; then
-    echo ""
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting ATB stage ($ATB_BATCHES batches, $NCORES parallel batches)"
-    find "$ATB_BATCH_DIR" -name 'batch_*' -type f | sort -V | \
-        xargs -I {} -P "$NCORES" bash -c 'run_atb_batch "$1" "$2" "$3"' _ {} "$OUTPUT_DIR" "$LOG_DIR"
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ATB stage complete"
-else
-    echo "Skipping ATB stage (no batches or --skip-atb)"
-fi
-
-# ── NCBI stage ───────────────────────────────────────────────────────────────
+# ── NCBI stage helpers ───────────────────────────────────────────────────────
 # Per batch: `datasets download genome accession --inputfile X --include genome`
 # yields one zip; we unzip, find each <ACC>/*_genomic.fna, look up the matching
 # BioSample in the accession_map, gzip and rename to <BIOSAMPLE>.fa.gz.
@@ -276,36 +255,111 @@ run_ncbi_batch() {
 }
 export -f run_ncbi_batch
 
-if [[ "$SKIP_NCBI" != true && "$NCBI_BATCHES" -gt 0 ]]; then
+# -----------------------------------------------------------------------------
+# Retry loop: plan (skip-existing) -> ATB stage -> NCBI stage, until a pass
+# adds no new .fa.gz files or there is nothing left to download.
+# -----------------------------------------------------------------------------
+LAST_PASS=0
+for ((PASS=1; PASS<=MAX_PASSES; PASS++)); do
+    LAST_PASS=$PASS
     echo ""
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting NCBI stage ($NCBI_BATCHES batches, $NCORES parallel)"
-    find "$NCBI_BATCH_DIR" -name 'batch_*' -type f | sort -V | \
-        xargs -I {} -P "$NCORES" bash -c 'run_ncbi_batch "$1" "$2" "$3" "$4"' _ {} "$OUTPUT_DIR" "$LOG_DIR" "$ACCESSION_MAP"
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] NCBI stage complete"
-else
-    echo "Skipping NCBI stage (no batches or --skip-ncbi)"
-fi
+    echo "============================================"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] PASS ${PASS}/${MAX_PASSES}"
+    echo "============================================"
+
+    PASS_TAG=$(printf 'pass%02d' "$PASS")
+    LOG_DIR="${LOG_ROOT}/${PASS_TAG}"
+    mkdir -p "$LOG_DIR"
+    ATB_BATCH_DIR=$(mktemp -d)
+    NCBI_BATCH_DIR=$(mktemp -d)
+
+    PASS_MANIFEST="${LOG_ROOT}/${PASS_TAG}_manifest.tsv"
+    PASS_ACCMAP="${LOG_ROOT}/${PASS_TAG}_biosample_to_accession.tsv"
+    PASS_MISSING="${LOG_ROOT}/${PASS_TAG}_missing_samples.tsv"
+
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Planning download (micromamba ncbi-datasets)..." >&2
+    micromamba run -n ncbi-datasets python scripts/download_assemblies.py \
+        --metadata "$METADATA" \
+        --output-dir "$OUTPUT_DIR" \
+        --atb-batch-dir "$ATB_BATCH_DIR" \
+        --ncbi-batch-dir "$NCBI_BATCH_DIR" \
+        --manifest "$PASS_MANIFEST" \
+        --accession-map "$PASS_ACCMAP" \
+        --missing-output "$PASS_MISSING" \
+        --n "$N" \
+        --batch-size "$BATCH_SIZE" \
+        $EXTRA_FLAGS
+    EXIT_PLAN=$?
+    if [[ $EXIT_PLAN -ne 0 ]]; then
+        echo "ERROR: download_assemblies.py failed (exit $EXIT_PLAN)."
+        rm -rf "$ATB_BATCH_DIR" "$NCBI_BATCH_DIR"
+        exit $EXIT_PLAN
+    fi
+
+    ATB_TOTAL=$(find "$ATB_BATCH_DIR"  -name 'batch_*' -exec cat {} + 2>/dev/null | wc -l)
+    NCBI_TOTAL=$(find "$NCBI_BATCH_DIR" -name 'batch_*' -exec cat {} + 2>/dev/null | wc -l)
+    ATB_BATCHES=$(find  "$ATB_BATCH_DIR"  -name 'batch_*' -type f 2>/dev/null | wc -l)
+    NCBI_BATCHES=$(find "$NCBI_BATCH_DIR" -name 'batch_*' -type f 2>/dev/null | wc -l)
+    echo "Pass ${PASS} planned: ATB=${ATB_TOTAL} BioSamples (${ATB_BATCHES} batches); NCBI=${NCBI_TOTAL} accessions (${NCBI_BATCHES} batches)"
+
+    # Copy this pass's planning files to the canonical (latest) names.
+    cp -f "$PASS_MANIFEST" "$MANIFEST"     2>/dev/null || true
+    cp -f "$PASS_ACCMAP"   "$ACCESSION_MAP" 2>/dev/null || true
+    cp -f "$PASS_MISSING"  "$MISSING_OUTPUT" 2>/dev/null || true
+
+    if [[ "$ATB_BATCHES" -eq 0 && "$NCBI_BATCHES" -eq 0 ]]; then
+        echo "Pass ${PASS}: nothing left to download — converged."
+        rm -rf "$ATB_BATCH_DIR" "$NCBI_BATCH_DIR"
+        break
+    fi
+
+    BEFORE=$(count_fa_gz)
+
+    if [[ "$SKIP_ATB" != true && "$ATB_BATCHES" -gt 0 ]]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ATB stage ($ATB_BATCHES batches, $NCORES parallel)"
+        find "$ATB_BATCH_DIR" -name 'batch_*' -type f | sort -V | \
+            xargs -I {} -P "$NCORES" bash -c 'run_atb_batch "$1" "$2" "$3"' _ {} "$OUTPUT_DIR" "$LOG_DIR"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ATB stage complete"
+    else
+        echo "Skipping ATB stage (no batches or --skip-atb)"
+    fi
+
+    if [[ "$SKIP_NCBI" != true && "$NCBI_BATCHES" -gt 0 ]]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] NCBI stage ($NCBI_BATCHES batches, $NCORES parallel)"
+        find "$NCBI_BATCH_DIR" -name 'batch_*' -type f | sort -V | \
+            xargs -I {} -P "$NCORES" bash -c 'run_ncbi_batch "$1" "$2" "$3" "$4"' _ {} "$OUTPUT_DIR" "$LOG_DIR" "$PASS_ACCMAP"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] NCBI stage complete"
+    else
+        echo "Skipping NCBI stage (no batches or --skip-ncbi)"
+    fi
+
+    AFTER=$(count_fa_gz)
+    ADDED=$((AFTER - BEFORE))
+    rm -rf "$ATB_BATCH_DIR" "$NCBI_BATCH_DIR"
+
+    echo "Pass ${PASS} complete: added $ADDED files (now $AFTER on disk)"
+    if [[ $ADDED -le 0 ]]; then
+        echo "Pass ${PASS} added no new files — remaining samples likely unavailable. Stopping."
+        break
+    fi
+done
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 SUMMARY="${OUTPUT_DIR}/download_summary_${TIMESTAMP}.txt"
-FOUND_FA_GZ=$(find "$OUTPUT_DIR" -maxdepth 1 -name '*.fa.gz' -type f -size +0 | wc -l)
+FOUND_FA_GZ=$(count_fa_gz)
 {
     echo "Download Summary - $(date)"
     echo "==========================================="
     echo ""
+    echo "Passes run: $LAST_PASS (max $MAX_PASSES)"
     echo "Total <BIOSAMPLE>.fa.gz files in $OUTPUT_DIR: $FOUND_FA_GZ"
-    echo ""
-    echo "ATB planned:  $ATB_TOTAL  ($ATB_BATCHES batches)"
-    echo "NCBI planned: $NCBI_TOTAL ($NCBI_BATCHES batches)"
     echo ""
     echo "Manifest:        $MANIFEST"
     echo "Accession map:   $ACCESSION_MAP"
     echo "Missing sidecar: $MISSING_OUTPUT"
-    echo "Logs:            $LOG_DIR"
+    echo "Per-pass logs:   $LOG_ROOT/pass*/"
 } > "$SUMMARY"
 cat "$SUMMARY"
-
-rm -rf "$ATB_BATCH_DIR" "$NCBI_BATCH_DIR"
 
 echo ""
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] === run_download_assemblies.sh DONE ==="

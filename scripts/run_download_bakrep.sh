@@ -6,7 +6,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=76
-#SBATCH --time=02:00:00
+#SBATCH --time=06:00:00
 #SBATCH --account=FLOTO-SL2-CPU
 
 # =============================================================================
@@ -15,8 +15,14 @@
 #
 # Reads BioSample IDs (SAMN... / SAMEA...) from the TB AMR records CSV, batches
 # them, and downloads `.bakta.gff3.gz` files from BakRep in parallel via the
-# bakrep CLI. After downloads, emits a missing-samples sidecar TSV listing
-# BioSamples for which no GFF3 was retrieved.
+# bakrep CLI.
+#
+# Transient network failures always leave a fraction of samples undownloaded
+# on any single pass, so this runs the collect->download cycle in a loop:
+# each pass only re-attempts samples still missing on disk (skip-existing),
+# and the loop stops when a pass adds zero new files (remaining samples are
+# genuinely unavailable in BakRep) or nothing is left to fetch. After the
+# loop, a missing-samples sidecar TSV is written.
 #
 # This script never mutates the input CSV.
 #
@@ -25,7 +31,7 @@
 #
 # Outputs (under OUTPUT_DIR = /raw/tb/gff):
 #   - <BIOSAMPLE>/<BIOSAMPLE>.bakta.gff3.gz   (per-BioSample subdir, BakRep default)
-#   - logs_<timestamp>/batch_*.log
+#   - logs_<timestamp>/pass<NN>/batch_*.log
 #   - download_summary_<timestamp>.txt
 #   - missing_samples_<timestamp>.tsv
 #
@@ -43,6 +49,7 @@
 #   --metadata <path>          TB AMR records CSV (default below)
 #   --n <number>               -1 = all (default), >0 = test subset
 #   --batch-size <size>        BioSamples per bakrep batch (default: 100)
+#   --max-passes <number>      Max collect->download retry passes (default: 10)
 #   --overwrite-existing       Re-download even if files exist (default: skip)
 # =============================================================================
 
@@ -53,6 +60,7 @@ OUTPUT_DIR="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/raw/tb/gff"
 FILE_TYPE=gff3
 NCORES=76
 BATCH_SIZE=100
+MAX_PASSES=10
 SKIP_EXISTING=true
 
 # Parse command line arguments
@@ -70,6 +78,10 @@ while [[ $# -gt 0 ]]; do
             BATCH_SIZE="$2"
             shift 2
             ;;
+        --max-passes)
+            MAX_PASSES="$2"
+            shift 2
+            ;;
         --overwrite-existing)
             SKIP_EXISTING=false
             shift
@@ -81,6 +93,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --metadata <path>          : TB AMR records CSV (default: ${METADATA})"
             echo "  --n <number>               : Samples to process (-1=all, default)"
             echo "  --batch-size <size>        : Samples per batch (default: 100)"
+            echo "  --max-passes <number>      : Max collect->download retry passes (default: 10)"
             echo "  --overwrite-existing       : Re-download even if files exist"
             exit 1
             ;;
@@ -97,39 +110,18 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S')] PWD=$(pwd)" >&2
 # Create output directory if it doesn't exist
 mkdir -p "$OUTPUT_DIR"
 
-# Create log and batch directories (same timestamp)
+# Log root (one timestamped tree; one subdir per pass)
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-LOG_DIR="${OUTPUT_DIR}/logs_${TIMESTAMP}"
-BATCH_DIR=$(mktemp -d)
-mkdir -p "$LOG_DIR"
+LOG_ROOT="${OUTPUT_DIR}/logs_${TIMESTAMP}"
+mkdir -p "$LOG_ROOT"
 
 SKIP_ARG=""
 [ "$SKIP_EXISTING" = false ] && SKIP_ARG="--no-skip-existing"
 
-# Collect BioSample IDs and write batch files (uses bakrep_download env's pandas)
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running Python collect (micromamba bakrep_download)..." >&2
-micromamba run -n bakrep_download python scripts/collect_bakrep_samples.py \
-    --metadata "$METADATA" \
-    --output-dir "$OUTPUT_DIR" \
-    --filetype "$FILE_TYPE" \
-    --n "$N" \
-    $SKIP_ARG \
-    --batch-dir "$BATCH_DIR" \
-    --batch-size "$BATCH_SIZE"
-EXIT_COLLECT=$?
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Python collect finished (exit $EXIT_COLLECT)." >&2
-
-if [[ $EXIT_COLLECT -ne 0 ]]; then
-    echo "ERROR: collect_bakrep_samples.py failed (exit $EXIT_COLLECT)."
-    rm -rf "$BATCH_DIR"
-    exit $EXIT_COLLECT
-fi
-
-# Derive TOTAL and NUM_BATCHES from batch files
-TOTAL=$(find "$BATCH_DIR" -name 'batch_*' -type f -exec cat {} + 2>/dev/null | wc -l)
-NUM_BATCHES=$(find "$BATCH_DIR" -name 'batch_*' -type f 2>/dev/null | wc -l)
-echo "Final sample count for download: $TOTAL"
-echo "Created $NUM_BATCHES batches"
+# Count .bakta.<filetype>.gz files currently on disk (convergence signal).
+count_files() {
+    find "$OUTPUT_DIR" -name "*.bakta.${FILE_TYPE}.gz" -type f 2>/dev/null | wc -l
+}
 
 # Function to download a batch of BioSamples using the bakrep CLI
 download_batch() {
@@ -165,38 +157,88 @@ download_batch() {
 # Export function and variables for xargs
 export -f download_batch
 export OUTPUT_DIR
-export LOG_DIR
 export FILE_TYPE
 
-# Run batch downloads in parallel
-echo ""
-echo "Starting parallel batch download with $NCORES cores at $(date)"
-echo "Processing $NUM_BATCHES batches ($TOTAL total samples)..."
-echo "Logs will be saved to: $LOG_DIR"
-echo ""
+# -----------------------------------------------------------------------------
+# Retry loop: collect (skip-existing) -> parallel download, until a pass adds
+# no new files or there is nothing left to download.
+# -----------------------------------------------------------------------------
+LAST_PASS=0
+for ((PASS=1; PASS<=MAX_PASSES; PASS++)); do
+    LAST_PASS=$PASS
+    echo ""
+    echo "============================================"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] PASS ${PASS}/${MAX_PASSES}"
+    echo "============================================"
 
-find "$BATCH_DIR" -name 'batch_*' -type f | sort -V | \
-    xargs -I {} -P $NCORES bash -c 'download_batch "$1" "$2" "$3"' _ {} "$OUTPUT_DIR" "$LOG_DIR"
+    BATCH_DIR=$(mktemp -d)
+    LOG_DIR=$(printf '%s/pass%02d' "$LOG_ROOT" "$PASS")
+    mkdir -p "$LOG_DIR"
 
-EXIT_CODE=$?
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running Python collect (micromamba bakrep_download)..." >&2
+    micromamba run -n bakrep_download python scripts/collect_bakrep_samples.py \
+        --metadata "$METADATA" \
+        --output-dir "$OUTPUT_DIR" \
+        --filetype "$FILE_TYPE" \
+        --n "$N" \
+        $SKIP_ARG \
+        --batch-dir "$BATCH_DIR" \
+        --batch-size "$BATCH_SIZE"
+    EXIT_COLLECT=$?
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Python collect finished (exit $EXIT_COLLECT)." >&2
 
-# Create summary report
+    if [[ $EXIT_COLLECT -ne 0 ]]; then
+        echo "ERROR: collect_bakrep_samples.py failed (exit $EXIT_COLLECT)."
+        rm -rf "$BATCH_DIR"
+        exit $EXIT_COLLECT
+    fi
+
+    TOTAL=$(find "$BATCH_DIR" -name 'batch_*' -type f -exec cat {} + 2>/dev/null | wc -l)
+    NUM_BATCHES=$(find "$BATCH_DIR" -name 'batch_*' -type f 2>/dev/null | wc -l)
+
+    if [[ $TOTAL -eq 0 ]]; then
+        echo "Pass ${PASS}: nothing left to download — converged."
+        rm -rf "$BATCH_DIR"
+        break
+    fi
+
+    BEFORE=$(count_files)
+    echo "Pass ${PASS}: $TOTAL samples in $NUM_BATCHES batches (files on disk before: $BEFORE)"
+    echo "Logs: $LOG_DIR"
+
+    export LOG_DIR
+    find "$BATCH_DIR" -name 'batch_*' -type f | sort -V | \
+        xargs -I {} -P $NCORES bash -c 'download_batch "$1" "$2" "$3"' _ {} "$OUTPUT_DIR" "$LOG_DIR"
+    PASS_EXIT=$?
+
+    AFTER=$(count_files)
+    ADDED=$((AFTER - BEFORE))
+    rm -rf "$BATCH_DIR"
+
+    echo "Pass ${PASS} complete: added $ADDED files (now $AFTER on disk; xargs exit $PASS_EXIT)"
+
+    if [[ $ADDED -le 0 ]]; then
+        echo "Pass ${PASS} added no new files — remaining samples likely unavailable in BakRep. Stopping."
+        break
+    fi
+done
+
+# Summary report
+ON_DISK=$(count_files)
 SUMMARY_FILE="${OUTPUT_DIR}/download_summary_${TIMESTAMP}.txt"
 {
     echo "Download Summary - $(date)"
     echo "==========================================="
     echo ""
-    echo "Total samples: $TOTAL"
-    echo "Total batches: $NUM_BATCHES"
+    echo "Passes run: $LAST_PASS (max $MAX_PASSES)"
     echo "Batch size: $BATCH_SIZE samples/batch"
+    echo "Files on disk: $ON_DISK"
     echo ""
-    echo "Successful batches: $(grep -l "SUCCESS:" ${LOG_DIR}/batch_*.log 2>/dev/null | wc -l)"
-    echo "Failed batches: $(grep -l "FAILED:" ${LOG_DIR}/batch_*.log 2>/dev/null | wc -l)"
+    echo "Per-pass logs: $LOG_ROOT/pass*/"
+    echo "Successful batches (all passes): $(grep -rl "SUCCESS:" ${LOG_ROOT}/pass*/batch_*.log 2>/dev/null | wc -l)"
+    echo "Failed batches (all passes): $(grep -rl "FAILED:" ${LOG_ROOT}/pass*/batch_*.log 2>/dev/null | wc -l)"
     echo ""
-    echo "Failed batches:"
-    grep -l "FAILED:" ${LOG_DIR}/batch_*.log 2>/dev/null | xargs -I {} basename {} .log
-    echo ""
-    echo "Log directory: $LOG_DIR"
+    echo "Log directory: $LOG_ROOT"
 } > "$SUMMARY_FILE"
 
 cat "$SUMMARY_FILE"
@@ -222,20 +264,13 @@ else
     echo "Verification step failed."
 fi
 
-# Cleanup
-rm -rf "$BATCH_DIR"
-
 # Final summary
 echo ""
 echo "============================================"
 echo "Download job completed at $(date)"
-echo "Exit code: $EXIT_CODE"
-echo ""
-echo "Total samples: $TOTAL"
-echo "Batches processed: $NUM_BATCHES"
+echo "Passes run: $LAST_PASS"
+echo "Files on disk: $ON_DISK"
 echo ""
 echo "Summary report: $SUMMARY_FILE"
-echo "Batch logs: $LOG_DIR/"
+echo "Batch logs: $LOG_ROOT/"
 echo "============================================"
-
-exit $EXIT_CODE
