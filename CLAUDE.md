@@ -43,6 +43,8 @@ All data lives under:
 | Complete vs SR analysis | `processed/complete_vs_sr_genomes/` |
 | AMR preprocessed CSVs (Kleb) | `processed/binary_ast.csv`, `processed/binary_ast_with_split.csv` |
 | TB AMR raw records | `raw/tb/ebi_tb_amr_records.csv` |
+| TB genome assemblies | `raw/tb/assemblies/<BIOSAMPLE>.fa.gz` (ATB primary + NCBI fallback; ~95% of 41.7k BioSamples) |
+| TB Bakta GFF3s | `raw/tb/gff/<bucket>/<BIOSAMPLE>/<BIOSAMPLE>.bakta.gff3.gz` (BakRep; ~92%) |
 | TB processed outputs | `processed/tb/` (binary_ast, regression_log_mic, metadata, antibiograms) |
 
 Paths are hardcoded in each script (no central data_paths module). Check the top of any script before running.
@@ -215,8 +217,11 @@ k-fold sweep.
 | `run_bacformer_embeddings.sh` / `_array.sh` | Generate ESM embeddings |
 | `preprocess_protein_sequences.sh` | GFF → protein sequences |
 | `cpu_slurm.sh` | Generic CPU job template |
+| `scripts/run_download_assemblies.sh` | CPU job: download TB genome assemblies (ATB primary + NCBI fallback) → `raw/tb/assemblies/`. Auto-retries the still-missing set until convergence (`--max-passes`, default 10) |
+| `scripts/run_download_bakrep.sh` | CPU job: download TB Bakta GFF3s from BakRep → `raw/tb/gff/`. Same auto-retry loop. Helper: `scripts/collect_bakrep_samples.py` |
 
 **Notes:**
+- The two `scripts/run_download_*.sh` jobs default to `--partition=icelake-himem` and run standalone under the `ncbi-datasets` / `bakrep_download` micromamba envs (no `uv`). They never mutate the input CSV — outcomes go to `missing_samples_*.tsv` / `manifest_*.tsv` sidecars.
 - Isolation-source pair tokens are edited directly in the `.sh` file, not passed as CLI args.
 - `FOLD` and `SEED` are computed from `SLURM_ARRAY_TASK_ID` inside the script. Comment out the `#SBATCH --array=...` line and remove the `--n-folds` arg to fall back to single-split mode using the CSV's `train_val_eval` column.
 
