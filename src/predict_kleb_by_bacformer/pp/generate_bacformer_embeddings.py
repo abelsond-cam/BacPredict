@@ -260,16 +260,36 @@ def main():
         default=None,
         help="End index for processing files (for array jobs)",
     )
+    parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=PROTEIN_SEQUENCES_DIR,
+        help="Directory of *_protein_sequences.parquet files "
+        "(default: klebsiella_protein_sequences)",
+    )
+    parser.add_argument(
+        "--esm-dir",
+        type=Path,
+        default=ESM_EMBEDDINGS_DIR,
+        help="Output directory for ESM embeddings (default: klebsiella_esm_embeddings)",
+    )
+    parser.add_argument(
+        "--bacformer-dir",
+        type=Path,
+        default=BACFORMER_EMBEDDINGS_DIR,
+        help="Output directory for Bacformer embeddings "
+        "(default: klebsiella_bacformer_embeddings)",
+    )
 
     args = parser.parse_args()
 
     # Setup input directory path
-    input_dir = PROTEIN_SEQUENCES_DIR
+    input_dir = args.input_dir
     logger.info(f"Input directory: {input_dir}")
 
     # Setup output directories
-    esm_dir = ESM_EMBEDDINGS_DIR
-    bacformer_dir = BACFORMER_EMBEDDINGS_DIR
+    esm_dir = args.esm_dir
+    bacformer_dir = args.bacformer_dir
     
     # Create output directories if they don't exist
     esm_dir.mkdir(parents=True, exist_ok=True)
