@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=bacformer_embed_klebsiella
-#SBATCH --output=bacformer_embed_%A.out
-#SBATCH --error=bacformer_embed_%A.err
+#SBATCH --job-name=embeddings_klebsiella
+#SBATCH --output=embeddings_%A.out
+#SBATCH --error=embeddings_%A.err
 #SBATCH --time=36:00:00
 #SBATCH --partition=ampere
 #SBATCH --account=FLOTO-SL2-GPU
@@ -11,11 +11,13 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mem=100G
 
-# Script to run Bacformer embedding generation on HPC with GPU
+# Script to run ESM-C embedding generation on HPC with GPU (single-job).
+# Pass --bacformer-embeddings to also produce Bacformer contextualised outputs.
 # Usage:
-#   sbatch src/bacpredict/embed/scripts/run_bacformer_embeddings.sh --n 10  # Test with 10 files
-#   sbatch src/bacpredict/embed/scripts/run_bacformer_embeddings.sh         # Process all files
-#   sbatch src/bacpredict/embed/scripts/run_bacformer_embeddings.sh --skip-existing  # Resume
+#   sbatch src/bacpredict/embed/scripts/run_embeddings.sh --n 10                  # Test with 10 files
+#   sbatch src/bacpredict/embed/scripts/run_embeddings.sh                         # ESM-C only, all files
+#   sbatch src/bacpredict/embed/scripts/run_embeddings.sh --skip-existing         # Resume
+#   sbatch src/bacpredict/embed/scripts/run_embeddings.sh --bacformer-embeddings  # Add Bacformer outputs
 
 # Load required modules
 module purge
@@ -37,7 +39,7 @@ export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 cd /home/dca36/workspace/BacPredict
 
 echo "=========================================="
-echo "Bacformer Embedding Generation"
+echo "Embedding Generation (ESM-C; Bacformer opt-in)"
 echo "=========================================="
 echo "Job ID: $SLURM_JOB_ID"
 echo "Node: $SLURMD_NODENAME"
@@ -55,7 +57,7 @@ if ! command -v uv &> /dev/null; then
     # Try to use existing virtual environment
     if [ -d ".venv" ]; then
         source .venv/bin/activate
-        python src/bacpredict/embed/generate_bacformer_embeddings.py "$@"
+        python src/bacpredict/embed/generate_embeddings.py "$@"
     else
         echo "ERROR: No .venv found and uv not available"
         exit 1
@@ -63,7 +65,7 @@ if ! command -v uv &> /dev/null; then
 else
     echo "Using uv: $(which uv)"
     # Run the Python script with all passed arguments
-    uv run python src/bacpredict/embed/generate_bacformer_embeddings.py "$@"
+    uv run python src/bacpredict/embed/generate_embeddings.py "$@"
 fi
 
 echo "=========================================="

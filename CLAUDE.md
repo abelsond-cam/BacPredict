@@ -76,14 +76,14 @@ collect / flatten Python helpers run under `micromamba` envs.
 |---|---|
 | `src/bacpredict/embed/extract_proteins_from_gff_fna.py` | Splice CDS regions from FASTA + GFF into `.faa` |
 | `src/bacpredict/embed/preprocess_assemblies_to_protein_sequences.py` | Driver: GFF/assembly → protein sequences (CPU job) |
-| `src/bacpredict/embed/generate_bacformer_embeddings.py` | Generate ESM + Bacformer embedding `.pt` files (GPU job) |
+| `src/bacpredict/embed/generate_embeddings.py` | Generate ESM-C embedding `.pt` files (GPU job); `--bacformer-embeddings` opt-in for Bacformer contextualised outputs |
 | `src/bacpredict/embed/find_missing_embeddings.py` | List `kpsc_final_list` samples missing embeddings |
 | `src/bacpredict/embed/genome_assemblies_from_bacformer_embeddings.py` | Audit which assemblies have embeddings |
 | `src/bacpredict/embed/filter_esmc_embeddings_by_klebsiella.py` | Filter embedding parquets to KPSC-only |
 | `src/bacpredict/embed/extract_anndata_with_bacformer_protein_embeddings.py` | Extract AnnData from Bacformer embeddings for EDA |
 
 SLURM under `src/bacpredict/embed/scripts/`: `preprocess_protein_sequences.sh`,
-`run_bacformer_embeddings.sh` / `_array.sh` / `_array_tb.sh`, `run_genome_embeddings.sh`.
+`run_embeddings.sh` / `_array.sh` / `_array_tb.sh`, `run_genome_embeddings.sh`.
 
 ### `sample_and_label/` — cohort selection + label materialisation
 
@@ -257,7 +257,7 @@ modules they invoke.
 | `train/scripts/train_on_slurm_amr.sh` | GPU array job (`--array=0-14`, 5 folds × 3 seeds): fine-tune for one antibiotic |
 | `train/scripts/train_isolation_source.sh` | GPU array job (`--array=0-14`): fine-tune for isolation-source pair |
 | `sample_and_label/scripts/prepare_iso_source_data_for_training.sh` | CPU job: write the split CSV for an isolation-source pair |
-| `embed/scripts/run_bacformer_embeddings.sh` / `_array.sh` / `_array_tb.sh` | Generate ESM + Bacformer embeddings |
+| `embed/scripts/run_embeddings.sh` / `_array.sh` / `_array_tb.sh` | Generate ESM-C embeddings (Bacformer opt-in via `--bacformer-embeddings`) |
 | `embed/scripts/preprocess_protein_sequences.sh` | GFF → protein sequences |
 | `sample_and_label/scripts/cpu_slurm.sh` | Generic CPU job template |
 | `genome_download/scripts/run_download_assemblies.sh` | CPU job: download TB genome assemblies (ATB primary + NCBI fallback) → `raw/tb/assemblies/`. Auto-retries the still-missing set until convergence (`--max-passes`, default 10) |

@@ -28,7 +28,7 @@ The `bacpredict` package is organised into four task-scoped subpackages.
 
     embed.extract_proteins_from_gff_fna
     embed.preprocess_assemblies_to_protein_sequences
-    embed.generate_bacformer_embeddings
+    embed.generate_embeddings
     embed.find_missing_embeddings
     embed.genome_assemblies_from_bacformer_embeddings
     embed.filter_esmc_embeddings_by_klebsiella
