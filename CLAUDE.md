@@ -16,7 +16,7 @@ Embeddings are generated from protein sequences derived from genome assemblies. 
 Host:      login.hpc.cam.ac.uk
 User:      dca36
 SSH:       ControlMaster auto, ControlPersist 8h (~/.ssh/sockets/)
-Workspace: /home/dca36/workspace/predict_kleb_by_bacformer
+Workspace: /home/dca36/workspace/BacPredict
 Python:    always uv run python (never python or python3 directly)
 ```
 
@@ -49,25 +49,65 @@ All data lives under:
 
 Paths are hardcoded in each script (no central data_paths module). Check the top of any script before running.
 
-The project is expanding beyond Klebsiella to include **M. tuberculosis**; scripts are being made organism-agnostic. The folder/package name `predict_kleb_by_bacformer` will be renamed later.
+The project is expanding beyond Klebsiella to include **M. tuberculosis**; scripts are organism-agnostic where they can be.
 
 ## Package layout
 
+`src/bacpredict/` is split into four task-scoped subpackages. Each subpackage owns its
+SLURM wrappers and standalone helpers under its own `scripts/` subdir.
+
+### `genome_download/` — acquire and catalogue raw genomic data
+
 | Module | Purpose |
 |---|---|
-| `src/predict_kleb_by_bacformer/pp/preprocess_ebi_amr_records.py` | Parse EBI AST CSV → binary resistance labels per sample |
-| `src/predict_kleb_by_bacformer/pp/prepare_esmc_embeddings_and_labels_to_finetune_amr.py` | Merge AST labels + embeddings → split CSV (default); `--write-pt-files` for legacy per-sample `.pt` |
-| `src/predict_kleb_by_bacformer/pp/prepare_esmc_embeddings_and_labels_to_finetune_isolation_source.py` | Merge isolation-source labels + embeddings → split CSV (default); `--write-pt-files` for legacy `.pt` |
-| `src/predict_kleb_by_bacformer/pp/split_utils.py` | Shared `add_splits()` (single 70/10/20) and `generate_kfold_splits()` (k-fold + fixed evaluate holdout) |
-| `src/predict_kleb_by_bacformer/tl/datasets.py` | `LabelInjectingFileDataset` — lazy load of `{sample}_esm_embeddings.pt`, label injected at runtime from in-memory dict |
-| `src/predict_kleb_by_bacformer/tl/train_amr.py` | Fine-tune Bacformer for one antibiotic; supports `--n-folds`/`--fold`/`--seed` for k-fold CV |
-| `src/predict_kleb_by_bacformer/tl/train_isolation_source.py` | Fine-tune Bacformer for an isolation-source pair; same k-fold args |
-| `src/predict_kleb_by_bacformer/pp/stratified_isolation_source_sampling.py` | Select balanced cohort for an isolation-source pair |
-| `src/predict_kleb_by_bacformer/pp/generate_bacformer_embeddings.py` | Generate ESM embeddings from protein sequences |
-| `src/predict_kleb_by_bacformer/pp/preprocess_assemblies_to_protein_sequences.py` | GFF/assembly → `.faa` protein sequences |
-| `src/predict_kleb_by_bacformer/pp/genome_assemblies_from_bacformer_embeddings.py` | Identify which assemblies have/lack embeddings |
-| `src/predict_kleb_by_bacformer/pp/filter_esmc_embeddings_by_klebsiella.py` | Filter embedding set to KPSC-only samples |
-| `src/predict_kleb_by_bacformer/pp/extract_anndata_with_bacformer_protein_embeddings.py` | Extract AnnData from Bacformer embeddings for EDA |
+| `src/bacpredict/genome_download/add_bakta_gbff_downloaded_flag.py` | Add presence flag to metadata based on which samples have `.bakta.gbff.gz` |
+| `src/bacpredict/genome_download/add_paths_gff_fna_to_metadata.py` | Populate `assembly_file` + `gff_file` columns in the Klebsiella metadata TSV |
+| `src/bacpredict/genome_download/build_tb_input_csv.py` | Build TB (`Sample`, `assembly_file`, `gff_file`) input CSV from disk |
+| `src/bacpredict/genome_download/download_bakrep_gbff_files.py` | Collect + skip-existing helper for BakRep gbff/gff3 downloads |
+
+SLURM + helpers under `src/bacpredict/genome_download/scripts/`:
+`download_bakrep.sh`, `download_ncbi_datasets.sh`, `add_paths_gff_fna_to_metadata.sh`,
+`run_download_bakrep.sh` (TB), `run_download_assemblies.sh` (TB), plus the standalone
+collect / flatten Python helpers run under `micromamba` envs.
+
+### `embed/` — protein sequences → ESM → Bacformer embeddings
+
+| Module | Purpose |
+|---|---|
+| `src/bacpredict/embed/extract_proteins_from_gff_fna.py` | Splice CDS regions from FASTA + GFF into `.faa` |
+| `src/bacpredict/embed/preprocess_assemblies_to_protein_sequences.py` | Driver: GFF/assembly → protein sequences (CPU job) |
+| `src/bacpredict/embed/generate_bacformer_embeddings.py` | Generate ESM + Bacformer embedding `.pt` files (GPU job) |
+| `src/bacpredict/embed/find_missing_embeddings.py` | List `kpsc_final_list` samples missing embeddings |
+| `src/bacpredict/embed/genome_assemblies_from_bacformer_embeddings.py` | Audit which assemblies have embeddings |
+| `src/bacpredict/embed/filter_esmc_embeddings_by_klebsiella.py` | Filter embedding parquets to KPSC-only |
+| `src/bacpredict/embed/extract_anndata_with_bacformer_protein_embeddings.py` | Extract AnnData from Bacformer embeddings for EDA |
+
+SLURM under `src/bacpredict/embed/scripts/`: `preprocess_protein_sequences.sh`,
+`run_bacformer_embeddings.sh` / `_array.sh` / `_array_tb.sh`, `run_genome_embeddings.sh`.
+
+### `sample_and_label/` — cohort selection + label materialisation
+
+| Module | Purpose |
+|---|---|
+| `src/bacpredict/sample_and_label/preprocess_ebi_amr_records.py` | Parse EBI AST CSV → binary resistance labels per sample |
+| `src/bacpredict/sample_and_label/convert_ast_data.py` | Helper for AST data processing |
+| `src/bacpredict/sample_and_label/stratified_isolation_source_sampling.py` | Select balanced cohort for an isolation-source pair |
+| `src/bacpredict/sample_and_label/isolation_source_cli_parsing.py` | Pair-token CLI parsing (shared with `train.train_isolation_source`) |
+| `src/bacpredict/sample_and_label/prepare_esmc_embeddings_and_labels_to_finetune_amr.py` | Merge AST labels + embeddings → split CSV (`--write-pt-files` for legacy `.pt`) |
+| `src/bacpredict/sample_and_label/prepare_esmc_embeddings_and_labels_to_finetune_isolation_source.py` | Same for isolation-source pair |
+
+SLURM under `src/bacpredict/sample_and_label/scripts/`: `prepare_iso_source_data_for_training.sh`, `cpu_slurm.sh`.
+
+### `train/` — Bacformer fine-tuning
+
+| Module | Purpose |
+|---|---|
+| `src/bacpredict/train/split_utils.py` | `add_splits()` (single 70/10/20) and `generate_kfold_splits()` (k-fold + fixed evaluate holdout) |
+| `src/bacpredict/train/datasets.py` | `LabelInjectingFileDataset` — lazy load of `{sample}_esm_embeddings.pt`, label injected at runtime |
+| `src/bacpredict/train/train_amr.py` | Fine-tune Bacformer for one antibiotic; `--n-folds`/`--fold`/`--seed` for k-fold CV |
+| `src/bacpredict/train/train_isolation_source.py` | Fine-tune Bacformer for an isolation-source pair; same k-fold args |
+
+SLURM under `src/bacpredict/train/scripts/`: `train_on_slurm_amr.sh`, `train_isolation_source.sh`.
 
 ## Commands
 
@@ -76,7 +116,7 @@ The project is expanding beyond Klebsiella to include **M. tuberculosis**; scrip
 uv pip install -e .
 
 # Run a script
-uv run python src/predict_kleb_by_bacformer/pp/stratified_isolation_source_sampling.py --help
+uv run python src/bacpredict/sample_and_label/stratified_isolation_source_sampling.py --help
 
 # Tests
 pytest tests/
@@ -130,7 +170,7 @@ files are gated behind `--write-pt-files` and are no longer needed.
 
 **3. Training (lazy, runtime label injection)**
 
-`LabelInjectingFileDataset` (`tl/datasets.py`) takes:
+`LabelInjectingFileDataset` (`train/datasets.py`) takes:
 - A list of sample IDs (filtered to one split)
 - A `label_map: dict[sample_id → int]` (built from the CSV in memory — small, picklable, safe for DataLoader workers)
 - The path to the shared embedding store
@@ -176,7 +216,7 @@ k-fold sweep.
 
 - **Single-split mode.** `add_splits()` shuffles the unique values of the `Sample` column
   and partitions them into train (70 %) / validate (10 %) / evaluate (20 %). A sample is
-  in exactly one split. Tested in `tests/test_split_utils.py::test_add_splits_no_overlap`.
+  in exactly one split. Tested in `tests/train/test_split_utils.py::test_add_splits_no_overlap`.
 - **K-fold mode.** Evaluate is selected first and removed from the pool. K-fold then
   partitions the remaining samples into mutually disjoint validation folds. For any
   given `(fold, seed)`:
@@ -187,8 +227,8 @@ k-fold sweep.
     share validation samples.
   - The evaluate set is identical across every `(fold, seed)` pair when `evaluate_seed`
     is held constant.
-  Tested in `tests/test_split_utils.py::test_kfold_*` and
-  `tests/test_pt_training_pipeline.py::test_kfold_*`.
+  Tested in `tests/train/test_split_utils.py::test_kfold_*` and
+  `tests/train/test_pt_training_pipeline.py::test_kfold_*`.
 
 **Caveats — what these guarantees do NOT cover:**
 
@@ -209,19 +249,24 @@ k-fold sweep.
 
 ## Slurm scripts
 
+All SLURM scripts live under `src/bacpredict/<bucket>/scripts/` next to the Python
+modules they invoke.
+
 | Script | Purpose |
 |---|---|
-| `train_on_slurm_amr.sh` | GPU array job (`--array=0-14`, 5 folds × 3 seeds): fine-tune for one antibiotic |
-| `train_isolation_source.sh` | GPU array job (`--array=0-14`): fine-tune for isolation-source pair |
-| `prepare_iso_source_data_for_training.sh` | CPU job: write the split CSV for an isolation-source pair |
-| `run_bacformer_embeddings.sh` / `_array.sh` | Generate ESM embeddings |
-| `preprocess_protein_sequences.sh` | GFF → protein sequences |
-| `cpu_slurm.sh` | Generic CPU job template |
-| `scripts/run_download_assemblies.sh` | CPU job: download TB genome assemblies (ATB primary + NCBI fallback) → `raw/tb/assemblies/`. Auto-retries the still-missing set until convergence (`--max-passes`, default 10) |
-| `scripts/run_download_bakrep.sh` | CPU job: download TB Bakta GFF3s from BakRep → `raw/tb/gff/`. Same auto-retry loop. Helper: `scripts/collect_bakrep_samples.py` |
+| `train/scripts/train_on_slurm_amr.sh` | GPU array job (`--array=0-14`, 5 folds × 3 seeds): fine-tune for one antibiotic |
+| `train/scripts/train_isolation_source.sh` | GPU array job (`--array=0-14`): fine-tune for isolation-source pair |
+| `sample_and_label/scripts/prepare_iso_source_data_for_training.sh` | CPU job: write the split CSV for an isolation-source pair |
+| `embed/scripts/run_bacformer_embeddings.sh` / `_array.sh` / `_array_tb.sh` | Generate ESM + Bacformer embeddings |
+| `embed/scripts/preprocess_protein_sequences.sh` | GFF → protein sequences |
+| `sample_and_label/scripts/cpu_slurm.sh` | Generic CPU job template |
+| `genome_download/scripts/run_download_assemblies.sh` | CPU job: download TB genome assemblies (ATB primary + NCBI fallback) → `raw/tb/assemblies/`. Auto-retries the still-missing set until convergence (`--max-passes`, default 10) |
+| `genome_download/scripts/run_download_bakrep.sh` | CPU job: download TB Bakta GFF3s from BakRep → `raw/tb/gff/`. Same auto-retry loop. Helper: `genome_download/scripts/tb_collect_bakrep_samples.py` |
+| `genome_download/scripts/download_bakrep.sh` | CPU job: Klebsiella-side BakRep GFF3/gbff downloads. Helper: `genome_download/scripts/collect_bakrep_samples.py` |
+| `genome_download/scripts/download_ncbi_datasets.sh` | CPU job: NCBI Datasets fallback for accessions missing from BakRep |
 
 **Notes:**
-- The two `scripts/run_download_*.sh` jobs default to `--partition=icelake-himem` and run standalone under the `ncbi-datasets` / `bakrep_download` micromamba envs (no `uv`). They never mutate the input CSV — outcomes go to `missing_samples_*.tsv` / `manifest_*.tsv` sidecars.
+- The two `run_download_*.sh` jobs (TB-side) default to `--partition=icelake-himem` and run standalone under the `ncbi-datasets` / `bakrep_download` micromamba envs (no `uv`). They never mutate the input CSV — outcomes go to `missing_samples_*.tsv` / `manifest_*.tsv` sidecars.
 - Isolation-source pair tokens are edited directly in the `.sh` file, not passed as CLI args.
 - `FOLD` and `SEED` are computed from `SLURM_ARRAY_TASK_ID` inside the script. Comment out the `#SBATCH --array=...` line and remove the `--n-folds` arg to fall back to single-split mode using the CSV's `train_val_eval` column.
 

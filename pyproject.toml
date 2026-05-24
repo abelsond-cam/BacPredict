@@ -3,9 +3,9 @@ build-backend = "hatchling.build"
 requires = [ "hatchling" ]
 
 [project]
-name = "predict_kleb_by_bacformer"
+name = "bacpredict"
 version = "0.0.1"
-description = "Use bacformer to define predict_kleb_by_bacformers to create embeddings of whole genomes, both core and accessory, and understand population structure from perspective of all genes in genomes"
+description = "Fine-tune Bacformer on Klebsiella pneumoniae and M. tuberculosis genome embeddings to predict AMR resistance and isolation source."
 readme = "README.md"
 license = { file = "LICENSE" }
 maintainers = [
@@ -54,9 +54,9 @@ dependencies = [
   "typed-argument-parser>=1.8.1",
 ]
 # https://docs.pypi.org/project_metadata/#project-urls
-urls.Documentation = "https://predict_kleb_by_bacformer.readthedocs.io/"
-urls.Homepage = "https://github.com/abelsond-cam/predict_kleb_by_bacformer"
-urls.Source = "https://github.com/abelsond-cam/predict_kleb_by_bacformer"
+urls.Documentation = "https://bacpredict.readthedocs.io/"
+urls.Homepage = "https://github.com/abelsond-cam/BacPredict"
+urls.Source = "https://github.com/abelsond-cam/BacPredict"
 
 [project.optional-dependencies]
 hpc = [
@@ -165,15 +165,16 @@ lint.per-file-ignores."docs/*" = [ "I" ]
 lint.per-file-ignores."tests/*" = [ "D" ]
 lint.pydocstyle.convention = "numpy"
 
-[tool.pytest]
+[tool.pytest.ini_options]
 strict = true
 testpaths = [ "tests" ]
+pythonpath = [ "." ]
 addopts = [
   "--import-mode=importlib", # allow using test files with same name
 ]
 
 [tool.coverage.run]
-source = [ "predict_kleb_by_bacformer" ]
+source = [ "bacpredict" ]
 patch = [ "subprocess" ]
 omit = [
   "**/test_*.py",
