@@ -18,10 +18,15 @@ from torch.nn.utils.rnn import pad_sequence
 from transformers import (
     AutoModelForSequenceClassification,
     EarlyStoppingCallback,
-    EvalPrediction,
     TrainingArguments,
 )
 
+from kleb_ast.metrics import (
+    build_results_payload,
+    compute_full_metrics,
+    compute_metrics_binary_genome_pred,
+    write_results_json,
+)
 from tl.train.datasets import LabelInjectingFileDataset
 from tl.train.split_utils import generate_kfold_splits
 
@@ -98,47 +103,6 @@ class PyTorchFileDataset(torch.utils.data.Dataset):
             sample["contig_ids"] = torch.zeros(1, seq_len, dtype=torch.long)
 
         return sample
-
-
-############################################################## Compute metrics ##############################################################
-
-
-def compute_metrics_binary_genome_pred(
-    preds: EvalPrediction, ignore_index: int = -100, prefix: str = "eval"
-):
-    """Compute metrics for a single-logit binary classifier."""
-    with torch.no_grad():
-        logits = torch.tensor(preds.predictions).flatten()  # (N,)
-        labels = torch.tensor(preds.label_ids).flatten().long()
-        if (labels == ignore_index).any():
-            keep = labels != ignore_index
-            logits, labels = logits[keep], labels[keep]
-        prob = torch.sigmoid(logits)  # P(y=1)
-        pred = (prob >= 0.5).long()
-        from sklearn.metrics import accuracy_score, average_precision_score, f1_score, roc_auc_score
-
-        y_true = labels.cpu().numpy()
-        y_prob = prob.cpu().numpy()
-        y_pred = pred.cpu().numpy()
-
-        acc = accuracy_score(y_true, y_pred)
-        try:
-            auroc_val = roc_auc_score(y_true, y_prob)
-        except Exception:
-            auroc_val = float("nan")
-        try:
-            auprc = average_precision_score(y_true, y_prob)
-        except Exception:
-            auprc = float("nan")
-        f1 = f1_score(y_true, y_pred, average="binary")
-
-    return {
-        f"{prefix}_accuracy": acc,
-        f"{prefix}_auroc": auroc_val,
-        f"{prefix}_auprc": auprc,
-        f"{prefix}_f1": f1,
-        f"{prefix}_nr_samples": len(y_true),
-    }
 
 
 ############################################################## Main run function ##############################################################
@@ -233,17 +197,21 @@ def run(
         print("Using dummy test mode with 10 samples.")
         train_ids = (build_sample_ids("train") if "train_val_eval" in labeled.columns else list(labeled["Sample"]))[:10]
         val_ids = train_ids
+        evaluate_ids = train_ids  # No held-out evaluate set in smoke mode — reuse train for JSON sanity.
+        split_source = "smoke"
         eval_strategy = "epoch"
         use_epochs = True
         num_train_epochs = 100
     elif n_folds is not None:
         print(f"K-fold mode: generating splits (n_folds={n_folds}, fold={fold}, seed={seed})")
-        evaluate_ids, folds = generate_kfold_splits(
+        evaluate_ids_set, folds = generate_kfold_splits(
             labeled, n_folds=n_folds, seed=seed, evaluate_seed=evaluate_seed
         )
         train_ids_set, val_ids_set = folds[fold]
         train_ids = [sid for sid in labeled["Sample"].tolist() if sid in train_ids_set]
         val_ids = [sid for sid in labeled["Sample"].tolist() if sid in val_ids_set]
+        evaluate_ids = [sid for sid in labeled["Sample"].tolist() if sid in evaluate_ids_set]
+        split_source = "kfold"
         print(f"  train: {len(train_ids)}, val: {len(val_ids)}, evaluate holdout: {len(evaluate_ids)}")
         eval_strategy = "steps"
         use_epochs = False
@@ -256,6 +224,8 @@ def run(
         print("Full set mode using LabelInjectingFileDataset")
         train_ids = build_sample_ids("train")
         val_ids = build_sample_ids("validate")
+        evaluate_ids = build_sample_ids("evaluate")
+        split_source = "csv"
         eval_strategy = "steps"
         use_epochs = False
 
@@ -370,6 +340,46 @@ def run(
     )
     trainer.train()
 
+    # Canonical §0.4 results JSON on the evaluate holdout. In smoke mode
+    # (n_samples==10) there is no separate evaluate split so train_ids is reused
+    # for end-to-end pipeline verification.
+    if evaluate_ids:
+        print(f"Running post-training evaluation on {len(evaluate_ids)} samples.")
+        evaluate_dataset = LabelInjectingFileDataset(
+            evaluate_ids, embeddings_path, label_map, drug
+        )
+        preds = trainer.predict(evaluate_dataset)
+        logits = torch.as_tensor(preds.predictions).flatten()
+        labels = torch.as_tensor(preds.label_ids).flatten().long()
+        keep = labels != -100
+        if (~keep).any():
+            logits, labels = logits[keep], labels[keep]
+        y_prob = torch.sigmoid(logits.float()).cpu().numpy()
+        y_true = labels.cpu().numpy()
+        metrics_block = compute_full_metrics(y_true, y_prob)
+        payload = build_results_payload(
+            task="kleb_ast",
+            drug=drug,
+            model_name_or_path=model_name_or_path,
+            checkpoint_dir=str(Path(output_dir).resolve()),
+            split_source=split_source,
+            metrics=metrics_block,
+            evaluate_seed=evaluate_seed if n_folds is not None else None,
+            n_folds=n_folds,
+            fold=fold if n_folds is not None else None,
+            n_evaluate=len(evaluate_ids),
+        )
+        results_path = Path(output_dir) / "results.json"
+        write_results_json(results_path, payload)
+        print(f"Wrote results JSON: {results_path}")
+        print(
+            f"  AUROC={metrics_block['auroc']:.4f} AUPRC={metrics_block['auprc']:.4f} "
+            f"sens={metrics_block['sensitivity']:.4f} spec={metrics_block['specificity']:.4f} "
+            f"bal_acc={metrics_block['balanced_accuracy']:.4f} n={metrics_block['n_samples']}"
+        )
+    else:
+        print("No evaluate samples available; skipping results JSON write.")
+
 
 ############################################################## Argument parser ##############################################################
 
@@ -380,7 +390,9 @@ class ArgumentParser(Tap):
     def __init__(self):
         super().__init__(underscores_to_dashes=True)
 
-    model_name_or_path: str = "macwiatrak/bacformer-large-masked-MAG"
+    model_name_or_path: str = "macwiatrak/bacformer-large-masked-complete-genomes"
+    """HF model ID. Default = refreshed complete-genomes (CG) weights. Override with
+    'macwiatrak/bacformer-large-masked-MAG' for the sub-step 3 MAG contrast runs."""
     embeddings_dir: str = str(EMBEDDINGS_DIR_DEFAULT)
     # deprecated — kept for backward compat; ignored if present
     train_data_dir: str | None = None
