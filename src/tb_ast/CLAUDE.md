@@ -71,3 +71,39 @@ Generic shared infrastructure lives in [`../tl/embed/`](../tl/embed/), [`../tl/g
 ## Running notes
 
 <!-- Agent appends here as work proceeds. Date entries (YYYY-MM-DD) and link to checkpoints / results JSON. -->
+
+### 2026-05-25 — Stage A scaffolding on rifampin
+
+Goal: refresh Bacformer to the complete-genomes weights and prove the pipeline
+runs end-to-end on CPU. Confirmed HPC has more done than this doc previously
+suggested.
+
+Bacformer model ID refreshed (root §0.1):
+- [src/tl/embed/generate_embeddings.py](../tl/embed/generate_embeddings.py) default
+  now `macwiatrak/bacformer-large-masked-complete-genomes`.
+- New [`train_amr.py`](train_amr.py) defaults to the same.
+
+State on HPC at `project_k/david/processed/tb/`:
+- `binary_ast.csv` (40,021 rows × 20 drug columns) and `ebi_parsed_ast_metadata.csv`
+  are already in place — EBI parsing is done.
+- `tb_esm_embeddings/`: **35,156 / 38,248 protein-input rows have embeddings (~92%)**.
+  ESM-C array job not yet fully converged; reruns recommended before Stage C.
+- Drug column name in the CSV is **`rifampin`** (US spelling), not `rifampicin`.
+  TB scripts and SLURM default to `rifampin` accordingly.
+
+`prepare_esmc_embeddings_and_labels_to_finetune_amr.py` first run (2026-05-25):
+- 33,687 unique samples retained after dropping 6,334 missing-embedding rows.
+- Splits 70/10/20: train 23,611 / validate 3,390 / evaluate 6,686.
+- Rifampin labels (per split, non-NaN): train 22,970 / validate 3,291 / evaluate 6,482.
+- Output CSV: `processed/tb/binary_ast_with_split.csv` (2.5 MB).
+- Sidecar: `processed/tb/ast_training/ast_samples_not_in_dataset.csv` lists the 6,334 dropped IDs.
+
+Stage A smoke test (HPC login, CPU, `n_samples=10`, drug=rifampin): in progress.
+
+Open follow-ups (not blocking Stage A but should be addressed before Stage C):
+- Backport `dtype="auto"` HF loading idiom to [src/kleb_ast/train_amr.py](../kleb_ast/train_amr.py)
+  (the `.to(torch.bfloat16)` cast there pegs the kleb Stage A on CPU).
+- Adopt the richer kleb_ast/metrics module (now provides `build_results_payload`,
+  `compute_full_metrics`, `write_results_json` per root §0.4 reporting requirements).
+  Either move it to `tl/train/metrics.py` and share, or copy + adapt into `tb_ast/`.
+  The current `tb_ast/train_amr.py` carries an older inline metrics function.
