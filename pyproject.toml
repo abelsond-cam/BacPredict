@@ -92,6 +92,15 @@ doc = [
 [tool.hatch.metadata]
 allow-direct-references = true
 
+[tool.hatch.build.targets.wheel]
+packages = [
+  "src/tl",
+  "src/tb_ast",
+  "src/kleb_ast",
+  "src/kleb_iso_source",
+  "src/predict_hgt",
+]
+
 [tool.uv.sources]
 bacformer = { git = "https://github.com/abelsond-cam/Bacformer" }
 
@@ -168,13 +177,19 @@ lint.pydocstyle.convention = "numpy"
 [tool.pytest.ini_options]
 strict = true
 testpaths = [ "tests" ]
-pythonpath = [ "." ]
+pythonpath = [ ".", "src" ]
 addopts = [
   "--import-mode=importlib", # allow using test files with same name
 ]
 
 [tool.coverage.run]
-source = [ "bacpredict" ]
+source = [
+  "tl",
+  "tb_ast",
+  "kleb_ast",
+  "kleb_iso_source",
+  "predict_hgt",
+]
 patch = [ "subprocess" ]
 omit = [
   "**/test_*.py",
