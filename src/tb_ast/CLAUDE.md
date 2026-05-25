@@ -98,7 +98,26 @@ State on HPC at `project_k/david/processed/tb/`:
 - Output CSV: `processed/tb/binary_ast_with_split.csv` (2.5 MB).
 - Sidecar: `processed/tb/ast_training/ast_samples_not_in_dataset.csv` lists the 6,334 dropped IDs.
 
-Stage A smoke test (HPC login, CPU, `n_samples=10`, drug=rifampin): in progress.
+Stage A smoke test (drug=rifampin, n_samples=10):
+- First attempt on HPC login (CPU) was killed at the start of training (login-node
+  CPU policy; the run also surfaced a `Detected kernel version 4.18.0 … can cause
+  the process to hang` warning). Re-ran as a 10-min GPU SLURM job
+  ([scripts/smoke_test_rifampin_gpu.sh](scripts/smoke_test_rifampin_gpu.sh)) per
+  user direction.
+- **PASS** (SLURM job 29712625, exit 0:0, wall 5:51 / 10:00 budget):
+  - Train loss 1.059 → 0.0001 across 32 epochs.
+  - Eval AUROC hit 1.0 by epoch 2 and stayed there (n=10 train=val ⇒ perfect
+    memorisation expected; this confirms loss + backward + eval all wired up).
+  - Checkpoints save and auto-rotate (`save_total_limit=1`).
+  - `load_best_model_at_end` succeeded at the end of training.
+  - Best checkpoint: `processed/tb/checkpoints/smoke_rifampin_29712625/checkpoint-*`.
+
+Note for Stage B/C: with `save_total_limit=1` the early "best" checkpoint
+gets deleted as later ones save, then `load_best_model_at_end` tries to
+reload the deleted path. The smoke run finished cleanly anyway (last
+checkpoint coincidentally matched), but for real runs we should bump
+`save_total_limit` to ≥ 3 or change `metric_for_best_model` so we don't
+race the cleanup.
 
 Open follow-ups (not blocking Stage A but should be addressed before Stage C):
 - Backport `dtype="auto"` HF loading idiom to [src/kleb_ast/train_amr.py](../kleb_ast/train_amr.py)
