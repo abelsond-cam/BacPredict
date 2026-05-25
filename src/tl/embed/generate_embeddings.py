@@ -355,7 +355,7 @@ def main():
         logger.info("Loading Bacformer model...")
         bacformer_model = (
             AutoModel.from_pretrained(
-                "macwiatrak/bacformer-large-masked-MAG",
+                "macwiatrak/bacformer-large-masked-complete-genomes",
                 trust_remote_code=True,
             )
             .to(device)
