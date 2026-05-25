@@ -71,3 +71,71 @@ What we predict here is **not "virulence" in the LD50 sense** — it is "probabi
 ## Running notes
 
 <!-- Agent appends here as work proceeds. -->
+
+### 2026-05-25 — refreshed model + v2 metadata: Stage A/B pass, Stage C queued
+
+Goal: re-baseline blood-vs-faeces on the refreshed Bacformer complete-genomes
+weights against the v2 metadata, end-to-end from prep through Stage B.
+
+Codebase prep (all on `restructure/flatten-to-task-folders`):
+- v1 metadata (`metadata_final_curated_slimmed.tsv`) was already swept to
+  `metadata_v2_all_samples_and_columns.tsv` across all task folders (commit
+  `6a97c77` from a parallel session).
+- [train_isolation_source.py:289](train_isolation_source.py#L289) ported to the
+  `dtype="auto"` HF loading idiom (same fix `tb_ast/train_amr.py` got in
+  `4956f91`). The previous unconditional `.to(torch.bfloat16)` crashed on CPU in
+  Bacformer's classifier einsum.
+- New `--output-dir` flag on
+  [`prepare_esmc_embeddings_and_labels_to_finetune_isolation_source.py`](prepare_esmc_embeddings_and_labels_to_finetune_isolation_source.py)
+  so the bypass-stratification flow can write outputs somewhere other than the
+  curated `final/` directory (commit `83f3633`).
+
+Bacformer cache: HF refreshed
+`macwiatrak/bacformer-large-masked-complete-genomes` on 2026-05-15. HPC cache
+was pinned to the Apr 28 revision; pre-downloaded the new snapshot
+(`ab3a91a21027359ae59d1c258afea8089826ea4a`).
+
+Split CSV (v2 metadata, no stratification, no country cap):
+- Output:
+  `processed/train_on_sr_mags/training_blood_faeces/binary_blood_vs_faeces_with_split.csv`
+- 25,879 unique samples kept (137 pruned for missing embeddings).
+- 70/10/20: train 18,169 / validate 2,591 / evaluate 5,206.
+- Label balance: 13,289 blood (51.2%) / 12,677 faeces (48.8%); preserved
+  across each split. ~27% more faeces than the v1 baseline noted in §Status.
+
+Stage A + Stage B — both PASS in one GPU run (SLURM job 29713406, 7:06 elapsed):
+- Script: [`scripts/train_isolation_source_stage_a.sh`](scripts/train_isolation_source_stage_a.sh)
+  (n=10, ampere, 30 min walltime, `--n-samples 10` triggers the train=val
+  smoke-test path that doubles as Stage B's overfit harness).
+- Pipeline ran end-to-end: model loaded, training loop, eval, checkpoint, early stop.
+- Train loss: ~0.7 → **3.6e-5** over 32 epochs (Stage B overfit signal — model
+  has more than enough capacity to memorise n=10).
+- Eval loss → 5e-5; AUROC 1.0 from epoch 1 (saturated on n=10).
+- Best model: `…/stage_a_smoke/checkpoint-4` (score 1.0).
+- **Important venue correction:** root §0.2 says Stage A can run on HPC login
+  CPU. For *this* codebase that is not viable — Bacformer-large + the
+  per-sample RDS embedding I/O exceeds login-node limits. CPU Stage A here
+  silently produced an empty tensorboard event file with no scalar
+  metrics. Every BacPredict Stage A needs a short ampere GPU sbatch
+  (~30 min walltime is fine).
+
+Stage C — single fold × single seed, full data, 36 h ampere:
+- Script: [`scripts/train_isolation_source_stage_c.sh`](scripts/train_isolation_source_stage_c.sh)
+  (commit `48fc7c1`).
+- Pinned: complete-genomes model, v2-derived split CSV, `stage_c_full` output dir.
+- Linted (`bash -n` + `sbatch --test-only`); SLURM accepted, projected start
+  `2026-05-27 17:00` (ampere queue depth).
+- **Not submitted.** User to fire when ready:
+  `sbatch src/kleb_iso_source/scripts/train_isolation_source_stage_c.sh`.
+
+Open follow-ups (parked, not blocking Stage C):
+- Backport `dtype="auto"` to [`../kleb_ast/train_amr.py`](../kleb_ast/train_amr.py)
+  (Task 2 will hit the same CPU Stage A crash — already flagged in
+  [tb_ast/CLAUDE.md](../tb_ast/CLAUDE.md) running notes).
+- `train_isolation_source.py`'s `PROCESSED_BASE_DIR_DEFAULT` is `processed/`
+  (not `processed/train_on_sr_mags/`); inconsistent with the prep script's
+  default base. The Stage A and Stage C sbatch scripts pass
+  `--processed-base-dir` explicitly to avoid this. Worth normalising one day.
+- Tensorboard scalars from the failed login-node Stage A runs (under
+  `processed/training_blood_faeces/stage_a_smoke/runs/`) can be deleted —
+  they contain no successful events.
