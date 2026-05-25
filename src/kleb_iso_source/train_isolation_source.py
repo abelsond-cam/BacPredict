@@ -286,13 +286,17 @@ def run(
     except Exception as e:
         print(f"WARNING: Could not inspect sample: {e}")
 
+    # dtype="auto" lets HF pick precision per device — bf16 on GPU, fp32 on CPU — so Stage A
+    # CPU smoke tests stay viable (the previous unconditional .to(torch.bfloat16) crashed in
+    # Bacformer's classifier einsum on CPU with float-vs-bf16 mismatch).
     bacformer_model = AutoModelForSequenceClassification.from_pretrained(
         model_name_or_path,
         num_labels=1,
         problem_type="binary_classification",
         return_dict=True,
         trust_remote_code=True,
-    ).to(torch.bfloat16)
+        dtype="auto",
+    )
 
     if freeze_encoder:
         for param in bacformer_model.bacformer.parameters():
