@@ -55,8 +55,12 @@ echo "Node: $SLURMD_NODENAME  GPU: $CUDA_VISIBLE_DEVICES"
 echo "Start time: $(date)"
 echo "=========================================="
 
-# Count unprocessed protein parquets (ESM-only; only the ESM .pt must exist to skip).
-TOTAL_FILES=$(uv run python -c "
+# Chunk by the TOTAL parquet count (stable across tasks), not the unprocessed
+# count. The unprocessed count is racy — late-starting tasks would see a
+# shrunken list and slice into the wrong index space, leaving gaps. Each task
+# now slices [start..end) of the full sorted parquet list; `--skip-existing`
+# inside the Python script then filters within the slice.
+read TOTAL_FILES UNPROCESSED <<< "$(uv run python -c "
 from pathlib import Path
 inp = Path('${TB_INPUT_DIR}')
 esm = Path('${TB_ESM_DIR}')
@@ -65,9 +69,9 @@ todo = [
     f for f in files
     if not (esm / f'{f.stem.replace(\"_protein_sequences\", \"\")}_esm_embeddings.pt').exists()
 ]
-print(len(todo))
-")
-echo "Total unprocessed files: $TOTAL_FILES"
+print(len(files), len(todo))
+")"
+echo "Total parquet files: $TOTAL_FILES  (unprocessed: $UNPROCESSED)"
 
 # Derive chunk size from the array task count (set by Slurm, overridable via
 # sbatch --array=...); fall back to 64 if unset.

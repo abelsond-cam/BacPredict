@@ -51,10 +51,12 @@ echo "GPU: $CUDA_VISIBLE_DEVICES"
 echo "Start time: $(date)"
 echo "=========================================="
 
-# Calculate file indices for this array task
-# We need to get the total number of files first
-# Run a quick count with Python
-TOTAL_FILES=$(uv run python -c "
+# Chunk by the TOTAL parquet count (stable across tasks), not the unprocessed
+# count. The unprocessed count is racy — late-starting tasks would see a
+# shrunken list and slice into the wrong index space, leaving gaps. Each task
+# now slices [start..end) of the full sorted parquet list; `--skip-existing`
+# inside the Python script then filters within the slice.
+read TOTAL_FILES UNPROCESSED <<< "$(uv run python -c "
 from pathlib import Path
 
 root = Path('/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw')
@@ -66,13 +68,14 @@ unprocessed = [
     f for f in protein_files
     if not (esm_dir / f'{f.stem.replace(\"_protein_sequences\", \"\")}_esm_embeddings.pt').exists()
 ]
-print(len(unprocessed))
-")
+print(len(protein_files), len(unprocessed))
+")"
 
-echo "Total unprocessed files: $TOTAL_FILES"
+echo "Total parquet files: $TOTAL_FILES  (unprocessed: $UNPROCESSED)"
 
-# Calculate chunk size (divide total files by number of array tasks)
-CHUNK_SIZE=$((TOTAL_FILES / 30 + 1))
+# Calculate chunk size from total parquet count (divide by array task count)
+NTASKS=${SLURM_ARRAY_TASK_COUNT:-30}
+CHUNK_SIZE=$((TOTAL_FILES / NTASKS + 1))
 START_IDX=$((SLURM_ARRAY_TASK_ID * CHUNK_SIZE))
 END_IDX=$(((SLURM_ARRAY_TASK_ID + 1) * CHUNK_SIZE))
 
@@ -81,8 +84,7 @@ if [ $END_IDX -gt $TOTAL_FILES ]; then
     END_IDX=$TOTAL_FILES
 fi
 
-echo "Processing files from index $START_IDX to $END_IDX"
-echo "Chunk size: $CHUNK_SIZE files"
+echo "Tasks: $NTASKS  Chunk: $CHUNK_SIZE  Indices: $START_IDX..$END_IDX"
 echo "=========================================="
 
 # Check if uv is available

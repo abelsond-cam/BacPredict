@@ -315,11 +315,22 @@ def main():
         logger.error("Please run generate_protein_sequences.py first to generate protein sequences")
         sys.exit(1)
 
-    # Filter out files that already have embeddings if requested
+    # Apply array job slicing BEFORE --skip-existing. Each task's slice indexes
+    # the full sorted parquet list, so its responsibility set is fixed regardless
+    # of when the task is scheduled or how many `.pt` files siblings have written
+    # in the meantime. Slicing after --skip-existing introduced a race where
+    # late-starting tasks indexed a shrunken list and left gaps no task covered.
+    if args.start_idx is not None and args.end_idx is not None:
+        total_files = len(protein_files)
+        protein_files = protein_files[args.start_idx:args.end_idx]
+        logger.info(f"Array job slice: processing files {args.start_idx} to {args.end_idx} of {total_files}")
+        logger.info(f"Files in this slice: {len(protein_files)}")
+
+    # Filter out files that already have embeddings if requested (within slice)
     if args.skip_existing:
         original_count = len(protein_files)
         protein_files = [
-            f for f in protein_files 
+            f for f in protein_files
             if not check_embeddings_exist(extract_sample_id(f), esm_dir, bacformer_dir)
         ]
         skipped = original_count - len(protein_files)
@@ -327,15 +338,8 @@ def main():
             logger.info(f"Skipping {skipped} genomes that already have embeddings")
 
     if not protein_files:
-        logger.info("All genomes already have embeddings")
+        logger.info("Nothing to do in this slice (all already have embeddings)")
         return
-
-    # Apply array job slicing if indices provided
-    if args.start_idx is not None and args.end_idx is not None:
-        total_files = len(protein_files)
-        protein_files = protein_files[args.start_idx:args.end_idx]
-        logger.info(f"Array job slice: processing files {args.start_idx} to {args.end_idx} of {total_files}")
-        logger.info(f"Files in this slice: {len(protein_files)}")
 
     # Setup device
     device = args.device
