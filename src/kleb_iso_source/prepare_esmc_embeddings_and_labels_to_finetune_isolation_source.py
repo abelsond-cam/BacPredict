@@ -198,6 +198,17 @@ def main() -> None:
             "Off by default: the split CSV alone is sufficient for training with LabelInjectingFileDataset."
         ),
     )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Where to write the binary label CSV and split CSV. Defaults to the parent directory "
+            "of --input-metadata-file (the conventional layout when the input is a stratified TSV). "
+            "Set this when the input metadata lives outside the desired output tree, e.g. when "
+            "feeding the raw curated metadata TSV from final/ directly and bypassing stratification."
+        ),
+    )
     args = parser.parse_args()
 
     token1, token2 = args.isolation_sources
@@ -209,7 +220,7 @@ def main() -> None:
     pair_slug = sanitize_pair_name(token1, token2)
     label_column = f"{pair_slug}_label"
     pt_suffix = f"_with_{pair_slug}.pt"
-    output_base = input_metadata_file.parent
+    output_base = args.output_dir or input_metadata_file.parent
 
     print(f"Loading metadata from: {input_metadata_file}")
     df = load_metadata_sheet(input_metadata_file, sep=args.sep)
