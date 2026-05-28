@@ -144,3 +144,42 @@ Open follow-ups (not blocking Stage A but should be addressed before Stage C):
   to what 36h allows (early stopping should bound it anyway) or raise the wall /
   rely on early-stopping firing first. Also apply the `save_total_limit` bump
   noted above for the same run.
+
+### 2026-05-28 — Stage C launched (rifampin, single split)
+
+Per user direction: skip an explicit Stage B (the Stage A n=10 train=val run
+already serves as the overfit check) and go straight to Stage C. The
+`--max-steps 100000` step-budget concern above is **deliberately left as-is** —
+early stopping bounds the run.
+
+Shared §0.4 metrics adopted:
+- `metrics.py` now lives at [../tl/train/metrics.py](../tl/train/metrics.py)
+  (moved out of kleb_ast into the shared toolbox). NB: the move had been
+  committed upstream but left two `from kleb_ast.metrics import` statements
+  dangling (kleb_ast/train_amr.py + the moved test) — repointed both to
+  `tl.train.metrics` in the same commit, which un-breaks those imports.
+- [train_amr.py](train_amr.py) re-synced to the §0.4 reporting path: sets
+  `split_source` + `evaluate_ids` per branch (smoke/kfold/csv) and writes a
+  versioned `results.json` (full metric set: AUROC, AUPRC, sens, spec, bal-acc,
+  F1, confusion matrix, calibration) on the evaluate holdout after training.
+  Keeps `dtype="auto"` (no `.to(torch.bfloat16)` regression) and TB defaults.
+
+Split regenerated at 100% embedding coverage
+(`prepare_esmc_embeddings_and_labels_to_finetune_amr.py`, 2026-05-28 14:29):
+- 40,021 AST rows → **36,684 kept** (3,337 still missing embeddings), up from
+  33,687 at the earlier ~92% coverage.
+- Rifampin non-NaN per split: train 24,977 / validate 3,574 / evaluate 7,075,
+  ~31% resistant across all three (healthy balance).
+- Note: the prepare script crawls stat-ing ~38k embedding files; on a loaded
+  login node it took ~10 min. Next time run it as a CPU sbatch job (~1 h wall).
+
+Stage C single-split run:
+- New [scripts/train_on_slurm_amr_tb_stage_c.sh](scripts/train_on_slurm_amr_tb_stage_c.sh)
+  — no `--array`/`--n-folds`/`--fold`/`--seed`, so `run()` reads
+  `train_val_eval` straight from the CSV (`split_source="csv"`). The k-fold
+  array sweep stays in `train_on_slurm_amr_tb.sh` (publication only).
+- **Submitted: SLURM job 29776879** (ampere, FLOTO-SL2-GPU, 36 h),
+  drug=rifampin, output
+  `processed/tb/checkpoints/mycobacterium_tuberculosis_rifampin_stage_c_29776879/`.
+  Queued (PENDING/Priority) at submit; `results.json` expected in the checkpoint
+  dir on completion.
