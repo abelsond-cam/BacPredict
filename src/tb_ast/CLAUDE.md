@@ -122,7 +122,25 @@ race the cleanup.
 Open follow-ups (not blocking Stage A but should be addressed before Stage C):
 - Backport `dtype="auto"` HF loading idiom to [src/kleb_ast/train_amr.py](../kleb_ast/train_amr.py)
   (the `.to(torch.bfloat16)` cast there pegs the kleb Stage A on CPU).
+  [Resolved for kleb_iso_source already; kleb_ast still pending.]
 - Adopt the richer kleb_ast/metrics module (now provides `build_results_payload`,
   `compute_full_metrics`, `write_results_json` per root §0.4 reporting requirements).
   Either move it to `tl/train/metrics.py` and share, or copy + adapt into `tb_ast/`.
   The current `tb_ast/train_amr.py` carries an older inline metrics function.
+
+### 2026-05-28 — status before Stage B/C
+
+- **TB ESM-C embeddings now 100% complete: 38,248 / 38,248.** The remaining ~8%
+  filled by embedding array jobs 29712701_* (one `_4` TIMEOUT, re-run) and
+  29765627_*, all COMPLETED. `binary_ast_with_split.csv` should be regenerated so
+  the prune step picks up the newly-embedded samples before any full run.
+- No TB Stage B or Stage C job has been launched yet (only the Stage A smoke
+  29712625 exists). Nothing crashed.
+- **Before launching TB Stage C, fix the step budget.**
+  [scripts/train_on_slurm_amr_tb.sh](scripts/train_on_slurm_amr_tb.sh) currently
+  passes `--max-steps 100000`, which at the observed ~3 s/step does NOT fit the
+  36h wall — it would be killed around ~37% (~step 36-40k). Confirmed live by the
+  sibling iso_source Stage C run hitting exactly this. Either lower `--max-steps`
+  to what 36h allows (early stopping should bound it anyway) or raise the wall /
+  rely on early-stopping firing first. Also apply the `save_total_limit` bump
+  noted above for the same run.
