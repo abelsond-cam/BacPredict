@@ -21,7 +21,7 @@ from transformers import (
     TrainingArguments,
 )
 
-from kleb_ast.metrics import (
+from tl.train.metrics import (
     build_results_payload,
     compute_full_metrics,
     compute_metrics_binary_genome_pred,

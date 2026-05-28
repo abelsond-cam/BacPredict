@@ -1,4 +1,4 @@
-"""Shared metrics + results-JSON helpers for the kleb_ast task.
+"""Shared metrics + results-JSON helpers for AMR / phenotype tasks.
 
 Provides the canonical §0.4 metrics block (AUROC, AUPRC, sensitivity,
 specificity, balanced accuracy, F1, confusion matrix, calibration) plus a
