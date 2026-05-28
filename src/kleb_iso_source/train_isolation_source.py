@@ -206,7 +206,10 @@ def run(
     if not os.path.exists(sheet_path):
         raise FileNotFoundError(f"Sheet not found at {sheet_path}")
 
-    df = pd.read_csv(sheet_path)
+    # low_memory=False: the split CSV carries the full wide metadata (hundreds of mixed-type
+    # columns). The default chunked C parser can hard-crash (exit 1, no traceback) on the wider
+    # cohorts — read in one pass to dtype-infer safely.
+    df = pd.read_csv(sheet_path, low_memory=False)
     if n_folds is None and "train_val_eval" not in df.columns:
         raise ValueError(
             "Sheet must contain 'train_val_eval' column. "
