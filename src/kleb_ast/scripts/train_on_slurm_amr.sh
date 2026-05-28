@@ -23,7 +23,10 @@ FOLD=$(( SLURM_ARRAY_TASK_ID % N_FOLDS ))
 SEED=$(( SLURM_ARRAY_TASK_ID / N_FOLDS + 1 ))
 
 species=klebsiella_pneumoniae
-drug=ceftriaxone
+# Drug defaults to ceftriaxone (Stage A/B/C canonical). For the fan-out, override
+# per job: sbatch --array=0 --job-name=meropenem --output=meropenem_%A_%a.out \
+#   --error=meropenem_%A_%a.err --export=ALL,DRUG=meropenem train_on_slurm_amr.sh
+drug=${DRUG:-ceftriaxone}
 warmup_proportion=0.1 # (default)
 lr=0.00015 # Use this is finetuning the encoder (freeze-encoder not called)
 eval_steps=250 # This is 3-8 per epoch with training set size 1500-4000 samples!
