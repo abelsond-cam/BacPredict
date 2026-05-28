@@ -72,7 +72,14 @@ uv run python "$python_script" \
   --max-steps "$max_steps" \
   --early-stopping-patience "$early_stopping_patience" \
   --seed "$seed"
+status=$?
 
 echo ""
+if [ "$status" -ne 0 ]; then
+  # Propagate the real failure so SLURM marks the job FAILED instead of COMPLETED.
+  # (Without this, the script's trailing echoes exit 0 and mask a dead training run.)
+  echo "Stage C (strict cohort) FAILED with exit code $status — inspect the .err log."
+  exit "$status"
+fi
 echo "Stage C (strict cohort) finished — checkpoint in ${processed_base_dir}/training_blood_faeces/${output_dir}."
 echo "Compare AUROC against both the 0.55–0.62 baseline and the all-sample run."
