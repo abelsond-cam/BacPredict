@@ -15,7 +15,7 @@ from tqdm import tqdm
 from tl.train.split_utils import add_splits
 
 AST_CSV_DEFAULT = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/binary_ast.csv"
+    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/ast_training/binary_ast.csv"
 )
 EMBEDDINGS_DIR_DEFAULT = Path(
     "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/klebsiella_esm_embeddings"

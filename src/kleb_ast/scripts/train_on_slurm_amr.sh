@@ -62,7 +62,7 @@ embeddings_dir="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/
 
 uv run python src/kleb_ast/train_amr.py  \
 --embeddings-dir $embeddings_dir \
---ast-sheet-path /home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/binary_ast_with_split.csv \
+--ast-sheet-path /home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/ast_training/binary_ast_with_split.csv \
 --lr $lr \
 --model-name-or-path $model_name_or_path \
 --warmup-proportion $warmup_proportion \
