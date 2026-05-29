@@ -18,8 +18,6 @@ Sampling Strategy:
      the matched categories (and their sample counts).
    - The script prints an `Isolation Source Token Mapping` block early in the log
      for provenance (token -> matched `isolation_source_category`).
-   - Optional `--complete-genomes` pre-filter restricts rows to `is_refseq == True`
-     before the existing isolation source / host / study-setting filters and thread split.
    - Filter to host_category == "human"
    - Optional filter to study_setting containing "Hospital"
 
@@ -58,8 +56,6 @@ Output:
 - Each country contributes samples from both isolation sources (when available)
 - Study type distributions are preserved within geographic strata
 - Final ratio approximates target ratio across all countries
-- If `--complete-genomes` is used, output is routed to `train_on_complete_genomes/`
-  instead of `train_on_sr_mags/`, and the `is_refseq` filter is applied automatically.
 
 Statistical Properties:
 - Sampling is stratified by country AND study type
@@ -90,7 +86,6 @@ TEST_RATIOS = [1.0, 2.0, 2.5, 3.0]
 DEFAULT_OUTPUT_FILE = "stratified_selected_isolation_source_metadata.tsv"
 _PROCESSED = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed")
 DEFAULT_OUTPUT_BASE_DIR = _PROCESSED / "train_on_sr_mags"
-COMPLETE_GENOMES_BASE_DIR = _PROCESSED / "train_on_complete_genomes"
 
 
 def setup_logging(log_file: str = "stratify_isolation_source_sampling.log"):
@@ -249,7 +244,6 @@ def load_and_filter_data(
     source_categories: list[str],
     source_labels: list[str],
     filter_by_study_setting: bool = False,
-    refseq_genomes: bool = False,
 ) -> tuple[pd.DataFrame, dict[str, int]]:
     """Load metadata and apply initial filters.
 
@@ -272,18 +266,6 @@ def load_and_filter_data(
     logging.info(f"Initial dataset size: {initial_count:,} samples")
 
     filter_counts = {"initial": initial_count}
-
-    # Optional pre-filter: RefSeq genomes only
-    if refseq_genomes:
-        logging.info('\nFiltering to is_refseq == True')
-        df = df[df["is_refseq"]]
-        filter_counts["after_refseq"] = len(df)
-        logging.info(f"After is_refseq filter: {len(df):,} samples")
-    else:
-        filter_counts["after_refseq"] = len(df)
-        logging.info(
-            f"RefSeq filter: NOT APPLIED (--complete-genomes not set). All {len(df):,} samples retained."
-        )
 
     # Filter 1: Isolation source category
     logging.info(f"\nFiltering to isolation sources (tokens): {source_labels}")
@@ -725,21 +707,12 @@ Examples:
         "--test-all-ratios", action="store_true", help="Test all predefined ratios instead of just the specified one"
     )
     parser.add_argument(
-        "--complete-genomes",
-        action="store_true",
-        help=(
-            "Restrict to complete (RefSeq) genomes only (is_refseq == True) and write output "
-            "under train_on_complete_genomes/ instead of train_on_sr_mags/."
-        ),
-    )
-    parser.add_argument(
         "--output-file",
         type=str,
         default=None,
         help=(
             "Path to output TSV file. If omitted, writes to "
-            "train_on_sr_mags/ (or train_on_complete_genomes/ with --complete-genomes)/"
-            f"training_<token1>_<token2>/{DEFAULT_OUTPUT_FILE}"
+            f"train_on_sr_mags/training_<token1>_<token2>/{DEFAULT_OUTPUT_FILE}"
         ),
     )
 
@@ -749,7 +722,7 @@ Examples:
     if args.output_file:
         output_path = Path(args.output_file)
     else:
-        base = COMPLETE_GENOMES_BASE_DIR if args.complete_genomes else DEFAULT_OUTPUT_BASE_DIR
+        base = DEFAULT_OUTPUT_BASE_DIR
         output_dir = base / f"training_{_slugify_token(token1)}_{_slugify_token(token2)}"
         output_path = output_dir / DEFAULT_OUTPUT_FILE
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -789,7 +762,6 @@ Examples:
             isolation_sources,
             source_labels,
             filter_by_study_setting=args.filter_by_study_setting,
-            refseq_genomes=args.complete_genomes,
         )
 
         if df.empty:

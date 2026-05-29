@@ -22,7 +22,6 @@ EMBEDDINGS_DIR_DEFAULT = Path(
 )
 _PROCESSED = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed")
 PROCESSED_BASE_DIR_DEFAULT = _PROCESSED / "train_on_sr_mags"
-COMPLETE_GENOMES_BASE_DIR_DEFAULT = _PROCESSED / "train_on_complete_genomes"
 STRATIFIED_METADATA_FILENAME = "stratified_selected_isolation_source_metadata.tsv"
 SEP_DEFAULT = "\t"
 
@@ -182,14 +181,6 @@ def main() -> None:
         help="Optional path to write CSV of samples removed (missing embeddings).",
     )
     parser.add_argument(
-        "--complete-genomes",
-        action="store_true",
-        help=(
-            "Look for the stratified metadata TSV under train_on_complete_genomes/ "
-            "instead of train_on_sr_mags/ when --input-metadata-file is omitted."
-        ),
-    )
-    parser.add_argument(
         "--write-pt-files",
         action="store_true",
         default=False,
@@ -212,7 +203,7 @@ def main() -> None:
     args = parser.parse_args()
 
     token1, token2 = args.isolation_sources
-    _base = COMPLETE_GENOMES_BASE_DIR_DEFAULT if args.complete_genomes else PROCESSED_BASE_DIR_DEFAULT
+    _base = PROCESSED_BASE_DIR_DEFAULT
     default_training_dir = _base / (
         f"training_{slugify_isolation_source_token(token1)}_{slugify_isolation_source_token(token2)}"
     )
