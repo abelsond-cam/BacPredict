@@ -85,7 +85,7 @@ DEFAULT_RATIO = 2.0
 TEST_RATIOS = [1.0, 2.0, 2.5, 3.0]
 DEFAULT_OUTPUT_FILE = "stratified_selected_isolation_source_metadata.tsv"
 _PROCESSED = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed")
-DEFAULT_OUTPUT_BASE_DIR = _PROCESSED / "train_on_sr_mags"
+DEFAULT_OUTPUT_BASE_DIR = _PROCESSED / "train_iso_source"
 
 
 def setup_logging(log_file: str = "stratify_isolation_source_sampling.log"):
@@ -844,7 +844,7 @@ Examples:
         default=None,
         help=(
             "Path to output TSV file. If omitted, writes to "
-            f"train_on_sr_mags/training_<token1>_<token2>/{DEFAULT_OUTPUT_FILE}"
+            f"train_iso_source/<token1>_<token2>/{DEFAULT_OUTPUT_FILE}"
         ),
     )
 
@@ -855,7 +855,7 @@ Examples:
         output_path = Path(args.output_file)
     else:
         base = DEFAULT_OUTPUT_BASE_DIR
-        output_dir = base / f"training_{_slugify_token(token1)}_{_slugify_token(token2)}"
+        output_dir = base / f"{_slugify_token(token1)}_{_slugify_token(token2)}"
         output_path = output_dir / DEFAULT_OUTPUT_FILE
     output_path.parent.mkdir(parents=True, exist_ok=True)
     log_path = output_path.parent / Path(args.log_file).name

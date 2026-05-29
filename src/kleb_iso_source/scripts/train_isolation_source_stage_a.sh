@@ -20,10 +20,11 @@ cd /home/dca36/workspace/BacPredict
 
 python_script="src/kleb_iso_source/train_isolation_source.py"
 isolation_sources="blood faeces"
-processed_base_dir="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_on_sr_mags"
-sheet_path="${processed_base_dir}/training_blood_faeces/binary_blood_vs_faeces_with_split.csv"
+processed_base_dir="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_iso_source"
+cohort_dir="${processed_base_dir}/blood_faeces/all_samples"
+sheet_path="${cohort_dir}/binary_blood_vs_faeces_with_split.csv"
 embeddings_dir="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/klebsiella_esm_embeddings"
-output_dir="stage_a_smoke"
+output_dir="${cohort_dir}/smoke"   # absolute → used verbatim (transient; keeps models/ clean)
 model_name_or_path="macwiatrak/bacformer-large-masked-complete-genomes"
 
 module purge

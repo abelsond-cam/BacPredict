@@ -21,7 +21,7 @@ EMBEDDINGS_DIR_DEFAULT = Path(
     "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/klebsiella_esm_embeddings"
 )
 _PROCESSED = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed")
-PROCESSED_BASE_DIR_DEFAULT = _PROCESSED / "train_on_sr_mags"
+PROCESSED_BASE_DIR_DEFAULT = _PROCESSED / "train_iso_source"
 STRATIFIED_METADATA_FILENAME = "stratified_selected_isolation_source_metadata.tsv"
 SEP_DEFAULT = "\t"
 
@@ -146,7 +146,7 @@ def main() -> None:
             "Path to stratified_selected_isolation_source_metadata.tsv "
             "(or equivalent stratified metadata sheet). If omitted, uses "
             "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/"
-            "training_<token1>_<token2>/stratified_selected_isolation_source_metadata.tsv"
+            "train_iso_source/<token1>_<token2>/stratified_selected_isolation_source_metadata.tsv"
         ),
     )
     parser.add_argument(
@@ -205,7 +205,7 @@ def main() -> None:
     token1, token2 = args.isolation_sources
     _base = PROCESSED_BASE_DIR_DEFAULT
     default_training_dir = _base / (
-        f"training_{slugify_isolation_source_token(token1)}_{slugify_isolation_source_token(token2)}"
+        f"{slugify_isolation_source_token(token1)}_{slugify_isolation_source_token(token2)}"
     )
     input_metadata_file = args.input_metadata_file or (default_training_dir / STRATIFIED_METADATA_FILENAME)
     pair_slug = sanitize_pair_name(token1, token2)

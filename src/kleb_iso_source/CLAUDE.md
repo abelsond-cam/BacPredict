@@ -1,6 +1,6 @@
 # Task 3 — Isolation source in *Klebsiella*
 
-This is one of six task folders under `src/`. See the root [CLAUDE.md](../../CLAUDE.md) for §0 global conventions, and [BacPredict_Training_Plan.md](../../BacPredict_Training_Plan.md) §3 for the long-form plan.
+This is one of the task folders under `src/`. See the root [CLAUDE.md](../../CLAUDE.md) for §0 global conventions. Cross-task status lives in [ToDo.md](../../ToDo.md).
 
 ## Aim
 
@@ -96,8 +96,8 @@ was pinned to the Apr 28 revision; pre-downloaded the new snapshot
 (`ab3a91a21027359ae59d1c258afea8089826ea4a`).
 
 Split CSV (v2 metadata, no stratification, no country cap):
-- Output:
-  `processed/train_on_sr_mags/training_blood_faeces/binary_blood_vs_faeces_with_split.csv`
+- Output (relocated 2026-05-29 — see entry below):
+  `processed/train_iso_source/blood_faeces/all_samples/binary_blood_vs_faeces_with_split.csv`
 - 25,879 unique samples kept (137 pruned for missing embeddings).
 - 70/10/20: train 18,169 / validate 2,591 / evaluate 5,206.
 - Label balance: 13,289 blood (51.2%) / 12,677 faeces (48.8%); preserved
@@ -139,3 +139,54 @@ Open follow-ups (parked, not blocking Stage C):
 - Tensorboard scalars from the failed login-node Stage A runs (under
   `processed/training_blood_faeces/stage_a_smoke/runs/`) can be deleted —
   they contain no successful events.
+
+### 2026-05-29 — Stage C results + output-layout restructure
+
+**Headline (refreshed complete-genomes model, blood vs faeces):** the genomic
+invasion signal is real and survives strict country control.
+
+| Cohort | n | Val AUROC | Evaluate-holdout §0.4 |
+|---|---|---|---|
+| `all_samples` (no country control) | 25,879 | 0.835 peak | not scored — country-confounded baseline |
+| `sampled_country_2_1_stratified` (strict 2:1 cap, thread-segregated) | 10,443 | 0.767 | **AUROC 0.752** (n=2096; auprc 0.758, sens 0.836, spec 0.492, bal-acc 0.664, prevalence 0.528) |
+| old MAG baseline | — | 0.55–0.62 | reference |
+
+Strict country control holds AUROC at ~0.75 ≫ the 0.55–0.6 country-shortcut ceiling →
+genuine genomic signal, not a country/phylogeny artefact (~0.09 AUROC of the
+all-sample number was country confounding). `all_samples` is a baseline, not resumed
+(converged ~ep10; TIMEOUT at 36h). All-sample evaluate-holdout left unscored (its
+5,206-row holdout needs >1h; it is only the confounded baseline).
+
+**Output layout restructured** → `processed/train_iso_source/blood_faeces/<cohort>/`,
+each cohort holding its split CSV at the top + a `models/` checkpoint dir:
+- `all_samples/models/checkpoint-37000`
+- `sampled_country_2_1_stratified/models/` (+ `eval_results.json`, ROC/PR png, npz)
+- `sampled_country_2_1_all/` — pooled ~15.2k cohort (Phase C, not yet built)
+
+The pair dir is `{slug1}_{slug2}` (no `training_` prefix) so future pairs slot in
+beside `blood_faeces/`. The sbatch scripts pass an absolute `--output-dir
+…/<cohort>/models` (now used verbatim); Stage A smoke writes to `<cohort>/smoke` to
+keep `models/` clean. `train_isolation_source.py` `PROCESSED_BASE_DIR_DEFAULT` is now
+`processed/train_iso_source` (resolves the old inconsistency follow-up above).
+
+**Sampler defaults to pooled threads** (single stratify over the whole filtered pool);
+`--segregate-threads` opts back into the old per-thread (AMR/Surv/NA) split. Every run
+writes `stratification_report.md` beside the cohort TSV: thread-segregation impact,
+Sublineage band table (Epidemic ≥250 / Rare <250 / Very-rare <100 / no-call ×
+n/blood/faeces/ratio) for pool AND cohort, and rare-fraction pool-vs-cohort. Dry-run
+headcounts: pooled **15,218** / segregated **10,541** (the −4,677 thread-segregation
+cost is the lever Phase C recovers, country-control intact). Finding: stratification
+does NOT enrich rare SLs (44.2%→42.9%); the 2:1 cap incidentally balances rare bands
+(blood:faeces ratio 1.40→1.17).
+
+**Auto-eval backported** into `train_isolation_source.py` (post-`train()` → `results.json`,
+§0.4); `evaluate.py` got a `file_system` FD-sharing fix; dead `--complete-genomes`
+flag removed (broken on v2). **RDS cleanup:** deleted stale `train_on_sr_mags/`,
+`train_on_complete_genomes/`, top-level `training_blood_faeces/` (legacy MAG `.pt`
+dirs + old checkpoints).
+
+**Next:** Phase C — build `sampled_country_2_1_all` (~15.2k pooled, `--ratio 2.0`),
+prep → split CSV, Stage C train + `evaluate_iso_source.sh sampled_country_2_1_all`,
+then compare AUROC (pooled-15.2k vs stratified-10.5k=0.752 vs all-sample-25k). Phase D
+(Kleb-specific masked continued-pretraining) is blocked on the ESM-C 960-dim
+protein-family centroids from Isambard (the CSD3 RDS ones are legacy ESM 480-dim).

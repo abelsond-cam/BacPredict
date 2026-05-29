@@ -22,10 +22,11 @@ cd /home/dca36/workspace/BacPredict
 
 python_script="src/kleb_iso_source/train_isolation_source.py"
 isolation_sources="blood faeces"
-processed_base_dir="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_on_sr_mags"
-sheet_path="${processed_base_dir}/training_blood_faeces/stratified_country_cohort/binary_blood_vs_faeces_with_split.csv"
+processed_base_dir="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_iso_source"
+cohort_dir="${processed_base_dir}/blood_faeces/sampled_country_2_1_stratified"
+sheet_path="${cohort_dir}/binary_blood_vs_faeces_with_split.csv"
 embeddings_dir="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/klebsiella_esm_embeddings"
-output_dir="stratified_country_cohort/stage_c_full"
+output_dir="${cohort_dir}/models"   # absolute → used verbatim
 model_name_or_path="macwiatrak/bacformer-large-masked-complete-genomes"
 
 # Single-split, single-seed (Stage C, not k-fold). train_val_eval column used directly.
@@ -51,7 +52,7 @@ echo "Tokens:            $isolation_sources"
 echo "Sheet:             $sheet_path"
 echo "Model:             $model_name_or_path"
 echo "Single fold/seed:  seed=$seed"
-echo "Output:            ${processed_base_dir}/training_blood_faeces/${output_dir}"
+echo "Output:            ${output_dir}"
 echo "Job ID:            $SLURM_JOB_ID"
 echo "Node:              $SLURMD_NODENAME, GPU: $CUDA_VISIBLE_DEVICES"
 echo "========================================================================"
@@ -81,5 +82,5 @@ if [ "$status" -ne 0 ]; then
   echo "Stage C (strict cohort) FAILED with exit code $status — inspect the .err log."
   exit "$status"
 fi
-echo "Stage C (strict cohort) finished — checkpoint in ${processed_base_dir}/training_blood_faeces/${output_dir}."
+echo "Stage C (strict cohort) finished — checkpoint in ${output_dir}."
 echo "Compare AUROC against both the 0.55–0.62 baseline and the all-sample run."

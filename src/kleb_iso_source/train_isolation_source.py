@@ -30,10 +30,9 @@ from tl.train.datasets import LabelInjectingFileDataset
 from tl.train.metrics import build_results_payload, compute_full_metrics, write_results_json
 from tl.train.split_utils import generate_kfold_splits
 
-PROCESSED_BASE_DIR_DEFAULT = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed"
-)
-EMBEDDINGS_DIR_DEFAULT = PROCESSED_BASE_DIR_DEFAULT / "klebsiella_esm_embeddings"
+PROCESSED_DIR = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed")
+PROCESSED_BASE_DIR_DEFAULT = PROCESSED_DIR / "train_iso_source"
+EMBEDDINGS_DIR_DEFAULT = PROCESSED_DIR / "klebsiella_esm_embeddings"
 
 
 ############################################################## PyTorchFileDataset ##############################################################
@@ -440,7 +439,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--processed-base-dir",
         type=str,
         default=str(PROCESSED_BASE_DIR_DEFAULT),
-        help="Directory containing training_<slug1>_<slug2>/ (default matches prepare script).",
+        help="Directory containing <slug1>_<slug2>/ (default matches prepare script).",
     )
     p.add_argument(
         "--embeddings-dir",
@@ -464,15 +463,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--sheet-path",
         type=str,
         default=None,
-        help="Override path to binary_<pair_slug>_with_split.csv (default under training dir).",
+        help="Override path to binary_<pair_slug>_with_split.csv (default under the <slug1>_<slug2>/ pair dir).",
     )
     p.add_argument(
         "--output-dir",
         type=str,
         default=None,
         help=(
-            "Checkpoint subdirectory name under training_<slug1>_<slug2>/ "
-            "(default includes learning rate)."
+            "Checkpoint output dir. An absolute path is used verbatim; a relative one "
+            "is a subdirectory name under the <slug1>_<slug2>/ pair dir (default includes learning rate)."
         ),
     )
     p.add_argument("--model-name-or-path", type=str, default="macwiatrak/bacformer-large-masked-complete-genomes")
@@ -518,11 +517,15 @@ def _resolve_paths_from_tokens(
     pair_slug = sanitize_pair_name(token1, token2)
     slug1 = slugify_isolation_source_token(token1)
     slug2 = slugify_isolation_source_token(token2)
-    base = Path(processed_base_dir) / f"training_{slug1}_{slug2}"
+    base = Path(processed_base_dir) / f"{slug1}_{slug2}"
     sheet = sheet_path or str(base / f"binary_{pair_slug}_with_split.csv")
     label_column = f"{pair_slug}_label"
-    output_subdir = output_dir or f"bacformer_finetuned_lr_{lr}"
-    out = str(base / output_subdir)
+    # An absolute --output-dir is used verbatim (lets cohorts live in a flat home like
+    # train_iso_source/blood_faeces/<cohort>/models); a relative one nests under base.
+    if output_dir and Path(output_dir).is_absolute():
+        out = output_dir
+    else:
+        out = str(base / (output_dir or f"bacformer_finetuned_lr_{lr}"))
     return sheet, out, label_column
 
 
