@@ -649,6 +649,128 @@ def test_multiple_ratios(
     return results
 
 
+def _kept_count_for_group(g: pd.DataFrame, ratio: float, isolation_sources: list[str]) -> tuple[int, int]:
+    """(source1_kept, source2_kept) for one group under the ratio cap; (0, 0) if one-sided.
+
+    Keep all of the minority source and min(ratio*minority, majority) of the majority.
+    A ratio <= 0 disables capping (keep everything). Mirrors sample_to_ratio() counts
+    without doing the random draw — used for the report's headcount comparison.
+    """
+    s1, s2 = isolation_sources
+    n1 = int((g["isolation_source_category"] == s1).sum())
+    n2 = int((g["isolation_source_category"] == s2).sum())
+    if n1 == 0 or n2 == 0:
+        return 0, 0
+    if ratio <= 0:
+        return n1, n2
+    if n1 <= n2:
+        return n1, min(int(ratio * n1), n2)
+    return min(int(ratio * n2), n1), n2
+
+
+def _estimate_kept(df: pd.DataFrame, ratio: float, isolation_sources: list[str], by_thread: bool) -> tuple[int, int]:
+    """Headcount (source1, source2) kept under country (optionally x thread) capping."""
+    if by_thread:
+        amr = df["amr_study"].str.contains("amr", case=False, na=False)
+        surv = df["amr_study"].str.contains("surveillance", case=False, na=False) & ~amr
+        na = df["amr_study"].isna()
+        groups = [df[amr], df[surv], df[na]]
+    else:
+        groups = [df]
+    t1 = t2 = 0
+    for gdf in groups:
+        for _, cg in gdf.groupby("country_parsed"):
+            k1, k2 = _kept_count_for_group(cg, ratio, isolation_sources)
+            t1 += k1
+            t2 += k2
+    return t1, t2
+
+
+def _sublineage_band_rows(
+    df: pd.DataFrame, isolation_sources: list[str], slsize: pd.Series, sl_col: str = "Sublineage"
+) -> list[tuple[str, int, int, int, str]] | None:
+    """Rows of (band, n, source1, source2, ratio_str). Bands by SL size in the pool."""
+    if sl_col not in df.columns:
+        return None
+    s1, s2 = isolation_sources
+    sz = df[sl_col].map(slsize).fillna(0)
+    na = df[sl_col].isna()
+
+    def row(mask, label: str) -> tuple[str, int, int, int, str]:
+        sub = df[mask]
+        n1 = int((sub["isolation_source_category"] == s1).sum())
+        n2 = int((sub["isolation_source_category"] == s2).sum())
+        ratio_str = f"{max(n1, n2) / min(n1, n2):.2f}" if (n1 and n2) else "-"
+        return (label, n1 + n2, n1, n2, ratio_str)
+
+    return [
+        row((sz >= 250) & ~na, "Epidemic (>=250)"),
+        row((sz < 250) & ~na, "Rare (<250)"),
+        row((sz < 100) & ~na, "Very-rare (<100)"),
+        row(na, "No Sublineage call"),
+    ]
+
+
+def write_stratification_report(
+    report_path: Path,
+    pool_df: pd.DataFrame,
+    final_df: pd.DataFrame,
+    isolation_sources: list[str],
+    source_labels: list[str],
+    ratio: float,
+) -> None:
+    """Write stratification_report.md: thread-segregation impact + Sublineage bands (pool vs cohort)."""
+    s1, s2 = isolation_sources
+    l1, l2 = source_labels
+    slsize = pool_df["Sublineage"].value_counts() if "Sublineage" in pool_df.columns else pd.Series(dtype=int)
+
+    def src_counts(d: pd.DataFrame) -> tuple[int, int]:
+        return int((d["isolation_source_category"] == s1).sum()), int((d["isolation_source_category"] == s2).sum())
+
+    lines: list[str] = [f"# Stratification report — {l1} vs {l2}", ""]
+    pp1, pp2 = src_counts(pool_df)
+    fp1, fp2 = src_counts(final_df)
+    lines += [
+        f"- Candidate pool (post host/source filters): **{len(pool_df):,}** ({l1} {pp1:,} / {l2} {pp2:,})",
+        f"- Selected cohort: **{len(final_df):,}** ({l1} {fp1:,} / {l2} {fp2:,})",
+        f"- Ratio cap: {ratio}",
+        "",
+        "## Thread-segregation impact (2:1 country-cap headcounts)",
+        "",
+        f"| Mode | total | {l1} | {l2} |",
+        "|---|---|---|---|",
+    ]
+    p1, p2 = _estimate_kept(pool_df, ratio, isolation_sources, by_thread=False)
+    g1, g2 = _estimate_kept(pool_df, ratio, isolation_sources, by_thread=True)
+    lines += [
+        f"| Pooled (default) | {p1 + p2:,} | {p1:,} | {p2:,} |",
+        f"| Segregated AMR/Surv/NA | {g1 + g2:,} | {g1:,} | {g2:,} |",
+        f"| Cost of segregation | {(p1 + p2) - (g1 + g2):,} | | |",
+        "",
+    ]
+    for name, d in [("Candidate pool", pool_df), ("Selected cohort", final_df)]:
+        rows = _sublineage_band_rows(d, isolation_sources, slsize)
+        if rows is None:
+            lines += [f"## Sublineage bands — {name}: no Sublineage column", ""]
+            continue
+        tot = max(len(d), 1)
+        rare = next(r[1] for r in rows if r[0].startswith("Rare"))
+        vrare = next(r[1] for r in rows if r[0].startswith("Very-rare"))
+        lines += [
+            f"## Sublineage bands — {name} (n={len(d):,}; rare {100 * rare / tot:.1f}%, very-rare {100 * vrare / tot:.1f}%)",
+            "",
+            f"| Band | n | {l1} | {l2} | ratio |",
+            "|---|---|---|---|---|",
+        ]
+        lines += [f"| {label} | {n:,} | {n1:,} | {n2:,} | {r} |" for label, n, n1, n2, r in rows]
+        lines.append("")
+
+    report_path = Path(report_path)
+    report_path.write_text("\n".join(lines))
+    logging.info("\n".join(["", *lines]))
+    logging.info(f"Stratification report written: {report_path}")
+
+
 def main():
     """Main execution function."""
     parser = argparse.ArgumentParser(
@@ -705,6 +827,16 @@ Examples:
     )
     parser.add_argument(
         "--test-all-ratios", action="store_true", help="Test all predefined ratios instead of just the specified one"
+    )
+    parser.add_argument(
+        "--segregate-threads",
+        action="store_true",
+        help=(
+            "Stratify the AMR / Surveillance / NA study threads separately, then combine "
+            "(preserves study-design balance but drops countries that are one-sided within a "
+            "thread). Default: OFF — pool all threads and stratify by country once, which keeps "
+            "more samples at the same 2:1 country cap."
+        ),
     )
     parser.add_argument(
         "--output-file",
@@ -777,7 +909,7 @@ Examples:
         df_na = df[mask_na].copy()
 
         logging.info(f"\n{'=' * 80}")
-        logging.info("THREE-THREAD STRATIFICATION (AMR + Surveillance + NA)")
+        logging.info("STUDY-THREAD SIZES (amr / surveillance / NA)")
         logging.info(f"{'=' * 80}")
         logging.info(f"AMR thread (amr/AMR plus control): {len(df_amr):,} samples")
         logging.info(f"Surveillance thread: {len(df_surveillance):,} samples")
@@ -799,8 +931,16 @@ Examples:
                 logging.info(
                     "Note: --test-all-ratios runs on AMR thread only. Surveillance and NA samples not included."
                 )
+        elif not args.segregate_threads:
+            # POOLED (default): one stratification over all study threads, country 2:1 cap.
+            logging.info(f"\nPooling all study threads (single ratio {args.ratio}; --segregate-threads to split).")
+            final_df, log_pooled = stratify_by_location(
+                df, args.ratio, isolation_sources, source_labels, thread_label="POOLED"
+            )
+            create_detailed_report(log_pooled, args.ratio, isolation_sources, "POOLED", source_labels=source_labels)
+            _log_final_country_table(df, final_df, isolation_sources, source_labels)
         else:
-            logging.info(f"\nUsing single ratio: {args.ratio}")
+            logging.info(f"\nUsing single ratio (segregated AMR/Surv/NA threads): {args.ratio}")
 
             stratified_amr = pd.DataFrame()
             log_amr = []
@@ -901,6 +1041,17 @@ Examples:
             df_init_parts = [p for p in [df_amr, df_surveillance, df_na] if not p.empty]
             df_init = pd.concat(df_init_parts, ignore_index=True) if df_init_parts else pd.DataFrame()
             _log_final_country_table(df_init, final_df, isolation_sources, source_labels)
+
+        # Stratification report (thread-segregation impact + Sublineage bands) beside the cohort.
+        if not final_df.empty:
+            write_stratification_report(
+                output_path.parent / "stratification_report.md",
+                df,
+                final_df,
+                isolation_sources,
+                source_labels,
+                args.ratio,
+            )
 
         # Save TSV output (always writes if there are samples)
         if not final_df.empty:
