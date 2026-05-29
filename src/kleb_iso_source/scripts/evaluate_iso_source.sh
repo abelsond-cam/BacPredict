@@ -20,14 +20,13 @@
 cd /home/dca36/workspace/BacPredict
 
 BASE=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_on_sr_mags/training_blood_faeces
-# --- all-sample cohort (default) ---
-CHECKPOINT="${BASE}/stage_c_full"
-SHEET="${BASE}/binary_blood_vs_faeces_with_split.csv"
-OUT_DIR="${BASE}/stage_c_full"
-# --- strict 2:1 cohort (uncomment to score instead) ---
-# CHECKPOINT="${BASE}/stratified_country_cohort/stage_c_full"
-# SHEET="${BASE}/stratified_country_cohort/binary_blood_vs_faeces_with_split.csv"
-# OUT_DIR="${BASE}/stratified_country_cohort/stage_c_full"
+# Optional cohort subdir as $1 (e.g. "stratified_country_cohort", "country2to1_pooled").
+# Empty (no arg) = the all-sample cohort at BASE.
+SUB="${1:-}"
+DIR="${BASE}${SUB:+/$SUB}"
+CHECKPOINT="${DIR}/stage_c_full"
+SHEET="${DIR}/binary_blood_vs_faeces_with_split.csv"
+OUT_DIR="${DIR}/stage_c_full"
 
 EMB=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/klebsiella_esm_embeddings
 
