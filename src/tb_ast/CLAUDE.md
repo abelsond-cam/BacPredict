@@ -207,4 +207,9 @@ Stage C single-split run:
   all > 1,000 R: isoniazid (12,838 R), ethambutol (5,266), rifabutin (4,384),
   levofloxacin (2,614), streptomycin (2,537), moxifloxacin (2,475),
   pyrazinamide (2,415), ethionamide (2,210), kanamycin (2,179). Launcher
-  parametrized by drug (`$1`); see job IDs below.
+  parametrized by drug (`$1`).
+- Job IDs (all single-split Stage C, ampere/FLOTO-SL2-GPU, 36 h): isoniazid
+  29824376, ethambutol 29824377, rifabutin 29824378, levofloxacin 29824379,
+  streptomycin 29824380, moxifloxacin 29824381, pyrazinamide 29824382,
+  ethionamide 29824383, kanamycin 29824384. Each writes its `results.json` to
+  `processed/train_tb_ast/checkpoints/mycobacterium_tuberculosis_<drug>_stage_c_<jobid>/`.
