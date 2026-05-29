@@ -44,6 +44,11 @@ from tl.train.datasets import LabelInjectingFileDataset
 from tl.train.metrics import build_results_payload, compute_full_metrics, write_results_json
 from tl.train.split_utils import generate_kfold_splits
 
+# The file-based dataset + DataLoader workers open many .pt files; the default
+# file_descriptor sharing strategy exhausts FDs on large evaluate splits
+# ("Too many open files"). file_system shares via temp files instead.
+torch.multiprocessing.set_sharing_strategy("file_system")
+
 
 def collate_fn(samples: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
     """Pad a list of per-sample dicts into a batch (matches train_amr.py)."""

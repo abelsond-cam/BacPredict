@@ -27,6 +27,7 @@ from kleb_iso_source.isolation_source_cli_parsing import (
     slugify_isolation_source_token,
 )
 from tl.train.datasets import LabelInjectingFileDataset
+from tl.train.metrics import build_results_payload, compute_full_metrics, write_results_json
 from tl.train.split_utils import generate_kfold_splits
 
 PROCESSED_BASE_DIR_DEFAULT = Path(
@@ -243,17 +244,21 @@ def run(
         print("Using dummy test mode with 10 samples.")
         train_ids = (build_sample_ids("train") if "train_val_eval" in labeled.columns else list(labeled["Sample"]))[:10]
         val_ids = train_ids
+        evaluate_ids = []  # smoke mode: no separate holdout
+        split_source = "smoke"
         eval_strategy = "epoch"
         use_epochs = True
         num_train_epochs = 100
     elif n_folds is not None:
         print(f"K-fold mode: generating splits (n_folds={n_folds}, fold={fold}, seed={seed})")
-        evaluate_ids, folds = generate_kfold_splits(
+        evaluate_set, folds = generate_kfold_splits(
             labeled, n_folds=n_folds, seed=seed, evaluate_seed=evaluate_seed
         )
         train_ids_set, val_ids_set = folds[fold]
         train_ids = [sid for sid in labeled["Sample"].tolist() if sid in train_ids_set]
         val_ids = [sid for sid in labeled["Sample"].tolist() if sid in val_ids_set]
+        evaluate_ids = [sid for sid in labeled["Sample"].tolist() if sid in evaluate_set]
+        split_source = "kfold"
         print(f"  train: {len(train_ids)}, val: {len(val_ids)}, evaluate holdout: {len(evaluate_ids)}")
         eval_strategy = "steps"
         use_epochs = False
@@ -266,6 +271,8 @@ def run(
         print("Full set mode using LabelInjectingFileDataset")
         train_ids = build_sample_ids("train")
         val_ids = build_sample_ids("validate")
+        evaluate_ids = build_sample_ids("evaluate")
+        split_source = "csv"
         eval_strategy = "steps"
         use_epochs = False
 
@@ -378,6 +385,43 @@ def run(
         callbacks=[EarlyStoppingCallback(early_stopping_patience=early_stopping_patience)],
     )
     trainer.train()
+
+    # Canonical §0.4 results JSON on the held-out evaluate split (mirrors kleb_ast/train_amr.py).
+    # Smoke mode (n_samples==10) has no separate evaluate split, so skip it there.
+    if evaluate_ids:
+        print(f"Running post-training evaluation on {len(evaluate_ids)} evaluate samples.")
+        evaluate_dataset = LabelInjectingFileDataset(evaluate_ids, embeddings_path, label_map, label_column)
+        preds = trainer.predict(evaluate_dataset)
+        logits = torch.as_tensor(preds.predictions).flatten()
+        labels = torch.as_tensor(preds.label_ids).flatten().long()
+        keep = labels != -100
+        if (~keep).any():
+            logits, labels = logits[keep], labels[keep]
+        y_prob = torch.sigmoid(logits.float()).cpu().numpy()
+        y_true = labels.cpu().numpy()
+        metrics_block = compute_full_metrics(y_true, y_prob)
+        payload = build_results_payload(
+            task="kleb_iso_source",
+            drug=label_column,
+            model_name_or_path=model_name_or_path,
+            checkpoint_dir=str(Path(output_dir).resolve()),
+            split_source=split_source,
+            metrics=metrics_block,
+            evaluate_seed=evaluate_seed if n_folds is not None else None,
+            n_folds=n_folds,
+            fold=fold if n_folds is not None else None,
+            n_evaluate=len(evaluate_ids),
+        )
+        results_path = Path(output_dir) / "results.json"
+        write_results_json(results_path, payload)
+        print(f"Wrote results JSON: {results_path}")
+        print(
+            f"  AUROC={metrics_block['auroc']:.4f} AUPRC={metrics_block['auprc']:.4f} "
+            f"sens={metrics_block['sensitivity']:.4f} spec={metrics_block['specificity']:.4f} "
+            f"bal_acc={metrics_block['balanced_accuracy']:.4f} n={metrics_block['n_samples']}"
+        )
+    else:
+        print("No evaluate samples available; skipping results JSON write.")
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
