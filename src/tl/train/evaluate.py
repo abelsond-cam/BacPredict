@@ -93,6 +93,31 @@ def resolve_evaluate_ids(
     return evaluate_ids, label_map, "csv"
 
 
+def resolve_checkpoint_dir(checkpoint: Path) -> Path:
+    """Return the dir holding the model files.
+
+    Trainer saves weights under ``checkpoint-<step>/`` (with ``save_total_limit=1``
+    only the best/last is kept), while the run dir itself holds only
+    ``results.json`` + ``runs/``. If ``checkpoint`` already has ``config.json`` use
+    it; otherwise pick the highest-step ``checkpoint-*`` subdir that does.
+    """
+    checkpoint = Path(checkpoint)
+    if (checkpoint / "config.json").exists():
+        return checkpoint
+
+    def _step(p: Path) -> int:
+        tail = p.name.rsplit("-", 1)[-1]
+        return int(tail) if tail.isdigit() else -1
+
+    subs = sorted(
+        (p for p in checkpoint.glob("checkpoint-*") if (p / "config.json").exists()),
+        key=_step,
+    )
+    if not subs:
+        raise FileNotFoundError(f"No config.json in {checkpoint} or any checkpoint-*/ subdir.")
+    return subs[-1]
+
+
 def run_inference(
     model: torch.nn.Module,
     loader: DataLoader,
@@ -185,8 +210,11 @@ def _evaluate(args: argparse.Namespace) -> None:
     if not evaluate_ids:
         raise RuntimeError(f"No evaluate samples for drug {args.drug!r}.")
 
+    model_dir = resolve_checkpoint_dir(checkpoint)
+    if model_dir != checkpoint:
+        print(f"  loading weights from {model_dir.name}/")
     model = AutoModelForSequenceClassification.from_pretrained(
-        str(checkpoint),
+        str(model_dir),
         num_labels=1,
         problem_type="binary_classification",
         return_dict=True,
@@ -215,7 +243,7 @@ def _evaluate(args: argparse.Namespace) -> None:
     payload = build_results_payload(
         task=args.task,
         drug=args.drug,
-        model_name_or_path=str(checkpoint),
+        model_name_or_path=str(model_dir),
         checkpoint_dir=str(checkpoint),
         split_source=split_source,
         metrics=metrics,

@@ -2,9 +2,10 @@
 
 import numpy as np
 import pandas as pd
+import pytest
 import torch
 
-from tl.train.evaluate import collate_fn, plot_roc_pr_grid, resolve_evaluate_ids
+from tl.train.evaluate import collate_fn, plot_roc_pr_grid, resolve_checkpoint_dir, resolve_evaluate_ids
 from tl.train.split_utils import generate_kfold_splits
 
 
@@ -47,6 +48,29 @@ def test_resolve_evaluate_ids_csv_mode(tmp_path):
     ids, _, source = resolve_evaluate_ids(str(csv), "ceftriaxone", n_folds=None, seed=1, evaluate_seed=1)
     assert source == "csv"
     assert set(ids) == {"B", "C"}
+
+
+def test_resolve_checkpoint_dir_prefers_config_then_subdir(tmp_path):
+    # Direct dir with config.json → returned as-is.
+    direct = tmp_path / "direct"
+    direct.mkdir()
+    (direct / "config.json").write_text("{}")
+    assert resolve_checkpoint_dir(direct) == direct
+
+    # Run dir with checkpoint-* subdirs → highest step with a config.json wins.
+    run = tmp_path / "run"
+    (run / "checkpoint-500").mkdir(parents=True)
+    (run / "checkpoint-500" / "config.json").write_text("{}")
+    (run / "checkpoint-5000").mkdir(parents=True)
+    (run / "checkpoint-5000" / "config.json").write_text("{}")
+    assert resolve_checkpoint_dir(run) == run / "checkpoint-5000"
+
+
+def test_resolve_checkpoint_dir_raises_when_none(tmp_path):
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    with pytest.raises(FileNotFoundError):
+        resolve_checkpoint_dir(empty)
 
 
 def test_collate_fn_pads_to_max_length():
