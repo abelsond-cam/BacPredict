@@ -41,7 +41,7 @@ from torch.utils.data import DataLoader
 from transformers import AutoModelForSequenceClassification
 
 from tl.train.datasets import LabelInjectingFileDataset
-from tl.train.metrics import build_results_payload, compute_full_metrics, write_results_json
+from tl.train.metrics import build_results_payload, compute_full_metrics, write_results_json, youden_threshold
 from tl.train.split_utils import generate_kfold_splits
 
 # The file-based dataset + DataLoader workers open many .pt files; the default
@@ -63,17 +63,20 @@ def collate_fn(samples: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor
     }
 
 
-def resolve_evaluate_ids(
+def resolve_holdouts(
     ast_sheet_path: str,
     drug: str,
     n_folds: int | None,
+    fold: int,
     seed: int,
     evaluate_seed: int,
-) -> tuple[list[str], dict[str, int], str]:
-    """Reconstruct the evaluate-holdout sample IDs + label map for a drug.
+) -> tuple[list[str], list[str], dict[str, int], str]:
+    """Reconstruct (evaluate_ids, validation_ids, label_map, source) for a drug.
 
-    Mirrors ``train_amr.py``: k-fold mode derives the fixed holdout from
-    ``evaluate_seed``; otherwise reads ``train_val_eval == "evaluate"`` from the CSV.
+    Mirrors ``train_amr.py``: k-fold mode derives the fixed evaluate holdout from
+    ``evaluate_seed`` and the validation set from ``folds[fold]`` (with ``seed``);
+    CSV mode reads ``train_val_eval``. Validation is needed to pick an operating
+    threshold without peeking at the evaluate set.
     """
     df = pd.read_csv(ast_sheet_path, low_memory=False)
     if "Sample" not in df.columns:
@@ -87,16 +90,37 @@ def resolve_evaluate_ids(
     labeled = df[df[drug].notna()].copy()
     labeled["Sample"] = labeled["Sample"].astype(str)
     label_map = {row["Sample"]: int(row[drug]) for _, row in labeled.iterrows()}
+    order = labeled["Sample"].tolist()
 
     if n_folds is not None:
-        evaluate_set, _ = generate_kfold_splits(labeled, n_folds=n_folds, seed=seed, evaluate_seed=evaluate_seed)
-        evaluate_ids = [sid for sid in labeled["Sample"].tolist() if sid in evaluate_set]
-        return evaluate_ids, label_map, "kfold"
+        evaluate_set, folds = generate_kfold_splits(labeled, n_folds=n_folds, seed=seed, evaluate_seed=evaluate_seed)
+        _, val_set = folds[fold]
+        evaluate_ids = [sid for sid in order if sid in evaluate_set]
+        validation_ids = [sid for sid in order if sid in val_set]
+        return evaluate_ids, validation_ids, label_map, "kfold"
 
     if "train_val_eval" not in labeled.columns:
         raise ValueError("CSV has no 'train_val_eval' column; pass --n-folds to derive the holdout.")
     evaluate_ids = labeled[labeled["train_val_eval"] == "evaluate"]["Sample"].tolist()
-    return evaluate_ids, label_map, "csv"
+    validation_ids = labeled[labeled["train_val_eval"] == "validate"]["Sample"].tolist()
+    return evaluate_ids, validation_ids, label_map, "csv"
+
+
+def resolve_evaluate_ids(
+    ast_sheet_path: str,
+    drug: str,
+    n_folds: int | None,
+    seed: int,
+    evaluate_seed: int,
+) -> tuple[list[str], dict[str, int], str]:
+    """Back-compat shim: evaluate IDs + label map + source (no validation set).
+
+    Evaluate IDs are independent of ``fold``, so fold 0 is used internally.
+    """
+    evaluate_ids, _validation_ids, label_map, source = resolve_holdouts(
+        ast_sheet_path, drug, n_folds, fold=0, seed=seed, evaluate_seed=evaluate_seed
+    )
+    return evaluate_ids, label_map, source
 
 
 def resolve_checkpoint_dir(checkpoint: Path) -> Path:
@@ -170,15 +194,24 @@ def run_inference(
     )
 
 
-def plot_roc_pr_grid(entries: list[tuple[str, np.ndarray, np.ndarray]], out_path: Path | str) -> None:
+def plot_roc_pr_grid(
+    entries: list[tuple],
+    out_path: Path | str,
+    prevalence_label: str = "prevalence",
+) -> None:
     """Render an N-row x 2-col grid: ROC (left) and PR (right) per drug.
 
     Parameters
     ----------
     entries
-        List of ``(label, y_true, y_prob)`` tuples — one row per entry.
+        List of ``(label, y_true, y_prob)`` or ``(label, y_true, y_prob, threshold)``
+        tuples — one row per entry. When a finite ``threshold`` is given, the
+        Youden operating point is marked on both panels.
     out_path
         Destination PNG.
+    prevalence_label
+        Reader-facing name for the positive-class base rate on the PR panel
+        (e.g. ``"resistance rate"`` for AST, ``"blood source ratio"`` for isolation source).
     """
     import matplotlib
 
@@ -193,12 +226,39 @@ def plot_roc_pr_grid(entries: list[tuple[str, np.ndarray, np.ndarray]], out_path
 
     n = len(entries)
     fig, axes = plt.subplots(n, 2, figsize=(11, 4.2 * n), squeeze=False)
-    for i, (label, y_true, y_prob) in enumerate(entries):
+    for i, entry in enumerate(entries):
+        label, y_true, y_prob, *rest = entry
+        threshold = rest[0] if rest else None
+        y_true = np.asarray(y_true).astype(int)
+        y_prob = np.asarray(y_prob).astype(float)
         ax_roc, ax_pr = axes[i]
+
         fpr, tpr, _ = roc_curve(y_true, y_prob)
         auroc = roc_auc_score(y_true, y_prob)
         ax_roc.plot(fpr, tpr, lw=2, color="C0", label=f"AUROC = {auroc:.3f}")
         ax_roc.plot([0, 1], [0, 1], ls="--", lw=1, color="grey")
+
+        prec, rec, _ = precision_recall_curve(y_true, y_prob)
+        auprc = average_precision_score(y_true, y_prob)
+        prevalence = float(np.mean(y_true))
+        ax_pr.plot(rec, prec, lw=2, color="C1", label=f"AUPRC = {auprc:.3f}")
+        ax_pr.axhline(prevalence, ls="--", lw=1, color="grey", label=f"{prevalence_label} = {prevalence:.3f}")
+
+        if threshold is not None and np.isfinite(threshold):
+            y_pred = (y_prob >= threshold).astype(int)
+            tp = int(((y_pred == 1) & (y_true == 1)).sum())
+            fp = int(((y_pred == 1) & (y_true == 0)).sum())
+            fn = int(((y_pred == 0) & (y_true == 1)).sum())
+            tn = int(((y_pred == 0) & (y_true == 0)).sum())
+            sens = tp / (tp + fn) if (tp + fn) else 0.0
+            spec = tn / (tn + fp) if (tn + fp) else 0.0
+            prec_pt = tp / (tp + fp) if (tp + fp) else 0.0
+            ax_roc.plot(
+                1 - spec, sens, "o", color="C3", ms=7,
+                label=f"J* @ {threshold:.2f} (sens {sens:.2f}, spec {spec:.2f})",
+            )
+            ax_pr.plot(sens, prec_pt, "o", color="C3", ms=7, label=f"J* @ {threshold:.2f}")
+
         ax_roc.set_xlim(0, 1)
         ax_roc.set_ylim(0, 1.02)
         ax_roc.set_xlabel("False positive rate")
@@ -206,11 +266,6 @@ def plot_roc_pr_grid(entries: list[tuple[str, np.ndarray, np.ndarray]], out_path
         ax_roc.set_title(f"{label} — ROC")
         ax_roc.legend(loc="lower right")
 
-        prec, rec, _ = precision_recall_curve(y_true, y_prob)
-        auprc = average_precision_score(y_true, y_prob)
-        prevalence = float(np.mean(y_true))
-        ax_pr.plot(rec, prec, lw=2, color="C1", label=f"AUPRC = {auprc:.3f}")
-        ax_pr.axhline(prevalence, ls="--", lw=1, color="grey", label=f"prevalence = {prevalence:.3f}")
         ax_pr.set_xlim(0, 1)
         ax_pr.set_ylim(0, 1.02)
         ax_pr.set_xlabel("Recall")
@@ -225,15 +280,29 @@ def plot_roc_pr_grid(entries: list[tuple[str, np.ndarray, np.ndarray]], out_path
     plt.close(fig)
 
 
+def _build_loader(ids: list[str], args: argparse.Namespace, label_map: dict[str, int]) -> DataLoader:
+    dataset = LabelInjectingFileDataset(ids, Path(args.embeddings_dir), label_map, args.drug)
+    return DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        collate_fn=collate_fn,
+    )
+
+
 def _evaluate(args: argparse.Namespace) -> None:
     checkpoint = Path(args.checkpoint)
     out_dir = Path(args.out_dir) if args.out_dir else checkpoint
     device = "cpu" if (args.no_cuda or not torch.cuda.is_available()) else "cuda"
 
-    evaluate_ids, label_map, split_source = resolve_evaluate_ids(
-        args.ast_sheet_path, args.drug, args.n_folds, args.seed, args.evaluate_seed
+    evaluate_ids, validation_ids, label_map, split_source = resolve_holdouts(
+        args.ast_sheet_path, args.drug, args.n_folds, args.fold, args.seed, args.evaluate_seed
     )
-    print(f"Drug {args.drug}: {len(evaluate_ids)} evaluate samples ({split_source} split), device={device}")
+    print(
+        f"Drug {args.drug}: {len(evaluate_ids)} evaluate / {len(validation_ids)} validation "
+        f"samples ({split_source} split), device={device}"
+    )
     if not evaluate_ids:
         raise RuntimeError(f"No evaluate samples for drug {args.drug!r}.")
 
@@ -252,20 +321,38 @@ def _evaluate(args: argparse.Namespace) -> None:
         model = model.float()
     model = model.to(device)
 
-    dataset = LabelInjectingFileDataset(evaluate_ids, Path(args.embeddings_dir), label_map, args.drug)
-    loader = DataLoader(
-        dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
-        collate_fn=collate_fn,
-    )
-    y_true, y_prob = run_inference(model, loader, device)
+    y_true, y_prob = run_inference(model, _build_loader(evaluate_ids, args, label_map), device)
     metrics = compute_full_metrics(y_true, y_prob)
+
+    # Operating point: pick Youden's J threshold on validation, report it on evaluate.
+    operating_point = None
+    opt_thr = None
+    if validation_ids:
+        yv_true, yv_prob = run_inference(model, _build_loader(validation_ids, args, label_map), device)
+        opt_thr = youden_threshold(yv_true, yv_prob)
+        op_metrics = compute_full_metrics(y_true, y_prob, threshold=opt_thr)
+        operating_point = {
+            "objective": "youden_j",
+            "selected_on": "validation",
+            "threshold": opt_thr,
+            "sensitivity": op_metrics["sensitivity"],
+            "specificity": op_metrics["specificity"],
+            "balanced_accuracy": op_metrics["balanced_accuracy"],
+            "f1": op_metrics["f1"],
+            "confusion_matrix": op_metrics["confusion_matrix"],
+        }
+    else:
+        print("  no validation samples — skipping operating-point tuning.")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     scores_path = out_dir / "eval_scores.npz"
-    np.savez(scores_path, y_true=y_true, y_prob=y_prob, drug=np.array(args.drug))
+    np.savez(
+        scores_path,
+        y_true=y_true,
+        y_prob=y_prob,
+        drug=np.array(args.drug),
+        operating_threshold=np.array(opt_thr if opt_thr is not None else np.nan),
+    )
 
     payload = build_results_payload(
         task=args.task,
@@ -278,20 +365,30 @@ def _evaluate(args: argparse.Namespace) -> None:
         n_folds=args.n_folds,
         fold=args.fold if args.n_folds is not None else None,
         n_evaluate=len(evaluate_ids),
+        operating_point=operating_point,
     )
     write_results_json(out_dir / "eval_results.json", payload)
-    plot_roc_pr_grid([(args.drug, y_true, y_prob)], out_dir / f"eval_roc_pr_{args.drug}.png")
+    plot_roc_pr_grid(
+        [(args.drug, y_true, y_prob, opt_thr)],
+        out_dir / f"eval_roc_pr_{args.drug}.png",
+        prevalence_label=args.prevalence_label,
+    )
 
     print(
-        f"  AUROC={metrics['auroc']:.4f} AUPRC={metrics['auprc']:.4f} "
+        f"  @0.5: AUROC={metrics['auroc']:.4f} AUPRC={metrics['auprc']:.4f} "
         f"sens={metrics['sensitivity']:.4f} spec={metrics['specificity']:.4f} "
         f"bal_acc={metrics['balanced_accuracy']:.4f} n={metrics['n_samples']}"
     )
+    if operating_point is not None:
+        print(
+            f"  @J*={opt_thr:.3f}: sens={operating_point['sensitivity']:.4f} "
+            f"spec={operating_point['specificity']:.4f} bal_acc={operating_point['balanced_accuracy']:.4f}"
+        )
     print(f"  wrote {out_dir/'eval_results.json'}, {scores_path}, {out_dir/('eval_roc_pr_'+args.drug+'.png')}")
 
 
 def _combine(args: argparse.Namespace) -> None:
-    entries: list[tuple[str, np.ndarray, np.ndarray]] = []
+    entries: list[tuple] = []
     for item in args.combine:
         label, _, path = item.partition("=")
         if not path:  # bare path form: derive label from the npz's stored drug
@@ -300,8 +397,9 @@ def _combine(args: argparse.Namespace) -> None:
             label = str(data["drug"])
         else:
             data = np.load(path, allow_pickle=False)
-        entries.append((label, data["y_true"], data["y_prob"]))
-    plot_roc_pr_grid(entries, args.combine_out)
+        thr = float(data["operating_threshold"]) if "operating_threshold" in data.files else None
+        entries.append((label, data["y_true"], data["y_prob"], thr))
+    plot_roc_pr_grid(entries, args.combine_out, prevalence_label=args.prevalence_label)
     print(f"Wrote {len(entries)}-drug ROC|PR grid: {args.combine_out}")
 
 
@@ -321,6 +419,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--num-workers", type=int, default=4)
     p.add_argument("--no-cuda", action="store_true", help="Force CPU even if a GPU is available.")
     p.add_argument("--out-dir", type=str, default=None, help="Output dir (default: the checkpoint dir).")
+    p.add_argument(
+        "--prevalence-label",
+        type=str,
+        default="prevalence",
+        help='Reader-facing PR base-rate label, e.g. "resistance rate" (AST) or "blood source ratio".',
+    )
     p.add_argument(
         "--combine",
         nargs="+",

@@ -15,6 +15,7 @@ from tl.train.metrics import (
     compute_full_metrics,
     compute_metrics_binary_genome_pred,
     write_results_json,
+    youden_threshold,
 )
 
 
@@ -133,3 +134,45 @@ def test_write_results_json_rejects_missing_metrics_key(tmp_path: Path):
     )
     with pytest.raises(ValueError, match="missing required metric keys"):
         write_results_json(tmp_path / "bad.json", payload)
+
+
+def test_youden_threshold_between_clusters():
+    # Negatives near 0.2, positives near 0.8 → optimal cut should land between them.
+    y_true, y_prob = _separable_arrays()
+    thr = youden_threshold(y_true, y_prob)
+    assert 0.3 < thr < 0.75
+
+
+def test_youden_threshold_single_class_returns_half():
+    assert youden_threshold(np.zeros(8, dtype=int), np.full(8, 0.1)) == 0.5
+    assert youden_threshold([], []) == 0.5
+
+
+def test_operating_point_roundtrips_and_validates(tmp_path: Path):
+    y_true, y_prob = _separable_arrays()
+    metrics = compute_full_metrics(y_true, y_prob)
+    op = compute_full_metrics(y_true, y_prob, threshold=0.4)
+    operating_point = {
+        "objective": "youden_j",
+        "selected_on": "validation",
+        "threshold": 0.4,
+        "sensitivity": op["sensitivity"],
+        "specificity": op["specificity"],
+        "balanced_accuracy": op["balanced_accuracy"],
+        "f1": op["f1"],
+        "confusion_matrix": op["confusion_matrix"],
+    }
+    payload = build_results_payload(
+        task="kleb_ast",
+        drug="ceftriaxone",
+        model_name_or_path="m",
+        checkpoint_dir="c",
+        split_source="kfold",
+        metrics=metrics,
+        operating_point=operating_point,
+    )
+    out = tmp_path / "results.json"
+    write_results_json(out, payload)  # operating_point is optional → still validates
+    loaded = json.loads(out.read_text())
+    assert loaded["operating_point"]["objective"] == "youden_j"
+    assert loaded["operating_point"]["threshold"] == 0.4

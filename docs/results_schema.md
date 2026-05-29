@@ -1,6 +1,6 @@
-# BacPredict results JSON schema (v1)
+# BacPredict results JSON schema (v1.1)
 
-Canonical post-training results file written by [src/kleb_ast/metrics.py](../src/kleb_ast/metrics.py) (`write_results_json`). One file per training run, written next to the checkpoint as `results.json`. Tasks other than `kleb_ast` may adopt this schema as-is.
+Canonical results file written by [src/tl/train/metrics.py](../src/tl/train/metrics.py) (`write_results_json`). Written next to a checkpoint as `results.json` (training-time, threshold 0.5 only) or `eval_results.json` (the shared evaluator [src/tl/train/evaluate.py](../src/tl/train/evaluate.py), which also adds the optional `operating_point` block). Shared by every AST/phenotype task (`kleb_ast`, `tb_ast`, `kleb_iso_source`).
 
 ## Example
 
@@ -74,6 +74,20 @@ All required, all computed on the evaluate holdout (see §0.4 of root [CLAUDE.md
 | `threshold` | float | Decision threshold (default 0.5). |
 | `calibration.prob_true`, `prob_pred` | float[] | `sklearn.calibration.calibration_curve` outputs. Empty arrays if calibration failed (e.g. all probs in one bin). |
 | `calibration.n_bins` | int | Bin count (default 10). |
+
+### `operating_point` block (optional, schema v1.1)
+
+Written by the **evaluator** (`evaluate.py`), not by training. Holds metrics at a tuned threshold instead of the fixed 0.5. The threshold is chosen by **Youden's J** (max sensitivity+specificity) on the **validation** split and reported on the **evaluate** split, so the numbers stay unbiased. Absent in training-time `results.json` (which is 0.5-only) — readers must treat it as optional.
+
+| Field | Type | Notes |
+|---|---|---|
+| `objective` | string | `"youden_j"`. |
+| `selected_on` | string | `"validation"` — where the threshold was chosen. |
+| `threshold` | float | The tuned cut applied to the evaluate set. |
+| `sensitivity`, `specificity`, `balanced_accuracy`, `f1` | float | Evaluate-set metrics at `threshold`. |
+| `confusion_matrix` | int[2][2] | `[[tn, fp], [fn, tp]]` at `threshold`. |
+
+`auroc`/`auprc` are threshold-independent and live only in `metrics` (they are unchanged by tuning).
 
 ## Forward compatibility
 

@@ -5,7 +5,13 @@ import pandas as pd
 import pytest
 import torch
 
-from tl.train.evaluate import collate_fn, plot_roc_pr_grid, resolve_checkpoint_dir, resolve_evaluate_ids
+from tl.train.evaluate import (
+    collate_fn,
+    plot_roc_pr_grid,
+    resolve_checkpoint_dir,
+    resolve_evaluate_ids,
+    resolve_holdouts,
+)
 from tl.train.split_utils import generate_kfold_splits
 
 
@@ -21,6 +27,47 @@ def test_plot_roc_pr_grid_writes_file(tmp_path):
     out = tmp_path / "sub" / "grid.png"
     plot_roc_pr_grid(entries, out)
     assert out.exists() and out.stat().st_size > 0
+
+
+def test_plot_roc_pr_grid_with_threshold_and_label(tmp_path):
+    # 4-tuples (with operating threshold) + a custom prevalence label must render.
+    entries = [("ceftriaxone", *_scores(seed=1), 0.4), ("meropenem", *_scores(seed=2), 0.35)]
+    out = tmp_path / "grid_thr.png"
+    plot_roc_pr_grid(entries, out, prevalence_label="resistance rate")
+    assert out.exists() and out.stat().st_size > 0
+
+
+def test_resolve_holdouts_kfold_returns_disjoint_eval_and_val(tmp_path):
+    df = pd.DataFrame({"Sample": [f"S{i:03d}" for i in range(60)], "ceftriaxone": [i % 2 for i in range(60)]})
+    csv = tmp_path / "binary_ast_with_split.csv"
+    df.to_csv(csv, index=False)
+
+    ev, val, label_map, source = resolve_holdouts(str(csv), "ceftriaxone", n_folds=5, fold=0, seed=1, evaluate_seed=1)
+    eval_set, folds = generate_kfold_splits(
+        df.assign(Sample=df["Sample"].astype(str)), n_folds=5, seed=1, evaluate_seed=1
+    )
+    _, expected_val = folds[0]
+
+    assert source == "kfold"
+    assert set(ev) == eval_set
+    assert set(val) == expected_val
+    assert set(ev).isdisjoint(set(val))
+    assert len(label_map) == 60
+
+
+def test_resolve_holdouts_csv_mode_splits_eval_and_val(tmp_path):
+    df = pd.DataFrame({
+        "Sample": ["A", "B", "C", "D"],
+        "train_val_eval": ["train", "evaluate", "validate", "evaluate"],
+        "ceftriaxone": [0, 1, 0, 1],
+    })
+    csv = tmp_path / "sheet.csv"
+    df.to_csv(csv, index=False)
+
+    ev, val, _, source = resolve_holdouts(str(csv), "ceftriaxone", n_folds=None, fold=0, seed=1, evaluate_seed=1)
+    assert source == "csv"
+    assert set(ev) == {"B", "D"}
+    assert set(val) == {"C"}
 
 
 def test_resolve_evaluate_ids_kfold_matches_split_utils(tmp_path):

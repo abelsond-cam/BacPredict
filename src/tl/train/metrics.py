@@ -25,10 +25,11 @@ from sklearn.metrics import (
     confusion_matrix,
     f1_score,
     roc_auc_score,
+    roc_curve,
 )
 from transformers import EvalPrediction
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 REQUIRED_TOP_LEVEL_KEYS = {
     "schema_version", "task", "drug", "model", "split", "metrics", "timestamp", "host",
 }
@@ -153,6 +154,24 @@ def compute_metrics_binary_genome_pred(
     }
 
 
+def youden_threshold(y_true: np.ndarray | list, y_prob: np.ndarray | list) -> float:
+    """Probability threshold maximizing Youden's J statistic (``tpr - fpr``).
+
+    Derived from the ROC curve — the operating point with the best balance of
+    sensitivity and specificity. Returns 0.5 when no informative point exists
+    (empty input or a single class present).
+    """
+    y_true = np.asarray(y_true).astype(int).ravel()
+    y_prob = np.asarray(y_prob).astype(float).ravel()
+    if y_true.size == 0 or np.unique(y_true).size < 2:
+        return 0.5
+    fpr, tpr, thresholds = roc_curve(y_true, y_prob)
+    best = int(np.argmax(tpr - fpr))
+    thr = float(thresholds[best])
+    # roc_curve prepends an +inf threshold (the "classify nothing positive" point).
+    return thr if np.isfinite(thr) else 1.0
+
+
 def _git_sha() -> str | None:
     try:
         return (
@@ -176,9 +195,14 @@ def build_results_payload(
     n_folds: int | None = None,
     fold: int | None = None,
     n_evaluate: int | None = None,
+    operating_point: dict[str, Any] | None = None,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Assemble a v1-schema results payload from training-time inputs."""
+    """Assemble a results payload.
+
+    ``metrics`` is the §0.4 block at the default 0.5 threshold. ``operating_point``
+    (optional, schema v1.1) holds tuned-threshold metrics — see ``docs/results_schema.md``.
+    """
     payload: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "task": task,
@@ -199,6 +223,8 @@ def build_results_payload(
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "host": socket.gethostname(),
     }
+    if operating_point is not None:
+        payload["operating_point"] = operating_point
     if extra:
         payload["extra"] = extra
     return payload
