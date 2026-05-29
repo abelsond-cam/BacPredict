@@ -1,10 +1,10 @@
 # Task 2 — AST in *Klebsiella pneumoniae*
 
-This is one of six task folders under `src/`. See the root [CLAUDE.md](../../CLAUDE.md) for §0 global conventions (base model, three-stage protocol, paths, reporting requirements), and [BacPredict_Training_Plan.md](../../BacPredict_Training_Plan.md) §2 for the long-form plan that this file condenses.
+This is one of the task folders under `src/`. See the root [CLAUDE.md](../../CLAUDE.md) for §0 global conventions (base model, three-stage protocol, paths, reporting requirements). Cross-task status lives in [ToDo.md](../../ToDo.md).
 
 ## Aim
 
-Predict susceptibility for clinically relevant antibiotics in *Klebsiella pneumoniae*, where we expect Bacformer to do best — resistance is heavily HGT-driven (carbapenemases, ESBLs, *mcr*) on plasmids and ICEs. This is the natural home for our AUROC 0.99 result, **and the strong test of the central HGT-vs-vertical hypothesis** (see Task 1 / training plan §1): unlike TB, Kp has both classes of mechanism well-represented in the same dataset, so a clean stratified comparison is possible.
+Predict susceptibility for clinically relevant antibiotics in *Klebsiella pneumoniae*, where we expect Bacformer to do best — resistance is heavily HGT-driven (carbapenemases, ESBLs, *mcr*) on plasmids and ICEs. This is the natural home for our AUROC 0.99 result, **and the strong test of the central HGT-vs-vertical hypothesis** (see Task 1 [tb_ast/CLAUDE.md](../tb_ast/CLAUDE.md)): unlike TB, Kp has both classes of mechanism well-represented in the same dataset, so a clean stratified comparison is possible.
 
 ## Status
 
@@ -81,3 +81,44 @@ Imports from [`../tl/train/`](../tl/train/) (split_utils, datasets) and [`../tl/
 ## Running notes
 
 <!-- Agent appends here as work proceeds. -->
+
+### 2026-05-29 — Sub-step 2 (CG-weights retrain) done for first 3 drugs
+
+**Infra (Phase 0).** Added `metrics.py`: `compute_full_metrics` (§0.4 block — AUROC,
+AUPRC, sens, spec, balanced acc, F1, confusion matrix, calibration), HF-Trainer
+wrapper, and `write_results_json` (schema in `docs/results_schema.md`).
+`train_amr.py` auto-writes `results.json` (evaluate-holdout metrics) to the
+checkpoint dir after `trainer.train()`. Defaults flipped to the refreshed CG
+weights `macwiatrak/bacformer-large-masked-complete-genomes`. SLURM: `sbatch
+--array=0` = single fold 0 / seed 1 Stage C; `--export=ALL,DRUG=<drug>` drives
+per-drug fan-out (keep `--array=0-14` for the publication 5×3 sweep).
+
+**Stage A/B.** Smoke + overfit passed (n=10, loss→0, AUROC→1). The all-class-0
+threshold collapse seen on n=10 is a tiny-set/early-checkpoint artifact — absent
+at full scale (confirmed below).
+
+**Stage C benchmarks** (CG weights, kfold fold 0 / seed 1, fixed evaluate holdout):
+
+| Drug | n_eval | AUROC | AUPRC | Sens | Spec | Bal acc |
+|---|---|---|---|---|---|---|
+| ceftriaxone | 641 | 0.983 | 0.993 | 0.983 | 0.889 | 0.936 |
+| gentamicin | 943 | 0.978 | 0.970 | 0.955 | 0.973 | 0.964 |
+| meropenem | 880 | 0.969 | 0.945 | 0.865 | 0.964 | 0.915 |
+
+Checkpoints + `results.json` under
+`processed/ast_training/models/finetune/klebsiella_pneumoniae_<drug>_lr_0.00015_finetuned_fold00_seed1/`.
+meropenem sens (0.865) is the softest — 43/318 R below the 0.5 threshold despite
+strong ranking; threshold tuning could recover these.
+
+**Data layout.** All AST CSVs co-located under `processed/ast_training/`
+(`binary_ast.csv`, `binary_ast_with_split.csv`, `regression_log_mic.csv`,
+`klebsiella_ebi_metadata.csv`, `ast_samples_not_in_dataset.csv`). Producer/consumer
+path defaults updated accordingly.
+
+**Deferred (by user).** Sub-step 1 (evaluate legacy MAG checkpoints).
+AMRFinderPlus/Kleborate HGT-vs-chromosomal mechanism stratification.
+
+**Next.** (1) Fan out to the full panel (~top 23 drugs by sampling — see binary_ast
+counts; exclude intrinsic ampicillin, verify `pentizidone`, consider colistin for
+the chromosomal arm). (2) Formal test-set evaluation of the 3 done drugs with ROC +
+PR curves.
