@@ -34,6 +34,6 @@ uv run python src/tb_ast/train_amr.py \
     --drug rifampin \
     --n-samples 10 \
     --num-workers 0 \
-    --output-dir /home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/tb/checkpoints/smoke_rifampin_$SLURM_JOB_ID
+    --output-dir /home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/checkpoints/smoke_rifampin_$SLURM_JOB_ID
 
 echo "Smoke test finished."

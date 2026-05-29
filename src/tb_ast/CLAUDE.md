@@ -1,6 +1,6 @@
 # Task 1 — AST in *M. tuberculosis*
 
-This is one of six task folders under `src/`. See the root [CLAUDE.md](../../CLAUDE.md) for §0 global conventions (base model, three-stage protocol, paths, reporting requirements), and [BacPredict_Training_Plan.md](../../BacPredict_Training_Plan.md) §1 for the full long-form plan that this file condenses.
+This is one of the task folders under `src/`. See the root [CLAUDE.md](../../CLAUDE.md) for §0 global conventions (base model, three-stage protocol, paths, reporting requirements). Cross-task status lives in [ToDo.md](../../ToDo.md).
 
 ## Aim
 
@@ -10,17 +10,25 @@ Predict antibiotic susceptibility in TB from genome embeddings, starting with ES
 
 - AST labels downloaded from EBI for the full TB set.
 - Assemblies + GFFs already in `project_k/david/raw/tb/`.
-- Protein lists extracted into `project_k/david/processed/tb/`.
-- Per-antibiotic resistance stats: `project_k/david/processed/tb/antibiotic_testing_stats.csv`.
+- Protein lists extracted into `project_k/david/processed/train_tb_ast/`.
+- Per-antibiotic resistance stats: `project_k/david/processed/train_tb_ast/antibiotic_testing_stats.csv`.
 - **Not yet done:** ESM-C embeddings; Bacformer fine-tuning; refreshed-model run.
 
 ## The "goldilocks zone" — which drugs to train on
 
-- **Tier 1 — saturated by catalogue** (positive-control sanity checks): RIF, INH, AMK/KAN/CAP, STR.
-- **Tier 2 — goldilocks (target for headline runs):** **PZA (flagship)**, EMB, MXF, LFX, ethionamide.
-- **Tier 3 — data-limited, parked:** bedaquiline, linezolid, clofazimine, delamanid/pretomanid (each < 1,000 resistant n).
+- **Tier 1 — saturated by catalogue** (positive-control sanity checks): RIF, INH, AMK/KAN/CAP, STR. Catalogue already strong, so little ML headroom — RIF is the canonical first test (catalogue ~93–97% sens / 98.5–99% spec, AUROC ≥ 0.97; INH ~0.96). Resistance is chromosomal (*rpoB*/*katG*), the *harder* case for an HGT-leaning transformer.
+- **Tier 2 — goldilocks (target for headline runs):** the middle tier where representation learning should beat lookup tables.
+- **Tier 3 — data-limited, parked:** bedaquiline, linezolid, clofazimine, delamanid/pretomanid (each < ~1,000 resistant n; below the threshold ML needs).
 
-See training plan §1 for the underlying catalogue / ML AUROC numbers and resistance n.
+Tier 2 detail (catalogue/ML numbers from the earlier TB deep-research review — kept here as the standing reference):
+
+| Drug | Catalogue sens (/spec) | ML AUROC reported | n resistant (~) | Why it's a good target |
+| :-- | :-- | :-- | :-- | :-- |
+| **PZA (flagship)** | 26–66% | ~0.90–0.93 | ~2,500 | ~600 distinct *pncA* LOF alleles, mostly singletons — exactly where representation learning beats lookup |
+| EMB | 80–94% / 91–94% | 0.88–0.92 | ~3,000 | *embB* M306V/I MIC-shifters straddling the ECOFF; structure adds ~3–5 AUROC pts |
+| MXF | ~70% / ~92% | ~0.90 | ~3,200 | *gyrA* 90/91/94 with very different MIC effects vs the breakpoint |
+| LFX | ~73% / ~94% | ~0.91 | ~3,000 | same story as MXF |
+| Ethionamide | moderate | – | – | heterogeneous *ethA*/*ethR*/*inhA* — possible ML target |
 
 ## Central hypothesis being tested here
 
@@ -83,7 +91,7 @@ Bacformer model ID refreshed (root §0.1):
   now `macwiatrak/bacformer-large-masked-complete-genomes`.
 - New [`train_amr.py`](train_amr.py) defaults to the same.
 
-State on HPC at `project_k/david/processed/tb/`:
+State on HPC at `project_k/david/processed/train_tb_ast/`:
 - `binary_ast.csv` (40,021 rows × 20 drug columns) and `ebi_parsed_ast_metadata.csv`
   are already in place — EBI parsing is done.
 - `tb_esm_embeddings/`: **35,156 / 38,248 protein-input rows have embeddings (~92%)**.
@@ -95,8 +103,8 @@ State on HPC at `project_k/david/processed/tb/`:
 - 33,687 unique samples retained after dropping 6,334 missing-embedding rows.
 - Splits 70/10/20: train 23,611 / validate 3,390 / evaluate 6,686.
 - Rifampin labels (per split, non-NaN): train 22,970 / validate 3,291 / evaluate 6,482.
-- Output CSV: `processed/tb/binary_ast_with_split.csv` (2.5 MB).
-- Sidecar: `processed/tb/ast_training/ast_samples_not_in_dataset.csv` lists the 6,334 dropped IDs.
+- Output CSV: `processed/train_tb_ast/binary_ast_with_split.csv` (2.5 MB).
+- Sidecar: `processed/train_tb_ast/ast_training/ast_samples_not_in_dataset.csv` lists the 6,334 dropped IDs.
 
 Stage A smoke test (drug=rifampin, n_samples=10):
 - First attempt on HPC login (CPU) was killed at the start of training (login-node
@@ -110,7 +118,7 @@ Stage A smoke test (drug=rifampin, n_samples=10):
     memorisation expected; this confirms loss + backward + eval all wired up).
   - Checkpoints save and auto-rotate (`save_total_limit=1`).
   - `load_best_model_at_end` succeeded at the end of training.
-  - Best checkpoint: `processed/tb/checkpoints/smoke_rifampin_29712625/checkpoint-*`.
+  - Best checkpoint: `processed/train_tb_ast/checkpoints/smoke_rifampin_29712625/checkpoint-*`.
 
 Note for Stage B/C: with `save_total_limit=1` the early "best" checkpoint
 gets deleted as later ones save, then `load_best_model_at_end` tries to
@@ -180,6 +188,23 @@ Stage C single-split run:
   array sweep stays in `train_on_slurm_amr_tb.sh` (publication only).
 - **Submitted: SLURM job 29776879** (ampere, FLOTO-SL2-GPU, 36 h),
   drug=rifampin, output
-  `processed/tb/checkpoints/mycobacterium_tuberculosis_rifampin_stage_c_29776879/`.
+  `processed/train_tb_ast/checkpoints/mycobacterium_tuberculosis_rifampin_stage_c_29776879/`.
   Queued (PENDING/Priority) at submit; `results.json` expected in the checkpoint
   dir on completion.
+
+### 2026-05-29 — RDS dir rename + fan-out to the drug panel
+
+- Renamed the TB data dir `processed/tb` → **`processed/train_tb_ast`** to match
+  the `train_kleb_ast` / `train_on_sr_mags` convention. A compat symlink
+  `processed/tb → train_tb_ast` was left in place so the in-flight rifampin job
+  29776879 (which had hard-coded `processed/tb` paths) keeps resolving; it can be
+  removed once that job finishes. All scripts now point at `train_tb_ast` directly.
+- Rifampin Stage C at ~epoch 6: validation AUROC plateauing ~0.88–0.89 (balanced
+  acc ~0.81). Consistent with the conservative-test expectation for a chromosomal
+  point-mutation drug.
+- **Fan-out:** launched single-split Stage C for the 9 next-highest-resistance
+  drugs (rifampin already running). Selection = top-10 by resistant-label count,
+  all > 1,000 R: isoniazid (12,838 R), ethambutol (5,266), rifabutin (4,384),
+  levofloxacin (2,614), streptomycin (2,537), moxifloxacin (2,475),
+  pyrazinamide (2,415), ethionamide (2,210), kanamycin (2,179). Launcher
+  parametrized by drug (`$1`); see job IDs below.

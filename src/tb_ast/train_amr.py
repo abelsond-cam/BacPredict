@@ -33,10 +33,10 @@ from tl.train.metrics import (
 from tl.train.split_utils import generate_kfold_splits
 
 EMBEDDINGS_DIR_DEFAULT = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/tb/tb_esm_embeddings"
+    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/tb_esm_embeddings"
 )
 AST_SHEET_PATH_DEFAULT = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/tb/binary_ast_with_split.csv"
+    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/binary_ast_with_split.csv"
 )
 
 

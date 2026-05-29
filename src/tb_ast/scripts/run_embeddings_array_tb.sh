@@ -44,9 +44,9 @@ export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 cd /home/dca36/workspace/BacPredict
 
 RDS_ROOT=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david
-TB_INPUT_DIR="${RDS_ROOT}/processed/tb/tb_protein_sequences"
-TB_ESM_DIR="${RDS_ROOT}/processed/tb/tb_esm_embeddings"
-# TB_BACFORMER_DIR="${RDS_ROOT}/processed/tb/tb_bacformer_embeddings"  # uncomment + pass --bacformer-embeddings if needed
+TB_INPUT_DIR="${RDS_ROOT}/processed/train_tb_ast/tb_protein_sequences"
+TB_ESM_DIR="${RDS_ROOT}/processed/train_tb_ast/tb_esm_embeddings"
+# TB_BACFORMER_DIR="${RDS_ROOT}/processed/train_tb_ast/tb_bacformer_embeddings"  # uncomment + pass --bacformer-embeddings if needed
 
 echo "=========================================="
 echo "TB Embedding Generation (Array Job; ESM-C default)"

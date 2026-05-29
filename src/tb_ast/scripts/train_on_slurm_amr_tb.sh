@@ -47,11 +47,11 @@ echo "Learning rate: $lr, Drug: $drug"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Node: $SLURMD_NODENAME, GPU: $CUDA_VISIBLE_DEVICES"
 
-embeddings_dir="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/tb/tb_esm_embeddings"
+embeddings_dir="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/tb_esm_embeddings"
 
 uv run python src/tb_ast/train_amr.py \
 --embeddings-dir $embeddings_dir \
---ast-sheet-path /home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/tb/binary_ast_with_split.csv \
+--ast-sheet-path /home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/binary_ast_with_split.csv \
 --lr $lr \
 --model-name-or-path $model_name_or_path \
 --warmup-proportion $warmup_proportion \
@@ -65,7 +65,7 @@ uv run python src/tb_ast/train_amr.py \
 --n-folds $N_FOLDS \
 --fold $FOLD \
 --seed $SEED \
---output-dir /home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/tb/checkpoints/${species}_${drug}_lr_${lr}_finetuned
+--output-dir /home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/checkpoints/${species}_${drug}_lr_${lr}_finetuned
 
 echo "End of script... check the .out and .err logs for any errors and for training progress"
 

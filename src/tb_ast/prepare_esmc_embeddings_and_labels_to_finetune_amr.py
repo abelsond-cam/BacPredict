@@ -15,13 +15,13 @@ from tqdm import tqdm
 from tl.train.split_utils import add_splits
 
 AST_CSV_DEFAULT = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/tb/binary_ast.csv"
+    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/binary_ast.csv"
 )
 EMBEDDINGS_DIR_DEFAULT = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/tb/tb_esm_embeddings"
+    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/tb_esm_embeddings"
 )
 OUTPUT_BASE_DEFAULT = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/tb/ast_training"
+    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/ast_training"
 )
 
 
