@@ -15,13 +15,13 @@ from tqdm import tqdm
 from tl.train.split_utils import add_splits
 
 AST_CSV_DEFAULT = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/ast_training/binary_ast.csv"
+    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_kleb_ast/binary_ast.csv"
 )
 EMBEDDINGS_DIR_DEFAULT = Path(
     "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/klebsiella_esm_embeddings"
 )
 OUTPUT_BASE_DEFAULT = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/ast_training"
+    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_kleb_ast"
 )
 
 
@@ -158,7 +158,7 @@ def main() -> None:
         "--output-base",
         type=Path,
         default=OUTPUT_BASE_DEFAULT,
-        help="Base directory for ast_training/{train,validate,evaluate}/ outputs.",
+        help="Base directory for train_kleb_ast/{train,validate,evaluate}/ outputs.",
     )
     parser.add_argument(
         "--seed",

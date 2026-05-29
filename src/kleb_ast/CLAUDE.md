@@ -106,11 +106,11 @@ at full scale (confirmed below).
 | meropenem | 880 | 0.969 | 0.945 | 0.865 | 0.964 | 0.915 |
 
 Checkpoints + `results.json` under
-`processed/ast_training/models/finetune/klebsiella_pneumoniae_<drug>_lr_0.00015_finetuned_fold00_seed1/`.
+`processed/train_kleb_ast/models/finetune/klebsiella_pneumoniae_<drug>_lr_0.00015_finetuned_fold00_seed1/`.
 meropenem sens (0.865) is the softest — 43/318 R below the 0.5 threshold despite
 strong ranking; threshold tuning could recover these.
 
-**Data layout.** All AST CSVs co-located under `processed/ast_training/`
+**Data layout.** All AST CSVs co-located under `processed/train_kleb_ast/`
 (`binary_ast.csv`, `binary_ast_with_split.csv`, `regression_log_mic.csv`,
 `klebsiella_ebi_metadata.csv`, `ast_samples_not_in_dataset.csv`). Producer/consumer
 path defaults updated accordingly.

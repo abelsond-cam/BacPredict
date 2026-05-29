@@ -406,7 +406,7 @@ class ArgumentParser(Tap):
     freeze_encoder: bool = False
     logging_steps: int = 10
     n_samples: int = 10000
-    ast_sheet_path: str = "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/ast_training/binary_ast_with_split.csv"
+    ast_sheet_path: str = "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_kleb_ast/binary_ast_with_split.csv"
     seed: int = 1
     max_steps: int = 100000
     early_stopping_patience: int = 30

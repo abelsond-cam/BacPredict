@@ -11,7 +11,7 @@ VIS_SUB = "results_visualisations"
 FILE_LEAF = "klebsiella_ebi_amr_records_20260216.csv"
 
 DEFAULT_INPUT = BASE_DIR / RAW_SUB / FILE_LEAF
-DEFAULT_OUTPUT_DIR = BASE_DIR / PROCESSED_SUB / "ast_training"
+DEFAULT_OUTPUT_DIR = BASE_DIR / PROCESSED_SUB / "train_kleb_ast"
 DEFAULT_VIZ_DIR = BASE_DIR / VIS_SUB
 
 
