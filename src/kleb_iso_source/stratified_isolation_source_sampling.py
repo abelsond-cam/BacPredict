@@ -297,7 +297,21 @@ def load_and_filter_data(
     filter_counts["after_host_category"] = len(df)
     logging.info(f"After host_category filter: {len(df):,} samples")
 
-    # Filter 3: Study setting (conditional)
+    # Filter 3: KPSC final list + Sublineage assigned (mandatory).
+    # Restricts to the curated Klebsiella pneumoniae species complex (KPSC).
+    # Non-KPSC samples — and the small minority of KPSC samples that lack a
+    # Sublineage call in v2 metadata — are excluded so the cohort matches the
+    # experiment scope. Without this the candidate pool leaks non-KPSC isolates
+    # (see "kpsc-contamination bug" entry in CLAUDE.md, 2026-05-29).
+    logging.info("\nFiltering to kpsc_final_list == True with Sublineage assigned")
+    n_before = len(df)
+    df = df[df["kpsc_final_list"].fillna(False) & df["Sublineage"].notna()]
+    filter_counts["after_kpsc_and_sublineage"] = len(df)
+    logging.info(
+        f"After KPSC + Sublineage filter: {len(df):,} samples (dropped {n_before - len(df):,})"
+    )
+
+    # Filter 4: Study setting (conditional)
     logging.info("\nStudy setting:")
     _log_category_breakdown(
         df, "study_setting", "study_setting (pre-filter, all categories)", source_categories, source_labels

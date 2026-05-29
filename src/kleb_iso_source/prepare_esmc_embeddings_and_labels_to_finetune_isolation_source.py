@@ -46,7 +46,14 @@ def filter_and_create_pair_label(
     token2: str,
     label_column: str,
 ) -> tuple[pd.DataFrame, str, str, str]:
-    """Filter metadata to resolved pair categories and create a binary label."""
+    """Filter metadata to resolved pair categories and create a binary label.
+
+    Applies the four mandatory experiment filters in order: isolation source pair,
+    host_category == "human", kpsc_final_list == True, and Sublineage assigned.
+    The host + KPSC + Sublineage filters mirror the sampler's filter pipeline so
+    the no-stratification (all_samples) flow yields a cohort that matches the
+    sampler's pool (KPSC human blood/faeces only — no mixed-species leakage).
+    """
     isolation_col = resolve_isolation_column(df)
     resolved_1, resolved_2 = validate_and_resolve_tokens(
         df,
@@ -54,7 +61,17 @@ def filter_and_create_pair_label(
         token2,
         isolation_col=isolation_col,
     )
+    n0 = len(df)
     filtered = df[df[isolation_col].isin([resolved_1, resolved_2])].copy()
+    n1 = len(filtered)
+    filtered = filtered[filtered["host_category"] == "human"]
+    n2 = len(filtered)
+    filtered = filtered[filtered["kpsc_final_list"].fillna(False) & filtered["Sublineage"].notna()]
+    n3 = len(filtered)
+    print(
+        f"  filter funnel: {n0:,} → isolation_source {n1:,} → host_category=human {n2:,} "
+        f"→ kpsc_final_list & Sublineage {n3:,}"
+    )
     filtered[label_column] = (filtered[isolation_col] == resolved_1).astype(int)
     return filtered, isolation_col, resolved_1, resolved_2
 

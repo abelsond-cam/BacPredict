@@ -190,3 +190,33 @@ prep → split CSV, Stage C train + `evaluate_iso_source.sh sampled_country_2_1_
 then compare AUROC (pooled-15.2k vs stratified-10.5k=0.752 vs all-sample-25k). Phase D
 (Kleb-specific masked continued-pretraining) is blocked on the ESM-C 960-dim
 protein-family centroids from Isambard (the CSD3 RDS ones are legacy ESM 480-dim).
+
+### 2026-05-29 (later) — KPSC-contamination bug + filter fix
+
+Spotted while reviewing the fresh pooled cohort's stratification report (~1,248
+"No Sublineage call" samples in the cohort). Root cause: the sampler never
+restricted to `kpsc_final_list==True`, and the prepare script's filter funnel
+**never applied `host_category=="human"` either** (verified via `git log -S` —
+the host filter was never in prepare's history, not removed by a recent edit).
+
+| Cohort | n trained | Non-KPSC in trained split | Null-Sublineage in trained split |
+|---|---|---|---|
+| `sampled_country_2_1_stratified` (the 0.752 result) | 10,446 | 676 | 709 |
+| `all_samples` (25,879) | — | not separately measured; also missing host filter | — |
+
+Of the 1,519 no-call pool samples, 1,433 are non-KPSC and **86 are
+`kpsc_final_list==True` but lack a Sublineage** (124 such samples globally;
+v2 metadata data-quality, not our bug). User decision: require BOTH
+`kpsc_final_list==True` AND `Sublineage.notna()` so the cohort has a zero
+no-call band.
+
+**Fix:** added the KPSC + Sublineage filter as Filter 3 in
+`stratified_isolation_source_sampling.py` (between host and study_setting), and
+added host + KPSC + Sublineage filters inside `filter_and_create_pair_label` in
+`prepare_…isolation_source.py` (so both flows produce KPSC-clean, human-only
+cohorts). Filter funnel is now logged.
+
+**Rebuild scope (user-approved: all three).** Existing trained artifacts moved
+to `<cohort>/mixed_species/` under each cohort dir (kept as a reference; the
+0.752 number stands as the mixed-species result for diffing). Then rebuild all
+three cohort definitions with the fix, retrain Stage C on each, compare.
