@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=tb_rif_stagec
-#SBATCH --output=tb_rif_stagec_%j.out
-#SBATCH --error=tb_rif_stagec_%j.err
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
 #SBATCH --time=36:00:00
 #SBATCH --partition=ampere
 #SBATCH --account=FLOTO-SL2-GPU
@@ -12,16 +12,21 @@
 #SBATCH --mem=250G
 #SBATCH --open-mode=append
 
-# Stage C (§0.2) — single split, 1 fold × 1 seed. The headline TB rifampin run.
+# Stage C (§0.2) — single split, 1 fold × 1 seed. Per-drug single-split run.
 # No --array / --n-folds / --fold / --seed: train_amr.py reads the train/validate/
 # evaluate assignment straight from binary_ast_with_split.csv (split_source="csv")
 # and writes the §0.4 results.json on the evaluate holdout at the end.
 # The k-fold array sweep (publication only) lives in train_on_slurm_amr_tb.sh.
+#
+# Drug is the first positional arg (defaults to rifampin). Override the SLURM
+# job name per drug so the %x-based log files stay distinct, e.g.:
+#   sbatch --job-name=tb_isoniazid_stagec train_on_slurm_amr_tb_stage_c.sh isoniazid
+# Drug names must match the binary_ast.csv columns (US spellings — rifampin etc.).
 
 cd /home/dca36/workspace/BacPredict
 
 species=mycobacterium_tuberculosis
-drug=rifampin  # TB binary_ast.csv uses US spelling (rifampin, not rifampicin)
+drug=${1:-rifampin}  # TB binary_ast.csv uses US spelling (rifampin, not rifampicin)
 warmup_proportion=0.1
 lr=0.00015
 eval_steps=250
