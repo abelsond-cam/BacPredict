@@ -1,44 +1,65 @@
 #!/bin/bash
-#SBATCH --job-name=prep_isol_training_data
-#SBATCH --output=prep_isol_training_data_%j.out     
-#SBATCH --error=prep_isol_training_data_%j.err
+# Build the iso-source split CSV (binary_<pair>_with_split.csv) for one cohort.
+# Writes into <cohort>/kpsc_human/ (the KPSC-clean filter flavor; mixed_species/
+# is the pre-fix run we keep as reference).
+#
+# Usage:  sbatch [--job-name=prep_<cohort>] prepare_iso_source_data_for_training.sh <cohort>
+#   cohort ∈ {all_samples, sampled_country_2_1_stratified, sampled_country_2_1_all}
+#
+# Input metadata:
+#   - all_samples            → v2 metadata directly (no upstream stratified TSV);
+#                              prepare's host + KPSC + Sublineage filters define the cohort.
+#   - sampled_country_2_1_*  → the sampler's stratified TSV under <cohort>/kpsc_human/
+#                              (already country-capped + thread-handled + KPSC-filtered).
+
+#SBATCH --job-name=prep_iso_source
+#SBATCH --output=prep_iso_source_%j.out
+#SBATCH --error=prep_iso_source_%j.err
 #SBATCH --partition=icelake
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=76
-#SBATCH --time=01:00:00
-#SBATCH --account=FLOTO-PROJECT-K-SL2-CPU  
+#SBATCH --cpus-per-task=32
+#SBATCH --time=02:00:00
+#SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
+#SBATCH --open-mode=append
 
 cd /home/dca36/workspace/BacPredict
 
-# Force Python unbuffered output for real-time logging
+COHORT="${1:?usage: sbatch $0 <cohort>}"
+case "$COHORT" in
+  all_samples|sampled_country_2_1_stratified|sampled_country_2_1_all) ;;
+  *) echo "ERROR: unknown cohort '$COHORT'" >&2; exit 2 ;;
+esac
+
+BASE=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_iso_source/blood_faeces
+DIR=$BASE/$COHORT/kpsc_human
+mkdir -p "$DIR"
+
+if [ "$COHORT" = "all_samples" ]; then
+  INPUT=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/final/metadata_v2_all_samples_and_columns.tsv
+else
+  INPUT=$DIR/stratified_selected_isolation_source_metadata.tsv
+fi
+if [ ! -f "$INPUT" ]; then
+  echo "ERROR: input metadata not found at $INPUT" >&2; exit 3
+fi
+
 export PYTHONUNBUFFERED=1
 
-python_script="src/kleb_iso_source/prepare_esmc_embeddings_and_labels_to_finetune_isolation_source.py"
-isolation_sources="faeces respiratory"
-
 echo "========================================================================"
-echo "Starting to prepare training data for isolation source prediction"
-echo "Isolation sources: $isolation_sources"
-echo "Python script: $python_script"
+echo "Prep iso-source data — cohort=$COHORT"
+echo "Input:  $INPUT"
+echo "Output: $DIR"
 echo "Job ID: $SLURM_JOB_ID"
-echo "Node: $SLURMD_NODENAME"
-echo "CPUs: $SLURM_CPUS_PER_TASK"
-echo "========================================================================"
-echo ""
-
-# ESM embeddings
-# uv run python src/kleb_ast/prepare_esmc_embeddings_and_labels_to_finetune_amr.py --skip-existing
-#uv run python src/kleb_ast/add_paths_gff_fna_to_metadata.py
-
-uv run python $python_script --isolation-sources $isolation_sources
-
-echo ""
-echo "========================================================================"
-echo "Processing complete!"
 echo "========================================================================"
 
-# Run with: sbatch cpu_slurm.sh
-# Check on progress with: squeue -u dca36
-# To cancel: scancel jobid
+uv run python src/kleb_iso_source/prepare_esmc_embeddings_and_labels_to_finetune_isolation_source.py \
+  --isolation-sources blood faeces \
+  --input-metadata-file "$INPUT" \
+  --output-dir "$DIR"
+status=$?
 
+if [ "$status" -ne 0 ]; then
+  echo "PREP FAILED with exit $status — inspect .err"; exit "$status"
+fi
+echo "Prep done — split CSV at $DIR/binary_blood_vs_faeces_with_split.csv"

@@ -21,7 +21,7 @@ cd /home/dca36/workspace/BacPredict
 python_script="src/kleb_iso_source/train_isolation_source.py"
 isolation_sources="blood faeces"
 processed_base_dir="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_iso_source"
-cohort_dir="${processed_base_dir}/blood_faeces/all_samples"
+cohort_dir="${processed_base_dir}/blood_faeces/all_samples/kpsc_human"
 sheet_path="${cohort_dir}/binary_blood_vs_faeces_with_split.csv"
 embeddings_dir="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/klebsiella_esm_embeddings"
 output_dir="${cohort_dir}/smoke"   # absolute → used verbatim (transient; keeps models/ clean)

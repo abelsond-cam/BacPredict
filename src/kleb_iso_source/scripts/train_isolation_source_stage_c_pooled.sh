@@ -1,13 +1,13 @@
 #!/bin/bash
-# Stage C (strict country-controlled cohort): full-data fine-tune for blood-vs-faeces,
-# single fold × single seed, on the max-2:1-per-country cohort.
-# Confounding test vs the all-sample run: if the all-sample ~0.82 AUROC was mostly the
-# model using country as a label shortcut, this strict cohort should collapse toward the
-# 0.55–0.62 baseline. Identical to train_isolation_source_stage_c.sh except the cohort paths.
+# Stage C (pooled-threads cohort): full-data fine-tune for blood-vs-faeces on
+# the 2:1 country cap WITHOUT thread-segregation (AMR/Surv/NA pooled). Recovers
+# the ~4k samples lost to thread segregation while keeping the country control.
+# Cohort: sampled_country_2_1_all/kpsc_human (~14.2k after KPSC+Sublineage filter).
+# Identical to stage_c_stratified.sh except the cohort_dir.
 
-#SBATCH --job-name=stage_c_strat_blood_faeces
-#SBATCH --output=stage_c_strat_blood_faeces_%j.out
-#SBATCH --error=stage_c_strat_blood_faeces_%j.err
+#SBATCH --job-name=stage_c_pooled_blood_faeces
+#SBATCH --output=stage_c_pooled_blood_faeces_%j.out
+#SBATCH --error=stage_c_pooled_blood_faeces_%j.err
 #SBATCH --time=36:00:00
 #SBATCH --partition=ampere
 #SBATCH --account=FLOTO-SL2-GPU
@@ -23,7 +23,7 @@ cd /home/dca36/workspace/BacPredict
 python_script="src/kleb_iso_source/train_isolation_source.py"
 isolation_sources="blood faeces"
 processed_base_dir="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_iso_source"
-cohort_dir="${processed_base_dir}/blood_faeces/sampled_country_2_1_stratified/kpsc_human"
+cohort_dir="${processed_base_dir}/blood_faeces/sampled_country_2_1_all/kpsc_human"
 sheet_path="${cohort_dir}/binary_blood_vs_faeces_with_split.csv"
 embeddings_dir="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/klebsiella_esm_embeddings"
 output_dir="${cohort_dir}/models"   # absolute → used verbatim
@@ -34,8 +34,8 @@ seed=1
 
 warmup_proportion=0.1
 lr=0.00015
-eval_steps=500              # cohort ~10.5k (train ~7.4k); batch=1 × grad_accum=8 → ~920 steps/epoch,
-                           # so eval_steps=500 ≈ every ~0.5 epoch (cohort is smaller than all-sample)
+eval_steps=700              # cohort ~14.2k (train ~9.9k); batch=1 × grad_accum=8 → ~1240 steps/epoch,
+                           # so eval_steps=700 ≈ every ~0.55 epoch (between strict ~0.5 and all-sample ~0.4)
 max_steps=100000           # generous cap; early-stopping decides actual stop
 early_stopping_patience=30
 
@@ -47,7 +47,7 @@ export PYTHONUNBUFFERED=1
 export TRANSFORMERS_VERBOSITY=info
 
 echo "========================================================================"
-echo "Stage C (strict 2:1 country cohort) — isolation source (blood vs faeces)"
+echo "Stage C (pooled-threads 2:1 country cohort) — isolation source (blood vs faeces)"
 echo "Tokens:            $isolation_sources"
 echo "Sheet:             $sheet_path"
 echo "Model:             $model_name_or_path"
@@ -77,10 +77,8 @@ status=$?
 
 echo ""
 if [ "$status" -ne 0 ]; then
-  # Propagate the real failure so SLURM marks the job FAILED instead of COMPLETED.
-  # (Without this, the script's trailing echoes exit 0 and mask a dead training run.)
-  echo "Stage C (strict cohort) FAILED with exit code $status — inspect the .err log."
+  echo "Stage C (pooled cohort) FAILED with exit code $status — inspect the .err log."
   exit "$status"
 fi
-echo "Stage C (strict cohort) finished — checkpoint in ${output_dir}."
-echo "Compare AUROC against both the 0.55–0.62 baseline and the all-sample run."
+echo "Stage C (pooled cohort) finished — checkpoint in ${output_dir}."
+echo "Compare AUROC against the stratified (KPSC-clean) and mixed-species (0.752) baselines."

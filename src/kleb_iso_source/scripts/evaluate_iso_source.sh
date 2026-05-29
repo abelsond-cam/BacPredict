@@ -20,11 +20,14 @@
 cd /home/dca36/workspace/BacPredict
 
 BASE=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_iso_source/blood_faeces
-# Cohort subdir as $1: all_samples | sampled_country_2_1_stratified | sampled_country_2_1_all.
-# Each holds binary_blood_vs_faeces_with_split.csv + models/ (the checkpoint).
-# Note: all_samples's 5,206-row evaluate split needs >1h — bump --time when scoring it.
+# Args: $1 cohort, $2 flavor.
+#   cohort  ∈ {all_samples, sampled_country_2_1_stratified, sampled_country_2_1_all}
+#   flavor  ∈ {kpsc_human (default — KPSC+Sublineage+human), mixed_species (pre-fix reference)}
+# Each flavor dir holds binary_blood_vs_faeces_with_split.csv + models/ (the checkpoint).
+# Note: all_samples's ~4-5k-row evaluate split needs >1h — bump --time when scoring it.
 SUB="${1:-sampled_country_2_1_all}"
-DIR="${BASE}/${SUB}"
+FLAVOR="${2:-kpsc_human}"
+DIR="${BASE}/${SUB}/${FLAVOR}"
 CHECKPOINT="${DIR}/models"
 SHEET="${DIR}/binary_blood_vs_faeces_with_split.csv"
 OUT_DIR="${DIR}/models"
