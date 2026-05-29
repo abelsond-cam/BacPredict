@@ -194,6 +194,12 @@ Stage C single-split run:
 
 ### 2026-05-29 — RDS dir rename + fan-out to the drug panel
 
+- **ESM-C embeddings now complete: 38,248 (= all protein-input rows).** The split
+  CSV was regenerated 2026-05-28 14:29 to **36,684 rows** — the full intersection of
+  40,021 labelled samples ∩ 38,248 embeddings (the remaining 3,337 labels have no
+  embedding; 36,684 is the achievable ceiling). The 2026-05-25 figures above
+  (~92% coverage, 33,687 retained) are superseded. Rifampin job 29776879 started
+  14:56, after the regen, so it and all fan-out jobs train on the full 36,684 split.
 - Renamed the TB data dir `processed/tb` → **`processed/train_tb_ast`** to match
   the `train_kleb_ast` / `train_on_sr_mags` convention. A compat symlink
   `processed/tb → train_tb_ast` was left in place so the in-flight rifampin job
