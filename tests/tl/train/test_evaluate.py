@@ -57,13 +57,26 @@ def test_resolve_checkpoint_dir_prefers_config_then_subdir(tmp_path):
     (direct / "config.json").write_text("{}")
     assert resolve_checkpoint_dir(direct) == direct
 
-    # Run dir with checkpoint-* subdirs → highest step with a config.json wins.
+    # Single checkpoint-* subdir (save_total_limit=1) → returned regardless of step.
     run = tmp_path / "run"
-    (run / "checkpoint-500").mkdir(parents=True)
-    (run / "checkpoint-500" / "config.json").write_text("{}")
-    (run / "checkpoint-5000").mkdir(parents=True)
-    (run / "checkpoint-5000" / "config.json").write_text("{}")
-    assert resolve_checkpoint_dir(run) == run / "checkpoint-5000"
+    (run / "checkpoint-3250").mkdir(parents=True)
+    (run / "checkpoint-3250" / "config.json").write_text("{}")
+    assert resolve_checkpoint_dir(run) == run / "checkpoint-3250"
+
+
+def test_resolve_checkpoint_dir_honours_best_model_checkpoint(tmp_path):
+    """When several checkpoints are kept, trainer_state.best_model_checkpoint wins over highest step."""
+    import json
+
+    run = tmp_path / "run"
+    for step in (500, 5000):
+        (run / f"checkpoint-{step}").mkdir(parents=True)
+        (run / f"checkpoint-{step}" / "config.json").write_text("{}")
+    # best is the *lower* step; path is intentionally stale (another host) → match by basename.
+    (run / "checkpoint-5000" / "trainer_state.json").write_text(
+        json.dumps({"best_model_checkpoint": "/some/other/host/run/checkpoint-500"})
+    )
+    assert resolve_checkpoint_dir(run) == run / "checkpoint-500"
 
 
 def test_resolve_checkpoint_dir_raises_when_none(tmp_path):

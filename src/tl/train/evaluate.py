@@ -30,6 +30,7 @@ Combine several drugs into one ROC | PR grid (one row per drug)::
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 import numpy as np
@@ -94,12 +95,19 @@ def resolve_evaluate_ids(
 
 
 def resolve_checkpoint_dir(checkpoint: Path) -> Path:
-    """Return the dir holding the model files.
+    """Return the dir holding the best model's files.
 
-    Trainer saves weights under ``checkpoint-<step>/`` (with ``save_total_limit=1``
-    only the best/last is kept), while the run dir itself holds only
-    ``results.json`` + ``runs/``. If ``checkpoint`` already has ``config.json`` use
-    it; otherwise pick the highest-step ``checkpoint-*`` subdir that does.
+    Trainer saves weights under ``checkpoint-<step>/`` (the step varies per run —
+    early stopping decides it), while the run dir itself holds only
+    ``results.json`` + ``runs/``. Resolution order:
+
+    1. ``checkpoint`` itself has ``config.json`` → use it.
+    2. The Trainer's ``best_model_checkpoint`` (from any ``trainer_state.json``),
+       matched by basename so a stale absolute path from another host still works.
+    3. Fallback: highest-step ``checkpoint-*`` containing ``config.json``.
+
+    With ``save_total_limit=1`` + ``load_best_model_at_end=True`` only the best
+    checkpoint survives, so (2) and (3) agree; (2) matters if multiple are kept.
     """
     checkpoint = Path(checkpoint)
     if (checkpoint / "config.json").exists():
@@ -109,13 +117,27 @@ def resolve_checkpoint_dir(checkpoint: Path) -> Path:
         tail = p.name.rsplit("-", 1)[-1]
         return int(tail) if tail.isdigit() else -1
 
-    subs = sorted(
+    candidates = sorted(
         (p for p in checkpoint.glob("checkpoint-*") if (p / "config.json").exists()),
         key=_step,
     )
-    if not subs:
+    if not candidates:
         raise FileNotFoundError(f"No config.json in {checkpoint} or any checkpoint-*/ subdir.")
-    return subs[-1]
+
+    by_name = {p.name: p for p in candidates}
+    for c in candidates:
+        state = c / "trainer_state.json"
+        if not state.exists():
+            continue
+        try:
+            best = json.loads(state.read_text()).get("best_model_checkpoint")
+        except (json.JSONDecodeError, OSError):
+            best = None
+        if best and Path(best).name in by_name:
+            return by_name[Path(best).name]
+        break
+
+    return candidates[-1]
 
 
 def run_inference(
