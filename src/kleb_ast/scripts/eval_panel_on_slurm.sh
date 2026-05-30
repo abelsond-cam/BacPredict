@@ -2,7 +2,7 @@
 #SBATCH --job-name=kleb_eval_panel
 #SBATCH --output=kleb_eval_panel_%j.out
 #SBATCH --error=kleb_eval_panel_%j.err
-#SBATCH --time=00:45:00
+#SBATCH --time=02:00:00
 #SBATCH --partition=ampere
 #SBATCH --account=FLOTO-SL2-GPU
 #SBATCH --nodes=1
@@ -37,20 +37,26 @@ PANEL="gentamicin ceftazidime meropenem ciprofloxacin trimethoprim-sulfamethoxaz
 piperacillin-tazobactam cefoxitin aztreonam cefazolin tobramycin cefepime imipenem levofloxacin cefotaxime \
 cefuroxime ampicillin-sulbactam ertapenem tetracycline azithromycin colistin"
 
-# 1) Evaluate each drug (skip + log any whose training job did not produce a checkpoint).
+# 1) Evaluate each drug. Idempotent: drugs that already have an eval_scores.npz
+# are skipped unless FORCE_RECOMPUTE=1, so a re-submitted job picks up where a
+# timed-out one left off.
 for d in $PANEL; do
   CK=$FT/klebsiella_pneumoniae_${d}_lr_0.00015_finetuned_fold00_seed1
-  if [ -d "$CK" ]; then
-    echo "=== evaluating $d ==="
-    uv run python src/tl/train/evaluate.py \
-      --checkpoint "$CK" --drug "$d" --task kleb_ast \
-      --n-folds 5 --fold 0 --seed 1 --evaluate-seed 1 \
-      --prevalence-label "resistance rate" \
-      --ast-sheet-path "$SHEET" --embeddings-dir "$EMB" --num-workers 4 \
-      || echo "EVAL FAILED: $d"
-  else
+  if [ ! -d "$CK" ]; then
     echo "NO CHECKPOINT (skipping): $d"
+    continue
   fi
+  if [ -f "$CK/eval_scores.npz" ] && [ "${FORCE_RECOMPUTE:-0}" != "1" ]; then
+    echo "ALREADY DONE (skip; set FORCE_RECOMPUTE=1 to re-run): $d"
+    continue
+  fi
+  echo "=== evaluating $d ==="
+  uv run python src/tl/train/evaluate.py \
+    --checkpoint "$CK" --drug "$d" --task kleb_ast \
+    --n-folds 5 --fold 0 --seed 1 --evaluate-seed 1 \
+    --prevalence-label "resistance rate" \
+    --ast-sheet-path "$SHEET" --embeddings-dir "$EMB" --num-workers 4 \
+    || echo "EVAL FAILED: $d"
 done
 
 # 2) Combined ROC|PR grid over every drug that produced scores, in panel order.
