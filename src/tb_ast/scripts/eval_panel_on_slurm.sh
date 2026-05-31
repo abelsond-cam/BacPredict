@@ -2,7 +2,7 @@
 #SBATCH --job-name=tb_eval_panel
 #SBATCH --output=tb_eval_panel_%j.out
 #SBATCH --error=tb_eval_panel_%j.err
-#SBATCH --time=02:00:00
+#SBATCH --time=06:00:00
 #SBATCH --partition=ampere
 #SBATCH --account=FLOTO-SL2-GPU
 #SBATCH --nodes=1
@@ -73,7 +73,9 @@ done
 if [ ${#ARGS[@]} -gt 0 ]; then
   uv run python src/tl/train/evaluate.py --combine "${ARGS[@]}" \
     --prevalence-label "resistance rate" \
-    --combine-out "$BASE/eval_roc_pr_grid_full_panel.png"
+    --combine-out "$BASE/eval_roc_pr_grid_full_panel.png" \
+    --bar-out "$BASE/eval_auroc_bar.png" \
+    --bar-title "TB AMR panel — held-out AUROC"
 else
   echo "WARNING: no eval_scores.npz files found — skipping combine grid."
 fi
