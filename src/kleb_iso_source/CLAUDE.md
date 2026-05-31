@@ -27,6 +27,59 @@ Test whether Bacformer fine-tuned via BacPredict can pick up genomic markers tha
 4. Stage C full run — single fold/seed, full data, 36 h GPU.
 5. Evaluate against the prior 0.55–0.62 AUROC benchmark. If meaningfully better, we have a result worth pursuing.
 
+## Week of 2026-05-30 — assigned workstream (A)
+
+Anchor: program plan `~/.claude/PROGRAM_PLAN_2026-05-30.md` — Workstream A.
+Branch: `task3/iso-source-expansion`.
+
+The 2026-05-29 blood-vs-faeces result (AUROC 0.835 pooled / 0.752 country-
+balanced) is the trigger. This workstream widens the proof and characterises
+cohorts well enough that country/SL are demonstrably not doing the work.
+
+- **A1 — respiratory vs faeces.** Run sampler + prepare for the
+  `respiratory_vs_faeces` token pair in BOTH cohorts (pooled all-samples + 2:1
+  country-balanced stratified). Outputs:
+  `processed/train_iso_source/respiratory_faeces/<cohort>/`. Sampler + prepare
+  are already label-agnostic — only the token pair changes. Reuse existing
+  Stage C sbatch scripts (parameterised on cohort subdir, commit 61748cd).
+  Gut-check AUROC ≥ 0.65 on the country-balanced cohort.
+- **A2 — wound vs faeces. DEFERRED.** Wound is a heterogeneous sum (swabs,
+  abscesses, surgical drains) and needs a label-cleanup pass over metadata_v2
+  first. Not in scope this week; tracked here so it isn't forgotten.
+- **A3 — cohort stratification visuals.** New `stratification_plots.py`:
+  - Country side-by-side bar (blood vs faeces per country, top-N + "other",
+    sorted desc on blood). One PNG per cohort.
+  - Per-country blood:faeces ratio histogram × n_samples (most countries
+    should sit near parity).
+  - SL stratification — three views: top-15 epidemic SLs (n≥250) bar chart;
+    SLs 100–250 bar chart; SLs <100 bubble scatter (n_samples on x,
+    blood:faeces ratio on y).
+  PNGs committed alongside the cohort dir (`stratification_plots/`); the
+  existing `stratification_report.md` embeds them. Reuse
+  `_log_final_country_table()` for counts.
+- **A4 — baseline AUROCs from metadata alone.** New harness in
+  `src/tl/train/metadata_baselines.py` (generic) + thin wrapper here. sklearn
+  LogisticRegression on (i) one-hot `country_parsed`, (ii) one-hot
+  `Sublineage`, (iii) the combination. Fit on the same train/eval split as
+  the Bacformer fine-tune. Numbers added to `stratification_report.md` and to
+  Stage C `results.json` under a new `baselines` key.
+- **A5 — explainability (occlusion + integrated gradients).** New code in
+  `src/tl/explain/` (generic, Captum-based) + `explain_iso_source.py` wrapper.
+  Run on both the country-confounded (`all_samples`) and country-controlled
+  (`stratified`) checkpoints; rank proteins by aggregated importance.
+  **Rank-shift between cohorts is the phylogeny-vs-signal filter:** genes
+  that lose the most rank-importance under country control are phylogeny-
+  confounded; the ones that hold up are the iso-source signal. Cross-
+  reference with Kleborate virulence loci (rmpA/rmpA2, iuc, iro, K1/K2,
+  ybt/clb). Smoke on n=50 from the evaluate holdout before scaling.
+  Once A1 is built, repeat A5 across the 2×2 of {blood-vs-faeces,
+  respiratory-vs-faeces} × {non-select, country-balanced} — that's the
+  sharpest phylogeny-vs-signal separation.
+
+**Dependency on Workstream B** (complete-genome eval-set surgery): once B2
+lands `bias_eval_toward` in `tl/train/split_utils.py`, re-run the stratified
+Stage C with `--bias-eval-toward is_complete` and compare AUROC delta.
+
 ## Three-stage testing protocol (recap of root §0.2)
 
 | Stage | Scale | Folds × seeds | Where |
@@ -220,3 +273,24 @@ cohorts). Filter funnel is now logged.
 to `<cohort>/mixed_species/` under each cohort dir (kept as a reference; the
 0.752 number stands as the mixed-species result for diffing). Then rebuild all
 three cohort definitions with the fix, retrain Stage C on each, compare.
+
+### 2026-05-31 — KPSC-clean results + stratification plots
+
+**KPSC-clean retrain results (eval-holdout §0.4 from auto-eval `results.json`):**
+
+| Cohort | n | Eval-holdout AUROC | vs mixed-species reference |
+|---|---|---|---|
+| `sampled_country_2_1_stratified` | 9,866 | **0.762** (n_eval=1951) | +0.010 vs mixed-species 0.752 — contamination did NOT drive the headline |
+| `sampled_country_2_1_all` (pooled) | 14,211 | **0.786** (n_eval=2822) | +0.024 vs stratified — pooling the AMR/Surv/NA threads pulls weight |
+| `all_samples` | 21,533 | TIMEOUT @ 36h; best ckpt `checkpoint-31000` (val 0.829 @ ep 16.5) being scored separately | — |
+
+The all_samples resume was **skipped** as overkill (val was already plateauing 0.75–0.82 around ep 20, and all_samples is the country-confounded baseline, not a headline). Scoring the existing `checkpoint-31000` directly via `evaluate_iso_source.sh all_samples kpsc_human checkpoint-31000` instead — sbatch added a 3rd `CKPT_SUBDIR` arg for pinning a specific checkpoint when models/ holds multiple.
+
+**Stratification plots (new artifact).** `stratification_plots.py` writes two paired-bar PNGs per cohort to `<cohort>/<flavor>/stratification_plots/{country.png, sublineage.png}`. Per group: left bar = initial pool n, right bar = accepted cohort n; colored by blood:faeces ratio (`RdBu_r` diverging colormap, log scale, clipped 0.25–4.0, neutral at 1.0). Groups with pool n < cutoff aggregate into a single "other" bar. Cutoffs tunable independently via `--country-min-samples` (default 100) and `--sl-min-samples` (default 100; the rare-SL knob). Standalone CLI replays the sampler's filter pipeline so plots can be backfilled for existing cohorts without re-running the sampler:
+
+```
+uv run python -m kleb_iso_source.stratification_plots \
+  --cohort-tsv .../stratified_selected_isolation_source_metadata.tsv \
+  --isolation-sources blood faeces \
+  --out-dir .../stratification_plots
+```

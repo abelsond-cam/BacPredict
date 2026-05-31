@@ -79,6 +79,7 @@ from pathlib import Path
 import pandas as pd
 
 from kleb_iso_source.isolation_source_cli_parsing import validate_and_resolve_tokens
+from kleb_iso_source.stratification_plots import make_plots as make_stratification_plots
 
 # Constants
 DEFAULT_RATIO = 2.0
@@ -853,6 +854,25 @@ Examples:
         ),
     )
     parser.add_argument(
+        "--country-min-samples",
+        type=int,
+        default=100,
+        help=(
+            "Country plot: countries with pool n < this are aggregated into a single 'other' bar. "
+            "Default: 100."
+        ),
+    )
+    parser.add_argument(
+        "--sl-min-samples",
+        type=int,
+        default=100,
+        help=(
+            "Sublineage plot: SLs with pool n < this are aggregated into a single 'other' bar. "
+            "Separate from --country-min-samples so the rare-SL cutoff is tunable independently. "
+            "Default: 100."
+        ),
+    )
+    parser.add_argument(
         "--output-file",
         type=str,
         default=None,
@@ -1065,6 +1085,16 @@ Examples:
                 isolation_sources,
                 source_labels,
                 args.ratio,
+            )
+            # Paired-bar plots (country + sublineage), colored by blood:faeces ratio.
+            logging.info("\nWriting stratification plots:")
+            make_stratification_plots(
+                df,
+                final_df,
+                isolation_sources,
+                output_path.parent / "stratification_plots",
+                country_min_samples=args.country_min_samples,
+                sl_min_samples=args.sl_min_samples,
             )
 
         # Save TSV output (always writes if there are samples)
