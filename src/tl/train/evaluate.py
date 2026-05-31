@@ -294,8 +294,10 @@ def _build_loader(ids: list[str], args: argparse.Namespace, label_map: dict[str,
 def plot_auroc_bar(
     entries: list[tuple],
     out_path: Path | str,
-    ylim: tuple[float, float] = (0.5, 1.0),
+    ylim: tuple[float, float] = (0.5, 1.05),
     title: str | None = None,
+    colorbar_label: str | None = None,
+    cmap: str = "YlOrRd",
 ) -> None:
     """Single-panel summary: AUROC per drug as a sorted vertical bar chart.
 
@@ -307,27 +309,51 @@ def plot_auroc_bar(
     out_path
         Destination PNG.
     ylim
-        Y-axis limits. Default ``(0.5, 1.0)`` so visual bar height reflects the
-        margin above the random baseline.
+        Y-axis limits. Default ``(0.5, 1.05)`` — 1.05 leaves room above the bars
+        for the value labels.
     title
         Optional figure title.
+    colorbar_label
+        If given, color each bar by its positive-class prevalence
+        (``y_true.mean()``) using ``cmap`` and attach a colorbar with this label
+        (e.g. ``"resistance rate"`` for AST, ``"blood source ratio"`` for
+        isolation source). When ``None`` the bars use a single colour.
+    cmap
+        Matplotlib colormap name when ``colorbar_label`` is set. Default
+        ``"YlOrRd"`` (light at 0 → dark red at 1).
     """
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib import colormaps
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.colors import Normalize
     from sklearn.metrics import roc_auc_score
 
     items = []
     for entry in entries:
         label, y_true, y_prob, *_ = entry
-        items.append((label, float(roc_auc_score(np.asarray(y_true).astype(int), np.asarray(y_prob).astype(float)))))
+        yt = np.asarray(y_true).astype(int)
+        yp = np.asarray(y_prob).astype(float)
+        items.append((label, float(roc_auc_score(yt, yp)), float(yt.mean())))
     items.sort(key=lambda x: -x[1])
     labels = [x[0] for x in items]
     aurocs = [x[1] for x in items]
+    rates = [x[2] for x in items]
 
     fig, ax = plt.subplots(figsize=(max(8.0, 0.45 * len(items) + 2.5), 5.0))
-    ax.bar(range(len(items)), aurocs, color="C0")
+
+    if colorbar_label is not None:
+        norm = Normalize(vmin=0.0, vmax=1.0)
+        cmap_obj = colormaps[cmap]
+        ax.bar(range(len(items)), aurocs, color=[cmap_obj(norm(r)) for r in rates], edgecolor="0.4", linewidth=0.5)
+        sm = ScalarMappable(cmap=cmap_obj, norm=norm)
+        sm.set_array([])
+        fig.colorbar(sm, ax=ax, label=colorbar_label, fraction=0.025, pad=0.02)
+    else:
+        ax.bar(range(len(items)), aurocs, color="C0")
+
     ax.set_xticks(range(len(items)))
     ax.set_xticklabels(labels, rotation=45, ha="right")
     ax.set_ylim(*ylim)
@@ -456,7 +482,7 @@ def _combine(args: argparse.Namespace) -> None:
     plot_roc_pr_grid(entries, args.combine_out, prevalence_label=args.prevalence_label)
     print(f"Wrote {len(entries)}-drug ROC|PR grid: {args.combine_out}")
     if args.bar_out:
-        plot_auroc_bar(entries, args.bar_out, title=args.bar_title)
+        plot_auroc_bar(entries, args.bar_out, title=args.bar_title, colorbar_label=args.prevalence_label)
         print(f"Wrote AUROC bar chart: {args.bar_out}")
 
 

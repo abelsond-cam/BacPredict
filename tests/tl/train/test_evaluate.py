@@ -38,7 +38,19 @@ def test_plot_auroc_bar_writes_file_and_accepts_4_tuples(tmp_path):
         ("colistin", *_scores(seed=3)),
     ]
     out = tmp_path / "bars.png"
-    plot_auroc_bar(entries, out, ylim=(0.5, 1.0), title="Test panel")
+    plot_auroc_bar(entries, out, ylim=(0.5, 1.05), title="Test panel")
+    assert out.exists() and out.stat().st_size > 0
+
+
+def test_plot_auroc_bar_with_colorbar(tmp_path):
+    # colorbar_label set → bars coloured by prevalence + colorbar drawn.
+    entries = [
+        ("ceftriaxone", *_scores(seed=1)),
+        ("meropenem", *_scores(seed=2)),
+        ("colistin", *_scores(seed=3)),
+    ]
+    out = tmp_path / "bars_cb.png"
+    plot_auroc_bar(entries, out, colorbar_label="resistance rate", cmap="YlOrRd")
     assert out.exists() and out.stat().st_size > 0
 
 
