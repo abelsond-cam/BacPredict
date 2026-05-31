@@ -109,6 +109,9 @@ Label / cohort prep
 
 Imports from [`../tl/train/`](../tl/train/) (split_utils, datasets) and [`../tl/embed/`](../tl/embed/) for shared infrastructure.
 
+Documentation
+- [`docs/iso_source_summary.ipynb`](docs/iso_source_summary.ipynb) — summary notebook for the blood-vs-faeces workstream. Three sampling methods, stratification stats + plots (pooled headline), Bacformer §0.4 + ROC, linear-model baseline (`linear_baselines.json`) comparison, and a Bacformer-vs-linear-baseline overlay ROC. Built by `docs/_build_summary_notebook.py`; pre-rendered figures sit in `docs/figures/`.
+
 ## Downstream / parked experiments
 
 - **(i) Klebsiella-specific pre-training before isolation source.** Same idea as Task 2 downstream (v): masked next-gene prediction on Kp complete genomes, then fine-tune to isolation source. Hypothesis: makes the model meaningfully more aware of Kp accessory architecture and phylogeny.
