@@ -108,13 +108,20 @@ def run_baselines(
     """Fit + score every requested feature set; return a JSON-ready payload."""
     split_df = _load_split(sheet_path, label_column)
     needed_cols = sorted({c for fs in feature_sets for c in FEATURE_SET_COLUMNS[fs]})
-    meta_df = _load_metadata(metadata_file, needed_cols)
+    joined = split_df.set_index("Sample")
+    missing_in_split = [c for c in needed_cols if c not in joined.columns]
+    if missing_in_split:
+        # Fall back to v2 metadata for any feature columns the split CSV doesn't carry.
+        meta_df = _load_metadata(metadata_file, missing_in_split)
+        joined = joined.join(meta_df, how="left")
+        logging.info("  joined %s from %s", missing_in_split, metadata_file.name)
+    else:
+        logging.info("  using %s straight from the split CSV (no metadata join needed)", needed_cols)
 
-    joined = split_df.set_index("Sample").join(meta_df, how="left")
     n_missing_all = int(joined[needed_cols].isna().all(axis=1).sum())
     if n_missing_all:
         logging.warning(
-            "  %d split rows have no metadata match across {%s} — dropping",
+            "  %d split rows have no value across {%s} — dropping",
             n_missing_all, ", ".join(needed_cols),
         )
     joined = joined.dropna(subset=needed_cols, how="all")
