@@ -135,11 +135,19 @@ def run(
     n_folds: int | None = None,
     fold: int = 0,
     evaluate_seed: int = 1,
+    resume_from_checkpoint: str | None = None,
     # deprecated — ignored; kept for call-site backward compat
     train_data_dir: str | None = None,
     val_data_dir: str | None = None,
 ):
-    """Fine-tune Bacformer on TB AMR data with dynamic label injection."""
+    """Fine-tune Bacformer on TB AMR data with dynamic label injection.
+
+    When ``resume_from_checkpoint`` is set, training continues from that
+    checkpoint (HF Trainer restores optimizer state, LR scheduler position,
+    global step, best-metric tracking, and early-stopping counter) and the
+    model is loaded from the checkpoint instead of ``model_name_or_path``.
+    Pass ``output_dir`` = the run dir that already contains that checkpoint.
+    """
     if train_data_dir or val_data_dir:
         warnings.warn(
             "--train-data-dir and --val-data-dir are deprecated and ignored. "
@@ -258,8 +266,13 @@ def run(
     # Load model (AutoModelForSequenceClassification loads BacformerLargeForGenomeClassification via auto_map).
     # dtype="auto" lets HF pick precision per device — bf16 on GPU, fp32 on CPU — so Stage A
     # CPU smoke tests stay viable.
+    # On resume, load weights from the checkpoint directly (avoids a wasted base-model pull
+    # before the trainer would overwrite them anyway).
+    load_from = resume_from_checkpoint or model_name_or_path
+    if resume_from_checkpoint:
+        print(f"Resume mode: loading model weights from {resume_from_checkpoint}")
     bacformer_model = AutoModelForSequenceClassification.from_pretrained(
-        model_name_or_path,
+        load_from,
         num_labels=1,
         problem_type="binary_classification",
         return_dict=True,
@@ -346,7 +359,7 @@ def run(
         compute_metrics=compute_metrics_binary_genome_pred,
         callbacks=[EarlyStoppingCallback(early_stopping_patience=early_stopping_patience)],
     )
-    trainer.train()
+    trainer.train(resume_from_checkpoint=resume_from_checkpoint)
 
     # Canonical §0.4 results JSON on the evaluate holdout. In smoke mode
     # (n_samples==10) there is no separate evaluate split so train_ids is reused
@@ -425,6 +438,8 @@ class ArgumentParser(Tap):
     """Which fold to use as validation set (0-indexed)."""
     evaluate_seed: int = 1
     """Seed controlling the fixed holdout set — do not change between folds/seeds in one experiment."""
+    resume_from_checkpoint: str | None = None
+    """If set, resume training from this checkpoint dir (true HF resume — preserves optimizer state, LR schedule, step counter, early-stopping counter). Pass --output-dir = the parent run dir."""
 
 
 if __name__ == "__main__":
@@ -453,4 +468,5 @@ if __name__ == "__main__":
         n_folds=args.n_folds,
         fold=args.fold,
         evaluate_seed=args.evaluate_seed,
+        resume_from_checkpoint=args.resume_from_checkpoint,
     )
