@@ -7,6 +7,7 @@ import torch
 
 from tl.train.evaluate import (
     collate_fn,
+    plot_auroc_bar,
     plot_roc_pr_grid,
     resolve_checkpoint_dir,
     resolve_evaluate_ids,
@@ -26,6 +27,18 @@ def test_plot_roc_pr_grid_writes_file(tmp_path):
     entries = [("ceftriaxone", *_scores(seed=1)), ("meropenem", *_scores(seed=2))]
     out = tmp_path / "sub" / "grid.png"
     plot_roc_pr_grid(entries, out)
+    assert out.exists() and out.stat().st_size > 0
+
+
+def test_plot_auroc_bar_writes_file_and_accepts_4_tuples(tmp_path):
+    # Mix 3-tuples and 4-tuples (with operating threshold) — bar chart ignores threshold.
+    entries = [
+        ("ceftriaxone", *_scores(seed=1)),
+        ("meropenem", *_scores(seed=2), 0.4),
+        ("colistin", *_scores(seed=3)),
+    ]
+    out = tmp_path / "bars.png"
+    plot_auroc_bar(entries, out, ylim=(0.5, 1.0), title="Test panel")
     assert out.exists() and out.stat().st_size > 0
 
 

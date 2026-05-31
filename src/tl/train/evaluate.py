@@ -291,6 +291,60 @@ def _build_loader(ids: list[str], args: argparse.Namespace, label_map: dict[str,
     )
 
 
+def plot_auroc_bar(
+    entries: list[tuple],
+    out_path: Path | str,
+    ylim: tuple[float, float] = (0.5, 1.0),
+    title: str | None = None,
+) -> None:
+    """Single-panel summary: AUROC per drug as a sorted vertical bar chart.
+
+    Parameters
+    ----------
+    entries
+        Same shape as :func:`plot_roc_pr_grid` — ``(label, y_true, y_prob, [threshold])``.
+        Sorted internally by AUROC descending.
+    out_path
+        Destination PNG.
+    ylim
+        Y-axis limits. Default ``(0.5, 1.0)`` so visual bar height reflects the
+        margin above the random baseline.
+    title
+        Optional figure title.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from sklearn.metrics import roc_auc_score
+
+    items = []
+    for entry in entries:
+        label, y_true, y_prob, *_ = entry
+        items.append((label, float(roc_auc_score(np.asarray(y_true).astype(int), np.asarray(y_prob).astype(float)))))
+    items.sort(key=lambda x: -x[1])
+    labels = [x[0] for x in items]
+    aurocs = [x[1] for x in items]
+
+    fig, ax = plt.subplots(figsize=(max(8.0, 0.45 * len(items) + 2.5), 5.0))
+    ax.bar(range(len(items)), aurocs, color="C0")
+    ax.set_xticks(range(len(items)))
+    ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.set_ylim(*ylim)
+    ax.set_ylabel("AUROC")
+    if title:
+        ax.set_title(title)
+    for i, v in enumerate(aurocs):
+        ax.text(i, v + 0.003, f"{v:.3f}", ha="center", va="bottom", fontsize=8)
+    ax.grid(axis="y", alpha=0.3)
+
+    fig.tight_layout()
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
 def _evaluate(args: argparse.Namespace) -> None:
     checkpoint = Path(args.checkpoint)
     out_dir = Path(args.out_dir) if args.out_dir else checkpoint
@@ -401,6 +455,9 @@ def _combine(args: argparse.Namespace) -> None:
         entries.append((label, data["y_true"], data["y_prob"], thr))
     plot_roc_pr_grid(entries, args.combine_out, prevalence_label=args.prevalence_label)
     print(f"Wrote {len(entries)}-drug ROC|PR grid: {args.combine_out}")
+    if args.bar_out:
+        plot_auroc_bar(entries, args.bar_out, title=args.bar_title)
+        print(f"Wrote AUROC bar chart: {args.bar_out}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -433,6 +490,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Plot mode: combine eval_scores.npz files into one ROC|PR grid (one row each).",
     )
     p.add_argument("--combine-out", type=str, default=None, help="Output PNG for --combine mode.")
+    p.add_argument(
+        "--bar-out",
+        type=str,
+        default=None,
+        help="Optional in --combine mode: also write a single-panel AUROC bar chart (sorted desc, y=0.5..1.0).",
+    )
+    p.add_argument("--bar-title", type=str, default=None, help="Title for the --bar-out figure.")
     return p
 
 

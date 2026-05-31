@@ -67,7 +67,9 @@ for d in $PANEL; do
 done
 uv run python src/tl/train/evaluate.py --combine "${ARGS[@]}" \
   --prevalence-label "resistance rate" \
-  --combine-out "$BASE/eval_roc_pr_grid_full_panel.png"
+  --combine-out "$BASE/eval_roc_pr_grid_full_panel.png" \
+  --bar-out "$BASE/eval_auroc_bar.png" \
+  --bar-title "Kp AMR panel — held-out AUROC"
 
 # 3) Summary CSV (0.5 metrics + Youden operating point), sorted by AUROC desc.
 uv run python - "$FT" "$BASE/eval_summary.csv" <<'PY'
