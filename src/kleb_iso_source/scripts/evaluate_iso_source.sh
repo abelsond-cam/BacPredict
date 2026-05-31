@@ -20,15 +20,18 @@
 cd /home/dca36/workspace/BacPredict
 
 BASE=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_iso_source/blood_faeces
-# Args: $1 cohort, $2 flavor.
-#   cohort  ∈ {all_samples, sampled_country_2_1_stratified, sampled_country_2_1_all}
-#   flavor  ∈ {kpsc_human (default — KPSC+Sublineage+human), mixed_species (pre-fix reference)}
+# Args: $1 cohort, $2 flavor, $3 checkpoint subdir (optional).
+#   cohort       ∈ {all_samples, sampled_country_2_1_stratified, sampled_country_2_1_all}
+#   flavor       ∈ {kpsc_human (default — KPSC+Sublineage+human), mixed_species (pre-fix reference)}
+#   ckpt_subdir  optional, e.g. checkpoint-31000 — pins evaluate.py to a specific
+#                checkpoint. If empty, evaluate.py picks the latest inside models/.
 # Each flavor dir holds binary_blood_vs_faeces_with_split.csv + models/ (the checkpoint).
 # Note: all_samples's ~4-5k-row evaluate split needs >1h — bump --time when scoring it.
 SUB="${1:-sampled_country_2_1_all}"
 FLAVOR="${2:-kpsc_human}"
+CKPT_SUBDIR="${3:-}"
 DIR="${BASE}/${SUB}/${FLAVOR}"
-CHECKPOINT="${DIR}/models"
+CHECKPOINT="${DIR}/models${CKPT_SUBDIR:+/$CKPT_SUBDIR}"
 SHEET="${DIR}/binary_blood_vs_faeces_with_split.csv"
 OUT_DIR="${DIR}/models"
 
