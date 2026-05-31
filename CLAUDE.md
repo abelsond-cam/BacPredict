@@ -64,6 +64,8 @@ Python:    always uv run python (never python or python3 directly)
 
 Run commands on HPC: `ssh dca36@login.hpc.cam.ac.uk "<command>"`.
 
+**Login node usage.** Jobs that complete in under **15 minutes** and stay under **128 MB RAM** (purely CPU — no GPU) can run directly on the login node without SLURM. Anything heavier (model inference, embedding generation, training, large-data parses) belongs in a SLURM job. Worked example: regenerating combined figures / summary CSVs from already-saved per-drug `eval_scores.npz` (see [src/kleb_ast/scripts/regen_panel_summary.sh](src/kleb_ast/scripts/regen_panel_summary.sh)) — pure matplotlib + small npz reads, finishes in seconds, not worth a queue wait.
+
 ## Package layout
 
 `src/` is flat — nine top-level packages, no `bacpredict/` wrapper. Distribution name stays `bacpredict`.
