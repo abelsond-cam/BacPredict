@@ -33,4 +33,6 @@ __pycache__/
 
 # Saved images
 *.png
+# …but documentation figures (small, committed) are kept.
+!src/kleb_iso_source/docs/figures/*.png
 
