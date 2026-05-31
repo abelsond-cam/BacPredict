@@ -58,7 +58,7 @@ cohorts well enough that country/SL are demonstrably not doing the work.
   existing `stratification_report.md` embeds them. Reuse
   `_log_final_country_table()` for counts.
 - **A4 — baseline AUROCs from metadata alone.** New harness in
-  `src/tl/train/metadata_baselines.py` (generic) + thin wrapper here. sklearn
+  `src/tl/train/linear_baselines.py` (generic) + thin wrapper here. sklearn
   LogisticRegression on (i) one-hot `country_parsed`, (ii) one-hot
   `Sublineage`, (iii) the combination. Fit on the same train/eval split as
   the Bacformer fine-tune. Numbers added to `stratification_report.md` and to

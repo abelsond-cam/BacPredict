@@ -1,10 +1,10 @@
-"""Metadata-only baselines for binary phenotype prediction.
+"""Linear-model baselines for binary phenotype prediction.
 
 Fits ``sklearn.LogisticRegression`` on one-hot metadata features (country,
 Sublineage, or both) on the SAME train/eval split the deep model was scored
 on. Use this to establish how much of the deep model's AUROC can be explained
-by metadata alone — the reviewer's first challenge: "is the model just
-learning country / Sublineage?"
+by a simple linear model on country / Sublineage — the reviewer's first
+challenge: "is the model just learning country / Sublineage?"
 
 Three feature sets out of the box: ``country``, ``sublineage``,
 ``country+sublineage``. Reuses ``tl.train.metrics.compute_full_metrics`` for
@@ -13,16 +13,17 @@ confusion matrix, calibration) so the output is directly comparable with
 ``results.json`` / ``eval_results.json`` produced by the deep-model pipeline.
 
 Output: a single JSON file (one entry per feature set), optionally appends a
-Markdown table to an existing ``stratification_report.md``.
+Markdown table to an existing ``stratification_report.md`` (idempotently —
+re-runs replace any prior baseline section rather than double-appending).
 
 Usage::
 
-    uv run python -m tl.train.metadata_baselines \\
+    uv run python -m tl.train.linear_baselines \\
         --sheet-path <cohort>/binary_<pair>_with_split.csv \\
         --label-column blood_vs_faeces_label \\
         --metadata-file /home/.../metadata_v2_all_samples_and_columns.tsv \\
         --feature-sets country sublineage country+sublineage \\
-        --out <cohort>/metadata_baselines.json \\
+        --out <cohort>/linear_baselines.json \\
         [--also-score-validate] \\
         [--update-report <cohort>/stratification_report.md] \\
         [--task kleb_iso_source]
@@ -103,7 +104,7 @@ def run_baselines(
     metadata_file: Path,
     feature_sets: list[str],
     also_score_validate: bool = False,
-    task: str = "metadata_baseline",
+    task: str = "linear_baseline",
 ) -> dict[str, Any]:
     """Fit + score every requested feature set; return a JSON-ready payload."""
     split_df = _load_split(sheet_path, label_column)
@@ -165,15 +166,52 @@ def run_baselines(
     }
 
 
+_BASELINE_HEADING = "## Linear-model baseline (LogisticRegression on country / Sublineage one-hot features)"
+_PRIOR_HEADINGS = (
+    _BASELINE_HEADING,
+    "## Metadata-only baseline (LogisticRegression on one-hot features)",  # legacy name
+)
+
+
+def _strip_prior_section(report_text: str) -> str:
+    """Remove any prior baseline section (delimited by the heading and the next '## ' heading or EOF).
+
+    Idempotent re-runs: re-appending replaces the prior section rather than double-writing.
+    """
+    lines = report_text.splitlines(keepends=True)
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i].rstrip("\n")
+        if line in _PRIOR_HEADINGS:
+            # Skip this heading and everything until the next '## ' (same-level) heading or EOF.
+            i += 1
+            while i < len(lines) and not lines[i].startswith("## "):
+                i += 1
+            continue
+        out.append(lines[i])
+        i += 1
+    # Trim trailing blank lines so the appended section sits cleanly.
+    text = "".join(out)
+    while text.endswith("\n\n"):
+        text = text[:-1]
+    return text
+
+
 def append_report_section(report_path: Path, payload: dict[str, Any]) -> None:
-    """Append a 'Metadata-only baseline' table to a stratification_report.md."""
+    """Append the linear-model baseline table to a stratification_report.md (idempotent)."""
     if not report_path.exists():
         logging.warning("  --update-report: %s does not exist; skipping", report_path)
         return
+    existing = report_path.read_text()
+    stripped = _strip_prior_section(existing)
+    if stripped != existing:
+        logging.info("  --update-report: removed prior baseline section before re-appending")
+
     label = payload["label_column"]
     lines = [
         "",
-        "## Metadata-only baseline (LogisticRegression on one-hot features)",
+        _BASELINE_HEADING,
         "",
         "Fit on the TRAIN split, scored on the held-out EVALUATE split. Pure sanity check: "
         "shows the AUROC achievable from country / Sublineage alone (no genomic features). "
@@ -194,8 +232,7 @@ def append_report_section(report_path: Path, payload: dict[str, Any]) -> None:
         f"_n_train={payload['n_train']:,}, n_evaluate={payload['n_evaluate']:,}, label={label}._",
         "",
     ]
-    with report_path.open("a") as f:
-        f.write("\n".join(lines))
+    report_path.write_text(stripped + "\n".join(lines))
 
 
 def _main_cli() -> None:
@@ -211,12 +248,12 @@ def _main_cli() -> None:
                    choices=list(FEATURE_SET_COLUMNS),
                    help="Which feature sets to fit (any combination).")
     p.add_argument("--out", type=Path, required=True,
-                   help="Path to write metadata_baselines.json.")
+                   help="Path to write linear_baselines.json.")
     p.add_argument("--also-score-validate", action="store_true",
                    help="Also score on the validate split (handy for direct val-curve comparison).")
     p.add_argument("--update-report", type=Path, default=None,
-                   help="If set, append a 'Metadata-only baseline' section to this stratification_report.md.")
-    p.add_argument("--task", default="metadata_baseline",
+                   help="If set, append (idempotently) a 'Linear-model baseline' section to this stratification_report.md.")
+    p.add_argument("--task", default="linear_baseline",
                    help="Free-form task label stored in the JSON (e.g. kleb_iso_source).")
     args = p.parse_args()
 
