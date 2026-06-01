@@ -27,6 +27,8 @@ dependencies = [
   "accelerate>=0.28.0",
   "adjusttext>=1.3.0",
   "anndata",
+  # Sibling-repo path dep — provides bac_kleborate.parsing (Kleborate cell/virulence/AMR helpers).
+  "BacHGT",
   # Use local editable Bacformer checkout during PR development
   "bacformer",
   "biopython>=1.83",
@@ -103,6 +105,8 @@ packages = [
 
 [tool.uv.sources]
 bacformer = { git = "https://github.com/abelsond-cam/Bacformer" }
+# Sibling checkout (~/developer/BacHGT locally, ~/workspace/BacHGT on HPC).
+BacHGT = { path = "../BacHGT", editable = true }
 
 [tool.hatch.envs.default]
 installer = "uv"
