@@ -179,6 +179,8 @@ def build_manifest(
         row = meta_by_sample.loc[lra_sample]
         if isinstance(row, pd.DataFrame):  # duplicate Sample — take first
             row = row.iloc[0]
+        row = row.copy()
+        row["Sample"] = lra_sample  # set_index() moved Sample into the index; restore it
         recs = genome_records_for_row(base, row)
         if recs:
             records.extend(recs)
