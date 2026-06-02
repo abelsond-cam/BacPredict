@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the (Sample, assembly_file, gff_file) input CSV for the TB pipeline.
+"""Build the (Sample, sr_assembly_file, sr_gff_file) input CSV for the TB pipeline.
 
 The Klebsiella path-builders (``find_missing_embeddings.py``,
 ``add_paths_gff_fna_to_metadata.py``) are tied to the curated KPSC metadata TSV
@@ -37,7 +37,7 @@ def _gff_index(gff_dir: Path) -> dict[str, Path]:
 
 
 def build(records_csv: Path, assemblies_dir: Path, gff_dir: Path, out_csv: Path) -> int:
-    """Write the (Sample, assembly_file, gff_file) CSV; return the row count."""
+    """Write the (Sample, sr_assembly_file, sr_gff_file) CSV; return the row count."""
     df = pd.read_csv(records_csv, low_memory=False)
     if BIOSAMPLE_COL not in df.columns:
         print(f"ERROR: '{BIOSAMPLE_COL}' not in {records_csv}", file=sys.stderr)
@@ -63,7 +63,7 @@ def build(records_csv: Path, assemblies_dir: Path, gff_dir: Path, out_csv: Path)
         if gff is None:
             no_gff += 1
             continue
-        rows.append({"Sample": bs, "assembly_file": str(asm), "gff_file": str(gff)})
+        rows.append({"Sample": bs, "sr_assembly_file": str(asm), "sr_gff_file": str(gff)})
 
     print(
         f"Dropped: {no_asm:,} without assembly, {no_gff:,} without GFF "
@@ -72,7 +72,7 @@ def build(records_csv: Path, assemblies_dir: Path, gff_dir: Path, out_csv: Path)
     )
 
     out_csv.parent.mkdir(parents=True, exist_ok=True)
-    out = pd.DataFrame(rows, columns=["Sample", "assembly_file", "gff_file"])
+    out = pd.DataFrame(rows, columns=["Sample", "sr_assembly_file", "sr_gff_file"])
     out.to_csv(out_csv, index=False)
     print(f"Wrote {len(out):,} rows to {out_csv}", file=sys.stderr)
     return len(out)
@@ -84,7 +84,7 @@ def main() -> None:
     parser.add_argument("--records-csv", type=Path, required=True, help="TB AMR records CSV")
     parser.add_argument("--assemblies-dir", type=Path, required=True, help="Flat <BIOSAMPLE>.fa.gz dir")
     parser.add_argument("--gff-dir", type=Path, required=True, help="Bucketed BakRep GFF3 dir")
-    parser.add_argument("--out-csv", type=Path, required=True, help="Output (Sample, assembly_file, gff_file) CSV")
+    parser.add_argument("--out-csv", type=Path, required=True, help="Output (Sample, sr_assembly_file, sr_gff_file) CSV")
     args = parser.parse_args()
     build(args.records_csv, args.assemblies_dir, args.gff_dir, args.out_csv)
 

@@ -1,9 +1,9 @@
 """
-Add assembly_file and gff_file columns to metadata TSV.
+Add sr_assembly_file and sr_gff_file columns to metadata TSV.
 
 Reads the three .txt path lists (assemblies, ncbi_gff, klebsiella_gff), parses
 Sample from each path with GC normalization, writes TSVs, then loads metadata
-and adds assembly_file / gff_file via dict lookup. Run after building the .txt
+and adds sr_assembly_file / sr_gff_file via dict lookup. Run after building the .txt
 files with: bash slurm_scripts/build_assemblies_and_gff_file_list.sh
 """
 
@@ -165,41 +165,41 @@ def run(metadata_path: Path | None = None) -> None:
     print(f"Loaded {len(df)} samples from metadata\n")
 
     df["sample_key"] = df["Sample"].apply(_normalize_sample_for_lookup)
-    df["assembly_file"] = df["sample_key"].map(assembly_dict)  # type: ignore[arg-type]
+    df["sr_assembly_file"] = df["sample_key"].map(assembly_dict)  # type: ignore[arg-type]
 
     total_samples = len(df)
-    n_assembly_found = df["assembly_file"].notna().sum()
+    n_assembly_found = df["sr_assembly_file"].notna().sum()
     n_assembly_not_found = total_samples - n_assembly_found
-    used_assembly = int(df["assembly_file"].dropna().nunique())
+    used_assembly = int(df["sr_assembly_file"].dropna().nunique())
 
     print("Assembly files:")
     print(f"  Samples in metadata: {total_samples}")
-    print(f"  Samples with assembly_file: {n_assembly_found}")
-    print(f"  Samples without assembly_file: {n_assembly_not_found}")
+    print(f"  Samples with sr_assembly_file: {n_assembly_found}")
+    print(f"  Samples without sr_assembly_file: {n_assembly_not_found}")
     if "kpsc_final_list" in df.columns:
         kpsc_mask = df["kpsc_final_list"]
-        n_kpsc_no_asm = int(df.loc[kpsc_mask, "assembly_file"].isna().sum())
+        n_kpsc_no_asm = int(df.loc[kpsc_mask, "sr_assembly_file"].isna().sum())
         print(
             f"    Metadata samples in kpsc_final_list without assemblies: {n_kpsc_no_asm}"
         )
     _summarise_matches(len(assembly_dict), used_assembly, "  Assembly list coverage")
 
     search_ncbi = df["is_refseq"].astype(bool) | df["is_nctc"].astype(bool)
-    df["gff_file"] = np.where(
+    df["sr_gff_file"] = np.where(
         search_ncbi,
         df["sample_key"].map(ncbi_dict),  # type: ignore[arg-type]
         df["sample_key"].map(kleb_dict),  # type: ignore[arg-type]
     )
 
-    n_gff_found = df["gff_file"].notna().sum()
+    n_gff_found = df["sr_gff_file"].notna().sum()
     n_gff_not_found = total_samples - n_gff_found
-    used_ncbi = int(df.loc[search_ncbi, "gff_file"].dropna().nunique())
-    used_kleb = int(df.loc[~search_ncbi, "gff_file"].dropna().nunique())
+    used_ncbi = int(df.loc[search_ncbi, "sr_gff_file"].dropna().nunique())
+    used_kleb = int(df.loc[~search_ncbi, "sr_gff_file"].dropna().nunique())
 
     print("\nGFF files:")
     print(f"  Samples in metadata: {total_samples}")
-    print(f"  Samples with gff_file: {n_gff_found}")
-    print(f"  Samples without gff_file: {n_gff_not_found}")
+    print(f"  Samples with sr_gff_file: {n_gff_found}")
+    print(f"  Samples without sr_gff_file: {n_gff_not_found}")
     _summarise_matches(len(ncbi_dict), used_ncbi, "  ncbi_gff3 list coverage")
     _summarise_matches(len(kleb_dict), used_kleb, "  klebsiella_gff3 list coverage")
 

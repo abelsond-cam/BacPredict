@@ -4,9 +4,9 @@ Reads a CSV of samples + per-sample annotation paths (produced by
 `find_missing_embeddings.py`) and writes one `{Sample}_protein_sequences.parquet`
 per sample for downstream GPU embedding generation.
 
-Per-sample extractor is chosen by file extension on the `gff_file` column:
+Per-sample extractor is chosen by file extension on the `sr_gff_file` column:
 - `.gff` / `.gff3` / `.gff.gz` / `.gff3.gz`: parse CDS features, splice from
-  the sibling FASTA (`assembly_file`), translate with codon table 11.
+  the sibling FASTA (`sr_assembly_file`), translate with codon table 11.
 - `.gbff` / `.gbff.gz`: fall back to bacformer's
   `preprocess_genome_assembly` (retained for completeness; new samples are
   expected to come in via GFF + FNA).
@@ -46,9 +46,9 @@ logger = logging.getLogger(__name__)
 
 
 def load_input_csv(input_csv: Path, limit: int | None = None) -> pd.DataFrame:
-    """Load the (Sample, assembly_file, gff_file) input CSV produced upstream."""
+    """Load the (Sample, sr_assembly_file, sr_gff_file) input CSV produced upstream."""
     df = pd.read_csv(input_csv)
-    required = {"Sample", "assembly_file", "gff_file"}
+    required = {"Sample", "sr_assembly_file", "sr_gff_file"}
     missing_cols = required - set(df.columns)
     if missing_cols:
         raise ValueError(f"Input CSV {input_csv} is missing columns: {missing_cols}")
@@ -70,22 +70,22 @@ def save_to_parquet(data_dict: dict, output_path: Path) -> None:
     df.to_parquet(output_path, engine="pyarrow", compression="snappy")
 
 
-def _extract_genome_info(sample_id: str, assembly_file: str, gff_file: str) -> dict:
-    """Dispatch to the correct extractor based on the `gff_file` extension."""
-    if gff_file and is_gff_path(gff_file):
-        if not assembly_file:
+def _extract_genome_info(sample_id: str, sr_assembly_file: str, sr_gff_file: str) -> dict:
+    """Dispatch to the correct extractor based on the `sr_gff_file` extension."""
+    if sr_gff_file and is_gff_path(sr_gff_file):
+        if not sr_assembly_file:
             raise ValueError(
-                f"{sample_id}: gff_file is set but assembly_file is empty; "
+                f"{sample_id}: sr_gff_file is set but sr_assembly_file is empty; "
                 "GFF+FNA extractor needs both."
             )
-        return extract_proteins_from_gff_fna(gff_file, assembly_file)
-    if gff_file and is_gbff_path(gff_file):
-        return preprocess_genome_assembly(filepath=str(gff_file))
-    if assembly_file and is_gbff_path(assembly_file):
-        return preprocess_genome_assembly(filepath=str(assembly_file))
+        return extract_proteins_from_gff_fna(sr_gff_file, sr_assembly_file)
+    if sr_gff_file and is_gbff_path(sr_gff_file):
+        return preprocess_genome_assembly(filepath=str(sr_gff_file))
+    if sr_assembly_file and is_gbff_path(sr_assembly_file):
+        return preprocess_genome_assembly(filepath=str(sr_assembly_file))
     raise ValueError(
         f"{sample_id}: no recognised annotation file. "
-        f"gff_file={gff_file!r}, assembly_file={assembly_file!r}"
+        f"sr_gff_file={sr_gff_file!r}, sr_assembly_file={sr_assembly_file!r}"
     )
 
 
@@ -97,14 +97,14 @@ def process_single_genome(args_tuple: tuple) -> tuple[str, bool, str, float]:
     tuple
         ``(sample_id, success, error_message, processing_time)``.
     """
-    sample_id, assembly_file, gff_file, output_dir, skip_existing = args_tuple
+    sample_id, sr_assembly_file, sr_gff_file, output_dir, skip_existing = args_tuple
     start_time = time.time()
 
     try:
         if skip_existing and check_output_exists(sample_id, output_dir):
             return sample_id, True, "Already exists (skipped)", 0.0
 
-        genome_info = _extract_genome_info(sample_id, assembly_file, gff_file)
+        genome_info = _extract_genome_info(sample_id, sr_assembly_file, sr_gff_file)
 
         # Strip metadata-only keys that the downstream embedding step does not consume.
         for k in ("strain_name", "accession_name", "protein_name", "accession_id"):
@@ -128,13 +128,13 @@ def main():
     sys.stdout.flush()
 
     parser = argparse.ArgumentParser(
-        description="Generate protein-sequence parquets from a CSV of (Sample, assembly_file, gff_file)."
+        description="Generate protein-sequence parquets from a CSV of (Sample, sr_assembly_file, sr_gff_file)."
     )
     parser.add_argument(
         "--input-csv",
         type=Path,
         default=INPUT_CSV_DEFAULT,
-        help="CSV with columns Sample, assembly_file, gff_file (default: missing_embeddings_kpsc.csv).",
+        help="CSV with columns Sample, sr_assembly_file, sr_gff_file (default: missing_embeddings_kpsc.csv).",
     )
     parser.add_argument(
         "--output-dir",
@@ -202,8 +202,8 @@ def main():
     process_args = [
         (
             row["Sample"],
-            str(row["assembly_file"]) if pd.notna(row["assembly_file"]) else "",
-            str(row["gff_file"]) if pd.notna(row["gff_file"]) else "",
+            str(row["sr_assembly_file"]) if pd.notna(row["sr_assembly_file"]) else "",
+            str(row["sr_gff_file"]) if pd.notna(row["sr_gff_file"]) else "",
             output_dir,
             args.skip_existing,
         )

@@ -10,7 +10,7 @@
 #SBATCH --mem=200G
 
 # Script to run protein-sequence extraction on HPC with CPU parallelization.
-# The python script reads a CSV of (Sample, assembly_file, gff_file) — generate it
+# The python script reads a CSV of (Sample, sr_assembly_file, sr_gff_file) — generate it
 # first with `find_missing_embeddings.py`.
 #
 # Usage:
