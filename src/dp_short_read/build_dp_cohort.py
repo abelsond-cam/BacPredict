@@ -160,9 +160,14 @@ def build_manifest(
         pi = pi[_as_bool(pi["lra_is_reference_genome"])]
     pi = pi.sort_values("lra_sample")
 
-    meta = pd.read_csv(metadata, sep="\t", dtype=str, low_memory=False)
-    if "Sample" not in meta.columns:
+    # metadata_v2 is wide (~450 cols) and large (~266 MB); read only the key + path columns so
+    # a manifest build stays inside the login-node RAM budget.
+    header = pd.read_csv(metadata, sep="\t", nrows=0).columns
+    if "Sample" not in header:
         raise KeyError("metadata has no 'Sample' column")
+    path_cols = GFF_SR_COLS + ASM_SR_COLS + GFF_LR_COLS + ASM_LR_COLS
+    usecols = ["Sample"] + [c for c in (("sample_accession",) + path_cols) if c in header]
+    meta = pd.read_csv(metadata, sep="\t", dtype=str, usecols=usecols)
     meta_by_sample = meta.set_index("Sample")
 
     records: list[dict] = []
