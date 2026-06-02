@@ -2,6 +2,8 @@
 
 Guidance for Claude Code working in this repository. Per-task detail lives in each task folder's own `CLAUDE.md`.
 
+> **Active program plan (week of 2026-05-30):** see [`~/.claude/PROGRAM_PLAN_2026-05-30.md`](../../.claude/PROGRAM_PLAN_2026-05-30.md). Workstreams **A** (iso-source expansion + stratification + explainability), **B** (complete-genome eval-set surgery, touches `src/tl/`), and **E** (Bacformer SNP-representation probe) live in this repo. Per-task detail is appended to each sub-CLAUDE.md.
+
 ## Project purpose
 
 Fine-tune [Bacformer](https://github.com/amina-BS/bacformer) on bacterial genome embeddings to predict downstream phenotypes. The repo hosts **six parallel experiments**, each in its own task folder with its own `CLAUDE.md` and SLURM scripts:
@@ -13,9 +15,9 @@ Fine-tune [Bacformer](https://github.com/amina-BS/bacformer) on bacterial genome
 | 3. Isolation source in *Klebsiella* | [src/kleb_iso_source/](src/kleb_iso_source/) | Active |
 | 6. `predictHGT` embedding diagnostic | [src/predict_hgt/](src/predict_hgt/) | Diagnostic, can run in parallel |
 
-Task 4 (mixed-assembly detection) and Task 5 (DefensePredictor on short reads) are deferred — full plans live in [BacPredict_Training_Plan.md](BacPredict_Training_Plan.md) §4 and §5. Recreate as `src/admixture/` and `src/dp_short_read/` when work actually starts.
+Task 4 (mixed-assembly detection) and Task 5 (DefensePredictor on short reads) are deferred — condensed plans live in [ToDo.md](ToDo.md). Recreate as `src/admixture/` and `src/dp_short_read/` when work actually starts.
 
-Master plan: [BacPredict_Training_Plan.md](BacPredict_Training_Plan.md). Tick-list tracker: [ToDo.md](ToDo.md) (also embedded below).
+This root file holds only global conventions and shared-infra docs. **Per-task plans, status, and running notes live in each task folder's `CLAUDE.md`.** The cross-task live tracker (current state + remaining milestones per task) is [ToDo.md](ToDo.md). Three to four agents run concurrently, one per active task (see §0.5).
 
 ## §0 — Global conventions (apply to every task)
 
@@ -46,11 +48,29 @@ Folds × seeds (≥5 each) are an **advanced final step**, only for external pub
 
 Per-task data paths live in each task's `CLAUDE.md`.
 
+**Metadata source.** Klebsiella cohort labels (host / isolation source / AMR / study type /
+sequencing provenance) come from `metadata_v2_all_samples_and_columns.tsv` produced by the
+sibling BacHGT repo. Authoritative description — cohort definition, row keying, every flag, every
+column's source —
+[`~/developer/BacHGT/src/bac_metadata/METADATA_v2_README.md`](../BacHGT/src/bac_metadata/METADATA_v2_README.md).
+The Bacformer-derived `predicted_{antibiotic}_AST` + `EBI_{antibiotic}_AST` columns produced by
+this repo are intended to be merged back into v2 (see the README's §12).
+
 ### §0.4 What we report at each milestone
 
 For every full run: **AUROC, AUPRC, sensitivity, specificity, balanced accuracy, confusion matrix, calibration curve, per-class breakdown.** Save model checkpoint + a versioned results JSON for diffing.
 
 **For AMR tasks (Tasks 1 and 2), every report MUST additionally be stratified by resistance mechanism — HGT/acquired vs chromosomal point mutation.** Central hypothesis of the programme. Mechanism labels: WHO V2 catalogue (TB), AMRFinderPlus + Kleborate (Kp).
+
+### §0.5 Concurrent agents — one per task
+
+Three to four Claude Code agents typically run in parallel on this repo, one per active task (Task 1 = [src/tb_ast/](src/tb_ast/), Task 2 = [src/kleb_ast/](src/kleb_ast/), Task 3 = [src/kleb_iso_source/](src/kleb_iso_source/), optionally Task 6 = [src/predict_hgt/](src/predict_hgt/)). To avoid stepping on each other:
+
+- **Stay in your task folder.** Edits should be confined to your own `src/<task>/` package and its tests under `tests/<task>/`. Touch shared code ([src/tl/](src/tl/), top-level configs, root docs) only when truly necessary, and call it out explicitly so the user can coordinate.
+- **Pull before you start, push as soon as a unit of work is done.** Don't sit on uncommitted changes — another agent on a parallel branch may be about to push something that touches adjacent files. Frequent small commits + pushes keep merge conflicts narrow and local.
+- **Scope `git add` to your task folder.** Prefer `git add src/<your_task>/ tests/<your_task>/` over `git add -A`/`git add .`. Never stage another task's in-progress edits; if you see unrelated modified files from a sibling agent, leave them untouched.
+- **Pull is also scoped — only when you need it.** Run `git pull --rebase` on your own branch before pushing; do not rebase or merge other agents' branches into yours without being asked.
+- **One branch per agent.** Each task agent should work on its own branch (e.g. `task1/...`, `task2/...`); do not commit to `main` or to another task's branch.
 
 ## HPC connection
 
@@ -149,55 +169,6 @@ The split logic is designed so that **no Sample ID can appear in more than one s
 - **Bacformer pre-training overlap.** Bacformer was pre-trained on MAGs / complete genomes. Samples in our evaluate set may have been in that corpus — representation-level leakage not addressable by sample splitting in this repo.
 - **Changing `--evaluate-seed` mid-experiment.** Evaluate holdout is only stable while `evaluate_seed` is held constant. Pin once per experiment.
 - **Pre-existing `train_val_eval` column when `--n-folds` is set.** Ignored in k-fold mode — a sample previously labelled `evaluate` may end up in `train` for some fold. By design; k-fold owns its own splitting.
-
-## Consolidated tick list (mirrors [ToDo.md](ToDo.md))
-
-### Shared infrastructure
-
-- [ ] Refresh Bacformer complete-genomes weights from Hugging Face (blocks every task)
-- [ ] Confirm SLURM scripts are current; standardise the 36 h GPU template
-- [ ] Standardise the n=10 / CPU-only smoke-test wrapper so every subproject can call it
-- [ ] Standardise the results JSON schema (AUROC, AUPRC, sens, spec, balanced acc, calibration, confusion matrix)
-
-### Task 1 — AST in TB ([src/tb_ast/](src/tb_ast/))
-
-- [ ] Kick off ESM-C embeddings on full TB protein set
-- [ ] Stage A smoke test on rifampicin (local, n=10)
-- [ ] Stage B overfit check on rifampicin (n=10)
-- [ ] Stage C full run on rifampicin (HPC GPU, 36 h, 1 fold × 1 seed)
-- [ ] Stage C on pyrazinamide (flagship goldilocks-zone drug)
-- [ ] Stage C on ethambutol, moxifloxacin, levofloxacin
-- [ ] Compare results vs WHO V2 catalogue and CRyPTIC ML benchmarks
-- [ ] **HGT-vs-vertical stratified performance** — mechanism via WHO V2; report per-stratum AUROC/sens/spec + delta
-- [ ] Decision: which drugs justify folds × seeds for publication
-
-### Task 2 — AST in Klebsiella ([src/kleb_ast/](src/kleb_ast/))
-
-- [ ] Evaluate existing Kp models against the refreshed model — save as benchmark
-- [ ] Stage A/B/C on canonical drug from refreshed Bacformer
-- [ ] Fan out across Kp drug panel
-- [ ] **HGT-vs-vertical stratified performance** — mechanism via AMRFinderPlus + Kleborate; report per-stratum AUROC/sens/spec + delta (strong test)
-- [ ] One-paragraph MAG-vs-complete-genome model contrast
-- [ ] Downstream (parked): held-out lineages; drug-class embeddings; Captum explainability; cross-training; Kp pre-training; read-depth gene-copy correction
-
-### Task 3 — Isolation source in Klebsiella ([src/kleb_iso_source/](src/kleb_iso_source/))
-
-- [ ] Regenerate train/val/eval splits for blood vs stool
-- [ ] Stage A/B/C on blood-vs-stool from refreshed Bacformer complete-genomes model
-- [ ] Compare against prior 0.55–0.62 AUROC benchmark
-- [ ] Downstream (parked): Kp pre-training first; complete-genomes-only training; matched-pair SR-vs-CG contrast; Captum gene attribution; stepwise AUROC across modelling layers
-
-### Task 6 — `predictHGT` embedding diagnostic (can run in parallel) ([src/predict_hgt/](src/predict_hgt/))
-
-- [ ] Pull HGT-region annotations from the `BacHGT` sister module (MOB-suite + ISEScan + …)
-- [ ] Embed all proteins with refreshed Bacformer
-- [ ] Marker-protein nearest-neighbour analysis (KPC/NDM/OXA-48/*mcr-1*/*tetA*/*iutA*/*rmpA* + housekeeping controls)
-- [ ] UMAP coloured by HGT vs chromosomal and by host species
-- [ ] Centroid separation score: HGT-vs-chromosomal vs host-context baseline
-- [ ] Layer-sensitivity scan (early vs late Bacformer layers)
-- [ ] **Optional comparator:** raw ESM-C diagnostic
-- [ ] **Decision point:** Aim 1 outcome determines embedding source for Aim 2 (Bacformer if HGT-preserving, DP-style if context-attractor); document implication for cross-species HGT-aware work
-- [ ] Boundary-detection head (Aim 2): pull ISEScan + MGEfinder ground truth from BacHGT; train per-protein head; evaluate held-out + on SR assemblies
 
 ## Code style
 

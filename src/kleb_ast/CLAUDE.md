@@ -31,6 +31,59 @@ Bacformer should excel where resistance is driven by **HGT / gene acquisition** 
 5. Side-by-side: old-Bacformer benchmark vs new-Bacformer vs MAG-model.
 6. **HGT-vs-vertical stratified performance — central hypothesis test.** For each isolate, run **AMRFinderPlus** and **Kleborate** to label every resistance determinant by origin (acquired gene / HGT vs chromosomal point mutation). Per drug, stratify and report AUROC / sens / spec **separately** for HGT-resistant vs vertically-resistant isolates. Mixed-mechanism → own bucket. Headline figure for the paper: the **delta** in Bacformer's gain over baseline between the two strata. Strongest test = held-out-by-mechanism (train on one stratum, test transfer to the other).
 
+## Week of 2026-05-30 — assigned workstream items (B4, E1, E2/E3)
+
+Anchor: program plan `~/.claude/PROGRAM_PLAN_2026-05-30.md`.
+Shared-infra agent runs B first (branch `feat/complete-genome-aware-splits`)
+then E1/E2 (branch `feat/bacformer-snp-probe`); the actual re-runs land in
+this folder.
+
+**Central hypothesis for this week:** chromosomal-SNP-driven resistance
+(cipro is the canonical exemplar) is systematically under-predicted because
+(i) Bacformer collapses near-identical alleles into the same protein family,
+and (ii) short-read assemblies further dilute the per-protein signal.
+
+- **B4 — re-run Stage C with eval-bias-toward-complete.** Once
+  `tl/train/split_utils.py` learns `bias_eval_toward` (B2) and the prepare
+  script propagates `is_complete` (B1), re-run Stage C for meropenem,
+  ceftriaxone, gentamicin **plus cipro** (cipro is added as the chromosomal-
+  leaning bellwether). Compare AUROC to the 2026-05-29 unbiased baselines
+  (0.969 / 0.983 / 0.978 / TBD). Prediction: a small but real bump because
+  the holdout is easier; cipro's delta is the headline.
+- **E1 — gyrA/gyrB/parC allele probe (RUN FIRST in workstream E).** New
+  script `allele_representation_probe.py` (here or in `predict_hgt/` — same
+  methodology as predict_hgt's HGT-preserving vs context-attractor
+  diagnostic; coordinate with the predict_hgt agent on location before
+  duplicating). For ~50–100 cipro-R and matched cipro-S isolates, identify
+  gyrA/gyrB/parC by locus_tag (Kleborate AMR call carries the WHO-style
+  mutation). Pull per-protein ESM-C embedding (mean-pool per protein) and
+  Bacformer contextualised per-protein embedding (before genome pooling).
+  Report pairwise cosine distance between WT and mutant within each model +
+  per-residue ESM-C deltas as sanity check. **This gates E2 + E3:** if
+  ESM-C separates them but Bacformer doesn't → Bacformer is the bottleneck
+  and E2/E3 are worth running. If neither separates → the fix is upstream
+  of Bacformer.
+- **E2 — attention-weighted genome pooling.** Only if E1 warrants. Replace
+  Bacformer's mean-pool with a learned attention head
+  (`src/tl/train/attention_pool.py`, owned by shared-infra agent). Smoke +
+  Stage C on cipro and blood/faeces. Headline test: cipro AUROC delta vs
+  mean-pool baseline. Don't expect movement on meropenem (HGT-bound, 0.97+).
+- **E3 — Klebsiella-specific continued masked pretraining.** Only if E1
+  warrants. Continued masked-LM on Kp genomes using the existing 50k
+  centroid vocabulary (cluster_centers.npy on the Bacformer RDS). Output
+  is a new checkpoint that re-fine-tunes all four BacPredict tasks; this
+  folder is the primary downstream consumer.
+
+Mechanism stratification (HGT vs chromosomal — central programme
+hypothesis) is still required for every result. Produce the stratified
+report block alongside the cipro / ceftriaxone / meropenem / gentamicin
+Stage C results, even on the first eval-bias re-run.
+
+Open follow-up (still applies): backport `dtype="auto"` HF loading idiom
+to [train_amr.py](train_amr.py) — `.to(torch.bfloat16)` regression hits
+the CPU Stage A path (already fixed in tb_ast `4956f91` and
+kleb_iso_source `2d5866e`).
+
 ## Three-stage testing protocol (recap of root §0.2)
 
 | Stage | Scale | Folds × seeds | Where |
@@ -59,7 +112,7 @@ Label / data prep
 - `convert_ast_data.py` — `process_klebsiella_ast_data()` helper.
 
 Kleb-specific metadata / embedding curation
-- `add_paths_gff_fna_to_metadata.py` — populate `assembly_file` + `gff_file` in the Kleb metadata TSV.
+- `add_paths_gff_fna_to_metadata.py` — populate `sr_assembly_file` + `sr_gff_file` in the Kleb metadata TSV.
 - `add_bakta_gbff_downloaded_flag.py` — scan `klebsiella_gbff/` and update metadata.
 - `find_missing_embeddings.py` — list `kpsc_final_list` samples missing embeddings.
 - `filter_esmc_embeddings_by_klebsiella.py` — filter embedding parquets to KPSC-only.

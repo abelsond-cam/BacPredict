@@ -2,7 +2,7 @@
 
 **Status: diagnostic / exploratory. Can run in parallel with other tasks** — only needs the refreshed Bacformer weights plus an HGT-annotation pipeline (the latter pulled from the sister `BacHGT` module, not re-run here). **No new training for the main experiment.**
 
-See the root [CLAUDE.md](../../CLAUDE.md) for §0 global conventions, and [BacPredict_Training_Plan.md](../../BacPredict_Training_Plan.md) §6 for the long-form plan.
+See the root [CLAUDE.md](../../CLAUDE.md) for §0 global conventions. Cross-task status lives in [ToDo.md](../../ToDo.md).
 
 ## Aim
 
@@ -26,7 +26,9 @@ Two linked questions, in priority order:
 
 ## Plan / workflow milestones — Aim 1 (main experiment)
 
-1. **Pull HGT-region annotations from the sister `BacHGT` module** — work already done there (MOB-suite for plasmid replicons + ISEScan for IS elements + other annotation steps). Do **not** re-run these tools in BacPredict; just consume the BacHGT outputs. Per-protein labels wanted: `chromosomal-core` / `plasmid` / `IS-flanked` / `other-MGE`, with element-level identifiers (replicon type, IS family) where available.
+1. **Pull HGT-region annotations from the sister `BacHGT` module** — work already done there (MOB-suite for plasmid replicons + ISEScan for IS elements + geNomad for prophages + other annotation steps). Do **not** re-run these tools in BacPredict; just consume the BacHGT outputs. Per-protein labels wanted: `chromosomal-core` / `plasmid` / `IS-flanked` / `prophage` / `other-MGE`, with element-level identifiers (replicon type, IS family) where available.
+
+   **Prophages (geNomad) are a particularly clean test.** A prophage is physically *integrated into the chromosome* yet is HGT-borne — so prophage proteins sit in chromosomal genomic neighbourhoods while having mobile origin. The two hypotheses make opposite predictions for them: a **context-attractor** Bacformer will pull prophage-protein embeddings toward their chromosomal neighbours (looking chromosomal), whereas an **HGT-preserving** Bacformer will keep them clustered with prophage proteins in other genomes. This is the sharpest single discriminator of how much Bacformer's contextualisation shifts an embedding away from the raw ESM-C representation — use prophage vs chromosomal-core as a headline marker class in steps 3–5.
 2. **Embed all proteins with refreshed Bacformer** complete-genomes model. Save per-protein contextual embeddings.
 3. **Core diagnostic — nearest-neighbour analysis by ortholog group.** For a set of marker proteins that occur both HGT-borne and chromosomally across the corpus (candidates: *bla*KPC, *bla*NDM, *bla*OXA-48, *mcr-1*, *tetA*, *iutA* from *iuc*, *rmpA*; plus a few core single-copy housekeeping proteins as negative controls): pull every instance from the corpus, compute pairwise embedding distances. For an HGT-borne instance, are its nearest neighbours in embedding space (a) other HGT-borne instances of the same protein in other genomes (= HGT-preserving) or (b) its chromosomal neighbours in the same genome (= context-attractor)?
 4. **UMAP visualisation** of the same marker proteins, coloured by HGT vs chromosomal location and by host species. Visual confirmation of the quantitative result.
@@ -39,6 +41,27 @@ Two linked questions, in priority order:
 Pull ISEScan + MGEfinder ground truth from `BacHGT`. Train a small head on per-protein embeddings to predict "is this within ±k genes of an HGT insertion boundary?" Evaluate on held-out genomes, then apply to short-read assemblies. Two input-representation options on the table: (a) MGEfinder-recovered IS proteins inserted into the protein list at the correct genomic position (positional anchoring via flanking genes); (b) IS-family gap tokens — one learned embedding per IS family, simpler and works when MGEfinder fails on composite transposons.
 
 **Embedding source chosen by the outcome of Aim 1:** Bacformer if HGT-preserving, DefensePredictor-style (raw ESM-C + concat flanking + gene features) if context-attractor. Same architecture and training set either way; only the input representation changes.
+
+## Week of 2026-05-30 — assigned workstream item (E1 alignment)
+
+Anchor: program plan `~/.claude/PROGRAM_PLAN_2026-05-30.md`.
+
+The kleb_ast gyrA/gyrB/parC allele probe (E1) is methodologically the same
+kind of representation diagnostic this folder is designed for — taking a
+known semantic difference between proteins (here: WT vs SNP-allele) and
+asking whether Bacformer's contextualised representation preserves or
+erases it.
+
+If the allele probe is built in `predict_hgt/` instead of `kleb_ast/`, the
+framing is: WT/mutant pairs are a clean Aim-1-style test on **chromosomal-
+core proteins** (the opposite end of the spectrum from the HGT-borne marker
+proteins this task originally focuses on). Combining both into one report
+(HGT-borne marker-centroid separation + SNP-allele cosine separation) gives
+a fuller picture of what Bacformer's contextualisation step is doing across
+both ends of the protein-identity spectrum.
+
+Either location is fine — coordinate with the kleb_ast agent on where the
+script lives before duplicating work.
 
 ## What we will and will not do
 

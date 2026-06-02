@@ -46,6 +46,26 @@ Bacformer should excel where resistance is driven by **HGT / gene acquisition** 
 8. **HGT-vs-vertical stratified performance — central hypothesis test.** Classify each resistant isolate via the **WHO V2 catalogue** (point mutation in a core gene vs acquired allele / gene gain). Re-compute AUROC, sensitivity, specificity **separately** for the two strata; report the delta. Mixed-mechanism isolates → own bucket. Where possible, hold out HGT-borne resistance from training and test transfer.
 9. **Decide whether to invest in folds × seeds** for any drug for publication.
 
+## Week of 2026-05-30 — assigned workstream items (B4, E3 control)
+
+Anchor: program plan `~/.claude/PROGRAM_PLAN_2026-05-30.md`.
+
+- **B4 — re-queue rifampin Stage C with eval-bias-toward-complete.** Once
+  `tl/train/split_utils.py` learns `bias_eval_toward` (B2) and the prepare
+  script propagates `is_complete` (B1), re-queue the rifampin run currently
+  in flight (job 29776879 — let it finish for the unbiased baseline; the
+  eval-bias re-run is the comparison). Same drill for the other 9
+  goldilocks-zone drugs once they finish their first Stage C.
+- **E3 — control task for Klebsiella-specific continued pretraining.**
+  If E1 warrants E3, the new Kp-specialised Bacformer checkpoint should be
+  used to fine-tune TB drugs as a **control**. Hypothesis: TB AUROCs should
+  NOT improve (Kp-specific pretraining shouldn't help a non-Kp organism).
+  If they do improve, the gain is general (better encoding of bacterial
+  genome structure) rather than Kp-specific — which is interesting but
+  means E3's framing in the paper changes.
+
+No new code in this folder unless E3 fires.
+
 ## Three-stage testing protocol (recap of root §0.2)
 
 | Stage | Scale | Folds × seeds | Where |
@@ -64,7 +84,7 @@ Per root §0.4: AUROC, AUPRC, sensitivity, specificity, balanced accuracy, confu
 
 ## Files in this folder
 
-- `build_tb_input_csv.py` — TB (`Sample`, `assembly_file`, `gff_file`) input CSV from disk.
+- `build_tb_input_csv.py` — TB (`Sample`, `sr_assembly_file`, `sr_gff_file`) input CSV from disk.
 - `scripts/tb_collect_bakrep_samples.py` — TB-specific BakRep collection helper.
 - `scripts/run_download_assemblies.sh` — CPU SLURM: download TB assemblies (ATB primary + NCBI fallback). Auto-retries until convergence (`--max-passes`, default 10).
 - `scripts/run_download_bakrep.sh` — CPU SLURM: download TB Bakta GFF3s from BakRep. Same auto-retry loop.

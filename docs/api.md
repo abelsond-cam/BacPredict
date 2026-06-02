@@ -2,7 +2,7 @@
 
 The `bacpredict` distribution is split into five top-level packages: one shared toolbox umbrella (`tl`, containing `tl.embed`, `tl.genome_download`, `tl.train`) plus four task-scoped packages (`tb_ast`, `kleb_ast`, `kleb_iso_source`, `predict_hgt`). Task packages depend on `tl.*`; `tl.*` does not depend on task packages.
 
-Tasks 4 (mixed-assembly detection) and 5 (DefensePredictor on short reads) are deferred — see `BacPredict_Training_Plan.md` §4 / §5; their task packages will be added when work resumes.
+Tasks 4 (mixed-assembly detection) and 5 (DefensePredictor on short reads) are deferred — see `ToDo.md`; their task packages will be added when work resumes.
 
 ## Embed (`tl.embed`)
 
