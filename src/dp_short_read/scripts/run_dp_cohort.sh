@@ -1,15 +1,15 @@
 #!/bin/bash
-# Full DefensePredictor sweep over the paired LR/SR cohort (~2,900 pairs -> ~5,800 arms),
-# sharded across a SLURM GPU array. Run the smoke test FIRST to validate + time per genome,
-# then size --array and --time from the measured cost before launching this.
+# Full DefensePredictor sweep over the complete-genome paired LR/SR cohort
+# (--cohort complete: ~1,454 pairs -> ~2,900 arms), sharded across a SLURM GPU array. Run the
+# smoke test FIRST to validate + time per genome, then size --array/--time from the measured cost.
 #
-# Build the full manifest once on the login node (cheap — two TSV reads):
+# Build the full manifest once on the login node (cheap — one TSV read):
 #   PROJECT_K=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw
 #   src/dp_short_read/.venv-dp/bin/python src/dp_short_read/build_dp_cohort.py \
-#       --paired-index ${PROJECT_K}/david/processed/complete_vs_sr_genomes/paired_index.tsv \
-#       --metadata     ${PROJECT_K}/david/final/metadata_v2_all_samples_and_columns.tsv \
-#       --base-dir     ${PROJECT_K} \
-#       --out          ${PROJECT_K}/david/processed/defence_predictor/full/dp_manifest_full.tsv
+#       --metadata ${PROJECT_K}/david/final/metadata_v2_all_samples_and_columns.tsv \
+#       --base-dir ${PROJECT_K} \
+#       --cohort   complete \
+#       --out      ${PROJECT_K}/david/processed/defence_predictor/full/dp_manifest_full.tsv
 #
 # Then:  sbatch src/dp_short_read/scripts/run_dp_cohort.sh
 # Each array task processes a round-robin shard; N_SHARDS must equal the array size.

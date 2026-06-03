@@ -30,7 +30,6 @@ cd /home/dca36/workspace/BacPredict
 export PYTHONUNBUFFERED=1
 
 PROJECT_K="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw"
-PAIRED_INDEX="${PROJECT_K}/david/processed/complete_vs_sr_genomes/paired_index.tsv"
 METADATA="${PROJECT_K}/david/final/metadata_v2_all_samples_and_columns.tsv"
 PANAROO_REPO="/home/dca36/workspace/panaroo"
 OUT_DIR="${PROJECT_K}/david/processed/defence_predictor/smoke"
@@ -44,10 +43,9 @@ echo "================================================================"
 
 echo "--- Building manifest (10 reference genomes) ---"
 "${PY}" src/dp_short_read/build_dp_cohort.py \
-    --paired-index "${PAIRED_INDEX}" \
     --metadata "${METADATA}" \
     --base-dir "${PROJECT_K}" \
-    --reference-only --limit 10 \
+    --cohort reference --limit 10 \
     --out "${OUT_DIR}/dp_manifest_smoke.tsv"
 
 echo "--- Running DefensePredictor ---"

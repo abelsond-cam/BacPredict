@@ -1,27 +1,29 @@
-r"""Build the DefensePredictor run manifest from the paired LR/SR cohort.
+r"""Build the DefensePredictor run manifest for the paired LR/SR complete-genome cohort.
 
-Selects genomes from ``paired_index.tsv`` (the curated long-read-vs-short-read pairing,
-``processed/complete_vs_sr_genomes/``), joins to ``metadata_v2`` to pull the four per-genome
-file-path columns, and expands each row into up to **two** genome records — one for the
-long-read (LR) assembly and one for the short-read (SR) assembly — each only when both its
-GFF and assembly resolve and exist on disk.
+Reads ``metadata_v2`` directly and selects rows that carry **all four** distinct per-genome
+file paths — ``lr_assembly_file`` + ``lr_gff_file`` (long-read arm) and ``sr_assembly_file`` +
+``sr_gff_file`` (short-read partner) — then filters by cohort (``complete`` / ``reference`` /
+``all``). Each selected row expands into two genome records: one LR arm and one SR arm, sharing
+the same ``Sample`` so their DefensePredictor outputs can be paired afterwards.
 
-The output manifest (one row per genome arm) is the single input to
-:mod:`run_defense_predictor`. Path-resolution and row-expansion mirror BacHGT's
-``panaroo_run_strain._genome_records_for_row`` so DefensePredictor sees the same gene models
-Panaroo does, but the helpers are re-implemented here to keep the isolated DP venv free of a
-BacHGT import.
+This is the post-fix design: metadata_v2 (2026-06-03) repopulated ``sr_assembly_file`` for the
+merged RefSeq pairs, so all four columns are now genuinely distinct for the paired complete
+cohort (1,454 rows; 709 reference). No ``paired_index.tsv`` join and no ``sr_shadow`` lookup are
+needed — the four columns on one row are authoritative.
+
+A record is emitted only when both its assembly and GFF resolve and exist on disk, so a Sample
+whose SR file is missing on disk contributes only its LR arm (graceful per-arm skipping). The
+manifest is the single input to :mod:`run_defense_predictor`.
 
 Examples
 --------
-Smoke manifest — 10 highest-confidence reference genomes, both arms::
+Smoke manifest — 10 reference genomes, both arms::
 
     python build_dp_cohort.py \\
-        --paired-index <project_k>/david/processed/complete_vs_sr_genomes/paired_index.tsv \\
-        --metadata     <project_k>/david/final/metadata_v2_all_samples_and_columns.tsv \\
-        --base-dir     <project_k> \\
-        --reference-only --limit 10 \\
-        --out          <out_dir>/dp_manifest_smoke.tsv
+        --metadata <project_k>/david/final/metadata_v2_all_samples_and_columns.tsv \\
+        --base-dir <project_k> \\
+        --cohort reference --limit 10 \\
+        --out <out_dir>/dp_manifest_smoke.tsv
 """
 
 from __future__ import annotations
@@ -31,25 +33,31 @@ from pathlib import Path
 
 import pandas as pd
 
-# metadata_v2 is mid-rename (METADATA_v2_README §12): the on-disk TSV may still carry the
-# legacy column names until the next rebuild. Accept either spelling for each path column.
-GFF_SR_COLS = ("sr_gff_file", "gff_file")
-ASM_SR_COLS = ("sr_assembly_file", "assembly_file")
-GFF_LR_COLS = ("lr_gff_file", "lra_gff_file")
+# Canonical names first; legacy spellings kept as fallback for older metadata snapshots.
 ASM_LR_COLS = ("lr_assembly_file", "lra_assembly_file")
+GFF_LR_COLS = ("lr_gff_file", "lra_gff_file")
+ASM_SR_COLS = ("sr_assembly_file", "assembly_file")
+GFF_SR_COLS = ("sr_gff_file", "gff_file")
+
+_TRUE = {"true", "1", "yes", "t"}
 
 MANIFEST_COLS = [
-    "panaroo_label",
+    "panaroo_label",  # output id: Sample (LR arm) / sr_biosample (SR arm)
     "arm",  # "lr" or "sr"
-    "Sample",
-    "sample_accession",
+    "Sample",  # LR accession — shared by both arms of a pair (the pairing key)
+    "sr_biosample",
+    "is_reference",
     "gff_abs",
     "assembly_abs",
 ]
 
 
+def _is_true(val) -> bool:
+    return pd.notna(val) and str(val).strip().lower() in _TRUE
+
+
 def _first_present(row: pd.Series, candidates: tuple[str, ...]):
-    """Return the first non-null value among ``candidates`` columns on ``row``."""
+    """Return the first non-empty value among ``candidates`` columns on ``row``."""
     for col in candidates:
         if col in row.index:
             val = row[col]
@@ -59,12 +67,11 @@ def _first_present(row: pd.Series, candidates: tuple[str, ...]):
 
 
 def _abs_path(base: Path, rel) -> Path | None:
-    """Resolve a metadata path column to an absolute Path.
+    """Resolve a metadata path value to an absolute Path.
 
-    SR paths are stored relative to ``base`` (the project_k root); LR paths are stored
-    absolute (``/home/dca36/...``). A leading ``/`` selects between the two. ``<project_k>``
-    placeholder prefixes (README §12, path-relative rewrite still pending) are stripped and
-    treated as relative.
+    SR paths are stored relative to ``base`` (project_k root); LR paths are absolute. A leading
+    ``/`` selects between the two; a ``<project_k>`` placeholder prefix is stripped and treated
+    as relative.
     """
     if rel is None or pd.isna(rel) or not str(rel).strip():
         return None
@@ -82,14 +89,16 @@ def _both_exist(gff: Path | None, assembly: Path | None) -> bool:
 def genome_records_for_row(base: Path, row: pd.Series) -> list[dict]:
     """Expand one metadata row into up to two (LR + SR) genome records.
 
-    A record is emitted only when both its GFF and assembly resolve and exist on disk, so a
-    row missing one arm's files contributes just the other arm (graceful per-arm skipping).
-    The Panaroo-style label is the accession that already matches the arm's files:
-    ``Sample`` for the long-read genome, ``sample_accession`` for the short-read genome.
+    Each arm is emitted only when both its assembly and GFF resolve and exist on disk. The LR
+    arm is labelled by ``Sample`` (the long-read accession); the SR arm by ``sr_biosample``
+    (the short-read partner BioSample, which matches the SR assembly filename).
     """
     records: list[dict] = []
     sample = row.get("Sample")
+    sr_biosample = row.get("sr_biosample")
     sample_accession = row.get("sample_accession")
+    is_reference = _is_true(row.get("is_reference_genome"))
+    sr_label = sr_biosample if (pd.notna(sr_biosample) and str(sr_biosample).strip()) else sample_accession
 
     lr_gff = _abs_path(base, _first_present(row, GFF_LR_COLS))
     lr_asm = _abs_path(base, _first_present(row, ASM_LR_COLS))
@@ -99,7 +108,8 @@ def genome_records_for_row(base: Path, row: pd.Series) -> list[dict]:
                 "panaroo_label": str(sample).strip(),
                 "arm": "lr",
                 "Sample": sample,
-                "sample_accession": sample_accession,
+                "sr_biosample": sr_biosample,
+                "is_reference": is_reference,
                 "gff_abs": str(lr_gff),
                 "assembly_abs": str(lr_asm),
             }
@@ -107,114 +117,115 @@ def genome_records_for_row(base: Path, row: pd.Series) -> list[dict]:
 
     sr_gff = _abs_path(base, _first_present(row, GFF_SR_COLS))
     sr_asm = _abs_path(base, _first_present(row, ASM_SR_COLS))
-    if _both_exist(sr_gff, sr_asm):
-        if pd.notna(sample_accession) and str(sample_accession).strip():
-            records.append(
-                {
-                    "panaroo_label": str(sample_accession).strip(),
-                    "arm": "sr",
-                    "Sample": sample,
-                    "sample_accession": sample_accession,
-                    "gff_abs": str(sr_gff),
-                    "assembly_abs": str(sr_asm),
-                }
-            )
+    if _both_exist(sr_gff, sr_asm) and pd.notna(sr_label) and str(sr_label).strip():
+        records.append(
+            {
+                "panaroo_label": str(sr_label).strip(),
+                "arm": "sr",
+                "Sample": sample,
+                "sr_biosample": sr_biosample,
+                "is_reference": is_reference,
+                "gff_abs": str(sr_gff),
+                "assembly_abs": str(sr_asm),
+            }
+        )
     return records
 
 
-def _as_bool(series: pd.Series) -> pd.Series:
-    if series.dtype == bool:
-        return series
-    return series.map(
-        lambda x: str(x).strip().lower() in ("true", "1", "yes", "t") if pd.notna(x) else False
-    )
+def _effective(df: pd.DataFrame, candidates: tuple[str, ...]) -> pd.Series:
+    """Per-row first non-empty value among candidate columns (vectorised _first_present)."""
+    out = pd.Series([None] * len(df), index=df.index, dtype=object)
+    for col in candidates:
+        if col in df.columns:
+            v = df[col]
+            fill = out.isna() & v.notna() & (v.astype(str).str.strip() != "")
+            out = out.mask(fill, v)
+    return out
 
 
 def build_manifest(
-    paired_index: Path,
     metadata: Path,
     base: Path,
-    reference_only: bool = False,
+    cohort: str = "complete",
     limit: int | None = None,
 ) -> pd.DataFrame:
-    """Build the per-arm genome manifest for the paired cohort.
+    """Build the per-arm genome manifest from metadata_v2.
 
     Parameters
     ----------
-    paired_index
-        ``paired_index.tsv`` — the LR/SR pairing, keyed by ``lra_sample`` + ``sr_biosample``.
     metadata
-        ``metadata_v2`` TSV holding the four per-genome file-path columns, keyed by ``Sample``.
+        ``metadata_v2`` TSV with the four per-genome file-path columns, keyed by ``Sample``.
     base
-        project_k root, prepended to SR (relative) path columns.
-    reference_only
-        Keep only ``lra_is_reference_genome`` pairs (highest-confidence reference set).
+        project_k root, prepended to relative (SR) path columns.
+    cohort
+        ``complete`` (``is_complete``), ``reference`` (``is_reference_genome``), or ``all`` —
+        applied on top of the always-required all-four-files-present filter.
     limit
-        Keep at most this many genomes (pairs are taken in sorted ``lra_sample`` order for a
-        deterministic smoke set).
+        Keep at most this many genomes (sorted by ``Sample`` for a deterministic smoke set).
     """
-    pi = pd.read_csv(paired_index, sep="\t", dtype=str)
-    if reference_only:
-        if "lra_is_reference_genome" not in pi.columns:
-            raise KeyError("paired_index has no 'lra_is_reference_genome' column")
-        pi = pi[_as_bool(pi["lra_is_reference_genome"])]
-    pi = pi.sort_values("lra_sample")
+    if cohort not in {"complete", "reference", "all"}:
+        raise ValueError(f"--cohort must be complete/reference/all, got {cohort!r}")
 
-    # metadata_v2 is wide (~450 cols) and large (~266 MB); read only the key + path columns so
-    # a manifest build stays inside the login-node RAM budget.
+    # metadata_v2 is wide (~450 cols) / large (~266 MB); read only the columns we need.
     header = pd.read_csv(metadata, sep="\t", nrows=0).columns
     if "Sample" not in header:
         raise KeyError("metadata has no 'Sample' column")
-    path_cols = GFF_SR_COLS + ASM_SR_COLS + GFF_LR_COLS + ASM_LR_COLS
-    usecols = ["Sample"] + [c for c in (("sample_accession",) + path_cols) if c in header]
+    path_cols = ASM_LR_COLS + GFF_LR_COLS + ASM_SR_COLS + GFF_SR_COLS
+    flag_cols = ("sample_accession", "sr_biosample", "is_complete", "is_reference_genome")
+    usecols = ["Sample"] + [c for c in (flag_cols + path_cols) if c in header]
     meta = pd.read_csv(metadata, sep="\t", dtype=str, usecols=usecols)
-    meta_by_sample = meta.set_index("Sample")
+
+    # Require all four file paths present (the definition of a usable LR-vs-SR pair).
+    lr_asm = _effective(meta, ASM_LR_COLS)
+    lr_gff = _effective(meta, GFF_LR_COLS)
+    sr_asm = _effective(meta, ASM_SR_COLS)
+    sr_gff = _effective(meta, GFF_SR_COLS)
+    all_four = lr_asm.notna() & lr_gff.notna() & sr_asm.notna() & sr_gff.notna()
+    meta = meta[all_four]
+
+    if cohort == "complete":
+        meta = meta[meta["is_complete"].map(_is_true)]
+    elif cohort == "reference":
+        meta = meta[meta["is_reference_genome"].map(_is_true)]
+
+    meta = meta.sort_values("Sample")
+    print(f"Cohort '{cohort}': {len(meta)} paired genomes with all 4 distinct files")
 
     records: list[dict] = []
-    seen_samples = 0
-    for lra_sample in pi["lra_sample"].dropna().unique():
-        if lra_sample not in meta_by_sample.index:
-            print(f"  WARN: {lra_sample} not in metadata — skipping")
-            continue
-        row = meta_by_sample.loc[lra_sample]
-        if isinstance(row, pd.DataFrame):  # duplicate Sample — take first
-            row = row.iloc[0]
-        row = row.copy()
-        row["Sample"] = lra_sample  # set_index() moved Sample into the index; restore it
+    seen = 0
+    for _, row in meta.iterrows():
         recs = genome_records_for_row(base, row)
         if recs:
             records.extend(recs)
-            seen_samples += 1
-        if limit is not None and seen_samples >= limit:
+            seen += 1
+        if limit is not None and seen >= limit:
             break
 
-    manifest = pd.DataFrame(records, columns=MANIFEST_COLS)
-    return manifest
+    return pd.DataFrame(records, columns=MANIFEST_COLS)
 
 
 def main() -> None:
     """CLI: write the DefensePredictor run manifest to TSV."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--paired-index", required=True, type=Path)
     ap.add_argument("--metadata", required=True, type=Path)
     ap.add_argument("--base-dir", required=True, type=Path, help="project_k root for relative SR paths")
-    ap.add_argument("--reference-only", action="store_true", help="keep only lra_is_reference_genome pairs")
-    ap.add_argument("--limit", type=int, default=None, help="cap number of genomes (sorted by lra_sample)")
+    ap.add_argument("--cohort", choices=["complete", "reference", "all"], default="complete")
+    ap.add_argument("--limit", type=int, default=None, help="cap number of genomes (sorted by Sample)")
     ap.add_argument("--out", required=True, type=Path)
     args = ap.parse_args()
 
     manifest = build_manifest(
-        paired_index=args.paired_index,
         metadata=args.metadata,
         base=args.base_dir,
-        reference_only=args.reference_only,
+        cohort=args.cohort,
         limit=args.limit,
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     manifest.to_csv(args.out, sep="\t", index=False)
     n_lr = (manifest["arm"] == "lr").sum()
     n_sr = (manifest["arm"] == "sr").sum()
-    print(f"Wrote {len(manifest)} genome arms ({n_lr} LR + {n_sr} SR) -> {args.out}")
+    n_pairs = manifest.groupby("Sample")["arm"].nunique().eq(2).sum()
+    print(f"Wrote {len(manifest)} arms ({n_lr} LR + {n_sr} SR; {n_pairs} complete LR+SR pairs) -> {args.out}")
 
 
 if __name__ == "__main__":
