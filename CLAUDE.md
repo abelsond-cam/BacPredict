@@ -62,6 +62,31 @@ For every full run: **AUROC, AUPRC, sensitivity, specificity, balanced accuracy,
 
 **For AMR tasks (Tasks 1 and 2), every report MUST additionally be stratified by resistance mechanism — HGT/acquired vs chromosomal point mutation.** Central hypothesis of the programme. Mechanism labels: WHO V2 catalogue (TB), AMRFinderPlus + Kleborate (Kp).
 
+### §0.5a HPC resource requests — be generous, **never under-call**
+
+CSD3 charges wall time used, not wall time requested; CPU cores and memory on
+ampere/icelake nodes are abundant. **Dying mid-job because we under-requested
+is the expensive failure mode.** Always lean toward more — *especially* time.
+
+- **Time: triple any estimate.** If reasoning says 2 h, request 6 h (or 8 h if
+  the estimate has any uncertainty at all — and it usually does). Over-requesting
+  time costs *nothing*; running out of time kills hours of GPU compute. Never
+  trim the time budget to "look efficient" — there's no prize for it.
+- **CPUs / `--num-workers`: use what the node has.** Ampere allocates ~32 cores
+  per GPU; request `--cpus-per-task=8` (the per-GPU partition default) and set
+  the DataLoader `--num-workers` to match (8). CPU cores are idle if you don't
+  use them; there is no penalty for "asking for more workers."
+- **Memory: be generous.** Single-GPU ampere jobs effectively get ~250 GB
+  regardless of what you request; defaulting to `--mem=128G` or higher is
+  free and harmless. Don't trim memory requests below your *actual* peak.
+
+Sources of truth (read these before tuning SLURM directives):
+- A100 / ampere partition: <https://docs.hpc.cam.ac.uk/hpc/user-guide/a100.html>
+- icelake CPU partition: <https://docs.hpc.cam.ac.uk/hpc/user-guide/icelake.html>
+
+When in doubt: **more**. The cost of asking for more than you need is zero;
+the cost of asking for less is the entire job.
+
 ### §0.5 Concurrent agents — one per task
 
 > ⚠️ **READ THIS BEFORE ANY GIT COMMAND.** Three to four Claude Code agents edit this

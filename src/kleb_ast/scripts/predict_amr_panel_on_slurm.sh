@@ -83,18 +83,26 @@ if [ -f "$OUT" ] && [ "${FORCE_RECOMPUTE:-0}" != "1" ]; then
   exit 0
 fi
 
-# num-workers=0 (single-process loading) — at deployment scale (~73k samples per drug)
-# the file_system sharing strategy + workers>0 exhausts mmap quotas on ampere nodes.
-# Fail-fast: SLURM sees a non-zero exit if the Python crashes, so failures aren't silent.
+# NUM_WORKERS env (default 8) controls the DataLoader worker count.
+#   Past pitfall: at deployment scale (~73k items) the file_system sharing
+#   strategy + many workers can exhaust mmap on ampere nodes. workers=0 is
+#   always safe but slow. workers=8 with cpus-per-task=8 is the production
+#   default; failures should surface fast (within minutes) — see fail-fast
+#   wrapper below.
 #
-# Canary support: if N_SAMPLES is set in the env, predict only that many samples
-# (small end-to-end verification before the full re-run). Submit with:
+# Canary support: if N_SAMPLES is set, predict only that many samples (quick
+# end-to-end smoke). Submit canary with:
 #   sbatch --array=0 --time=00:30:00 --export=ALL,N_SAMPLES=10 <this script>
+# Submit production with:
+#   sbatch --time=12:00:00 --array=0-21 <this script>          # 8 workers default
+#   sbatch --time=12:00:00 --array=0-21 --export=ALL,NUM_WORKERS=4 <this script>
+NUM_WORKERS=${NUM_WORKERS:-8}
 N_SAMPLES_ARG=()
 if [ -n "${N_SAMPLES:-}" ]; then
   N_SAMPLES_ARG=(--n-samples "$N_SAMPLES")
   echo "CANARY mode: N_SAMPLES=$N_SAMPLES"
 fi
+echo "Using NUM_WORKERS=$NUM_WORKERS"
 
 if ! uv run python src/kleb_ast/predict_amr_for_metadata.py \
   --drug "$d" \
@@ -103,7 +111,7 @@ if ! uv run python src/kleb_ast/predict_amr_for_metadata.py \
   --embeddings-dir "$EMB" \
   --out "$OUT" \
   --batch-size 1 \
-  --num-workers 0 \
+  --num-workers "$NUM_WORKERS" \
   "${N_SAMPLES_ARG[@]}"; then
   echo "PREDICT_FAILED: $d (see .err log)"
   exit 1
