@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import importlib.util
+import re
 import shutil
 import tempfile
 import time
@@ -35,6 +36,71 @@ from pathlib import Path
 import pandas as pd
 
 DEFENSIVE_LOG_ODDS_CUTOFF = 4.0  # README: stringent cutoff to call a protein defensive
+
+_ID_RE = re.compile(r"(?:^|;)ID=([^;]+)")
+_LOCUS_RE = re.compile(r"locus_tag=([^;\n]+)")
+
+
+def uniquify_locus_tags(gff_path: Path) -> int:
+    """Rewrite ``gff_path`` in place so every CDS ``locus_tag`` is unique across distinct IDs.
+
+    DefensePredictor keys both its per-protein FASTA (fed to ESM2) and its embedding merge on
+    ``locus_tag``. Two CDS sharing a ``locus_tag`` but with different ``ID``s — which occurs in
+    some RefSeq annotations — crash ESM (``Found duplicate sequence labels``) and would corrupt
+    the feature pivot. Multi-segment CDS that share a single ``ID`` (programmed frameshifts)
+    keep their one ``locus_tag``; only genuine cross-ID collisions get a ``_dup{n}`` suffix.
+    The embedded ``##FASTA`` block (contig headers) is left untouched. Returns lines renamed.
+    """
+    lines = gff_path.read_text().splitlines(keepends=True)
+
+    # Pass 1: first locus_tag seen for each distinct CDS ID.
+    id_to_lt: dict[str, str] = {}
+    in_fasta = False
+    for line in lines:
+        if in_fasta or line.startswith("##FASTA"):
+            in_fasta = True
+            continue
+        if line.startswith("#") or "\tCDS\t" not in line:
+            continue
+        attrs = line.split("\t")[8]
+        m_id, m_lt = _ID_RE.search(attrs), _LOCUS_RE.search(attrs)
+        if m_id and m_lt:
+            id_to_lt.setdefault(m_id.group(1), m_lt.group(1))
+
+    # Assign a unique locus_tag per ID: first user of a tag keeps it, later distinct IDs suffix.
+    seen: dict[str, int] = {}
+    id_to_newlt: dict[str, str] = {}
+    for cds_id, lt in id_to_lt.items():
+        n = seen.get(lt, 0)
+        id_to_newlt[cds_id] = lt if n == 0 else f"{lt}_dup{n}"
+        seen[lt] = n + 1
+
+    # Pass 2: rewrite CDS locus_tags by ID.
+    renamed = 0
+    out: list[str] = []
+    in_fasta = False
+    for line in lines:
+        if in_fasta or line.startswith("##FASTA"):
+            in_fasta = True
+            out.append(line)
+            continue
+        if line.startswith("#") or "\tCDS\t" not in line:
+            out.append(line)
+            continue
+        fields = line.split("\t")
+        m_id = _ID_RE.search(fields[8])
+        new_lt = id_to_newlt.get(m_id.group(1)) if m_id else None
+        if new_lt is not None:
+            new_attrs = _LOCUS_RE.sub(f"locus_tag={new_lt}", fields[8], count=1)
+            if new_attrs != fields[8]:
+                renamed += 1
+                fields[8] = new_attrs
+                line = "\t".join(fields)
+        out.append(line)
+
+    if renamed:
+        gff_path.write_text("".join(out))
+    return renamed
 
 
 def _load_convert(panaroo_repo: Path):
@@ -67,6 +133,9 @@ def build_combined_gff(convert, gff_abs: Path, assembly_abs: Path, out_gff: Path
         asm_plain = _maybe_gunzip(assembly_abs, tmpdir)
         # is_ignore_overlapping=True matches the Panaroo run pipeline (panaroo_run_strain.py).
         convert(str(gff_plain), str(out_gff), str(asm_plain), is_ignore_overlapping=True)
+    renamed = uniquify_locus_tags(out_gff)
+    if renamed:
+        print(f"    uniquified {renamed} duplicate locus_tag(s) in {out_gff.name}")
 
 
 def run_one(dfp, convert, row: pd.Series, out_dir: Path, force: bool) -> dict:
