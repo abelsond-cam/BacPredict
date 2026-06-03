@@ -24,10 +24,9 @@
 set -euo pipefail
 cd /home/dca36/workspace/BacPredict
 
-module purge
-module load cuda/12.4
-module load cudnn/8.9_cuda-12.4
-
+# No system CUDA module: the DP venv ships torch 2.5.1+cu124 with bundled CUDA + cuDNN
+# (nvidia-*-cu12 wheels), so it needs only the GPU driver, which is always present on
+# ampere nodes. (cuda/12.4 is not locatable on these nodes anyway.)
 export PYTHONUNBUFFERED=1
 
 PROJECT_K="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw"

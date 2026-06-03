@@ -31,9 +31,7 @@
 set -euo pipefail
 cd /home/dca36/workspace/BacPredict
 
-module purge
-module load cuda/12.4
-module load cudnn/8.9_cuda-12.4
+# DP venv bundles CUDA+cuDNN (torch cu124 wheels); only the GPU driver is needed. No module load.
 export PYTHONUNBUFFERED=1
 
 PROJECT_K="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw"
