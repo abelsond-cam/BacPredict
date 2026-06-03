@@ -86,6 +86,16 @@ fi
 # num-workers=0 (single-process loading) — at deployment scale (~73k samples per drug)
 # the file_system sharing strategy + workers>0 exhausts mmap quotas on ampere nodes.
 # Fail-fast: SLURM sees a non-zero exit if the Python crashes, so failures aren't silent.
+#
+# Canary support: if N_SAMPLES is set in the env, predict only that many samples
+# (small end-to-end verification before the full re-run). Submit with:
+#   sbatch --array=0 --time=00:30:00 --export=ALL,N_SAMPLES=10 <this script>
+N_SAMPLES_ARG=()
+if [ -n "${N_SAMPLES:-}" ]; then
+  N_SAMPLES_ARG=(--n-samples "$N_SAMPLES")
+  echo "CANARY mode: N_SAMPLES=$N_SAMPLES"
+fi
+
 if ! uv run python src/kleb_ast/predict_amr_for_metadata.py \
   --drug "$d" \
   --checkpoint "$CK" \
@@ -93,7 +103,8 @@ if ! uv run python src/kleb_ast/predict_amr_for_metadata.py \
   --embeddings-dir "$EMB" \
   --out "$OUT" \
   --batch-size 1 \
-  --num-workers 0; then
+  --num-workers 0 \
+  "${N_SAMPLES_ARG[@]}"; then
   echo "PREDICT_FAILED: $d (see .err log)"
   exit 1
 fi

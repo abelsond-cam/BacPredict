@@ -90,6 +90,11 @@ def main() -> None:
     p.add_argument("--batch-size", type=int, default=1)
     p.add_argument("--num-workers", type=int, default=4)
     p.add_argument("--no-cuda", action="store_true")
+    p.add_argument(
+        "--n-samples", type=int, default=None,
+        help="Truncate the post-filter sample list to this many entries (canary/debug use only). "
+             "Default: None = predict on every kpsc_final_list sample with an embedding.",
+    )
     args = p.parse_args()
 
     print(f"[{args.drug}] loading kpsc_final_list samples from {args.metadata_tsv}")
@@ -103,6 +108,9 @@ def main() -> None:
             f"[{args.drug}]   WARNING: {missing:,} kpsc samples lack embeddings; "
             "they will be absent from the parquet and will appear as NaN after merge."
         )
+    if args.n_samples is not None and len(kept) > args.n_samples:
+        print(f"[{args.drug}]   CANARY MODE: truncating to first {args.n_samples} samples (was {len(kept):,})")
+        kept = kept[: args.n_samples]
     if not kept:
         raise SystemExit(f"[{args.drug}] no samples to predict.")
 
