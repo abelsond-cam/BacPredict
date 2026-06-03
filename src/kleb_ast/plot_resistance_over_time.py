@@ -32,6 +32,41 @@ DRUG_PANEL: list[str] = [
     "azithromycin", "colistin",
 ]
 
+# amr_study stratification.
+#   "AMR plus control" → ignored (per user request)
+#   empty/NaN          → "NA" stratum
+# Maps stratum label → (matplotlib color, linestyle, linewidth, alpha).
+_STUDY_STRATA: dict[str, tuple[str, str, float, float]] = {
+    "AMR":          ("#d62728", "-", 2.0, 1.0),  # red
+    "Surveillance": ("#1f77b4", "-", 2.0, 1.0),  # blue
+    "NA":           ("#2ca02c", "-", 2.0, 1.0),  # green
+}
+_ALL_STYLE = ("black",      ":", 1.2, 0.4)       # All non-mixed combined (dotted, faint)
+_EBI_STYLE = ("goldenrod",  ":", 1.4, 0.7)       # EBI ground truth (dotted, golden-yellow)
+
+
+def _classify_amr_study(value: object) -> str | None:
+    """Map a raw amr_study cell to a plotting stratum, or None to drop.
+
+    Empty / NaN → "NA"; "AMR plus control" → None (mixed, ignored);
+    "AMR" / "Surveillance" → themselves; anything else → None.
+    """
+    if value is None:
+        return "NA"
+    try:
+        if pd.isna(value):
+            return "NA"
+    except (TypeError, ValueError):
+        pass
+    s = str(value).strip()
+    if s == "":
+        return "NA"
+    if s == "AMR plus control":
+        return None
+    if s in ("AMR", "Surveillance"):
+        return s
+    return None
+
 
 def _rolling_r_rate(series: pd.Series, window: int) -> pd.Series:
     """Rolling fraction of "R" calls over the last ``window`` rows.
@@ -60,12 +95,23 @@ def plot_one_drug(
     out_dir: Path,
     window: int,
     date_col: str = "collection_date_parsed",
+    uncertain_band: tuple[float, float] = (0.25, 0.75),
 ) -> Path | None:
-    """Render and save the per-drug resistance-rate-over-time plot.
+    """Render and save the per-drug resistance-rate-over-time + confidence plot.
 
-    Returns the output path, or ``None`` if there isn't enough data to plot.
+    Two stacked panels per drug:
+
+    1. **Top** — rolling fraction of "R" calls over time, stratified by
+       ``amr_study`` (AMR/Surveillance/NA), plus an "All" non-mixed combined
+       line and the EBI ground-truth overlay where available.
+    2. **Bottom** — histogram of ``predicted_<drug>_AST_prob`` with the
+       inferred Youden threshold marked and the "uncertain" band shaded.
+
+    Returns the output path, or ``None`` if the drug column is absent / there
+    isn't enough data to plot a single stratum.
     """
     pred_col = f"predicted_{drug}_AST"
+    prob_col = f"predicted_{drug}_AST_prob"
     ebi_col = f"EBI_{drug}_AST"
     if pred_col not in df.columns:
         return None
@@ -75,42 +121,99 @@ def plot_one_drug(
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    pred = _filtered_sorted(df, pred_col, date_col)
-    if len(pred) < max(10, window // 4):
+    # Pre-filter: drop anyone who didn't get a prediction.
+    base = df[df[pred_col].notna()].copy()
+    if len(base) < max(10, window // 4):
         return None
 
-    pred["rate"] = _rolling_r_rate(pred[pred_col], window)
+    fig = plt.figure(figsize=(11.5, 8.0))
+    gs = fig.add_gridspec(2, 1, height_ratios=[2.5, 1.0], hspace=0.32)
+    ax_time = fig.add_subplot(gs[0])
+    ax_hist = fig.add_subplot(gs[1])
 
-    ebi = _filtered_sorted(df, ebi_col, date_col) if ebi_col in df.columns else pd.DataFrame()
-    if len(ebi):
-        ebi["rate"] = _rolling_r_rate(ebi[ebi_col], window)
-
-    pred_r_rate = float((pred[pred_col] == "R").mean())
-    ebi_r_rate = float((ebi[ebi_col] == "R").mean()) if len(ebi) else float("nan")
-
-    fig, ax = plt.subplots(figsize=(10.5, 4.5))
-    ax.plot(
-        pred[date_col], pred["rate"],
-        color="C0", lw=2,
-        label=f"predicted (n={len(pred):,}, R rate {pred_r_rate:.2f})",
-    )
-    if len(ebi):
-        ax.plot(
-            ebi[date_col], ebi["rate"],
-            color="C3", lw=1.2, ls="--",
-            label=f"EBI actual (n={len(ebi):,}, R rate {ebi_r_rate:.2f})",
+    # ── Top panel: stratified rolling R-rate over time ───────────────────────
+    anything_plotted = False
+    for stratum, (color, ls, lw, alpha) in _STUDY_STRATA.items():
+        sub = base[base["_study_cat"] == stratum]
+        sub = _filtered_sorted(sub, pred_col, date_col)
+        if len(sub) < max(10, window // 4):
+            continue
+        rate = _rolling_r_rate(sub[pred_col], window)
+        r_rate = float((sub[pred_col] == "R").mean())
+        ax_time.plot(
+            sub[date_col], rate, color=color, lw=lw, linestyle=ls, alpha=alpha,
+            label=f"{stratum} (n={len(sub):,}, R rate {r_rate:.2f})",
         )
-    ax.set_xlabel("collection_date_parsed")
-    ax.set_ylabel(f"rolling resistance rate (window = {window} samples)")
-    ax.set_title(f"{drug} — rolling R rate over time")
-    ax.set_ylim(0, 1.0)
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="best")
+        anything_plotted = True
 
-    fig.tight_layout()
+    # All (non-mixed) combined.
+    all_sub = base[base["_study_cat"].notna()]
+    all_sub = _filtered_sorted(all_sub, pred_col, date_col)
+    if len(all_sub) >= max(10, window // 4):
+        rate = _rolling_r_rate(all_sub[pred_col], window)
+        r_rate = float((all_sub[pred_col] == "R").mean())
+        color, ls, lw, alpha = _ALL_STYLE
+        ax_time.plot(
+            all_sub[date_col], rate, color=color, lw=lw, linestyle=ls, alpha=alpha,
+            label=f"All (n={len(all_sub):,}, R rate {r_rate:.2f})",
+        )
+        anything_plotted = True
+
+    # EBI ground-truth overlay.
+    if ebi_col in df.columns:
+        ebi = _filtered_sorted(df, ebi_col, date_col)
+        if len(ebi) >= 10:
+            rate = _rolling_r_rate(ebi[ebi_col], window)
+            r_rate = float((ebi[ebi_col] == "R").mean())
+            color, ls, lw, alpha = _EBI_STYLE
+            ax_time.plot(
+                ebi[date_col], rate, color=color, lw=lw, linestyle=ls, alpha=alpha,
+                label=f"EBI actual (n={len(ebi):,}, R rate {r_rate:.2f})",
+            )
+
+    if not anything_plotted:
+        plt.close(fig)
+        return None
+
+    ax_time.set_xlabel("collection_date_parsed")
+    ax_time.set_ylabel(f"rolling R rate (window = {window} samples)")
+    ax_time.set_title(f"{drug} — rolling R rate over time, stratified by amr_study")
+    ax_time.set_ylim(0, 1.0)
+    ax_time.grid(True, alpha=0.3)
+    ax_time.legend(loc="best", fontsize=9)
+
+    # ── Bottom panel: confidence (probability) histogram ─────────────────────
+    lo, hi = uncertain_band
+    if prob_col in base.columns:
+        probs = base[prob_col].dropna()
+    else:
+        probs = pd.Series(dtype=float)
+
+    if len(probs):
+        ax_hist.hist(probs, bins=50, range=(0, 1), color="steelblue", edgecolor="0.3", linewidth=0.5)
+        ax_hist.axvspan(lo, hi, color="grey", alpha=0.15, label=f"uncertain [{lo:.2f}, {hi:.2f}]")
+        # Inferred Youden threshold = min prob over rows called R. (Correct math:
+        # R if prob >= threshold, so min(R probs) >= threshold within rounding.)
+        r_probs = base.loc[base[pred_col] == "R", prob_col].dropna()
+        if len(r_probs):
+            thr = float(r_probs.min())
+            ax_hist.axvline(thr, color="black", lw=1.5, ls="--", label=f"Youden ≈ {thr:.3f}")
+        n_uncertain = int(((probs >= lo) & (probs <= hi)).sum())
+        frac = 100.0 * n_uncertain / len(probs)
+        ax_hist.set_title(
+            f"confidence distribution (n={len(probs):,}; uncertain {n_uncertain:,} = {frac:.1f}%)"
+        )
+        ax_hist.set_xlim(0, 1)
+        ax_hist.set_xlabel(f"predicted_{drug}_AST_prob")
+        ax_hist.set_ylabel("count")
+        ax_hist.legend(loc="upper center", fontsize=8)
+    else:
+        ax_hist.text(0.5, 0.5, "no probability data", ha="center", va="center", transform=ax_hist.transAxes)
+        ax_hist.set_axis_off()
+
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{drug}.png"
-    fig.savefig(out_path, dpi=150)
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     return out_path
 
@@ -136,8 +239,9 @@ def main() -> None:
 
     print(f"Reading metadata: {args.metadata_tsv}")
     # Read only the columns we need to keep memory low.
-    needed_cols = ["Sample", "kpsc_final_list", args.date_column]
+    needed_cols = ["Sample", "kpsc_final_list", "amr_study", args.date_column]
     needed_cols += [f"predicted_{d}_AST" for d in DRUG_PANEL]
+    needed_cols += [f"predicted_{d}_AST_prob" for d in DRUG_PANEL]
     needed_cols += [f"EBI_{d}_AST" for d in DRUG_PANEL]
 
     # Some columns may be missing (a drug failed to train); read with usecols-fallback.
@@ -154,6 +258,15 @@ def main() -> None:
     df = pd.read_csv(args.metadata_tsv, sep="\t", low_memory=False, usecols=present_cols)
     df = df[df["kpsc_final_list"].astype(bool)]
     print(f"kpsc_final_list rows: {len(df):,}")
+
+    # Classify each row's amr_study cell once up-front; None for "AMR plus control" (mixed).
+    if "amr_study" in df.columns:
+        df["_study_cat"] = df["amr_study"].apply(_classify_amr_study)
+        cat_counts = df["_study_cat"].value_counts(dropna=False).to_dict()
+        print(f"amr_study strata: {cat_counts}")
+    else:
+        print("WARNING: 'amr_study' column absent; stratification disabled (only 'All' line will appear).")
+        df["_study_cat"] = None
 
     out_dir = Path(args.out_dir)
     written, skipped = [], []
