@@ -64,13 +64,54 @@ For every full run: **AUROC, AUPRC, sensitivity, specificity, balanced accuracy,
 
 ### §0.5 Concurrent agents — one per task
 
-Three to four Claude Code agents typically run in parallel on this repo, one per active task (Task 1 = [src/tb_ast/](src/tb_ast/), Task 2 = [src/kleb_ast/](src/kleb_ast/), Task 3 = [src/kleb_iso_source/](src/kleb_iso_source/), optionally Task 6 = [src/predict_hgt/](src/predict_hgt/)). To avoid stepping on each other:
+> ⚠️ **READ THIS BEFORE ANY GIT COMMAND.** Three to four Claude Code agents edit this
+> repository **at the same time**, sharing the local checkout *and* the single HPC checkout at
+> `/home/dca36/workspace/BacPredict`. **Git state (branch, index, working tree, history) is
+> shared and easily corrupted.** Treat every git operation as something that can destroy or
+> entangle another agent's live, uncommitted work. When in doubt, **stop and ask the user** —
+> a question is always cheaper than a recovery.
 
-- **Stay in your task folder.** Edits should be confined to your own `src/<task>/` package and its tests under `tests/<task>/`. Touch shared code ([src/tl/](src/tl/), top-level configs, root docs) only when truly necessary, and call it out explicitly so the user can coordinate.
-- **Pull before you start, push as soon as a unit of work is done.** Don't sit on uncommitted changes — another agent on a parallel branch may be about to push something that touches adjacent files. Frequent small commits + pushes keep merge conflicts narrow and local.
-- **Scope `git add` to your task folder.** Prefer `git add src/<your_task>/ tests/<your_task>/` over `git add -A`/`git add .`. Never stage another task's in-progress edits; if you see unrelated modified files from a sibling agent, leave them untouched.
-- **Pull is also scoped — only when you need it.** Run `git pull --rebase` on your own branch before pushing; do not rebase or merge other agents' branches into yours without being asked.
-- **One branch per agent.** Each task agent should work on its own branch (e.g. `task1/...`, `task2/...`); do not commit to `main` or to another task's branch.
+Active task → branch map: Task 1 = [src/tb_ast/](src/tb_ast/) (`task1/...`),
+Task 2 = [src/kleb_ast/](src/kleb_ast/) (`task2/...`),
+Task 3 = [src/kleb_iso_source/](src/kleb_iso_source/) (`task3/...`),
+Task 5 = [src/dp_short_read/](src/dp_short_read/) (`task5/...`),
+Task 6 = [src/predict_hgt/](src/predict_hgt/) (`task6/...`).
+
+**Stay in your task folder.** Confine edits to your own `src/<task>/` package and `tests/<task>/`.
+Touch shared code ([src/tl/](src/tl/)), top-level configs, or root docs only when truly necessary,
+and call it out explicitly so the user can coordinate.
+
+**Commits & pushes — ALL of your work, and ONLY your work:**
+
+- **Include everything *you* did.** A commit/push for a unit of work must capture *every* change
+  this agent made for it — never leave your own edits stranded uncommitted across a hand-off.
+- **Never include another agent's work without asking first — very clearly.** A commit/push must
+  contain *only* changes this agent authored. If `git status` shows modified/staged files you did
+  not create, **STOP**: do not `git add -A`, `git add .`, or `git commit -a`. Stage explicit paths
+  inside your own task folder only (`git add src/<your_task>/ tests/<your_task>/`). If your changes
+  are entangled with a sibling's uncommitted edits, **ask the user before committing anything** —
+  describe exactly which files are whose and wait for an explicit go-ahead.
+- **Never amend, squash, or rewrite a commit** that may contain another agent's work.
+
+**Branches & history — never without careful planning AND explicit approval:**
+
+- **Do not switch branches.** No `git checkout <branch>`, `git switch`, or `git checkout -b` on
+  either the local or the HPC checkout without first planning it and **asking the user**. Switching
+  the working tree out from under a sibling mid-edit is how work gets lost. Stay on the branch you
+  were started on; if you think you need a new one, ask first.
+- **Do not rebase, merge, reset, cherry-pick, revert, force-push, or `git restore`/`checkout -- <file>`**
+  across branches or over shared history without very careful planning and explicit user approval.
+  `git pull --rebase` is allowed **only** on your own branch, only when you actually need it.
+- **One branch per agent.** Never commit to `main` or to another task's branch.
+
+**On the shared HPC checkout especially:**
+
+- Before running a job, check `git branch --show-current`. If it is **not** your branch, another
+  agent owns the working tree right now — **do not `git checkout` to switch it.** Ask the user how
+  to proceed (e.g. a separate worktree) rather than yanking the shared tree onto your branch.
+- **Never delete `.git/index.lock` or other git internals** unless you have confirmed no other
+  process or agent is mid-operation — and prefer to flag it to the user instead.
+- Push frequently and in small units so your work is durable, but apply every rule above first.
 
 ## HPC connection
 
