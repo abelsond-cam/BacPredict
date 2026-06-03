@@ -72,9 +72,21 @@ Output layout: `combined_gff/{lr,sr}/<label>.gff` (cached), `predictions/{lr,sr}
 
 ## Status
 
+- **2026-06-03** — **Stage A smoke PASS** (job 30014777). 17/17 arms scored (10 LR + 7 SR over 10
+  reference genomes). End-to-end on ampere GPU; isolated `.venv-dp` (torch 2.5.1+cu124, bundled
+  CUDA — no system module). **~82 s/arm** (23 min for 17 arms). Sensible output (top defensive
+  log-odds 10–12; ~25–30 of ~4,800 proteins ≥4 cutoff). Two fixes en route: drop unavailable
+  `cuda/12.4` module; `uniquify_locus_tags` (RefSeq dup locus_tag crashed ESM).
+  - ⚠️ **Reference-set anchor is degenerate as-is.** All 7 LR/SR pairs in the smoke were the
+    `sr_assembly_file == lr_assembly_file` collision (METADATA bug — see below), so LR and SR
+    predictions came out **bit-for-bit identical** (zero contrast). 957/2,749 paired rows (83% of
+    reference genomes) hit this. Real LR-vs-SR contrast needs the **1,792 rows with a distinct SR
+    assembly**. Upstream fix belongs in BacHGT `bac_metadata` (`add_paths_gff_fna_to_metadata.py`).
 - **2026-06-02** — Package scaffolded (loader, runner, env setup, smoke + full SLURM scripts).
-  Smoke test not yet run; env not yet built on HPC. Extension to all ~80k genomes deferred
-  pending smoke-test timing.
+
+### Full-run sizing (from smoke)
+~82 s/arm × ~5,000 arms ≈ 114 GPU-hours → ~5.7 h/shard across the 20-shard array
+(`run_dp_cohort.sh`, `--time=10:00:00`). Comfortable within budget; 80k extension still optional.
 
 ## Open checks (resolve at smoke)
 
