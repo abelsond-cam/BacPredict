@@ -104,6 +104,27 @@ weights + HGT/MGE annotations consumed from the sister `BacHGT` module.
 - [ ] **Decision point:** Aim 1 outcome sets the embedding source for Aim 2 (Bacformer if HGT-preserving, DP-style if context-attractor); document the implication for cross-species HGT-aware work
 - [ ] Boundary-detection head (Aim 2): pull ISEScan + MGEfinder ground truth from BacHGT; train per-protein head; evaluate held-out + on SR assemblies
 
+## Pyseer GWAS ([src/bac_pyseer/](src/bac_pyseer/))
+
+New package compartmentalising pyseer / GWAS analyses, **one subfolder per task**
+(`kleb_iso_source` first; `tb_ast` and others to follow). Moved here from the BacHGT
+tracker — this is variant-call / unitig / Panaroo-GPA GWAS work, not Bacformer
+fine-tuning. Per-task detail:
+[src/bac_pyseer/kleb_iso_source/CLAUDE.md](src/bac_pyseer/kleb_iso_source/CLAUDE.md).
+An agent will plan the work in detail and start.
+
+### kleb_iso_source — invasive disease (blood vs faeces first)
+
+- [ ] **Hotspot rates by isolation source.** Compare per-source hotspot rates against
+  the whole-population background mutation rate at each locus as control → Chi-sq for
+  hotspots strongly associated with invasive disease. *Blocked on Aaron uploading
+  hotspots to HPC.*
+- [ ] **Pyseer unitig GWAS (KPSC-wide).** From variant calls, tabulate mutation loci
+  vs the reference genome per sample; filter low-frequency loci; compute pairwise
+  Jaccard distances. Combined with unitigs → whole-of-KPSC GWAS on unitigs.
+- [ ] **Pyseer presence/absence GWAS.** Same variant calls + the per-SL Panaroo we
+  have → presence/absence GWAS.
+
 ## Deferred — Tasks 4 & 5
 
 Paused until Tasks 1–3 are running. No task folders yet — recreate as
