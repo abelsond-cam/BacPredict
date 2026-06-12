@@ -253,6 +253,12 @@ def main() -> None:
              "the window-th chronological sample. Increase to smooth further.",
     )
     p.add_argument(
+        "--min-date", type=str, default=None,
+        help="Drop samples whose collection_date_parsed is earlier than this. "
+             "Date or year string (e.g. '2000-01-01' or '2000'). Useful when "
+             "early-era sparse data is too noisy.",
+    )
+    p.add_argument(
         "--date-column", default="collection_date_parsed",
         help="Datetime column to sort/plot by. Default collection_date_parsed.",
     )
@@ -279,6 +285,13 @@ def main() -> None:
     df = pd.read_csv(args.metadata_tsv, sep="\t", low_memory=False, usecols=present_cols)
     df = df[df["kpsc_final_list"].astype(bool)]
     print(f"kpsc_final_list rows: {len(df):,}")
+
+    if args.min_date is not None:
+        cutoff = pd.Timestamp(args.min_date)
+        df[args.date_column] = pd.to_datetime(df[args.date_column], errors="coerce")
+        before = len(df)
+        df = df[df[args.date_column] >= cutoff]
+        print(f"--min-date {args.min_date}: dropped {before - len(df):,} rows; {len(df):,} remain.")
 
     # Classify each row's amr_study cell once up-front; None for "AMR plus control" (mixed).
     if "amr_study" in df.columns:
