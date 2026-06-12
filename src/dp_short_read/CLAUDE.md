@@ -75,6 +75,19 @@ arms = the pairing key), `sr_biosample`, and `is_reference`. Pair LR↔SR predic
 
 ## Status
 
+- **2026-06-12 — Full sweep + matched-recovery analysis DONE.** `--cohort complete` sweep
+  (job 30459693): 2,744/2,908 arms scored, ~72 s/arm; **1,290 usable pairs** (554 reference).
+  164 LR arms failed `fasta_gff_mismatch` — all the RefSeq/GenBank `NZ_` contig-prefix mismatch
+  (GCA-namespace GFF vs GCF-namespace FASTA); left as-is per user. Matched-protein recovery
+  (`analyze_lr_vs_sr.py`, exact-AA match, LR calls as truth/AUROC 0.975):
+  - **recovery on shared proteins = 94.6% (94.3% reference)** — when a defence protein is intact
+    in the SR assembly, SR-DP reproduces the LR call ~95% of the time. Model barely degrades.
+  - **lost-to-assembly = 20.0% (19.9% reference)** — 1 in 5 LR-defensive proteins has no exact SR
+    match (dropped/frameshifted by SR fragmentation at MGE/contig borders).
+  - End-to-end ≈ 0.946 × 0.80 ≈ **76%** of LR defence calls recovered; gap dominated by assembly.
+  - Outputs: `full/analysis/lr_vs_sr_recovery_{per_pair.tsv,summary.json}`.
+  - ⚠️ Exact-AA match is a conservative lower bound (SR seq errors block exact matches even for
+    present genes) — RBH/identity-threshold matching would tighten recovery vs lost-to-assembly.
 - **2026-06-03 (corrected) — Stage A smoke PASS with genuine LR-vs-SR contrast** (job 30040166).
   10 reference pairs, 20/20 arms scored, ~80 s/arm. **LR and SR predictions now differ for every
   pair** (e.g. GCF_001718115.2: LR 4770 prot/30 defensive vs SR 4121/10) — the SR arm consistently
