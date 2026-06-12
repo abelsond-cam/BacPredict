@@ -6,6 +6,25 @@ gives **current state** (a rolling summary) followed by **remaining milestones**
 folder's `CLAUDE.md`; this file is the cross-task summary and a backup for the
 per-task agents. Global conventions: root [CLAUDE.md](CLAUDE.md) §0.
 
+## Forward priorities (2026-06-12)
+
+Current top-of-mind items for the coming days. These carry forward the relevant
+streams of the retired
+[`~/.claude/PROGRAM_PLAN_2026-05-30.md`](../../.claude/PROGRAM_PLAN_2026-05-30.md);
+detail lives in the task blocks below.
+
+1. **AMR prediction over time** — pending completion. Ties to
+   [tb_ast](src/tb_ast/) / [kleb_ast](src/kleb_ast/) Stage C work.
+2. **Defense predictor** — pending completion. Once results land, analyse them in
+   BacHGT as reference vs short read, then decide whether to run the whole set or
+   improve the model first. Links to the deferred Task 5 / DP-SR block below.
+3. **Bacformer vs ESM rifampicin probe** — test ESM and Bacformer embeddings on
+   rifampicin prediction. Identify rpoA/rpoB and other key ARG genes via GenBank,
+   annotate them from Bakta, then train a linear head on the **frozen** embeddings
+   of just those genes (for both ESM and Bacformer). Compare against the
+   genome-average prediction using all genes vs a ~20-key-gene subset. (Carries
+   forward the retired plan's SNP-representation probe, workstream E.)
+
 ## Shared infrastructure
 
 - [x] Refresh Bacformer complete-genomes weights from Hugging Face — model ID

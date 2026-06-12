@@ -2,7 +2,7 @@
 
 Guidance for Claude Code working in this repository. Per-task detail lives in each task folder's own `CLAUDE.md`.
 
-> **Active program plan (week of 2026-05-30):** see [`~/.claude/PROGRAM_PLAN_2026-05-30.md`](../../.claude/PROGRAM_PLAN_2026-05-30.md). Workstreams **A** (iso-source expansion + stratification + explainability), **B** (complete-genome eval-set surgery, touches `src/tl/`), and **E** (Bacformer SNP-representation probe) live in this repo. Per-task detail is appended to each sub-CLAUDE.md.
+> **Plans.** The living plan + tracker for this repo is [`ToDo.md`](ToDo.md) — current forward priorities and per-task state. (The earlier `~/.claude/PROGRAM_PLAN_2026-05-30.md` is superseded.)
 
 ## Project purpose
 
