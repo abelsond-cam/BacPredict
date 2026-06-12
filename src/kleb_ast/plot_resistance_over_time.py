@@ -111,7 +111,6 @@ def _fit_smooth_trend(
     (grid_dates, pred, ci_low, ci_high) on the **probability scale**, or ``None``
     if the fit fails or there isn't enough data.
     """
-    from patsy import dmatrix
     from scipy.special import expit
     from statsmodels.regression.mixed_linear_model import MixedLM
 
@@ -135,14 +134,18 @@ def _fit_smooth_trend(
         + (pd.to_datetime(work[date_col]).dt.dayofyear - 1) / 366.0
     )
 
-    try:
-        basis = dmatrix(f"cr(_yr, df={df_spline})", work, return_type="dataframe")
-    except Exception:  # noqa: BLE001  patsy / formula-build can throw a variety of errors
-        return None
-    basis.columns = [f"_s{i}" for i in range(basis.shape[1])]
-    work_b = pd.concat([work.reset_index(drop=True), basis.reset_index(drop=True)], axis=1)
+    # Orthogonal-polynomial basis for time, centered + standardised (numerical
+    # stability for high powers + decoupled from intercept). Degree = df_spline.
+    yr_centre = float(work["_yr"].mean())
+    yr_scale = float(work["_yr"].std()) or 1.0
+    yr_norm = (work["_yr"] - yr_centre) / yr_scale
+    poly_cols = []
+    for k in range(1, df_spline + 1):
+        col = f"_p{k}"
+        work[col] = yr_norm ** k
+        poly_cols.append(col)
 
-    formula = "_y ~ " + " + ".join(basis.columns)
+    formula = "_y ~ " + " + ".join(poly_cols)
     result = None
     last_exc: Exception | None = None
     for reml, methods in (
@@ -150,7 +153,7 @@ def _fit_smooth_trend(
         (False, ["lbfgs", "bfgs", "powell"]),
     ):
         try:
-            md = MixedLM.from_formula(formula, groups=work_b[group_col], data=work_b)
+            md = MixedLM.from_formula(formula, groups=work[group_col], data=work)
             result = md.fit(reml=reml, method=methods)
         except Exception as exc:  # noqa: BLE001  MixedLM can raise LinAlg, Conv, Value, etc.
             last_exc = exc
@@ -163,8 +166,8 @@ def _fit_smooth_trend(
         return None
 
     grid_yrs = np.linspace(float(work["_yr"].min()), float(work["_yr"].max()), n_grid)
-    grid_basis = dmatrix(f"cr(_yr, df={df_spline})", pd.DataFrame({"_yr": grid_yrs}), return_type="dataframe")
-    X = np.column_stack([np.ones(n_grid), grid_basis.values])  # intercept + spline cols
+    grid_norm = (grid_yrs - yr_centre) / yr_scale
+    X = np.column_stack([np.ones(n_grid)] + [grid_norm ** k for k in range(1, df_spline + 1)])
 
     fe = result.fe_params.values
     if X.shape[1] != len(fe):
