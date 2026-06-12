@@ -86,16 +86,27 @@ def _fit_smooth_trend(
     group_col: str,
     extra_re_col: str | None = None,
     df_spline: int = 5,
-    n_grid: int = 120,
+    bin_freq: str = "MS",
     binary: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
-    """Fit a smooth fixed-effect time trend with random group + (optional) extra-RE intercepts.
+    """Two-stage: LMM denoise per sample, then Kalman-smooth on a regular time grid.
 
-    Model::
+    Stage 1 — linear mixed model (random-intercept noise removal)::
 
-        logit(value) ~ poly(year, degree=df_spline)   (fixed)
-                     + (1 | group_col)                (random intercept)
-                     + (1 | extra_re_col)             (variance component, optional)
+        logit(value) ~ poly(year, degree=df_spline)   (fixed, for anchoring)
+                     + (1 | group_col)                (random intercept, e.g. study)
+                     + (1 | extra_re_col)             (variance component, e.g. country)
+
+    Per-sample "denoised" value = observed − random-effect contribution. This
+    strips study + country systematic offsets so the remaining time signal is
+    what's *common* across studies and countries.
+
+    Stage 2 — state-space local linear trend model (Kalman filter + smoother).
+    Aggregate denoised values to regular bins (default monthly), fit a local
+    linear trend SSM with ``statsmodels.tsa.statespace.structural.UnobservedComponents``,
+    and read the smoothed posterior level + variance off the Kalman smoother.
+    Empty bins are handled natively (the filter propagates state without an
+    update, so the CI widens through sparse periods on its own).
 
     Parameters
     ----------
@@ -105,17 +116,19 @@ def _fit_smooth_trend(
         Probability column (``binary=False``) or R/S string column (``binary=True``).
     extra_re_col : str | None
         Optional second random-intercept column added as a variance component
-        (e.g. ``"country"``). When set, absorbs country-level systematic
-        differences so the fixed time trend reflects what's common across
-        countries and studies.
+        (e.g. ``"country"``).
     binary : bool
         ``True`` for R/S → 0/1 (EBI ground truth); ``False`` for probabilities.
     df_spline : int
-        Polynomial degree for the fixed-effect time term.
+        Polynomial degree for the fixed-effect time term in stage 1.
+    bin_freq : str
+        Pandas resample alias for stage-2 binning. ``"MS"`` = month-start (default;
+        good for ~24 years of dense data). ``"QS"`` = quarterly, ``"YS"`` = yearly
+        for sparser strata.
 
     Returns
     -------
-    (grid_dates, pred, ci_low, ci_high) on the **probability scale**, or ``None``
+    (bin_dates, pred, ci_low, ci_high) on the **probability scale**, or ``None``
     if the fit fails or there isn't enough data.
     """
     from scipy.special import expit
@@ -197,29 +210,64 @@ def _fit_smooth_trend(
         print(f"  LMM fit failed for {value_col}: {last_exc}")
         return None
 
-    grid_yrs = np.linspace(float(work["_yr"].min()), float(work["_yr"].max()), n_grid)
-    grid_norm = (grid_yrs - yr_centre) / yr_scale
-    X = np.column_stack([np.ones(n_grid)] + [grid_norm ** k for k in range(1, df_spline + 1)])
+    # === STAGE 1: DENOISE PER SAMPLE ===
+    # denoised_y = y_obs − random-effect contribution = fitted_marginal + residual.
+    # statsmodels gives `fittedvalues` = fitted_conditional (which includes the
+    # random effects); subtracting the marginal fixed-effect prediction isolates
+    # the RE part.
+    fitted_cond = np.asarray(result.fittedvalues, dtype=float)
+    X_sample = np.column_stack([np.ones(len(work))] + [work[c].values for c in poly_cols])
+    fe = np.asarray(result.fe_params.values, dtype=float)
+    if X_sample.shape[1] != len(fe):
+        return None
+    fitted_marg = X_sample @ fe
+    denoised = work["_y"].values - (fitted_cond - fitted_marg)
 
-    fe = result.fe_params.values
-    if X.shape[1] != len(fe):
+    # === STAGE 2: KALMAN SMOOTH ON REGULAR-BIN AGGREGATION ===
+    from statsmodels.tsa.statespace.structural import UnobservedComponents
+
+    df_d = pd.DataFrame({
+        "date": pd.to_datetime(work[date_col]),
+        "y": denoised,
+    }).sort_values("date").set_index("date")
+    binned = df_d["y"].resample(bin_freq).mean()
+    if binned.notna().sum() < 12:
         return None
 
-    pred_lin = X @ fe
-    cov = result.cov_params().iloc[: len(fe), : len(fe)].values
-    se = np.sqrt(np.maximum(np.einsum("ij,jk,ik->i", X, cov, X), 0.0))
-    lo_lin = pred_lin - 1.96 * se
-    hi_lin = pred_lin + 1.96 * se
+    try:
+        ss = UnobservedComponents(binned.values, level="local linear trend")
+        ss_fit = ss.fit(disp=False, maxiter=200)
+    except Exception as exc:  # noqa: BLE001  SS optimisation can throw LinAlg/SVD.
+        # Fall back to the simpler local-level (random-walk) model.
+        try:
+            ss = UnobservedComponents(binned.values, level="local level")
+            ss_fit = ss.fit(disp=False, maxiter=200)
+            print(f"  ({value_col}: SS local-linear-trend failed, fell back to local-level — {exc})")
+        except Exception as exc2:  # noqa: BLE001
+            print(f"  SS smoother failed for {value_col}: {exc2}")
+            return None
+
+    # Smoothed posterior level + its variance (Kalman smoother / RTS).
+    # smoothed_state shape: (n_state, n_obs); state[0] is the level for both
+    # "local linear trend" and "local level".
+    smoothed_level = np.asarray(ss_fit.smoothed_state[0], dtype=float)
+    smoothed_var = np.asarray(ss_fit.smoothed_state_cov[0, 0, :], dtype=float)
+    smoothed_se = np.sqrt(np.maximum(smoothed_var, 0.0))
+
+    lo_lin = smoothed_level - 1.96 * smoothed_se
+    hi_lin = smoothed_level + 1.96 * smoothed_se
 
     if is_logit:
-        pred, lo, hi = expit(pred_lin), expit(lo_lin), expit(hi_lin)
+        pred = expit(smoothed_level)
+        lo = expit(lo_lin)
+        hi = expit(hi_lin)
     else:
-        pred = np.clip(pred_lin, 0.0, 1.0)
+        pred = np.clip(smoothed_level, 0.0, 1.0)
         lo = np.clip(lo_lin, 0.0, 1.0)
         hi = np.clip(hi_lin, 0.0, 1.0)
 
-    grid_dates = pd.to_datetime("2000-01-01") + pd.to_timedelta((grid_yrs - 2000.0) * 365.25, unit="D")
-    return grid_dates.values, pred, lo, hi
+    grid_dates = np.asarray(binned.index.values)
+    return grid_dates, pred, lo, hi
 
 
 def plot_one_drug(
@@ -231,13 +279,14 @@ def plot_one_drug(
     group_col: str = "study_accession",
     extra_re_col: str | None = None,
     df_spline: int = 5,
+    bin_freq: str = "MS",
 ) -> Path | None:
     """Render and save the per-drug fitted-trend plot.
 
     Single panel: for each amr_study stratum (and the combined "All non-mixed"
-    line + the EBI ground-truth overlay), fits and plots a smooth temporal
-    trend with a 95% CI ribbon. Returns the output path, or ``None`` if no
-    stratum could be fit.
+    line + the EBI ground-truth overlay), fits a two-stage trend (LMM denoise →
+    Kalman smoother) and plots it with a 95% CI ribbon. Returns the output
+    path, or ``None`` if no stratum could be fit.
     """
     pred_col = f"predicted_{drug}_AST"
     prob_col = f"predicted_{drug}_AST_prob"
@@ -263,7 +312,8 @@ def plot_one_drug(
             value_col = prob_col
         fit = _fit_smooth_trend(
             sub, value_col=value_col, date_col=date_col, group_col=group_col,
-            extra_re_col=extra_re_col, df_spline=df_spline, binary=binary,
+            extra_re_col=extra_re_col, df_spline=df_spline, bin_freq=bin_freq,
+            binary=binary,
         )
         if fit is None:
             return
@@ -303,7 +353,7 @@ def plot_one_drug(
 
     ax.set_xlabel("collection_date_parsed")
     ax.set_ylabel("fitted P(R)")
-    ax.set_title(f"{drug} — fitted smooth trend (95% CI), stratified by amr_study")
+    ax.set_title(f"{drug} — LMM-denoised + Kalman-smoothed trend (95% CI), stratified by amr_study")
     ax.set_ylim(0, 1.0)
     ax.grid(True, alpha=0.3)
     ax.legend(loc="best", fontsize=9)
@@ -348,7 +398,12 @@ def main() -> None:
     )
     p.add_argument(
         "--df-spline", type=int, default=5,
-        help="Polynomial degree for the fixed time term. Default 5; use 3 for cubic.",
+        help="Polynomial degree for the LMM fixed time term (stage 1 anchor). Default 5.",
+    )
+    p.add_argument(
+        "--bin-freq", default="MS",
+        help="Stage-2 Kalman binning frequency (pandas resample alias). Default 'MS' "
+             "(month-start). Use 'QS' for quarterly or 'YS' for yearly when data is sparse.",
     )
     args = p.parse_args()
 
@@ -410,6 +465,7 @@ def main() -> None:
             group_col=args.group_column,
             extra_re_col=extra_re_col,
             df_spline=args.df_spline,
+            bin_freq=args.bin_freq,
         )
         if path is not None:
             written.append(drug)
