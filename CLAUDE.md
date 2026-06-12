@@ -6,7 +6,7 @@ Guidance for Claude Code working in this repository. Per-task detail lives in ea
 
 ## Project purpose
 
-Fine-tune [Bacformer](https://github.com/amina-BS/bacformer) on bacterial genome embeddings to predict downstream phenotypes. The repo hosts **six parallel experiments**, each in its own task folder with its own `CLAUDE.md` and SLURM scripts:
+Fine-tune [Bacformer](https://github.com/amina-BS/bacformer) on bacterial genome embeddings to predict downstream phenotypes. The repo hosts **seven parallel experiments**, each in its own task folder with its own `CLAUDE.md` and SLURM scripts:
 
 | Task | Folder | Status |
 |---|---|---|
@@ -14,6 +14,7 @@ Fine-tune [Bacformer](https://github.com/amina-BS/bacformer) on bacterial genome
 | 2. AST in *Klebsiella pneumoniae* | [src/kleb_ast/](src/kleb_ast/) | Active |
 | 3. Isolation source in *Klebsiella* | [src/kleb_iso_source/](src/kleb_iso_source/) | Active |
 | 6. `predictHGT` embedding diagnostic | [src/predict_hgt/](src/predict_hgt/) | Diagnostic, can run in parallel |
+| 7. SNP-embedding signal-loss diagnostic | [src/snp_embeddings/](src/snp_embeddings/) | Active (diagnostic — why TB AST is poor) |
 
 Task 4 (mixed-assembly detection) and Task 5 (DefensePredictor on short reads) are deferred — condensed plans live in [ToDo.md](ToDo.md). Recreate as `src/admixture/` and `src/dp_short_read/` when work actually starts.
 
@@ -100,7 +101,8 @@ Active task → branch map: Task 1 = [src/tb_ast/](src/tb_ast/) (`task1/...`),
 Task 2 = [src/kleb_ast/](src/kleb_ast/) (`task2/...`),
 Task 3 = [src/kleb_iso_source/](src/kleb_iso_source/) (`task3/...`),
 Task 5 = [src/dp_short_read/](src/dp_short_read/) (`task5/...`),
-Task 6 = [src/predict_hgt/](src/predict_hgt/) (`task6/...`).
+Task 6 = [src/predict_hgt/](src/predict_hgt/) (`task6/...`),
+Task 7 = [src/snp_embeddings/](src/snp_embeddings/) (`snp-embeddings`).
 
 **Stay in your task folder.** Confine edits to your own `src/<task>/` package and `tests/<task>/`.
 Touch shared code ([src/tl/](src/tl/)), top-level configs, or root docs only when truly necessary,

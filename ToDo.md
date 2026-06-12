@@ -104,6 +104,39 @@ weights + HGT/MGE annotations consumed from the sister `BacHGT` module.
 - [ ] **Decision point:** Aim 1 outcome sets the embedding source for Aim 2 (Bacformer if HGT-preserving, DP-style if context-attractor); document the implication for cross-species HGT-aware work
 - [ ] Boundary-detection head (Aim 2): pull ISEScan + MGEfinder ground truth from BacHGT; train per-protein head; evaluate held-out + on SR assemblies
 
+## Task 7 — SNP embeddings: why TB AST is poor ([src/snp_embeddings/](src/snp_embeddings/))
+
+**State (2026-06-12).** Increment 1 built (not yet run). New diagnostic task testing the central
+hypothesis that Bacformer is blind to chromosomal point mutations because a chain of averaging
+(ESM-C residue→protein pool, then Bacformer protein→genome pool) dilutes the single causal RRDR
+residue. Positive control: TB rpoB / `rifampin`. Built stepwise, dependency-ordered: Increment 1
+= Stage 1.1 ceiling ladder, evaluate, then Increment 2 = Stage 1.2 geometry probe. Full spec in
+the task [CLAUDE.md](src/snp_embeddings/CLAUDE.md); approved plan in
+`~/.claude/plans/i-d-like-to-start-crystalline-allen.md`. On branch `dev` (per user).
+
+- [x] Increment 0 — scaffold + docs (package stub, task CLAUDE.md, this block, root-doc entries)
+- [x] **Increment 1 — Stage 1.1 ceiling ladder (code).** Built + lint-clean:
+  [locate_gene.py](src/snp_embeddings/locate_gene.py) (parquet→flat embedding index),
+  [rpob_genotype.py](src/snp_embeddings/rpob_genotype.py) (RRDR allele from the parquet protein
+  sequence — sequence-derived, motif-anchored, asserts WT identity; +`rifampin` join),
+  [tl/embed/esm_residue_level.py](src/tl/embed/esm_residue_level.py) (ESM-C masked-LM head +
+  `masked_marginals`; `ESMplusplusForMaskedLM` verified), [ceiling_ladder.py](src/snp_embeddings/ceiling_ladder.py)
+  (3-predictor ladder + JSON), [scripts/run_ceiling_ladder.sh](src/snp_embeddings/scripts/run_ceiling_ladder.sh),
+  [fixtures/rpoB_H37Rv.faa](src/snp_embeddings/fixtures/rpoB_H37Rv.faa). Reads the TB store +
+  parquets under `processed/train_tb_ast/`.
+- [ ] **Run Increment 1.** Confirm the exact TB parquet dir; run predictors 1+3 (CPU sbatch — the
+  pooled-vector pass streams ~30k embedding `.pt` files), **evaluate** `AUROC(1) − AUROC(3)` (info
+  lost to pooling); then GPU pass for predictor 2 (masked-marginal) and where it lands. No lineage holdout.
+- [ ] *Parallel (not blocking 1.1):* run **TB-Profiler `--fasta`** (assemblies only, no reads) for
+  ground-truth validation of the sequence-derived RRDR calls + **lineage** (needed for the deferred
+  genome-wide steps).
+- [ ] **Increment 2 — Stage 1.2 geometry probe** (local CPU). Extend `esm_residue_level.py` with
+  per-residue/all-layer states (no 1024-aa truncation) + bundled rpoB H37Rv fixture +
+  `geometry_probe.py`. **Evaluate** `d_pos` vs `d_pool` and the best-preserving layer.
+- [ ] **Gate call:** Representational (→ Remedy A then B, no retrain — expected) vs Absent (→ Remedy C).
+- [ ] *Deferred (genome-wide, lineage-blocked splits):* Stage 1.3 causal ablations; Remedies A/B/C;
+  pyseer oracle in parallel. Check `ebi_parsed_ast_metadata.csv` for lineage, else TB-Profiler.
+
 ## Pyseer GWAS ([src/bac_pyseer/](src/bac_pyseer/))
 
 New package compartmentalising pyseer / GWAS analyses, **one subfolder per task**
