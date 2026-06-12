@@ -42,12 +42,14 @@ bash src/dp_short_read/scripts/setup_dp_env.sh   # login node, once (PyPI + weig
 
 ## Cohort & paths
 
-- **Cohort:** `processed/complete_vs_sr_genomes/paired_index.tsv` (~2,911 LR/SR pairs; 748 with
-  `lra_is_reference_genome=True`). Smoke = 10 reference genomes, both arms.
-- **File paths** (Bakta GFF + assembly per arm) come from `metadata_v2`, columns
-  `lr_gff_file`/`lr_assembly_file` + `sr_gff_file`/`sr_assembly_file` (loader also accepts the
-  pre-rename legacy names `lra_*`/`gff_file`/`assembly_file` — METADATA_v2_README §12). SR paths
-  are project_k-relative, LR paths absolute; resolved in `build_dp_cohort._abs_path`.
+- **Cohort source = `metadata_v2` read directly.** `build_dp_cohort.py` selects rows that carry
+  **all four** distinct file paths — `lr_assembly_file`+`lr_gff_file` (LR arm),
+  `sr_assembly_file`+`sr_gff_file` (SR partner) — then filters `--cohort {complete,reference,all}`.
+  No `paired_index.tsv` join and no `sr_shadow` lookup (both were detours; see history below).
+- **Counts (v2 of 2026-06-03):** all-4-files ∧ `is_complete` = **1,454 pairs** (0 collisions);
+  `is_reference_genome` subset = **709**. Smoke = `--cohort reference --limit 10`.
+- SR paths are project_k-relative, LR paths absolute; resolved in `build_dp_cohort._abs_path`.
+  LR arm labelled by `Sample` (GCF/GCA), SR arm by `sr_biosample` (SAMN…, matches the SR FASTA).
 - `project_k` root: `/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw`
 - Output: `<project_k>/david/processed/defence_predictor/{smoke,full}/`
 - Panaroo fork (convert script): `/home/dca36/workspace/panaroo`
@@ -56,11 +58,12 @@ bash src/dp_short_read/scripts/setup_dp_env.sh   # login node, once (PyPI + weig
 
 | Step | Module | Where |
 |---|---|---|
-| Build manifest (paired_index → v2 join → LR+SR genome records) | `build_dp_cohort.py` | login node (2 TSV reads) |
+| Build manifest (v2 → all-4-files + cohort filter → LR+SR genome records) | `build_dp_cohort.py` | login node (1 TSV read) |
 | Convert GFF+assembly → combined GFF, run DP, write per-protein CSV | `run_defense_predictor.py` | GPU (ampere) |
 
 Output layout: `combined_gff/{lr,sr}/<label>.gff` (cached), `predictions/{lr,sr}/<label>.csv`,
-`run_manifest_shard*.tsv` (status + timing). Labels: `Sample` (LR) / `sample_accession` (SR).
+`run_manifest_shard*.tsv` (status + timing). Each manifest row carries `Sample` (shared by both
+arms = the pairing key), `sr_biosample`, and `is_reference`. Pair LR↔SR predictions on `Sample`.
 
 ## Run order (three-stage protocol §0.2)
 
@@ -72,26 +75,25 @@ Output layout: `combined_gff/{lr,sr}/<label>.gff` (cached), `predictions/{lr,sr}
 
 ## Status
 
-- **2026-06-03** — **Stage A smoke PASS** (job 30014777). 17/17 arms scored (10 LR + 7 SR over 10
-  reference genomes). End-to-end on ampere GPU; isolated `.venv-dp` (torch 2.5.1+cu124, bundled
-  CUDA — no system module). **~82 s/arm** (23 min for 17 arms). Sensible output (top defensive
-  log-odds 10–12; ~25–30 of ~4,800 proteins ≥4 cutoff). Two fixes en route: drop unavailable
-  `cuda/12.4` module; `uniquify_locus_tags` (RefSeq dup locus_tag crashed ESM).
-  - ⚠️ **Reference-set anchor is degenerate as-is.** All 7 LR/SR pairs in the smoke were the
-    `sr_assembly_file == lr_assembly_file` collision (METADATA bug — see below), so LR and SR
-    predictions came out **bit-for-bit identical** (zero contrast). 957/2,749 paired rows (83% of
-    reference genomes) hit this. Real LR-vs-SR contrast needs the **1,792 rows with a distinct SR
-    assembly**. Upstream fix belongs in BacHGT `bac_metadata` (`add_paths_gff_fna_to_metadata.py`).
+- **2026-06-03 (corrected) — Stage A smoke PASS with genuine LR-vs-SR contrast** (job 30040166).
+  10 reference pairs, 20/20 arms scored, ~80 s/arm. **LR and SR predictions now differ for every
+  pair** (e.g. GCF_001718115.2: LR 4770 prot/30 defensive vs SR 4121/10) — the SR arm consistently
+  has fewer proteins (fragmented assembly) and a diverging defensive count. This is the intended
+  signal; pair LR↔SR on `Sample` for the comparison.
+- **Root cause of the earlier degenerate run (resolved):** the first smoke (job 30014777) showed
+  bit-for-bit-identical LR/SR because `sr_assembly_file` pointed at the LR/complete FASTA for the
+  merged RefSeq pairs (the "957 SR+RefSeq merge"). **Not** a loader bug and **not** unfixable
+  metadata — BacHGT rebuilt metadata_v2 (2026-06-03 17:05) to repopulate `sr_assembly_file` with
+  the real SR draft. The loader was then simplified to read v2 directly (all-4-files + cohort).
+- Fixes carried in: drop unavailable `cuda/12.4` module (venv bundles CUDA); `uniquify_locus_tags`
+  (RefSeq dup locus_tag crashed ESM); isolated `.venv-dp` (torch 2.5.1+cu124).
 - **2026-06-02** — Package scaffolded (loader, runner, env setup, smoke + full SLURM scripts).
 
 ### Full-run sizing (from smoke)
-~82 s/arm × ~5,000 arms ≈ 114 GPU-hours → ~5.7 h/shard across the 20-shard array
-(`run_dp_cohort.sh`, `--time=10:00:00`). Comfortable within budget; 80k extension still optional.
+`--cohort complete` ≈ 1,454 pairs → ~2,900 arms × ~80 s ≈ 64 GPU-hours → ~3.5 h/shard across the
+20-shard array (`run_dp_cohort.sh`, `--time=10:00:00`). Comfortable within budget.
 
-## Open checks (resolve at smoke)
-
-- Confirm `metadata_v2` carries **both** `sr_*` and `lr_*` path columns on the LR `Sample` row
-  (the loader assumes one paired row per Sample, mirroring Panaroo's `_genome_records_for_row`).
-- Confirm the Bakta `seqid`s match the assembly FASTA headers (else convert raises
-  "Mismatch between fasta and GFF!" → that arm is skipped + logged in the run manifest).
-- Confirm DP's per-genome wall time on `esm2_t30_150M` to size the full array.
+## Resolved checks
+- ✅ metadata_v2 carries distinct `sr_*` vs `lr_*` paths after the 2026-06-03 rebuild.
+- ✅ Bakta `seqid`s match assembly FASTA headers (convert succeeded on all 20 arms).
+- ✅ DP wall time on `esm2_t30_150M` ≈ 80 s/arm.
