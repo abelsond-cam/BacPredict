@@ -238,6 +238,16 @@ Versioned results JSON per the §0.4 / `tl/train/metrics.py` convention:
     so a wrong/ swapped reference fails loudly. Per-sample RRDR alleles are read by global-aligning
     the assembled rpoB to the H37Rv reference (no dependence on absolute counts).
   - Modules lint clean (ruff B/BLE/C4/D/E/F/I/RUF100/TID/UP/W; empty `__init__.py` D104 matches
-    the repo-wide convention). **Not yet run** — needs the confirmed parquet dir + a first
-    invocation. Next: confirm TB data paths, run predictors 1+3 (head-line `AUROC(1) − AUROC(3)`),
-    then the GPU masked-marginal pass for predictor 2.
+    the repo-wide convention).
+  - **TB data verified on HPC:** `rifampin` = the canonical RIF column, 38,758 labelled
+    (26,147 S / 12,595 R; 16 ambiguous `0.5` dropped in code). Sample-ID column is
+    `phenotype-BioSample_ID` (SAMEA… = parquet stems). 38,248 parquets + 38,248 esm `.pt`
+    under `processed/train_tb_ast/{tb_protein_sequences,tb_esm_embeddings}/`.
+  - **Login-node smoke (200 samples) PASS:** pipeline runs end-to-end; one-hot RRDR AUROC 0.969,
+    pooled ESM-C rpoB 0.868 (resistant-enriched subset — numbers not yet meaningful). The
+    protein-count guard did not trip → flat-order alignment of the pooled rpoB row is correct.
+    Measured ~0.3 s/.pt read.
+  - **Full predictors 1+3 submitted:** SLURM job **30485091** (icelake CPU, 12 h),
+    `--skip-masked-marginal`, output
+    `processed/train_tb_ast/snp_embeddings/ceiling_ladder_30485091.json`. Read the head-line
+    `AUROC(1) − AUROC(3)` on completion, then run the GPU masked-marginal pass for predictor 2.
