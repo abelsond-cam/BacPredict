@@ -21,8 +21,12 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
-#SBATCH --time=04:00:00
+#SBATCH --time=12:00:00
 #SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
+# Timing (measured 2026-06-12 smoke): ~0.3 s per .pt read, sequential loop over
+# ~38k labelled samples → ~4-5 h. 12 h budget per the never-under-call rule.
+# (If this ever needs to be faster, predictor 3's .pt reads are embarrassingly
+# parallel — a multiprocessing Pool over the 32 cores would cut it to ~10 min.)
 #SBATCH --open-mode=append
 
 cd /home/dca36/workspace/BacPredict
