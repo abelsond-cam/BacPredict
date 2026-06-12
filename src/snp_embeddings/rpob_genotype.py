@@ -27,7 +27,7 @@ import pandas as pd
 from Bio import SeqIO
 from Bio.Align import PairwiseAligner, substitution_matrices
 
-from snp_embeddings.locate_gene import GeneHit, locate_gene
+from snp_embeddings.locate_gene import flatten_proteins
 
 logger = logging.getLogger(__name__)
 
@@ -171,15 +171,6 @@ def sample_codon_positions(
     return {codon: _ref_to_query_index(alignment, ref_index_for_codon(reference, codon)) for codon in codons}
 
 
-def _rpob_hit(parquet_path: Path) -> GeneHit | None:
-    """Return the single best rpoB hit for a sample parquet, or None."""
-    hits = locate_gene(parquet_path, "rpoB")
-    if not hits:
-        return None
-    # Single-copy gene; if duplicated, take the longest sequence (most complete).
-    return max(hits, key=lambda h: len(h.sequence))
-
-
 def build_genotype_table(
     sample_ids: list[str],
     parquet_dir: str | Path,
@@ -204,9 +195,11 @@ def build_genotype_table(
     -------
     pandas.DataFrame
         Indexed by ``Sample``. Columns: ``rpob_flat_index`` (int, the embedding
-        index for predictor 3), ``rpob_sequence`` (str), one column per RRDR
-        codon named ``codon_{n}`` holding the observed amino acid, and
-        ``n_rrdr_substitutions`` (count of codons differing from wild-type).
+        index for predictor 3), ``n_proteins`` (flat protein count — used to
+        guard the embedding-store row count against the parquet), ``rpob_sequence``
+        (str), one column per RRDR codon named ``codon_{n}`` holding the observed
+        amino acid, and ``n_rrdr_substitutions`` (count of codons differing from
+        wild-type).
     """
     parquet_dir = Path(parquet_dir)
     reference = reference if reference is not None else load_reference()
@@ -223,12 +216,21 @@ def build_genotype_table(
         if not parquet_path.exists():
             n_missing += 1
             continue
-        hit = _rpob_hit(parquet_path)
-        if hit is None:
+        # Read + flatten once so we capture the rpoB hit and the total protein count
+        # (the latter guards the embedding-store row count in predictor 3).
+        records = flatten_proteins(pd.read_parquet(parquet_path))
+        rpob = [r for r in records if r["gene_name"] is not None and str(r["gene_name"]).lower() == "rpob"]
+        if not rpob:
             n_missing += 1
             continue
-        observed = genotype_rrdr(hit.sequence, reference, aligner)
-        row = {"Sample": sample_id, "rpob_flat_index": hit.flat_index, "rpob_sequence": hit.sequence}
+        hit = max(rpob, key=lambda r: len(r["protein_sequence"]))  # longest = most complete
+        observed = genotype_rrdr(hit["protein_sequence"], reference, aligner)
+        row = {
+            "Sample": sample_id,
+            "rpob_flat_index": hit["flat_index"],
+            "n_proteins": len(records),
+            "rpob_sequence": hit["protein_sequence"],
+        }
         n_subs = 0
         for codon in codons:
             aa = observed[codon]

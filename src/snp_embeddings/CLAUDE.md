@@ -155,12 +155,15 @@ masked-marginal high, pooled ≈ baseline, the core hypothesis is essentially co
 - **Embedding store (read-only, shared):** the TB ESM-C store + protein-sequence parquets live
   under `project_k/david/processed/train_tb_ast/` (`tb_esm_embeddings/`, `binary_ast.csv`; the
   protein-sequence parquet dir is set by the embedding-prep step — confirm before the first run).
-  Each `.pt` is the Bacformer-input bundle from `protein_embeddings_to_inputs`: `protein_embeddings`
-  (`[1, T, dim]`) + `special_tokens_mask` (`[1, T]`). The tensor **interleaves** a leading CLS row,
-  per-contig SEP rows and pad rows with the real protein rows — so to pull rpoB's pooled vector you
-  select rows where `special_tokens_mask == 4` (PROT_EMB; CLS/SEP/PAD/END = 2/3/0/5), which are the
-  real proteins in flat order, then index by the rpoB flat index. **No labels, no per-residue
-  states, no logits.** (Kp equivalent: `processed/klebsiella_esm_embeddings/{sample_id}_esm_embeddings.pt`.)
+  The TB `.pt` (verified 2026-06-12) is the **plain per-protein** layout: `protein_embeddings`
+  (`[1, n_proteins, dim]`, one row per protein in flat order, e.g. `[1, 4055, 960]`), `contig_ids`,
+  `attention_mask` — **no** interleaved CLS/SEP/PROT_EMB tokens, so the rpoB flat index maps
+  directly to a row (`attention_mask == 1` drops any padding). `ceiling_ladder._protein_rows`
+  also handles the alternative Bacformer-input bundle (`special_tokens_mask == 4` = PROT_EMB;
+  CLS/SEP/PAD/END = 2/3/0/5) for stores written that way. A protein-count guard (rows vs the
+  parquet's flat count) skips any sample where the two disagree, so a flat-order misalignment can't
+  pass as "signal pooled away". **No labels, no per-residue states, no logits.** (Kp equivalent:
+  `processed/klebsiella_esm_embeddings/{sample_id}_esm_embeddings.pt`.)
 - **rpoB → embedding-index recovery:** protein order is preserved GFF → parquet → `.pt`.
   `{sample_id}_protein_sequences.parquet` (from
   [preprocess_assemblies_to_protein_sequences.py](../tl/embed/preprocess_assemblies_to_protein_sequences.py))

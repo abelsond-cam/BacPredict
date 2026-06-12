@@ -71,6 +71,28 @@ def select_samples(
     return samples
 
 
+def _protein_rows(store: dict) -> torch.Tensor:
+    """Extract the real per-protein embedding rows (flat order) from a stored ``.pt``.
+
+    Two store layouts exist:
+
+    - **Bacformer-input bundle** (``protein_embeddings_to_inputs``): the tensor
+      interleaves CLS/SEP/pad rows with real proteins, flagged by
+      ``special_tokens_mask == PROT_EMB`` (4). Select those.
+    - **Plain per-protein** (TB store): one row per protein already, with an
+      ``attention_mask`` marking real vs padding. Select ``attention_mask == 1``.
+
+    Either way the result is the proteins in flat order, matching
+    :func:`snp_embeddings.locate_gene.flatten_proteins`.
+    """
+    prot_emb = store["protein_embeddings"][0]
+    if "special_tokens_mask" in store:
+        return prot_emb[store["special_tokens_mask"][0] == PROT_EMB_TOKEN_ID]
+    if "attention_mask" in store:
+        return prot_emb[store["attention_mask"][0].bool()]
+    return prot_emb
+
+
 def load_pooled_rpob_vectors(
     genotype: pd.DataFrame,
     esm_store_dir: Path,
@@ -90,26 +112,32 @@ def load_pooled_rpob_vectors(
     kept: list[str] = []
     n_missing_pt = 0
     n_out_of_range = 0
+    n_count_mismatch = 0
     for sample_id, row in genotype.iterrows():
         pt_path = esm_store_dir / f"{sample_id}{pt_suffix}"
         if not pt_path.exists():
             n_missing_pt += 1
             continue
         store = torch.load(pt_path, map_location="cpu")
-        prot_emb = store["protein_embeddings"][0]
-        special = store["special_tokens_mask"][0]
-        protein_rows = prot_emb[special == PROT_EMB_TOKEN_ID]
+        protein_rows = _protein_rows(store)
+        # Guard against silent flat-order misalignment: the real protein rows must
+        # match the parquet's flat protein count, or the rpoB index is meaningless.
+        n_expected = int(row["n_proteins"]) if "n_proteins" in row and not pd.isna(row["n_proteins"]) else None
+        if n_expected is not None and protein_rows.shape[0] != n_expected:
+            n_count_mismatch += 1
+            continue
         flat_index = int(row["rpob_flat_index"])
         if flat_index >= protein_rows.shape[0]:
             n_out_of_range += 1
             continue
         vectors.append(protein_rows[flat_index].float().numpy())
         kept.append(str(sample_id))
-    if n_missing_pt or n_out_of_range:
+    if n_missing_pt or n_out_of_range or n_count_mismatch:
         logger.warning(
-            "pooled rpoB: %d samples missing .pt, %d with rpoB index past truncation",
+            "pooled rpoB: %d missing .pt, %d rpoB index out of range, %d protein-count mismatch (skipped)",
             n_missing_pt,
             n_out_of_range,
+            n_count_mismatch,
         )
     matrix = np.vstack(vectors) if vectors else np.empty((0, 0))
     return matrix, kept
