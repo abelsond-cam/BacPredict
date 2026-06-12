@@ -69,14 +69,27 @@ def _classify_amr_study(value: object) -> str | None:
 
 
 def _rolling_r_rate(series: pd.Series, window: int) -> pd.Series:
-    """Rolling fraction of "R" calls over the last ``window`` rows.
+    """Rolling fraction of "R" calls over the last ``window`` prior samples.
 
-    Requires the input to be pre-sorted by date and to contain only ``"R"``/``"S"``
-    (no NaN). ``min_periods = max(10, window // 4)`` so sparse eras still produce
-    a value once a meaningful sample is accumulated.
+    Full-window required: ``min_periods = window``. Early eras with fewer than
+    ``window`` samples produce NaN (no plot point) — so the first plotted point
+    appears at the ``window``-th sample in chronological order.
     """
     is_r = (series == "R").astype(int)
-    return is_r.rolling(window, min_periods=max(10, window // 4)).mean()
+    return is_r.rolling(window, min_periods=window).mean()
+
+
+def _rolling_mean_date(dates: pd.Series, window: int) -> pd.Series:
+    """Rolling mean of dates over the last ``window`` prior samples.
+
+    Paired with :func:`_rolling_r_rate` — both summarise the same window, so the
+    plotted point lands at the centre of mass of those samples' collection dates
+    rather than at the latest sample's date (which is misleading when data is
+    sparse). Full window required (no partial-window dates).
+    """
+    ts = dates.astype("int64").astype(float)  # ns since epoch
+    mean_ns = ts.rolling(window, min_periods=window).mean()
+    return pd.to_datetime(mean_ns, unit="ns")
 
 
 def _filtered_sorted(df: pd.DataFrame, drug_col: str, date_col: str) -> pd.DataFrame:
@@ -123,7 +136,7 @@ def plot_one_drug(
 
     # Pre-filter: drop anyone who didn't get a prediction.
     base = df[df[pred_col].notna()].copy()
-    if len(base) < max(10, window // 4):
+    if len(base) < window:
         return None
 
     fig = plt.figure(figsize=(11.5, 8.0))
@@ -136,12 +149,13 @@ def plot_one_drug(
     for stratum, (color, ls, lw, alpha) in _STUDY_STRATA.items():
         sub = base[base["_study_cat"] == stratum]
         sub = _filtered_sorted(sub, pred_col, date_col)
-        if len(sub) < max(10, window // 4):
+        if len(sub) < window:
             continue
         rate = _rolling_r_rate(sub[pred_col], window)
+        x_dates = _rolling_mean_date(sub[date_col], window)
         r_rate = float((sub[pred_col] == "R").mean())
         ax_time.plot(
-            sub[date_col], rate, color=color, lw=lw, linestyle=ls, alpha=alpha,
+            x_dates, rate, color=color, lw=lw, linestyle=ls, alpha=alpha,
             label=f"{stratum} (n={len(sub):,}, R rate {r_rate:.2f})",
         )
         anything_plotted = True
@@ -149,25 +163,27 @@ def plot_one_drug(
     # All (non-mixed) combined.
     all_sub = base[base["_study_cat"].notna()]
     all_sub = _filtered_sorted(all_sub, pred_col, date_col)
-    if len(all_sub) >= max(10, window // 4):
+    if len(all_sub) >= window:
         rate = _rolling_r_rate(all_sub[pred_col], window)
+        x_dates = _rolling_mean_date(all_sub[date_col], window)
         r_rate = float((all_sub[pred_col] == "R").mean())
         color, ls, lw, alpha = _ALL_STYLE
         ax_time.plot(
-            all_sub[date_col], rate, color=color, lw=lw, linestyle=ls, alpha=alpha,
+            x_dates, rate, color=color, lw=lw, linestyle=ls, alpha=alpha,
             label=f"All (n={len(all_sub):,}, R rate {r_rate:.2f})",
         )
         anything_plotted = True
 
-    # EBI ground-truth overlay.
+    # EBI ground-truth overlay. Uses the same window/full-window rule as predicted.
     if ebi_col in df.columns:
         ebi = _filtered_sorted(df, ebi_col, date_col)
-        if len(ebi) >= 10:
+        if len(ebi) >= window:
             rate = _rolling_r_rate(ebi[ebi_col], window)
+            x_dates = _rolling_mean_date(ebi[date_col], window)
             r_rate = float((ebi[ebi_col] == "R").mean())
             color, ls, lw, alpha = _EBI_STYLE
             ax_time.plot(
-                ebi[date_col], rate, color=color, lw=lw, linestyle=ls, alpha=alpha,
+                x_dates, rate, color=color, lw=lw, linestyle=ls, alpha=alpha,
                 label=f"EBI actual (n={len(ebi):,}, R rate {r_rate:.2f})",
             )
 
@@ -230,7 +246,12 @@ def main() -> None:
         default="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_kleb_ast/predicting_AST_over_time",
         help="Output directory for per-drug PNGs.",
     )
-    p.add_argument("--window", type=int, default=100, help="Rolling-window size (samples). Default 100.")
+    p.add_argument(
+        "--window", type=int, default=50,
+        help="Rolling-window size (samples). Default 50. Full window is required "
+             "(no partial-window plotting), so the first plotted point appears at "
+             "the window-th chronological sample. Increase to smooth further.",
+    )
     p.add_argument(
         "--date-column", default="collection_date_parsed",
         help="Datetime column to sort/plot by. Default collection_date_parsed.",
