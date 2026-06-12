@@ -84,16 +84,18 @@ def _fit_smooth_trend(
     value_col: str,
     date_col: str,
     group_col: str,
+    extra_re_col: str | None = None,
     df_spline: int = 5,
     n_grid: int = 120,
     binary: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
-    """Fit a smooth fixed-effect time trend with random study intercepts.
+    """Fit a smooth fixed-effect time trend with random group + (optional) extra-RE intercepts.
 
     Model::
 
-        logit(value) ~ cr(year, df=df_spline)   (fixed)
-                     + (1 | group)              (random intercept)
+        logit(value) ~ poly(year, degree=df_spline)   (fixed)
+                     + (1 | group_col)                (random intercept)
+                     + (1 | extra_re_col)             (variance component, optional)
 
     Parameters
     ----------
@@ -101,10 +103,15 @@ def _fit_smooth_trend(
         Already filtered to one stratum (and ``predicted/EBI`` rows).
     value_col : str
         Probability column (``binary=False``) or R/S string column (``binary=True``).
+    extra_re_col : str | None
+        Optional second random-intercept column added as a variance component
+        (e.g. ``"country"``). When set, absorbs country-level systematic
+        differences so the fixed time trend reflects what's common across
+        countries and studies.
     binary : bool
         ``True`` for R/S → 0/1 (EBI ground truth); ``False`` for probabilities.
     df_spline : int
-        Spline degrees of freedom for the fixed-effect time term.
+        Polynomial degree for the fixed-effect time term.
 
     Returns
     -------
@@ -114,7 +121,10 @@ def _fit_smooth_trend(
     from scipy.special import expit
     from statsmodels.regression.mixed_linear_model import MixedLM
 
-    work = sub.dropna(subset=[value_col, date_col, group_col]).copy()
+    required_cols = [value_col, date_col, group_col]
+    if extra_re_col is not None and extra_re_col in sub.columns:
+        required_cols.append(extra_re_col)
+    work = sub.dropna(subset=required_cols).copy()
     if binary:
         work = work[work[value_col].isin(["R", "S"])]
         work["_y"] = (work[value_col] == "R").astype(float)
@@ -146,6 +156,10 @@ def _fit_smooth_trend(
         poly_cols.append(col)
 
     formula = "_y ~ " + " + ".join(poly_cols)
+    vc_formula = None
+    if extra_re_col is not None and extra_re_col in work.columns and work[extra_re_col].nunique() >= 2:
+        vc_formula = {extra_re_col: f"0 + C({extra_re_col})"}
+
     result = None
     last_exc: Exception | None = None
     for reml, methods in (
@@ -153,7 +167,9 @@ def _fit_smooth_trend(
         (False, ["lbfgs", "bfgs", "powell"]),
     ):
         try:
-            md = MixedLM.from_formula(formula, groups=work[group_col], data=work)
+            md = MixedLM.from_formula(
+                formula, groups=work[group_col], vc_formula=vc_formula, data=work
+            )
             result = md.fit(reml=reml, method=methods)
         except Exception as exc:  # noqa: BLE001  MixedLM can raise LinAlg, Conv, Value, etc.
             last_exc = exc
@@ -161,6 +177,22 @@ def _fit_smooth_trend(
         if result is not None and getattr(result, "converged", True):
             break
         result = None
+    if result is None and vc_formula is not None:
+        # Fall back to fit without the extra variance component.
+        for reml, methods in (
+            (True, ["lbfgs", "bfgs", "powell"]),
+            (False, ["lbfgs", "bfgs", "powell"]),
+        ):
+            try:
+                md = MixedLM.from_formula(formula, groups=work[group_col], data=work)
+                result = md.fit(reml=reml, method=methods)
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                continue
+            if result is not None and getattr(result, "converged", True):
+                print(f"  ({value_col}: extra-RE '{extra_re_col}' dropped — singular)")
+                break
+            result = None
     if result is None:
         print(f"  LMM fit failed for {value_col}: {last_exc}")
         return None
@@ -197,6 +229,7 @@ def plot_one_drug(
     *,
     date_col: str = "collection_date_parsed",
     group_col: str = "study_accession",
+    extra_re_col: str | None = None,
     df_spline: int = 5,
 ) -> Path | None:
     """Render and save the per-drug fitted-trend plot.
@@ -230,7 +263,7 @@ def plot_one_drug(
             value_col = prob_col
         fit = _fit_smooth_trend(
             sub, value_col=value_col, date_col=date_col, group_col=group_col,
-            df_spline=df_spline, binary=binary,
+            extra_re_col=extra_re_col, df_spline=df_spline, binary=binary,
         )
         if fit is None:
             return
@@ -305,11 +338,17 @@ def main() -> None:
     )
     p.add_argument(
         "--group-column", default="study_accession",
-        help="Random-effect grouping column (default study_accession).",
+        help="Primary random-intercept column (default study_accession).",
+    )
+    p.add_argument(
+        "--extra-re-column", default="country",
+        help="Second random intercept added as a variance component (default 'country'). "
+             "Use '' or 'none' to disable. Falls back silently to no extra RE if the "
+             "fit goes singular with it included.",
     )
     p.add_argument(
         "--df-spline", type=int, default=5,
-        help="Spline degrees of freedom for the fixed time term. Default 5.",
+        help="Polynomial degree for the fixed time term. Default 5; use 3 for cubic.",
     )
     args = p.parse_args()
 
@@ -317,6 +356,11 @@ def main() -> None:
     needed_cols = [
         "Sample", "kpsc_final_list", "amr_study", args.date_column, args.group_column,
     ]
+    extra_re_col = args.extra_re_column.strip() or None
+    if extra_re_col and extra_re_col.lower() == "none":
+        extra_re_col = None
+    if extra_re_col:
+        needed_cols.append(extra_re_col)
     needed_cols += [f"predicted_{d}_AST" for d in DRUG_PANEL]
     needed_cols += [f"predicted_{d}_AST_prob" for d in DRUG_PANEL]
     needed_cols += [f"EBI_{d}_AST" for d in DRUG_PANEL]
@@ -364,6 +408,7 @@ def main() -> None:
             df, drug, out_dir,
             date_col=args.date_column,
             group_col=args.group_column,
+            extra_re_col=extra_re_col,
             df_spline=args.df_spline,
         )
         if path is not None:
