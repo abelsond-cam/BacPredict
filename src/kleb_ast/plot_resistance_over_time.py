@@ -231,6 +231,23 @@ def _lmm_denoise_to_bins(
         "y": denoised,
     }).sort_values("date").set_index("date")
     binned = df_d["y"].resample(bin_freq).mean()
+
+    # Auto-trim: keep only the longest contiguous tail of non-empty bins
+    # ending at the most recent non-empty bin. Catches drugs like ertapenem
+    # (handful of scattered early samples → long dropout → continuous from
+    # ~2009 onwards) without any per-drug configuration.
+    non_empty = binned.notna().values
+    if not non_empty.any():
+        return None
+    last_full = int(np.where(non_empty)[0].max())
+    first_in_run = last_full
+    for i in range(last_full - 1, -1, -1):
+        if non_empty[i]:
+            first_in_run = i
+        else:
+            break
+    binned = binned.iloc[first_in_run:last_full + 1]
+
     binned.attrs["binary"] = binary
     return binned
 
@@ -530,8 +547,14 @@ def main() -> None:
         help="Output directory for per-drug PNGs.",
     )
     p.add_argument(
-        "--min-date", type=str, default="2000",
-        help="Drop samples whose collection_date_parsed is earlier than this. Default '2000'.",
+        "--min-date", type=str, default="2004",
+        help="Drop samples earlier than this. Default '2004' (pre-2004 sample counts "
+             "are tiny and dominate per-quarter rate variability).",
+    )
+    p.add_argument(
+        "--max-date", type=str, default="2023",
+        help="Drop samples on/after this date. Default '2023' (only one full year "
+             "of 2023 + partial 2024 in the data; both dominated by recency lags).",
     )
     p.add_argument(
         "--date-column", default="collection_date_parsed",
@@ -631,12 +654,17 @@ def main() -> None:
     df = df[df["kpsc_final_list"].astype(bool)]
     print(f"kpsc_final_list rows: {len(df):,}")
 
-    if args.min_date is not None:
+    df[args.date_column] = pd.to_datetime(df[args.date_column], errors="coerce")
+    if args.min_date:
         cutoff = pd.Timestamp(args.min_date)
-        df[args.date_column] = pd.to_datetime(df[args.date_column], errors="coerce")
         before = len(df)
         df = df[df[args.date_column] >= cutoff]
         print(f"--min-date {args.min_date}: dropped {before - len(df):,} rows; {len(df):,} remain.")
+    if args.max_date:
+        cutoff_hi = pd.Timestamp(args.max_date)
+        before = len(df)
+        df = df[df[args.date_column] < cutoff_hi]
+        print(f"--max-date {args.max_date}: dropped {before - len(df):,} rows; {len(df):,} remain.")
 
     if "amr_study" in df.columns:
         df["_study_cat"] = df["amr_study"].apply(_classify_amr_study)
