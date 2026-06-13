@@ -106,33 +106,39 @@ weights + HGT/MGE annotations consumed from the sister `BacHGT` module.
 
 ## Task 7 — SNP embeddings: why TB AST is poor ([src/snp_embeddings/](src/snp_embeddings/))
 
-**State (2026-06-12).** Increment 1 built (not yet run). New diagnostic task testing the central
-hypothesis that Bacformer is blind to chromosomal point mutations because a chain of averaging
-(ESM-C residue→protein pool, then Bacformer protein→genome pool) dilutes the single causal RRDR
-residue. Positive control: TB rpoB / `rifampin`. Built stepwise, dependency-ordered: Increment 1
-= Stage 1.1 ceiling ladder, evaluate, then Increment 2 = Stage 1.2 geometry probe. Full spec in
+**State (2026-06-13).** Re-planned + rebuilt; not yet run. Diagnostic task testing the central
+hypothesis that Bacformer is blind to chromosomal point mutations because a **chain of two plain
+means** (ESM-C residue→protein, then Bacformer protein→genome — both straight mask-normalised
+means, no learned attention) dilutes the single causal RRDR residue. Positive control: TB rpoB /
+`rifampin`. The first cut was rejected (it loaded all embeddings + used an ad-hoc `train_test_split`,
+so its numbers weren't comparable to the deployed model); rebuilt on the repo infra. Full spec in
 the task [CLAUDE.md](src/snp_embeddings/CLAUDE.md); approved plan in
 `~/.claude/plans/i-d-like-to-start-crystalline-allen.md`. On branch `dev` (per user).
 
 - [x] Increment 0 — scaffold + docs (package stub, task CLAUDE.md, this block, root-doc entries)
-- [x] **Increment 1 — Stage 1.1 ceiling ladder (code).** Built + lint-clean:
-  [locate_gene.py](src/snp_embeddings/locate_gene.py) (parquet→flat embedding index),
-  [rpob_genotype.py](src/snp_embeddings/rpob_genotype.py) (RRDR allele from the parquet protein
-  sequence — sequence-derived, motif-anchored, asserts WT identity; +`rifampin` join),
-  [tl/embed/esm_residue_level.py](src/tl/embed/esm_residue_level.py) (ESM-C masked-LM head +
-  `masked_marginals`; `ESMplusplusForMaskedLM` verified), [ceiling_ladder.py](src/snp_embeddings/ceiling_ladder.py)
-  (3-predictor ladder + JSON), [scripts/run_ceiling_ladder.sh](src/snp_embeddings/scripts/run_ceiling_ladder.sh),
-  [fixtures/rpoB_H37Rv.faa](src/snp_embeddings/fixtures/rpoB_H37Rv.faa). Reads the TB store +
-  parquets under `processed/train_tb_ast/`.
-- [ ] **Run Increment 1.** Confirm the exact TB parquet dir; run predictors 1+3 (CPU sbatch — the
-  pooled-vector pass streams ~30k embedding `.pt` files), **evaluate** `AUROC(1) − AUROC(3)` (info
-  lost to pooling); then GPU pass for predictor 2 (masked-marginal) and where it lands. No lineage holdout.
-- [ ] *Parallel (not blocking 1.1):* run **TB-Profiler `--fasta`** (assemblies only, no reads) for
-  ground-truth validation of the sequence-derived RRDR calls + **lineage** (needed for the deferred
-  genome-wide steps).
-- [ ] **Increment 2 — Stage 1.2 geometry probe** (local CPU). Extend `esm_residue_level.py` with
-  per-residue/all-layer states (no 1024-aa truncation) + bundled rpoB H37Rv fixture +
-  `geometry_probe.py`. **Evaluate** `d_pos` vs `d_pool` and the best-preserving layer.
+- [x] **Code built + lint-clean (2026-06-13).** Three-step linear probes, all on the deployed
+  model's canonical `binary_ast_with_split.csv` holdout (`tl.train.evaluate.resolve_holdouts`) +
+  `tl.train.metrics`:
+  [snp_vs_esm_prediction.py](src/snp_embeddings/snp_vs_esm_prediction.py) (Step 1 one-hot RRDR,
+  Step 2 frozen pooled ESM-C, Step 3a masked-marginal LLR, Step 2b Bacformer token; intersection
+  head-line; optional reference-AUROC assertion),
+  [rpob_genotype.py](src/snp_embeddings/rpob_genotype.py) (RRDR allele + **rpoB-copy QC** +
+  provenance docstring), [locate_gene.py](src/snp_embeddings/locate_gene.py),
+  [frozen_bacformer_rpob_vectors.py](src/snp_embeddings/frozen_bacformer_rpob_vectors.py) (2b GPU),
+  [geometry_probe.py](src/snp_embeddings/geometry_probe.py) (3b),
+  [reference_gene/rpoB_H37Rv.faa](src/snp_embeddings/reference_gene/rpoB_H37Rv.faa),
+  scripts `run_snp_vs_esm_prediction.sh` + `smoke_geometry_probe.sh`. Shared touch:
+  [tl/embed/esm_residue_level.py](src/tl/embed/esm_residue_level.py) (residue-level ops) +
+  [tl/embed/generate_embeddings.py](src/tl/embed/generate_embeddings.py) (extracted
+  `load_bacformer_model` / `bacformer_last_hidden_state`, no behaviour change). Old
+  `ceiling_ladder.py` SLURM job 30485091 superseded/dead.
+- [ ] **Run Steps 1 + 2** (CPU sbatch — genotypes ~37k rpoB + mmap one-row `.pt` reads): the
+  head-line `AUROC(Step 1) − AUROC(Step 2)` (info lost to the ESM-C residue→protein mean) on the
+  common evaluate set, vs the deployed Bacformer ~0.9. Login-node `--max-samples` smoke first.
+- [ ] **Run the Step-3 GPU pass:** 3a masked-marginal LLR (recoverable pre-pool?) + 3b geometry
+  probe (`d_site ≫ d_pool`, best layer) + 2b bonus (Bacformer token ≈ Step 2 ⇒ loss sealed at ESM-C).
+- [ ] *Fast-follow (deferred, not blocking):* **TB-Profiler `--fasta`** (assemblies only) →
+  validate the sequence-derived RRDR calls (concordance %) + **lineage** + WHO-catalogue calls.
 - [ ] **Gate call:** Representational (→ Remedy A then B, no retrain — expected) vs Absent (→ Remedy C).
 - [ ] *Deferred (genome-wide, lineage-blocked splits):* Stage 1.3 causal ablations; Remedies A/B/C;
   pyseer oracle in parallel. Check `ebi_parsed_ast_metadata.csv` for lineage, else TB-Profiler.

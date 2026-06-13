@@ -1,18 +1,52 @@
 """Call the rpoB RRDR genotype per isolate, straight from the assembled protein.
 
-Stage 1.1 reads the resistance allele from the *same* amino-acid sequence ESM-C
+Step 1 reads the resistance allele from the *same* amino-acid sequence ESM-C
 embedded — the rpoB protein in each sample's ``*_protein_sequences.parquet`` —
 not from a variant caller. For every isolate we:
 
 1. locate rpoB (:func:`snp_embeddings.locate_gene.locate_gene`),
-2. globally align it to the H37Rv reference (UniProt P9WGY9, bundled fixture),
+2. globally align it to the H37Rv reference (UniProt P9WGY9, bundled reference),
 3. read off the observed amino acid at each RRDR codon (Mtb numbering).
 
+Genotype provenance & ground truth
+----------------------------------
+**Reference.** *M. tuberculosis* H37Rv — genome NCBI RefSeq ``NC_000962.3``
+(GenBank ``AL123456.3``); rpoB = locus ``Rv0667``; protein UniProt ``P9WGY9``
+(1,178 aa), downloaded from UniProt and bundled as
+``reference_gene/rpoB_H37Rv.faa``. Resistance framing = WHO 2nd-edition
+catalogue (the same catalogue TB-Profiler's ``tbdb`` uses).
+
 **Numbering.** The standard *M. tuberculosis* RRDR codon numbers (D435, S441,
-H445, S450 ...) are offset from UniProt P9WGY9 positions. Rather than hard-code
-the offset we anchor on the conserved core motif ``DQNNPLSGLTHKRR`` — whose
+H445, S450 ...) are **+6 vs** UniProt P9WGY9 positions. Rather than hard-code the
+offset we anchor on the conserved RRDR core motif ``DQNNPLSGLTHKRR`` — whose
 leading ``D`` is codon 435 — and **assert** the wild-type residue at every panel
 codon. Swap in a different reference and a wrong offset fails loudly.
+
+**Locating rpoB — no minimap.** We use the existing **Bakta** annotation already
+in each ``{Sample}_protein_sequences.parquet`` (``gene=rpoB`` CDS, table-11
+translation) — i.e. the *exact* rpoB protein ESM-C embedded. This is the crux:
+Step 1 (genotype), Steps 2/2b (embeddings) and Step 3a (LLR) are all derived from
+the *same molecule*, so the ceiling-vs-embedding comparison is internally
+consistent. The assembly→H37Rv mapping is **not** re-done by us (TB-Profiler does
+its own mapping in the fast-follow validation track).
+
+**rpoB-copy QC.** :func:`build_genotype_table` keeps only genomes with **exactly
+one** annotated rpoB. Genomes with **0** rpoB hits and those with **>1** copies
+are counted, printed to the terminal, written to ``rpob_copy_qc.log`` (Sample IDs
++ counts), and **excluded** from the test.
+
+**Aligning + calling the allele.** Global pairwise alignment (Biopython
+``PairwiseAligner``, BLOSUM62) of the annotated rpoB protein to the H37Rv
+reference; RRDR codons read off the aligned columns; WT identity asserted at each
+panel codon.
+
+**Why not TB-Profiler as primary.** TB-Profiler genotypes the *assembly* (a
+separate derivation), whereas this diagnostic needs the allele of the *exact
+embedded protein* — so sequence-derived is primary for internal consistency.
+TB-Profiler ``--fasta`` (``bioconda::tb-profiler``; repos ``jodyphelan/TBProfiler``
++ ``jodyphelan/tbdb``) is a planned fast-follow to validate these calls
+(concordance %), supply lineage, and give the WHO-catalogue calls reviewers
+expect — not blocking Steps 1–3.
 
 The phenotype label is the ``rifampin`` column (US spelling) of the TB
 ``binary_ast.csv``.
@@ -31,7 +65,7 @@ from snp_embeddings.locate_gene import flatten_proteins
 
 logger = logging.getLogger(__name__)
 
-FIXTURE_RPOB_H37RV = Path(__file__).parent / "fixtures" / "rpoB_H37Rv.faa"
+REFERENCE_RPOB_H37RV = Path(__file__).parent / "reference_gene" / "rpoB_H37Rv.faa"
 
 # Conserved RRDR core; the leading D is Mtb codon 435. Used only on the (WT)
 # reference to anchor the numbering — never on samples, which may be mutated here.
@@ -54,9 +88,9 @@ RRDR_PANEL = (
 RIFAMPIN_COLUMN = "rifampin"
 
 
-def load_reference(fixture: str | Path = FIXTURE_RPOB_H37RV) -> str:
-    """Load the H37Rv rpoB reference amino-acid sequence from the fixture FASTA."""
-    record = next(SeqIO.parse(str(fixture), "fasta"))
+def load_reference(reference: str | Path = REFERENCE_RPOB_H37RV) -> str:
+    """Load the H37Rv rpoB reference amino-acid sequence (UniProt P9WGY9)."""
+    record = next(SeqIO.parse(str(reference), "fasta"))
     return str(record.seq)
 
 
@@ -177,8 +211,15 @@ def build_genotype_table(
     reference: str | None = None,
     *,
     parquet_suffix: str = "_protein_sequences.parquet",
+    qc_log_path: str | Path = "rpob_copy_qc.log",
 ) -> pd.DataFrame:
-    """Build the per-isolate RRDR genotype table.
+    """Build the per-isolate RRDR genotype table, keeping single-copy rpoB genomes only.
+
+    Each TB genome should carry exactly one annotated rpoB. Genomes with **0**
+    rpoB hits and those with **>1** copies are counted, printed to the terminal,
+    written to ``qc_log_path`` (Sample IDs + copy counts), and **excluded** —
+    only the single-copy genomes are genotyped and returned. Genomes with no
+    parquet on disk are counted separately (also excluded).
 
     Parameters
     ----------
@@ -187,19 +228,21 @@ def build_genotype_table(
     parquet_dir : str or Path
         Directory of ``{sample_id}{parquet_suffix}`` files.
     reference : str, optional
-        H37Rv rpoB reference; loaded from the fixture if not supplied.
+        H37Rv rpoB reference; loaded from the bundled reference if not supplied.
     parquet_suffix : str
         Filename suffix for the protein-sequence parquets.
+    qc_log_path : str or Path
+        Where to write the excluded-genome QC log (0-copy and >1-copy Sample IDs).
 
     Returns
     -------
     pandas.DataFrame
-        Indexed by ``Sample``. Columns: ``rpob_flat_index`` (int, the embedding
-        index for predictor 3), ``n_proteins`` (flat protein count — used to
-        guard the embedding-store row count against the parquet), ``rpob_sequence``
-        (str), one column per RRDR codon named ``codon_{n}`` holding the observed
-        amino acid, and ``n_rrdr_substitutions`` (count of codons differing from
-        wild-type).
+        Indexed by ``Sample`` (single-copy rpoB genomes only). Columns:
+        ``rpob_flat_index`` (int, the embedding index for predictor 2),
+        ``n_proteins`` (flat protein count — guards the embedding-store row count
+        against the parquet), ``rpob_sequence`` (str), one column per RRDR codon
+        named ``codon_{n}`` holding the observed amino acid, and
+        ``n_rrdr_substitutions`` (count of codons differing from wild-type).
     """
     parquet_dir = Path(parquet_dir)
     reference = reference if reference is not None else load_reference()
@@ -209,41 +252,102 @@ def build_genotype_table(
     codons = list(range(RRDR_FIRST_CODON, RRDR_LAST_CODON + 1))
     wt_by_codon = {codon: reference[ref_index_for_codon(reference, codon)] for codon in codons}
 
+    import gc
+    import resource
+
+    import pyarrow
+
+    # Only the columns the genotype + flat-index recovery need — reading the full
+    # nested schema (start/end/protein_id/protein_name) ~triples per-read memory.
+    needed_cols = ["contig_idx", "gene_name", "protein_sequence"]
+
     rows: list[dict] = []
-    n_missing = 0
-    for sample_id in sample_ids:
+    no_parquet: list[str] = []          # sample absent on disk
+    zero_copy: list[str] = []           # parquet present, no rpoB annotation
+    multi_copy: list[tuple[str, int]] = []  # parquet present, >1 rpoB annotations
+    for i, sample_id in enumerate(sample_ids):
         parquet_path = parquet_dir / f"{sample_id}{parquet_suffix}"
         if not parquet_path.exists():
-            n_missing += 1
+            no_parquet.append(sample_id)
             continue
         # Read + flatten once so we capture the rpoB hit and the total protein count
-        # (the latter guards the embedding-store row count in predictor 3).
-        records = flatten_proteins(pd.read_parquet(parquet_path))
+        # (the latter guards the embedding-store row count in predictor 2).
+        df_p = pd.read_parquet(parquet_path, columns=needed_cols)
+        records = flatten_proteins(df_p)
         rpob = [r for r in records if r["gene_name"] is not None and str(r["gene_name"]).lower() == "rpob"]
-        if not rpob:
-            n_missing += 1
-            continue
-        hit = max(rpob, key=lambda r: len(r["protein_sequence"]))  # longest = most complete
-        observed = genotype_rrdr(hit["protein_sequence"], reference, aligner)
-        row = {
-            "Sample": sample_id,
-            "rpob_flat_index": hit["flat_index"],
-            "n_proteins": len(records),
-            "rpob_sequence": hit["protein_sequence"],
-        }
-        n_subs = 0
-        for codon in codons:
-            aa = observed[codon]
-            row[f"codon_{codon}"] = aa
-            if aa not in ("-", wt_by_codon[codon]):
-                n_subs += 1
-        row["n_rrdr_substitutions"] = n_subs
-        rows.append(row)
+        if len(rpob) == 0:
+            zero_copy.append(sample_id)
+        elif len(rpob) > 1:
+            multi_copy.append((sample_id, len(rpob)))
+        else:
+            hit = rpob[0]
+            observed = genotype_rrdr(hit["protein_sequence"], reference, aligner)
+            row = {
+                "Sample": sample_id,
+                "rpob_flat_index": hit["flat_index"],
+                "n_proteins": len(records),
+                "rpob_sequence": hit["protein_sequence"],
+            }
+            n_subs = 0
+            for codon in codons:
+                aa = observed[codon]
+                row[f"codon_{codon}"] = aa
+                if aa not in ("-", wt_by_codon[codon]):
+                    n_subs += 1
+            row["n_rrdr_substitutions"] = n_subs
+            rows.append(row)
+        del df_p, records
+        # pyarrow holds freed read buffers in its own pool; over ~38k reads that
+        # climbs into tens of GB. Return it to the OS periodically.
+        if (i + 1) % 2000 == 0:
+            gc.collect()
+            pyarrow.default_memory_pool().release_unused()
+            rss_gb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024 / 1024
+            logger.info("genotyped %d/%d (peak RSS %.1f GB)", i + 1, len(sample_ids), rss_gb)
 
-    if n_missing:
-        logger.warning("rpoB genotype: %d/%d samples had no parquet or no rpoB hit", n_missing, len(sample_ids))
+    _report_rpob_copy_qc(
+        total=len(sample_ids),
+        kept=len(rows),
+        no_parquet=no_parquet,
+        zero_copy=zero_copy,
+        multi_copy=multi_copy,
+        qc_log_path=qc_log_path,
+    )
 
     return pd.DataFrame(rows).set_index("Sample")
+
+
+def _report_rpob_copy_qc(
+    *,
+    total: int,
+    kept: int,
+    no_parquet: list[str],
+    zero_copy: list[str],
+    multi_copy: list[tuple[str, int]],
+    qc_log_path: str | Path,
+) -> None:
+    """Print the rpoB-copy QC summary and write the excluded Sample IDs to a log."""
+    summary = (
+        f"rpoB-copy QC: {total} samples requested | {kept} kept (exactly one rpoB) | "
+        f"excluded: {len(no_parquet)} no-parquet, {len(zero_copy)} zero-copy, "
+        f"{len(multi_copy)} multi-copy (>1 rpoB)"
+    )
+    logger.warning(summary)
+    print(summary, flush=True)
+
+    qc_log_path = Path(qc_log_path)
+    with qc_log_path.open("w") as fh:
+        fh.write(summary + "\n\n")
+        fh.write(f"# no_parquet ({len(no_parquet)}): sample absent from parquet dir\n")
+        for s in no_parquet:
+            fh.write(f"no_parquet\t{s}\n")
+        fh.write(f"\n# zero_copy ({len(zero_copy)}): parquet present, no rpoB annotation\n")
+        for s in zero_copy:
+            fh.write(f"zero_copy\t{s}\n")
+        fh.write(f"\n# multi_copy ({len(multi_copy)}): parquet present, >1 rpoB annotation\n")
+        for s, n in multi_copy:
+            fh.write(f"multi_copy\t{s}\t{n}\n")
+    logger.info("rpoB-copy QC log written to %s", qc_log_path)
 
 
 def join_rifampin_label(

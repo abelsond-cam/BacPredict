@@ -32,6 +32,33 @@ PROTEIN_SEQUENCES_DIR = RDS_ROOT / "david" / "processed" / "klebsiella_protein_s
 ESM_EMBEDDINGS_DIR = RDS_ROOT / "david" / "processed" / "klebsiella_esm_embeddings"
 BACFORMER_EMBEDDINGS_DIR = RDS_ROOT / "david" / "processed" / "klebsiella_bacformer_embeddings"
 
+# The refreshed Bacformer complete-genomes model (not the MAG-trained one).
+BACFORMER_MODEL_ID = "macwiatrak/bacformer-large-masked-complete-genomes"
+
+
+def load_bacformer_model(device: str, dtype="auto") -> torch.nn.Module:
+    """Load the frozen Bacformer complete-genomes model, on ``device``, in eval mode.
+
+    Single source of truth for loading Bacformer — reused by this script's
+    embedding pipeline and by :mod:`snp_embeddings.frozen_bacformer_rpob_vectors`.
+    ``dtype="auto"`` lets HF pick the checkpoint dtype (works on CPU for Stage-A
+    smoke); pass ``torch.bfloat16`` to force the GPU pipeline's historical dtype.
+    """
+    model = AutoModel.from_pretrained(BACFORMER_MODEL_ID, trust_remote_code=True, torch_dtype=dtype)
+    return model.to(device).eval()
+
+
+def bacformer_last_hidden_state(model: torch.nn.Module, inputs: dict) -> torch.Tensor:
+    """Run a frozen Bacformer forward and return its ``last_hidden_state`` tensor.
+
+    ``inputs`` is the Bacformer-input bundle (``protein_embeddings``,
+    ``special_tokens_mask``/``attention_mask``, ``token_type_ids`` …) already on
+    the model's device.
+    """
+    with torch.no_grad():
+        outputs = model(**inputs, return_dict=True)
+    return outputs["last_hidden_state"]
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -194,11 +221,10 @@ def process_genome_from_protein_sequences(
         # Optional Bacformer stage
         if bacformer_model is not None and bacformer_dir is not None:
             logger.debug(f"Processing {sample_id}: Generating Bacformer embeddings")
-            with torch.no_grad():
-                bacformer_outputs = bacformer_model(**bacformer_inputs, return_dict=True)
+            last_hidden_state = bacformer_last_hidden_state(bacformer_model, bacformer_inputs)
             bacformer_output_path = bacformer_dir / f"{sample_id}_bacformer_embeddings.pt"
             logger.debug(f"Processing {sample_id}: Saving Bacformer embeddings to {bacformer_output_path}")
-            bacformer_embeddings_cpu = bacformer_outputs["last_hidden_state"].float().cpu()
+            bacformer_embeddings_cpu = last_hidden_state.float().cpu()
             torch.save(bacformer_embeddings_cpu, bacformer_output_path)
 
         return sample_id, True, ""
@@ -357,15 +383,7 @@ def main():
     bacformer_model: torch.nn.Module | None = None
     if args.bacformer_embeddings:
         logger.info("Loading Bacformer model...")
-        bacformer_model = (
-            AutoModel.from_pretrained(
-                "macwiatrak/bacformer-large-masked-complete-genomes",
-                trust_remote_code=True,
-            )
-            .to(device)
-            .eval()
-            .to(torch.bfloat16)
-        )
+        bacformer_model = load_bacformer_model(device, dtype=torch.bfloat16)
         logger.info("Bacformer model loaded")
 
     # Process genomes

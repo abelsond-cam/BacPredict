@@ -4,10 +4,12 @@ This is the shared home for *per-residue* ESM-C work — the opposite end from t
 production embedding path (:mod:`tl.embed.generate_embeddings`), which only ever
 keeps the mean-pooled protein vector.
 
-Increment 1 (Stage 1.1 ceiling ladder) needs the masked-LM head and
-masked-marginal log-probabilities at chosen residue positions. Increment 2
-(Stage 1.2 geometry probe) will extend this module with ``residue_states`` for
-per-residue hidden states across all layers.
+Step 3a (masked-marginal LLR) needs the masked-LM head and masked-marginal
+log-probabilities at chosen residue positions. Step 3b (the geometry probe) adds
+:func:`residue_states` (per-residue hidden states across all layers),
+:func:`production_mean_pool` (the residue→protein mean the production path bakes
+in, so ``d_pool`` measures the *real* pool), and :func:`apply_point_mutation`
+(in-silico single-residue WT→mutant edits).
 
 Tokeniser facts (verified against the cached ``modeling_esm_plusplus.py``):
 
@@ -153,3 +155,149 @@ def substitution_llr(
     sample is wild-type at this site.
     """
     return aa_log_prob(log_prob_vector, tokenizer, observed) - aa_log_prob(log_prob_vector, tokenizer, wt)
+
+
+@torch.no_grad()
+def residue_states(
+    model,
+    tokenizer,
+    seq: str,
+    *,
+    device: str = "cpu",
+    all_layers: bool = True,
+    return_cls: bool = False,
+) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+    """Per-residue ESM-C hidden states, ``<cls>``/``<eos>`` stripped, no truncation.
+
+    Runs one forward pass with ``output_hidden_states=True`` and returns the
+    residue rows aligned 1:1 with ``seq`` (token ``p + 1`` → amino acid ``p``).
+    The full sequence is passed (``truncation=False``) so long proteins such as
+    rpoB (~1,178 aa > the production 1,024 cap) keep every residue — the geometry
+    probe needs them all.
+
+    Parameters
+    ----------
+    model, tokenizer
+        As returned by :func:`load_esmc_mlm`.
+    seq : str
+        Protein sequence (the exact string ESM-C embedded).
+    device : str, default "cpu"
+        Torch device.
+    all_layers : bool, default True
+        If True, return every hidden-state layer (embeddings + each transformer
+        block) stacked as ``[n_layers, L, dim]``. If False, only the final layer
+        ``[L, dim]``.
+    return_cls : bool, default False
+        If True, also return the ``<cls>`` token state(s) (``[n_layers, dim]`` or
+        ``[dim]``) — used for the geometry probe's ``d_cls``.
+
+    Returns
+    -------
+    torch.Tensor or tuple
+        Residue states ``[n_layers, L, dim]`` (``all_layers=True``) or ``[L, dim]``,
+        float32 on CPU, where ``L == len(seq)``. With ``return_cls`` a
+        ``(residues, cls)`` tuple.
+
+    Raises
+    ------
+    RuntimeError
+        If ESM++ returns no hidden states (the day-one check for Step 3b).
+    """
+    enc = tokenizer(seq, return_tensors="pt", add_special_tokens=True, truncation=False)
+    out = model(
+        input_ids=enc["input_ids"].to(device),
+        attention_mask=enc["attention_mask"].to(device),
+        output_hidden_states=True,
+    )
+    hidden = out.hidden_states
+    if not hidden:
+        raise RuntimeError(
+            "ESM++ returned no hidden_states — Step 3b needs output_hidden_states; "
+            "check the cached modeling_esm_plusplus.py forward signature."
+        )
+    length = len(seq)
+    residue_slice = slice(_CLS_OFFSET, _CLS_OFFSET + length)
+
+    def _strip(layer: torch.Tensor) -> torch.Tensor:
+        return layer[0, residue_slice].float().cpu()
+
+    def _cls(layer: torch.Tensor) -> torch.Tensor:
+        return layer[0, 0].float().cpu()
+
+    if all_layers:
+        residues = torch.stack([_strip(layer) for layer in hidden], dim=0)
+        cls = torch.stack([_cls(layer) for layer in hidden], dim=0)
+    else:
+        residues = _strip(hidden[-1])
+        cls = _cls(hidden[-1])
+    return (residues, cls) if return_cls else residues
+
+
+def production_mean_pool(
+    residue_matrix: torch.Tensor,
+    mask: torch.Tensor | None = None,
+    *,
+    max_residues: int | None = None,
+) -> torch.Tensor:
+    """Mask-normalised residue→protein mean — the pool the production path bakes in.
+
+    The ESM-C per-protein vector the embedding store holds is the **straight mean**
+    over a protein's residue hidden states. This reproduces it as an einsum so
+    ``d_pool`` in the geometry probe measures the *real* pool:
+    ``einsum("ld,l->d", H, m) / m.sum()``. With ``mask=None`` this is exactly
+    ``residue_matrix.mean(0)``.
+
+    Parameters
+    ----------
+    residue_matrix : torch.Tensor
+        ``[L, dim]`` per-residue states for one protein.
+    mask : torch.Tensor, optional
+        ``[L]`` 1/0 real-residue mask. Defaults to all-ones.
+    max_residues : int, optional
+        Pool over only the first ``max_residues`` rows — set to the production
+        ``max_prot_seq_len`` (1,024) to byte-match a stored pooled vector for a
+        protein longer than the cap.
+
+    Returns
+    -------
+    torch.Tensor
+        ``[dim]`` pooled vector (float32).
+    """
+    h = residue_matrix.float()
+    if max_residues is not None:
+        h = h[:max_residues]
+    length = h.shape[0]
+    m = torch.ones(length, dtype=torch.float32) if mask is None else mask[:length].float()
+    denom = m.sum()
+    if denom <= 0:
+        raise ValueError("production_mean_pool: empty mask (no residues to pool)")
+    return torch.einsum("ld,l->d", h, m) / denom
+
+
+def apply_point_mutation(seq: str, position: int, new_aa: str, *, expected_wt: str | None = None) -> str:
+    """Return ``seq`` with the residue at 0-based ``position`` replaced by ``new_aa``.
+
+    Parameters
+    ----------
+    seq : str
+        Wild-type protein sequence.
+    position : int
+        0-based residue index to mutate.
+    new_aa : str
+        Replacement amino acid (single letter).
+    expected_wt : str, optional
+        If given, assert the residue currently at ``position`` matches (guards
+        against a wrong reference / off-by-one).
+
+    Returns
+    -------
+    str
+        The mutated sequence (same length).
+    """
+    if not 0 <= position < len(seq):
+        raise ValueError(f"position {position} out of range for sequence of length {len(seq)}")
+    if len(new_aa) != 1:
+        raise ValueError(f"new_aa must be a single residue, got {new_aa!r}")
+    if expected_wt is not None and seq[position] != expected_wt:
+        raise ValueError(f"expected wild-type {expected_wt!r} at position {position}, found {seq[position]!r}")
+    return seq[:position] + new_aa + seq[position + 1 :]

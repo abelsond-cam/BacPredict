@@ -1,82 +1,106 @@
 #!/bin/bash
-# Stage 1.1 — rpoB / rifampicin phenotype-ceiling ladder.
+# SNP-vs-ESM linear probes — where does the rpoB / rifampicin signal get lost?
 #
-# Default phase (this script): predictors 1 (one-hot RRDR) + 3 (frozen pooled
-# ESM-C rpoB vector) only — the head-line AUROC(1) - AUROC(3). Pure CPU: it
-# aligns ~30k rpoB sequences and stat+loads ~30k .pt embedding files, so it runs
-# as a CPU sbatch job, NOT on the login node (same reasoning as the prepare/split
-# job — it crawls the embedding store).
+# Default phase (this script): the two CPU steps —
+#   Step 1  onehot_rrdr       one-hot RRDR codon genotype (the SNP ceiling)
+#   Step 2  pooled_esmc_rpob  frozen ESM-C mean-pooled rpoB 960-vector
+# The head-line read-out is AUROC(Step 1) - AUROC(Step 2) on the common evaluate
+# set: the information ESM-C's residue->protein mean throws away. Pure CPU — it
+# genotypes ~37k rpoB sequences from the protein parquets and mmap-reads one rpoB
+# row out of each .pt, so it runs as a CPU sbatch job, NOT on the login node.
 #
-# Predictor 2 (masked-marginal LLR) needs ESM-C forward passes; run that as the
-# GPU variant below (drop --skip-masked-marginal, add --device cuda:0, switch to
-# the ampere block). Read predictors 1+3 first; only spend the GPU once the
-# head-line gap is in hand.
+# Steps 3a (masked_marginal_llr) and 2b (bacformer_rpob_token) need a model
+# forward — run them as the GPU variant at the bottom, once the CPU gap is in hand.
 #
-# Usage:  sbatch src/snp_embeddings/scripts/run_ceiling_ladder.sh
+# Usage:  sbatch src/snp_embeddings/scripts/run_snp_vs_esm_prediction.sh
 #
-#SBATCH --job-name=snp_ceiling_ladder
-#SBATCH --output=snp_ceiling_ladder_%j.out
-#SBATCH --error=snp_ceiling_ladder_%j.err
+#SBATCH --job-name=snp_vs_esm
+#SBATCH --output=snp_vs_esm_%j.out
+#SBATCH --error=snp_vs_esm_%j.err
 #SBATCH --partition=icelake
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
+#SBATCH --mem=240G
 #SBATCH --time=12:00:00
 #SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
-# Timing (measured 2026-06-12 smoke): ~0.3 s per .pt read, sequential loop over
-# ~38k labelled samples → ~4-5 h. 12 h budget per the never-under-call rule.
-# (If this ever needs to be faster, predictor 3's .pt reads are embarrassingly
-# parallel — a multiprocessing Pool over the 32 cores would cut it to ~10 min.)
+# Memory is bounded to a few GB (subset-column parquet reads + periodic pyarrow
+# pool release in rpob_genotype.py; mmap one-row .pt reads in the predictor).
+# 240 G is generous headroom (fits a standard 256 G icelake node) per the
+# never-under-call rule. Genotyping is sequential (~0.3 s/parquet -> ~4-5 h over
+# ~37k); 12 h budget. --pool-workers parallelises the .pt reads across the cores.
 #SBATCH --open-mode=append
 
 cd /home/dca36/workspace/BacPredict
 
 export PYTHONUNBUFFERED=1
 
-# --- Data paths (TB AST cohort; verified on HPC 2026-06-12) ----------------
-# 38,248 parquets + 38,248 esm .pt; binary_ast.csv has 38,758 non-null rifampin
-# labels (26,147 S / 12,595 R; 16 ambiguous 0.5 dropped in code). Sample-ID
-# column is 'phenotype-BioSample_ID' (SAMEA... = parquet stems).
+# --- Data paths (TB AST cohort; the deployed model's canonical split) ----------
+# binary_ast_with_split.csv is the SAME 70/10/20 holdout tb_ast/train_amr.py used,
+# so the probe AUROCs sit in one table with Bacformer's deployed ~0.9. Sample-ID
+# column is 'phenotype-BioSample_ID' (SAMEA... = parquet/.pt stems); the probe's
+# resolve_holdouts() auto-detects it.
 RDS=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast
-AST_CSV=$RDS/binary_ast.csv
+SHEET=$RDS/binary_ast_with_split.csv
 PARQUET_DIR=$RDS/tb_protein_sequences
 ESM_STORE_DIR=$RDS/tb_esm_embeddings
-OUT_JSON=$RDS/snp_embeddings/ceiling_ladder_${SLURM_JOB_ID}.json
-SAMPLE_COL="phenotype-BioSample_ID"
+OUT_DIR=$RDS/snp_embeddings
+OUT_JSON=$OUT_DIR/snp_vs_esm_${SLURM_JOB_ID}.json
+QC_LOG=$OUT_DIR/rpob_copy_qc_${SLURM_JOB_ID}.log
+
+# Optional: the deployed Bacformer rifampin eval_results.json. If set and present,
+# the probe asserts its split source/n_evaluate match and records the reference
+# AUROC in the head-line. Leave empty to skip the reference block.
+REF_JSON=""
+
+mkdir -p "$OUT_DIR"
 
 echo "========================================================================"
-echo "Stage 1.1 ceiling ladder (predictors 1 + 3; masked-marginal skipped)"
-echo "AST CSV:     $AST_CSV"
+echo "SNP-vs-ESM probes (Steps 1 + 2; CPU)"
+echo "Split sheet: $SHEET"
 echo "Parquets:    $PARQUET_DIR"
 echo "ESM store:   $ESM_STORE_DIR"
 echo "Output JSON: $OUT_JSON"
+echo "QC log:      $QC_LOG"
 echo "Job ID:      $SLURM_JOB_ID"
 echo "========================================================================"
 
-uv run python src/snp_embeddings/ceiling_ladder.py \
-    --ast-csv "$AST_CSV" \
+REF_ARG=()
+if [[ -n "$REF_JSON" && -f "$REF_JSON" ]]; then
+    REF_ARG=(--reference-results-json "$REF_JSON")
+    echo "Reference Bacformer results: $REF_JSON"
+fi
+
+uv run python src/snp_embeddings/snp_vs_esm_prediction.py \
+    --ast-sheet-path "$SHEET" \
     --parquet-dir "$PARQUET_DIR" \
     --esm-store-dir "$ESM_STORE_DIR" \
     --output-json "$OUT_JSON" \
-    --sample-column "$SAMPLE_COL" \
-    --label-column rifampin \
-    --skip-masked-marginal
+    --qc-log "$QC_LOG" \
+    --drug rifampin \
+    --steps onehot_rrdr pooled_esmc_rpob \
+    --pool-workers "${SLURM_CPUS_PER_TASK:-8}" \
+    "${REF_ARG[@]}"
 
-echo "Ceiling ladder finished — JSON at $OUT_JSON"
+echo "SNP-vs-ESM probes finished — JSON at $OUT_JSON"
 
-# --- GPU variant (full ladder incl. masked-marginal predictor 2) ----------
-# Switch the directives to:
+# --- GPU variant (Step 3a masked-marginal LLR + Step 2b Bacformer token) -------
+# Step 3a re-runs ESM-C as a masked LM; Step 2b needs a precomputed Bacformer
+# rpoB-token NPZ (build it first with frozen_bacformer_rpob_vectors.py). Switch
+# the directives to:
 #   #SBATCH --partition=ampere
 #   #SBATCH --account=FLOTO-SL2-GPU
 #   #SBATCH --gres=gpu:1
 #   #SBATCH --cpus-per-task=8
 #   #SBATCH --mem=128G
 #   #SBATCH --time=08:00:00
-# and run without --skip-masked-marginal, with --device cuda:0:
+# and run (BAC_NPZ = output of frozen_bacformer_rpob_vectors.py):
 #
 #   module load cuda/12.4 cudnn/8.9_cuda-12.4
-#   uv run python src/snp_embeddings/ceiling_ladder.py \
-#       --ast-csv "$AST_CSV" --parquet-dir "$PARQUET_DIR" \
+#   uv run python src/snp_embeddings/snp_vs_esm_prediction.py \
+#       --ast-sheet-path "$SHEET" --parquet-dir "$PARQUET_DIR" \
 #       --esm-store-dir "$ESM_STORE_DIR" --output-json "$OUT_JSON" \
-#       --sample-column "$SAMPLE_COL" --label-column rifampin \
-#       --device cuda:0 --masked-marginal-codons panel
+#       --qc-log "$QC_LOG" --drug rifampin \
+#       --steps onehot_rrdr pooled_esmc_rpob masked_marginal_llr bacformer_rpob_token \
+#       --device cuda:0 --masked-marginal-codons panel \
+#       --bacformer-vectors "$BAC_NPZ" "${REF_ARG[@]}"
