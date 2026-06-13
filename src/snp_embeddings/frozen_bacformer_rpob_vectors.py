@@ -141,9 +141,14 @@ def main() -> None:
 
     reference = load_reference()
     _label_map, train_ids, validate_ids, evaluate_ids, _info = resolve_clean_splits(args.ast_sheet_path, args.drug)
-    all_ids = [*train_ids, *validate_ids, *evaluate_ids]
     if args.max_samples is not None:
-        all_ids = all_ids[: args.max_samples]
+        # Proportional slice so all three splits stay represented downstream.
+        total = len(train_ids) + len(validate_ids) + len(evaluate_ids)
+        frac = min(1.0, args.max_samples / max(1, total))
+        train_ids = train_ids[: max(1, round(len(train_ids) * frac))]
+        validate_ids = validate_ids[: max(1, round(len(validate_ids) * frac))]
+        evaluate_ids = evaluate_ids[: max(1, round(len(evaluate_ids) * frac))]
+    all_ids = [*train_ids, *validate_ids, *evaluate_ids]
 
     logger.info("Genotyping %d labelled samples (single-copy rpoB only) for the rpoB flat index", len(all_ids))
     genotype = build_genotype_table(all_ids, args.parquet_dir, reference, qc_log_path=args.qc_log)

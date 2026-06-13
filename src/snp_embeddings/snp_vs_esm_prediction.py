@@ -502,14 +502,17 @@ def run_probes(
     reference = load_reference()
     label_map, train_ids, validate_ids, evaluate_ids, split_info = resolve_clean_splits(ast_sheet_path, drug)
 
-    all_ids = [*train_ids, *validate_ids, *evaluate_ids]
     if max_samples is not None:
-        all_ids = all_ids[:max_samples]
-        keep = set(all_ids)
+        # Proportional slice so every split stays represented (a train-first
+        # truncation would empty evaluate/validate and the probe would error).
+        total = len(train_ids) + len(validate_ids) + len(evaluate_ids)
+        frac = min(1.0, max_samples / max(1, total))
+        train_ids = train_ids[: max(1, round(len(train_ids) * frac))]
+        validate_ids = validate_ids[: max(1, round(len(validate_ids) * frac))]
+        evaluate_ids = evaluate_ids[: max(1, round(len(evaluate_ids) * frac))]
+        keep = set(train_ids) | set(validate_ids) | set(evaluate_ids)
         label_map = {s: v for s, v in label_map.items() if s in keep}
-        train_ids = [s for s in train_ids if s in keep]
-        validate_ids = [s for s in validate_ids if s in keep]
-        evaluate_ids = [s for s in evaluate_ids if s in keep]
+    all_ids = [*train_ids, *validate_ids, *evaluate_ids]
 
     logger.info("Genotyping %d labelled samples (single-copy rpoB only)", len(all_ids))
     genotype = build_genotype_table(all_ids, parquet_dir, reference, qc_log_path=qc_log_path)
