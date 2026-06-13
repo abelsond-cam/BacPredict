@@ -299,10 +299,14 @@ def _smooth_arima(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
     """Stage 2b: ARIMA(p, d, q) with linear drift on the non-empty bins.
 
-    Uses ``statsmodels.tsa.arima.model.ARIMA``. The in-sample fitted values
-    give the smoothed trend; the residual SE × 1.96 gives a homoscedastic 95%
-    band (same width everywhere — unlike Kalman, ARIMA cannot widen its
-    in-sample CI through sparse periods).
+    Uses ``statsmodels.tsa.arima.model.ARIMA``. In-sample predicted means come
+    from ``get_prediction()``; the 95% band is a **confidence interval on the
+    mean** (uncertainty about where the trend lies), obtained from
+    ``get_prediction().conf_int(alpha=0.05)`` — **not** a prediction interval
+    on a future observation. The two are very different in width: residual-SD
+    × 1.96 gives ±2 SD of the *next observation* (huge), while the CI on the
+    mean accounts only for parameter and state uncertainty (much narrower,
+    comparable to the Kalman smoother's posterior).
 
     Drops NaN bins before fitting and reindexes the fitted values back onto
     the full bin index so the plot keeps consistent x-axis alignment with the
@@ -320,8 +324,6 @@ def _smooth_arima(
 
     non_empty = binned.dropna()
     try:
-        # Note: ARIMA() with `trend` requires a stationary differenced series; if
-        # the optimiser stalls we drop the drift and refit.
         ar = ARIMA(non_empty.values, order=order, trend=trend)
         ar_fit = ar.fit()
     except Exception as exc:  # noqa: BLE001
@@ -333,18 +335,35 @@ def _smooth_arima(
             print(f"  ARIMA fit failed: {exc2}")
             return None
 
-    # In-sample fitted values + residual SE (homoscedastic).
-    fitted_nonempty = np.asarray(ar_fit.fittedvalues, dtype=float)
-    resid = np.asarray(ar_fit.resid, dtype=float)
-    sigma = float(np.std(resid)) if len(resid) > 1 else 0.0
-    se_lin = 1.96 * sigma
+    # In-sample predictions + CI on the mean.
+    # `get_prediction(start, end)` returns a PredictionResults whose
+    # `conf_int(alpha)` defaults to a CI on the predicted mean — narrow, like
+    # Kalman's smoother posterior — rather than a prediction interval on the
+    # observation, which is what `residual_SD × 1.96` would give us.
+    n_ne = len(non_empty)
+    pred = ar_fit.get_prediction(start=0, end=n_ne - 1)
+    fitted_nonempty = np.asarray(pred.predicted_mean, dtype=float)
+    ci = pred.conf_int(alpha=0.05)
+    ci_arr = ci.values if hasattr(ci, "values") else np.asarray(ci)
+    lo_ne = np.asarray(ci_arr[:, 0], dtype=float)
+    hi_ne = np.asarray(ci_arr[:, 1], dtype=float)
 
-    # Reindex onto the full bin index (with NaN at empty bins so the plot shows gaps).
+    # The very first prediction lacks history and statsmodels reports infinite
+    # SE there; clip with the nearest finite value so the ribbon doesn't blow
+    # the y-axis at t=0.
+    for arr in (fitted_nonempty, lo_ne, hi_ne):
+        bad = ~np.isfinite(arr)
+        if bad.any():
+            good_vals = arr[~bad]
+            fill = float(good_vals[0]) if len(good_vals) else 0.5
+            arr[bad] = fill
+
     fitted_series = pd.Series(fitted_nonempty, index=non_empty.index)
-    full = fitted_series.reindex(binned.index)
-    level = full.values
-    lo_lin = level - se_lin
-    hi_lin = level + se_lin
+    lo_series = pd.Series(lo_ne, index=non_empty.index)
+    hi_series = pd.Series(hi_ne, index=non_empty.index)
+    level = fitted_series.reindex(binned.index).values
+    lo_lin = lo_series.reindex(binned.index).values
+    hi_lin = hi_series.reindex(binned.index).values
 
     if binary:
         pred = np.clip(level, 0.0, 1.0)
