@@ -1,25 +1,32 @@
-"""Step 2b (bonus, GPU) — frozen Bacformer contextualised rpoB protein token.
+"""GPU — frozen Bacformer contextualised vectors: the rpoB token AND the genome mean.
 
-The Step-2 probe shows the *frozen ESM-C mean-pooled* rpoB vector loses the
-rifampicin signal. Step 2b asks whether Bacformer's cross-protein attention adds
-anything back: it runs the frozen Bacformer complete-genomes model forward on
-each genome's stored ESM inputs and pulls out the **contextualised rpoB protein
-token** from ``last_hidden_state`` — the representation Bacformer's own mean-pool
-classification head would average over. A linear probe on this token that is no
-better than Step 2 means the loss was already sealed at the ESM-C pool (Bacformer
-recovers nothing); that probe is fit downstream by
-:mod:`snp_embeddings.snp_vs_esm_prediction` (``--steps bacformer_rpob_token``)
-on the NPZ this script writes.
+Runs the frozen Bacformer complete-genomes model forward on each genome's
+**stored ESM-C inputs** (no re-embedding) and extracts two vectors from the same
+forward pass:
 
-It is a *bonus*: it needs a GPU forward, so it rides with the Step-3 GPU pass.
+- **rpoB token** — ``last_hidden_state`` at the rpoB protein index (the gene's
+  contextualised representation).
+- **genome mean** — the mask-normalised mean of ``last_hidden_state`` over the
+  real protein tokens: exactly the pool ``BacformerGenomeClassificationHead``
+  averages over, but on the **frozen** base model (no fine-tuning).
 
-Indexing the rpoB token
------------------------
-The rpoB token sits at the same flat-protein position used in Step 2: the real
+Both feed linear probes in :mod:`snp_embeddings.snp_vs_esm_prediction`
+(``--steps bacformer_rpob_token bacformer_mean``), giving the comparison:
+
+- frozen rpoB token vs the ESM-C pool (Step 2) — does Bacformer's cross-protein
+  attention enrich rpoB beyond ESM-C?
+- frozen genome mean vs the **fine-tuned** deployed model (~0.905) — how much did
+  fine-tuning the Bacformer weights through the mean-pool head actually buy, over
+  a linear probe on the *frozen* mean? (We know the mean can't be fine-tuned well;
+  this quantifies the gap.)
+
+Indexing
+--------
+The rpoB token sits at the flat-protein position from the genotype table: the real
 proteins of the stored ``.pt`` in flat order (``special_tokens_mask == 4`` for the
 Bacformer-input bundle, or ``attention_mask == 1`` for the plain per-protein TB
-store), indexed by the rpoB flat index from the genotype table. A **day-one
-assertion** confirms ``last_hidden_state`` has the same length as the input (no
+store). The genome mean averages over those same real-protein rows. A **day-one
+assertion** confirms ``last_hidden_state`` aligns 1:1 with the input rows (no
 silently-injected CLS shifting the index) before any vector is trusted.
 """
 
@@ -64,22 +71,24 @@ def _forward_inputs(store: dict, device: str, model_dtype: torch.dtype) -> dict:
     }
 
 
-def compute_rpob_tokens(
+def compute_bacformer_vectors(
     genotype,
     esm_store_dir: Path,
     *,
     device: str,
     pt_suffix: str = "_esm_embeddings.pt",
-) -> tuple[np.ndarray, list[str]]:
-    """Frozen-Bacformer contextualised rpoB token per single-copy genome.
+) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    """Frozen-Bacformer rpoB token + genome mean per single-copy genome.
 
-    Returns ``(matrix [N, dim], sample_ids)``. Samples whose ``.pt`` is missing or
-    whose real-protein count fails the flat-order guard are skipped.
+    Returns ``(rpob_matrix [N, dim], mean_matrix [N, dim], sample_ids)`` — both
+    pulled from the same forward pass. Samples whose ``.pt`` is missing or whose
+    real-protein count fails the flat-order guard are skipped.
     """
     model = load_bacformer_model(device, dtype="auto")
     model_dtype = next(model.parameters()).dtype
 
-    vectors: list[np.ndarray] = []
+    rpob_vectors: list[np.ndarray] = []
+    mean_vectors: list[np.ndarray] = []
     kept: list[str] = []
     skips: dict[str, int] = {}
     length_checked = False
@@ -109,17 +118,21 @@ def compute_rpob_tokens(
             if lhs.shape[0] != input_len:
                 raise RuntimeError(
                     f"Bacformer last_hidden_state length {lhs.shape[0]} != input length {input_len} "
-                    f"for {sample_id}: the rpoB token index would be misaligned. Aborting Step 2b."
+                    f"for {sample_id}: the rpoB token index would be misaligned. Aborting."
                 )
             length_checked = True
+        real_rows = lhs[real_idx].float()  # contextualised real-protein tokens
         raw = int(real_idx[flat_index])
-        vectors.append(lhs[raw].float().cpu().numpy())
+        rpob_vectors.append(lhs[raw].float().cpu().numpy())
+        # Genome mean = the mask-normalised mean the classification head pools over.
+        mean_vectors.append(real_rows.mean(dim=0).cpu().numpy())
         kept.append(str(sample_id))
 
     if skips:
-        logger.warning("frozen Bacformer rpoB token: skipped %s", skips)
-    matrix = np.vstack(vectors) if vectors else np.empty((0, 0))
-    return matrix, kept
+        logger.warning("frozen Bacformer vectors: skipped %s", skips)
+    rpob = np.vstack(rpob_vectors) if rpob_vectors else np.empty((0, 0))
+    mean = np.vstack(mean_vectors) if mean_vectors else np.empty((0, 0))
+    return rpob, mean, kept
 
 
 def main() -> None:
@@ -130,7 +143,8 @@ def main() -> None:
     parser.add_argument("--parquet-dir", type=Path, required=True, help="Dir of *_protein_sequences.parquet.")
     parser.add_argument("--esm-store-dir", type=Path, required=True, help="Dir of *_esm_embeddings.pt.")
     parser.add_argument("--output-npz", type=Path, required=True,
-                        help="Where to write the {sample_ids, vectors} NPZ (consumed by --steps bacformer_rpob_token).")
+                        help="NPZ to write {sample_ids, rpob_vectors, mean_vectors} "
+                             "(consumed by --steps bacformer_rpob_token / bacformer_mean).")
     parser.add_argument("--drug", type=str, default="rifampin", help="Phenotype column (default rifampin).")
     parser.add_argument("--device", type=str, default="cuda:0", help="Torch device (default cuda:0).")
     parser.add_argument("--qc-log", type=Path, default=Path("rpob_copy_qc.log"),
@@ -154,13 +168,13 @@ def main() -> None:
     genotype = build_genotype_table(all_ids, args.parquet_dir, reference, qc_log_path=args.qc_log)
     logger.info("Running frozen Bacformer over %d genomes on %s", len(genotype), args.device)
 
-    matrix, kept = compute_rpob_tokens(genotype, args.esm_store_dir, device=args.device)
+    rpob, mean, kept = compute_bacformer_vectors(genotype, args.esm_store_dir, device=args.device)
     if not kept:
-        raise RuntimeError("No rpoB tokens recovered — check esm_store_dir / .pt suffix.")
+        raise RuntimeError("No Bacformer vectors recovered — check esm_store_dir / .pt suffix.")
 
     args.output_npz.parent.mkdir(parents=True, exist_ok=True)
-    np.savez(args.output_npz, sample_ids=np.array(kept), vectors=matrix)
-    logger.info("Wrote %d Bacformer rpoB-token vectors to %s", len(kept), args.output_npz)
+    np.savez(args.output_npz, sample_ids=np.array(kept), rpob_vectors=rpob, mean_vectors=mean)
+    logger.info("Wrote %d Bacformer rpoB-token + genome-mean vectors to %s", len(kept), args.output_npz)
 
 
 if __name__ == "__main__":

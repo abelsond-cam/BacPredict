@@ -305,15 +305,20 @@ def masked_marginal_features(
     return pd.DataFrame(features, index=pd.Index(kept, name="Sample"), columns=cols)
 
 
-def load_bacformer_vectors(path: str | Path) -> pd.DataFrame:
-    """Load the frozen Bacformer rpoB-token vectors (Step 2b) written by the GPU pass.
+def load_bacformer_vectors(path: str | Path, key: str = "rpob_vectors") -> pd.DataFrame:
+    """Load frozen Bacformer vectors written by the GPU pass.
 
-    Expects an ``.npz`` with ``sample_ids`` (str array) and ``vectors`` ([N, 960]),
-    as produced by :mod:`snp_embeddings.frozen_bacformer_rpob_vectors`.
+    Expects an ``.npz`` with ``sample_ids`` (str array) plus ``rpob_vectors`` and
+    ``mean_vectors`` ([N, 960] each), as produced by
+    :mod:`snp_embeddings.frozen_bacformer_rpob_vectors`. ``key`` selects which
+    (``"rpob_vectors"`` for the contextualised rpoB token, ``"mean_vectors"`` for
+    the frozen genome mean). Falls back to the legacy ``"vectors"`` key.
     """
     data = np.load(path, allow_pickle=False)
     ids = [str(s) for s in data["sample_ids"]]
-    return pd.DataFrame(data["vectors"], index=pd.Index(ids, name="Sample"))
+    if key not in data.files and "vectors" in data.files:
+        key = "vectors"  # legacy NPZ (rpoB token only)
+    return pd.DataFrame(data[key], index=pd.Index(ids, name="Sample"))
 
 
 # ---------------------------------------------------------------------------
@@ -426,6 +431,8 @@ STEP_META = {
                             "description": "ESM-C masked-LM LLR at panel codons"},
     "bacformer_rpob_token": {"step": "2b", "kind": "numeric", "standardise": True, "compute": "gpu",
                              "description": "frozen Bacformer contextualised rpoB token 960-vector"},
+    "bacformer_mean": {"step": "2c", "kind": "numeric", "standardise": True, "compute": "gpu",
+                       "description": "frozen Bacformer genome mean-pooled 960-vector (vs the fine-tuned model)"},
 }
 
 
@@ -549,7 +556,12 @@ def run_probes(
             if bacformer_vectors is None:
                 logger.warning("Step 2b (bacformer_rpob_token) requested but --bacformer-vectors not given; skipping")
                 continue
-            feat_df = load_bacformer_vectors(bacformer_vectors)
+            feat_df = load_bacformer_vectors(bacformer_vectors, key="rpob_vectors")
+        elif key == "bacformer_mean":
+            if bacformer_vectors is None:
+                logger.warning("Step 2c (bacformer_mean) requested but --bacformer-vectors not given; skipping")
+                continue
+            feat_df = load_bacformer_vectors(bacformer_vectors, key="mean_vectors")
         else:  # pragma: no cover - guarded by argparse choices
             raise ValueError(f"Unknown step {key!r}")
         if feat_df.empty:
