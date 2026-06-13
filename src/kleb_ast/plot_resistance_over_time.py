@@ -299,18 +299,20 @@ def _smooth_arima(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
     """Stage 2b: ARIMA(p, d, q) with linear drift on the non-empty bins.
 
-    Uses ``statsmodels.tsa.arima.model.ARIMA``. In-sample predicted means come
-    from ``get_prediction()``; the 95% band is a **confidence interval on the
-    mean** (uncertainty about where the trend lies), obtained from
-    ``get_prediction().conf_int(alpha=0.05)`` — **not** a prediction interval
-    on a future observation. The two are very different in width: residual-SD
-    × 1.96 gives ±2 SD of the *next observation* (huge), while the CI on the
-    mean accounts only for parameter and state uncertainty (much narrower,
-    comparable to the Kalman smoother's posterior).
+    Uses ``statsmodels.tsa.arima.model.ARIMA``, which is implemented internally
+    as a state-space (SARIMAX) model. After fitting, ``smoother_results``
+    holds the **smoothed in-sample posterior** computed by the Kalman smoother
+    over the full series. We read:
 
-    Drops NaN bins before fitting and reindexes the fitted values back onto
-    the full bin index so the plot keeps consistent x-axis alignment with the
-    Kalman line.
+    - ``smoothed_forecasts``           — the smoothed conditional mean at every t
+    - ``smoothed_forecasts_error_cov`` — its variance at every t
+
+    These are the right quantities for an in-sample fit + CI: they use ALL
+    observations (past + future) and exclude the irreducible innovation noise
+    that would inflate a one-step-ahead prediction interval. The resulting
+    band is comparable in width to the local-linear-trend Kalman smoother.
+
+    Drops NaN bins before fitting and reindexes back onto the full bin index.
 
     Returns
     -------
@@ -335,30 +337,30 @@ def _smooth_arima(
             print(f"  ARIMA fit failed: {exc2}")
             return None
 
-    # In-sample predictions + CI on the mean.
-    # `get_prediction(start, end)` returns a PredictionResults whose
-    # `conf_int(alpha)` defaults to a CI on the predicted mean — narrow, like
-    # Kalman's smoother posterior — rather than a prediction interval on the
-    # observation, which is what `residual_SD × 1.96` would give us.
-    n_ne = len(non_empty)
-    pred = ar_fit.get_prediction(start=0, end=n_ne - 1)
-    fitted_nonempty = np.asarray(pred.predicted_mean, dtype=float)
-    ci = pred.conf_int(alpha=0.05)
-    ci_arr = ci.values if hasattr(ci, "values") else np.asarray(ci)
-    lo_ne = np.asarray(ci_arr[:, 0], dtype=float)
-    hi_ne = np.asarray(ci_arr[:, 1], dtype=float)
+    # Pull the Kalman-smoothed in-sample forecast mean + variance.
+    sm = ar_fit.smoother_results
+    smoothed_obs = np.asarray(sm.smoothed_forecasts, dtype=float).reshape(-1)
+    # smoothed_forecasts_error_cov shape is (k_endog, k_endog, n_obs) for SARIMAX.
+    cov = np.asarray(sm.smoothed_forecasts_error_cov, dtype=float)
+    if cov.ndim == 3:
+        var = cov[0, 0, :]
+    else:
+        var = cov.reshape(-1)
+    var = np.maximum(var, 0.0)
+    se = np.sqrt(var)
 
-    # The very first prediction lacks history and statsmodels reports infinite
-    # SE there; clip with the nearest finite value so the ribbon doesn't blow
-    # the y-axis at t=0.
-    for arr in (fitted_nonempty, lo_ne, hi_ne):
+    # Numerical hygiene: replace any non-finite endpoint with the nearest finite.
+    for arr in (smoothed_obs, se):
         bad = ~np.isfinite(arr)
         if bad.any():
-            good_vals = arr[~bad]
-            fill = float(good_vals[0]) if len(good_vals) else 0.5
+            good = arr[~bad]
+            fill = float(good[0]) if len(good) else 0.0
             arr[bad] = fill
 
-    fitted_series = pd.Series(fitted_nonempty, index=non_empty.index)
+    lo_ne = smoothed_obs - 1.96 * se
+    hi_ne = smoothed_obs + 1.96 * se
+
+    fitted_series = pd.Series(smoothed_obs, index=non_empty.index)
     lo_series = pd.Series(lo_ne, index=non_empty.index)
     hi_series = pd.Series(hi_ne, index=non_empty.index)
     level = fitted_series.reindex(binned.index).values
@@ -391,6 +393,7 @@ def plot_one_drug(
     arima_order: tuple[int, int, int] = (1, 1, 1),
     arima_trend: str = "t",
     strata: frozenset[str] = frozenset({"AMR", "Surveillance", "NA", "All", "EBI"}),
+    ribbon_smoother: str = "kalman",
 ) -> Path | None:
     """Render and save the per-drug fitted-trend plot.
 
@@ -423,7 +426,13 @@ def plot_one_drug(
     smoother_styles = {"kalman": "-", "arima": ":"}
 
     def _plot_fit(sub, color, lw, alpha, label_prefix, *, value_col, ribbon=True):
-        """Fit LMM → bin → run every requested smoother → draw all lines."""
+        """Fit LMM → bin → run every requested smoother → draw all lines.
+
+        ``ribbon`` controls whether *any* ribbon is drawn at all for this
+        stratum. The ribbon — when drawn — comes from ``ribbon_smoother``
+        only (one smoother's CI per stratum), so paired Kalman + ARIMA lines
+        share the same band rather than producing two overlapping ribbons.
+        """
         nonlocal anything_plotted
         binned = _lmm_denoise_to_bins(
             sub, value_col=value_col, date_col=date_col, group_col=group_col,
@@ -432,8 +441,6 @@ def plot_one_drug(
         )
         if binned is None:
             return
-        # Legend label uses the same quantity as the plotted line:
-        # fraction of stratum samples called R.
         r_rate = float((sub[value_col].astype(str) == "R").mean())
         legend_label = f"{label_prefix} (n={len(sub):,}, R rate {r_rate:.2f})"
         first = True
@@ -448,10 +455,8 @@ def plot_one_drug(
                 continue
             grid_dates, pred, lo, hi = fit
             ls = smoother_styles.get(smoother, "-")
-            if ribbon:
+            if ribbon and smoother == ribbon_smoother:
                 ax.fill_between(grid_dates, lo, hi, color=color, alpha=_RIBBON_ALPHA, linewidth=0)
-            # Only the first smoother carries the stratum legend label — the
-            # smoother-style key sits in a separate inset legend.
             ax.plot(
                 grid_dates, pred, color=color, lw=lw, linestyle=ls, alpha=alpha,
                 label=legend_label if first else None,
@@ -572,6 +577,15 @@ def main() -> None:
         help="Comma-separated list of strata to plot. Choices: AMR, Surveillance, "
              "NA, All, EBI. Default plots all 5 lines.",
     )
+    p.add_argument(
+        "--ribbon-smoother", default="kalman",
+        choices=("kalman", "arima", "none"),
+        help="Which smoother's CI to draw as a ribbon. Default 'kalman' — only "
+             "Kalman's smoother-posterior CI is shown even when both Kalman and "
+             "ARIMA lines are drawn (ARIMA's in-sample CI is much wider and the "
+             "Kalman band is the more interpretable one). Use 'arima' to pick "
+             "ARIMA's band instead, or 'none' to suppress all ribbons.",
+    )
     args = p.parse_args()
 
     smoothers = tuple(s.strip().lower() for s in args.smoothers.split(",") if s.strip())
@@ -653,6 +667,7 @@ def main() -> None:
             arima_order=arima_order,
             arima_trend=args.arima_trend,
             strata=strata,
+            ribbon_smoother=args.ribbon_smoother,
         )
         if path is not None:
             written.append(drug)
