@@ -294,10 +294,10 @@ def _smooth_arima(
     binned: pd.Series,
     *,
     order: tuple[int, int, int] = (1, 1, 1),
-    trend: str = "c",
+    trend: str = "t",
     binary: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
-    """Stage 2b: ARIMA(p, d, q) with constant drift on the non-empty bins.
+    """Stage 2b: ARIMA(p, d, q) with linear drift on the non-empty bins.
 
     Uses ``statsmodels.tsa.arima.model.ARIMA``. The in-sample fitted values
     give the smoothed trend; the residual SE × 1.96 gives a homoscedastic 95%
@@ -370,7 +370,7 @@ def plot_one_drug(
     bin_freq: str = "QS",
     smoothers: tuple[str, ...] = ("kalman", "arima"),
     arima_order: tuple[int, int, int] = (1, 1, 1),
-    arima_trend: str = "c",
+    arima_trend: str = "t",
 ) -> Path | None:
     """Render and save the per-drug fitted-trend plot.
 
@@ -535,8 +535,11 @@ def main() -> None:
         help="ARIMA order as 'p,d,q'. Default '1,1,1'.",
     )
     p.add_argument(
-        "--arima-trend", default="c",
-        help="ARIMA trend term (passed to statsmodels). Default 'c' (constant drift).",
+        "--arima-trend", default="t",
+        help="ARIMA trend term (passed to statsmodels). Default 't' (linear) — "
+             "for ARIMA(p,1,q) this is mathematically a constant on the differenced "
+             "series; 'c' is rejected by statsmodels because it's absorbed by "
+             "differencing. Use 'n' for no drift.",
     )
     args = p.parse_args()
 
