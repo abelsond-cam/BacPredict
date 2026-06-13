@@ -664,7 +664,7 @@ def plot_class_composite(
             "     study + country batch noise\n"
             "     ( ~poly(year) + (1|study) + (1|country) )\n"
             "  2. Quarterly bin (≥10 samples)\n"
-            "  3. Kalman local linear trend\n"
+            f"  3. Kalman {kalman_level}\n"
             "     smoother + 95% posterior CI\n"
             "  4. Per-stratum auto-trim of\n"
             "     leading sparse / dropout quarters\n"
