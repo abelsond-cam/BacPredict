@@ -371,6 +371,7 @@ def plot_one_drug(
     smoothers: tuple[str, ...] = ("kalman", "arima"),
     arima_order: tuple[int, int, int] = (1, 1, 1),
     arima_trend: str = "t",
+    strata: frozenset[str] = frozenset({"AMR", "Surveillance", "NA", "All", "EBI"}),
 ) -> Path | None:
     """Render and save the per-drug fitted-trend plot.
 
@@ -441,16 +442,22 @@ def plot_one_drug(
 
     # Predicted strata: smooth the binary R/S call.
     for stratum, (color, _, lw, alpha) in _STUDY_STRATA.items():
+        if stratum not in strata:
+            continue
         sub = base[base["_study_cat"] == stratum]
         _plot_fit(sub, color, lw, alpha, stratum, value_col=pred_col)
 
-    # All non-mixed combined.
-    color, _, lw, alpha = _ALL_STYLE
-    all_sub = base[base["_study_cat"].notna()]
-    _plot_fit(all_sub, color, lw, alpha, "All", value_col=pred_col, ribbon=False)
+    # All non-mixed combined. Skip its ribbon when AMR/NA strata are also shown
+    # (their ribbons already imply uncertainty for those rows); keep it when
+    # All is one of only a couple of visible lines so the chart still carries CI info.
+    if "All" in strata:
+        color, _, lw, alpha = _ALL_STYLE
+        all_sub = base[base["_study_cat"].notna()]
+        show_all_ribbon = not any(s in strata for s in ("AMR", "NA"))
+        _plot_fit(all_sub, color, lw, alpha, "All", value_col=pred_col, ribbon=show_all_ribbon)
 
     # EBI ground truth (R/S → 0/1) — same model.
-    if ebi_col in df.columns:
+    if "EBI" in strata and ebi_col in df.columns:
         color, _, lw, alpha = _EBI_STYLE
         ebi_sub = df[df[ebi_col].isin(["R", "S"])]
         _plot_fit(ebi_sub, color, lw, alpha, "EBI actual",
@@ -541,6 +548,11 @@ def main() -> None:
              "series; 'c' is rejected by statsmodels because it's absorbed by "
              "differencing. Use 'n' for no drift.",
     )
+    p.add_argument(
+        "--strata", default="AMR,Surveillance,NA,All,EBI",
+        help="Comma-separated list of strata to plot. Choices: AMR, Surveillance, "
+             "NA, All, EBI. Default plots all 5 lines.",
+    )
     args = p.parse_args()
 
     smoothers = tuple(s.strip().lower() for s in args.smoothers.split(",") if s.strip())
@@ -552,6 +564,12 @@ def main() -> None:
         assert len(arima_order) == 3
     except (ValueError, AssertionError) as exc:
         raise SystemExit(f"--arima-order must be three comma-separated ints (e.g. '1,1,1'); got {args.arima_order!r}") from exc
+
+    valid_strata = {"AMR", "Surveillance", "NA", "All", "EBI"}
+    strata = frozenset(s.strip() for s in args.strata.split(",") if s.strip())
+    bad = strata - valid_strata
+    if bad:
+        raise SystemExit(f"--strata: unknown stratum/strata {sorted(bad)}; choices are {sorted(valid_strata)}")
 
     print(f"Reading metadata: {args.metadata_tsv}")
     needed_cols = [
@@ -615,6 +633,7 @@ def main() -> None:
             smoothers=smoothers,
             arima_order=arima_order,
             arima_trend=args.arima_trend,
+            strata=strata,
         )
         if path is not None:
             written.append(drug)
