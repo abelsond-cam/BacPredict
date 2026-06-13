@@ -77,7 +77,9 @@ PROT_EMB_TOKEN_ID = 4
 
 # The locus-restricted probe head, fixed across every step (user-confirmed):
 # C=1.0 L2 lbfgs, no class_weight. Pinned so the steps differ only in features.
-LOGREG_KW = {"C": 1.0, "penalty": "l2", "solver": "lbfgs", "max_iter": 2000}
+# (L2 is lbfgs's default; passing penalty="l2" explicitly is deprecated in
+# sklearn 1.8, so we rely on the default — same regularisation, no warning.)
+LOGREG_KW = {"C": 1.0, "solver": "lbfgs", "max_iter": 2000}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
