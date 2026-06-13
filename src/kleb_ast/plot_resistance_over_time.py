@@ -109,7 +109,7 @@ def _lmm_denoise_to_bins(
     df_spline: int = 5,
     bin_freq: str = "QS",
     binary: bool = True,
-    min_per_bin: int = 5,
+    min_per_bin: int = 10,
 ) -> pd.Series | None:
     """Stage 1: fit LMM, denoise per sample, aggregate to regular bins.
 
@@ -418,7 +418,7 @@ def plot_one_drug(
     arima_trend: str = "t",
     strata: frozenset[str] = frozenset({"AMR", "Surveillance", "NA", "All", "EBI"}),
     ribbon_smoother: str = "kalman",
-    min_per_bin: int = 5,
+    min_per_bin: int = 10,
 ) -> Path | None:
     """Render and save the per-drug fitted-trend plot.
 
@@ -609,9 +609,9 @@ def main() -> None:
              "NA, All, EBI. Default plots all 5 lines.",
     )
     p.add_argument(
-        "--min-per-bin", type=int, default=5,
+        "--min-per-bin", type=int, default=10,
         help="Quarters with fewer than this many samples are treated as missing "
-             "(noisy bin mean → 'incoherent bits'). Default 5.",
+             "(noisy bin mean → 'incoherent bits'). Default 10.",
     )
     p.add_argument(
         "--ribbon-smoother", default="kalman",
