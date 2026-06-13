@@ -109,6 +109,7 @@ def _lmm_denoise_to_bins(
     df_spline: int = 5,
     bin_freq: str = "QS",
     binary: bool = True,
+    min_per_bin: int = 5,
 ) -> pd.Series | None:
     """Stage 1: fit LMM, denoise per sample, aggregate to regular bins.
 
@@ -230,12 +231,18 @@ def _lmm_denoise_to_bins(
         "date": pd.to_datetime(work[date_col]),
         "y": denoised,
     }).sort_values("date").set_index("date")
-    binned = df_d["y"].resample(bin_freq).mean()
+    bin_mean = df_d["y"].resample(bin_freq).mean()
+    bin_count = df_d["y"].resample(bin_freq).count()
 
-    # Auto-trim: keep only the longest contiguous tail of non-empty bins
-    # ending at the most recent non-empty bin. Catches drugs like ertapenem
-    # (handful of scattered early samples → long dropout → continuous from
-    # ~2009 onwards) without any per-drug configuration.
+    # Sparse bins (count < min_per_bin) are unreliable noise — single-sample
+    # bins make the bin mean equal to that one sample's value, which is what
+    # produced the "incoherent bits" scattered before drugs like ertapenem
+    # had real cohort coverage. Treat them as missing for both the trim
+    # algorithm and the downstream smoothers.
+    binned = bin_mean.where(bin_count >= min_per_bin)
+
+    # Auto-trim: keep only the longest contiguous tail of well-populated bins
+    # ending at the most recent well-populated bin.
     non_empty = binned.notna().values
     if not non_empty.any():
         return None
@@ -411,6 +418,7 @@ def plot_one_drug(
     arima_trend: str = "t",
     strata: frozenset[str] = frozenset({"AMR", "Surveillance", "NA", "All", "EBI"}),
     ribbon_smoother: str = "kalman",
+    min_per_bin: int = 5,
 ) -> Path | None:
     """Render and save the per-drug fitted-trend plot.
 
@@ -454,7 +462,7 @@ def plot_one_drug(
         binned = _lmm_denoise_to_bins(
             sub, value_col=value_col, date_col=date_col, group_col=group_col,
             extra_re_col=extra_re_col, df_spline=df_spline, bin_freq=bin_freq,
-            binary=True,
+            binary=True, min_per_bin=min_per_bin,
         )
         if binned is None:
             return
@@ -601,6 +609,11 @@ def main() -> None:
              "NA, All, EBI. Default plots all 5 lines.",
     )
     p.add_argument(
+        "--min-per-bin", type=int, default=5,
+        help="Quarters with fewer than this many samples are treated as missing "
+             "(noisy bin mean → 'incoherent bits'). Default 5.",
+    )
+    p.add_argument(
         "--ribbon-smoother", default="kalman",
         choices=("kalman", "arima", "none"),
         help="Which smoother's CI to draw as a ribbon. Default 'kalman' — only "
@@ -696,6 +709,7 @@ def main() -> None:
             arima_trend=args.arima_trend,
             strata=strata,
             ribbon_smoother=args.ribbon_smoother,
+            min_per_bin=args.min_per_bin,
         )
         if path is not None:
             written.append(drug)
