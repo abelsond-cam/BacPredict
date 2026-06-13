@@ -563,9 +563,14 @@ def plot_one_drug(
         plt.close(fig)
         return None
 
+    n_surv = int((base.get("_study_cat") == "Surveillance").sum())
     ax.set_xlabel(date_col)
     ax.set_ylabel("R rate")
-    ax.set_title(f"{drug} — LMM-denoised R rate, stratified by amr_study (95% CI)")
+    ax.set_title(
+        f"Inferred Rate of {drug} Resistance in n={n_surv:,} Surveillance Sampled "
+        "Klebsiella Over Time",
+        fontsize=11,
+    )
     ax.set_ylim(0, 0.75)
     ax.set_yticks([0.0, 0.25, 0.5, 0.75])
     ax.grid(True, alpha=0.3)
@@ -715,8 +720,12 @@ def plot_class_composite(
     # Shared x/y labels via figure-level supxlabel/supylabel.
     fig.supxlabel(date_col, fontsize=11)
     fig.supylabel("R rate (Kalman-smoothed, 95% CI ribbon)", fontsize=11)
-    fig.suptitle("Klebsiella surveillance R rate over time, per drug class",
-                 fontsize=14, fontweight="bold")
+    n_surv = len(base)
+    fig.suptitle(
+        f"Inferred Rates of Resistance in n={n_surv:,} Surveillance Sampled "
+        "Klebsiella Over Time, All Drugs by Class",
+        fontsize=14, fontweight="bold",
+    )
     fig.tight_layout(rect=(0, 0, 1, 0.97))
 
     if not anything_plotted:
