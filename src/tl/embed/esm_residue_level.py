@@ -174,6 +174,86 @@ def substitution_llr(
 
 
 @torch.no_grad()
+def unmasked_logprobs(model, tokenizer, seq: str, *, device: str = "cpu") -> torch.Tensor:
+    """Per-residue ``log P(observed | full context)`` from one unmasked forward.
+
+    The cheap "surprise" / naturalness score: forward the protein as-is and read,
+    at every residue, the log-softmax of the observed amino acid given the *whole*
+    sequence (the model can see ``x_i`` itself, so this is attenuated relative to
+    the masked marginal — but it costs **one** forward for the entire protein, so
+    it scales genome-wide). Low = the model is surprised the residue is there =
+    anomalous. Reference-free: no wild-type or alignment needed.
+
+    Parameters
+    ----------
+    model, tokenizer
+        As returned by :func:`load_esmc_mlm`.
+    seq : str
+        The protein sequence (the exact string ESM-C embedded). Passed with
+        ``truncation=False`` so every residue keeps its real context.
+    device : str, default "cpu"
+        Torch device.
+
+    Returns
+    -------
+    torch.Tensor
+        ``[L]`` float32 on CPU, ``log P(observed)`` at each residue, aligned 1:1
+        with ``seq`` (token ``p + 1`` → amino acid ``p``).
+    """
+    enc = tokenizer(seq, return_tensors="pt", add_special_tokens=True, truncation=False)
+    ids = enc["input_ids"][0]
+    out = model(input_ids=enc["input_ids"].to(device), attention_mask=enc["attention_mask"].to(device))
+    log_probs = torch.log_softmax(out.logits[0].float(), dim=-1).cpu()  # [seq_len, vocab]
+    length = len(seq)
+    res = slice(_CLS_OFFSET, _CLS_OFFSET + length)
+    return log_probs[res].gather(1, ids[res].unsqueeze(1)).squeeze(1)
+
+
+@torch.no_grad()
+def masked_logprobs(
+    model,
+    tokenizer,
+    seq: str,
+    *,
+    device: str = "cpu",
+    positions: list[int] | None = None,
+    batch_size: int = 16,
+) -> torch.Tensor:
+    r"""Per-position masked-marginal ``log P(observed | context\i)`` (the gold standard).
+
+    For each position in ``positions``, mask the residue, forward, and read the
+    log-probability of the residue actually present given the rest of the protein
+    — the ablation-by-masking surprise. One forward **per position** (``L`` per
+    protein if ``positions`` is the whole sequence), so for a genome-wide pass
+    prefer :func:`unmasked_logprobs`; ``positions`` lets a caller restrict the
+    masked computation to a small window (e.g. a resistance hotspot ±W).
+
+    Parameters
+    ----------
+    model, tokenizer
+        As returned by :func:`load_esmc_mlm`.
+    seq : str
+        The protein sequence.
+    device : str, default "cpu"
+        Torch device.
+    positions : list of int, optional
+        0-based amino-acid indices to score. ``None`` scores every position.
+    batch_size : int, default 16
+        Masked variants forwarded at once (passed to :func:`masked_marginals`).
+
+    Returns
+    -------
+    torch.Tensor
+        ``[len(positions)]`` float32, ``log P(observed)`` at each scored position,
+        in the order of ``positions``.
+    """
+    if positions is None:
+        positions = list(range(len(seq)))
+    vectors = masked_marginals(model, tokenizer, seq, positions, device=device, batch_size=batch_size)
+    return torch.tensor([aa_log_prob(vectors[p], tokenizer, seq[p]) for p in positions])
+
+
+@torch.no_grad()
 def residue_states(
     model,
     tokenizer,
