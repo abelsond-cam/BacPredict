@@ -131,6 +131,7 @@ def _lmm_denoise_to_bins(
     bin_freq: str = "QS",
     binary: bool = True,
     min_per_bin: int = 4,
+    mode: str = "binned",
 ) -> pd.Series | None:
     """Stage 1: fit LMM, denoise per sample, aggregate to regular bins.
 
@@ -251,7 +252,22 @@ def _lmm_denoise_to_bins(
     df_d = pd.DataFrame({
         "date": pd.to_datetime(work[date_col]),
         "y": denoised,
-    }).sort_values("date").set_index("date")
+    }).sort_values("date")
+
+    if mode == "per-sample":
+        # No binning: return the denoised per-sample series sorted by date.
+        # The Kalman filter then treats each sample as one time step
+        # (sample-step time). Time on the model axis is non-linear in
+        # calendar time — denser-sampled periods get more state evolution
+        # per calendar year. This is a feature: where data is sparse, the
+        # state changes more slowly per calendar year (more conservative);
+        # where data is dense, more local adaptation comes through. No
+        # min_per_bin trim either — every observation contributes.
+        ser = pd.Series(df_d["y"].values, index=df_d["date"].values)
+        ser.attrs["binary"] = binary
+        return ser
+
+    df_d = df_d.set_index("date")
     bin_mean = df_d["y"].resample(bin_freq).mean()
     bin_count = df_d["y"].resample(bin_freq).count()
 
@@ -449,6 +465,7 @@ def plot_one_drug(
     ribbon_model: str = "kalman",
     min_per_bin: int = 4,
     kalman_level: str = "local level",
+    mode: str = "binned",
 ) -> Path | None:
     """Render and save the per-drug fitted-trend plot.
 
@@ -492,7 +509,7 @@ def plot_one_drug(
         binned = _lmm_denoise_to_bins(
             sub, value_col=value_col, date_col=date_col, group_col=group_col,
             extra_re_col=extra_re_col, df_spline=df_spline, bin_freq=bin_freq,
-            binary=True, min_per_bin=min_per_bin,
+            binary=True, min_per_bin=min_per_bin, mode=mode,
         )
         if binned is None:
             return
@@ -584,6 +601,7 @@ def plot_class_composite(
     bin_freq: str = "QS",
     min_per_bin: int = 4,
     kalman_level: str = "local level",
+    mode: str = "binned",
 ) -> Path | None:
     """Composite headline figure: per-drug-class panel of surveillance R rate trends.
 
@@ -628,7 +646,7 @@ def plot_class_composite(
             binned = _lmm_denoise_to_bins(
                 sub, value_col=pred_col, date_col=date_col, group_col=group_col,
                 extra_re_col=extra_re_col, df_spline=df_spline, bin_freq=bin_freq,
-                binary=True, min_per_bin=min_per_bin,
+                binary=True, min_per_bin=min_per_bin, mode=mode,
             )
             if binned is None:
                 continue
@@ -653,6 +671,25 @@ def plot_class_composite(
     note_ax = flat_axes[len(classes)] if len(classes) < rows * cols else None
     if note_ax is not None:
         note_ax.axis("off")
+        if mode == "per-sample":
+            stage2 = (
+                "  2. (no binning) every sample\n"
+                "     fed as one Kalman time step\n"
+                f"  3. Kalman {kalman_level}\n"
+                "     smoother + 95% posterior CI\n"
+                "  4. x-axis = sample dates;\n"
+                "     state evolution per sample,\n"
+                "     so sparse periods are\n"
+                "     inherently smoother."
+            )
+        else:
+            stage2 = (
+                f"  2. {bin_freq} bin (≥{min_per_bin} samples)\n"
+                f"  3. Kalman {kalman_level}\n"
+                "     smoother + 95% posterior CI\n"
+                "  4. Per-stratum auto-trim of\n"
+                "     leading sparse / dropout bins"
+            )
         note_ax.text(
             0.02, 0.95,
             "Surveillance-stratum R rate over time.\n"
@@ -663,11 +700,7 @@ def plot_class_composite(
             "  1. LMM denoise: removes \n"
             "     study + country batch noise\n"
             "     ( ~poly(year) + (1|study) + (1|country) )\n"
-            "  2. Quarterly bin (≥10 samples)\n"
-            f"  3. Kalman {kalman_level}\n"
-            "     smoother + 95% posterior CI\n"
-            "  4. Per-stratum auto-trim of\n"
-            "     leading sparse / dropout quarters\n"
+            f"{stage2}\n"
             "\n"
             f"Window: {df[date_col].min().date()} – {df[date_col].max().date()}.\n"
             "Legend value = stratum R rate (overall).",
@@ -768,7 +801,18 @@ def main() -> None:
         help="Bins with fewer than this many samples are treated as missing "
              "(noisy bin mean → 'incoherent bits'). Default 4 (right for monthly "
              "bins; the per-quarter equivalent is ~12 samples). For --bin-freq QS "
-             "you may want --min-per-bin 10 to match the older quarterly default.",
+             "you may want --min-per-bin 10 to match the older quarterly default. "
+             "Ignored when --mode per-sample.",
+    )
+    p.add_argument(
+        "--mode", default="binned", choices=("binned", "per-sample"),
+        help="Stage-2 mode. 'binned' (default) aggregates LMM-denoised values to "
+             "bins of --bin-freq frequency then runs Kalman on the binned series. "
+             "'per-sample' skips binning entirely — every sample is fed to the "
+             "Kalman filter as one time step (sample-step time). No min_per_bin "
+             "trim. State evolution per sample, so denser-sampled periods see "
+             "more local adaptation per calendar year; sparse periods are "
+             "inherently more conservative.",
     )
     p.add_argument(
         "--kalman-level", default="local level",
@@ -879,6 +923,7 @@ def main() -> None:
             bin_freq=args.bin_freq,
             min_per_bin=args.min_per_bin,
             kalman_level=args.kalman_level,
+            mode=args.mode,
         )
         if path is None:
             raise SystemExit("Composite figure produced no lines — check stratum / data filters.")
@@ -902,6 +947,7 @@ def main() -> None:
             ribbon_model=args.ribbon_model,
             min_per_bin=args.min_per_bin,
             kalman_level=args.kalman_level,
+            mode=args.mode,
         )
         if path is not None:
             written.append(drug)
