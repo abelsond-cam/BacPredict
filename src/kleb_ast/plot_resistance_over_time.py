@@ -1,20 +1,41 @@
-"""Per-drug fitted-smooth-trend resistance-rate-over-time plots for the Kp panel.
+"""Per-drug resistance-rate-over-time plots for the Kp panel.
 
-Replaces an earlier rolling-window approach that was dominated by structural
-batching noise (studies enter the timeline in clumps, each with its own
-country / sampling bias / case mix). Instead, per drug × stratum we fit a
-**linear mixed model**:
+Two-stage model per drug × stratum:
 
-  logit(predicted_<drug>_AST_prob) ~ natural_cubic_spline(year)   (fixed)
-                                   + (1 | study_accession)        (random)
+**Stage 1 — confounder denoising (linear mixed model).**
+Sequencing studies enter the timeline in clumps, each dominated by its own
+country / sampling bias / case mix. Without removing that structural noise the
+raw rates are dominated by which study contributed which year. Per stratum we
+fit::
 
-The fixed-effect curve (with 95% CI) gives the temporal trend after absorbing
-between-study variance. EBI ground-truth uses the same fit on R/S → 0/1.
+  y_obs ~ poly(year, df=5)         (fixed effect — time anchor)
+        + (1 | study_accession)    (random intercept — batch)
+        + (1 | country)            (variance component — geography)
 
-One single-panel PNG per drug — five overlayed lines (each with CI ribbon):
-AMR (red), Surveillance (blue), NA (green), All-non-mixed (dotted black),
-EBI ground truth (dotted goldenrod). Login-node CPU; statsmodels MixedLM
-fits ~seconds per drug.
+Each sample's "denoised" value = observed − random-effect contribution =
+fixed-effect prediction + residual. This strips systematic study + country
+offsets, leaving the time signal that is **common across studies + countries**.
+
+For the predicted strata (AMR / Surveillance / NA / All) ``y_obs`` is the
+binary R-call indicator (``predicted_<drug>_AST == "R"`` → 0/1), so the smooth
+estimates **R-call rate** — the same quantity the legend prints. For the EBI
+ground-truth overlay ``y_obs`` is the binary EBI call (R/S → 0/1).
+
+**Stage 2 — time-series smoothing on denoised values.**
+Aggregate denoised samples to a regular bin grid (default quarterly), then fit
+one or both of:
+
+- A state-space **local linear trend** model via Kalman filter + smoother
+  (``statsmodels.tsa.statespace.structural.UnobservedComponents``). Native NaN
+  handling; CI widens through sparse periods; can over-smooth.
+- An **ARIMA(1, 1, 1)** with constant drift on the non-empty bins
+  (``statsmodels.tsa.arima.model.ARIMA``). AR(1) momentum stays in the fit;
+  homoscedastic in-sample CI from residual SE.
+
+Per-stratum colour; Kalman drawn solid, ARIMA drawn dotted with the same hue,
+so the two appear together for visual comparison on every panel.
+
+One PNG per drug; login-node CPU; ~seconds per drug.
 """
 
 from __future__ import annotations
@@ -78,7 +99,7 @@ def _classify_amr_study(value: object) -> str | None:
     return None
 
 
-def _fit_smooth_trend(
+def _lmm_denoise_to_bins(
     sub: pd.DataFrame,
     *,
     value_col: str,
@@ -86,52 +107,38 @@ def _fit_smooth_trend(
     group_col: str,
     extra_re_col: str | None = None,
     df_spline: int = 5,
-    bin_freq: str = "MS",
-    binary: bool = False,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
-    """Two-stage: LMM denoise per sample, then Kalman-smooth on a regular time grid.
+    bin_freq: str = "QS",
+    binary: bool = True,
+) -> pd.Series | None:
+    """Stage 1: fit LMM, denoise per sample, aggregate to regular bins.
 
-    Stage 1 — linear mixed model (random-intercept noise removal)::
+    Per stratum::
 
-        logit(value) ~ poly(year, degree=df_spline)   (fixed, for anchoring)
-                     + (1 | group_col)                (random intercept, e.g. study)
-                     + (1 | extra_re_col)             (variance component, e.g. country)
+        y ~ poly(year, degree=df_spline)   (fixed, time anchor)
+          + (1 | group_col)                (random intercept, e.g. study_accession)
+          + (1 | extra_re_col)             (variance component, e.g. country; optional)
 
-    Per-sample "denoised" value = observed − random-effect contribution. This
-    strips study + country systematic offsets so the remaining time signal is
-    what's *common* across studies and countries.
-
-    Stage 2 — state-space local linear trend model (Kalman filter + smoother).
-    Aggregate denoised values to regular bins (default monthly), fit a local
-    linear trend SSM with ``statsmodels.tsa.statespace.structural.UnobservedComponents``,
-    and read the smoothed posterior level + variance off the Kalman smoother.
-    Empty bins are handled natively (the filter propagates state without an
-    update, so the CI widens through sparse periods on its own).
+    Each sample's "denoised" value = ``y_obs − random-effect contribution`` =
+    fitted_marginal + residual. Aggregates denoised values to ``bin_freq`` bins
+    (mean per bin) and returns the binned series (NaN for empty bins).
 
     Parameters
     ----------
-    sub : pandas DataFrame
-        Already filtered to one stratum (and ``predicted/EBI`` rows).
-    value_col : str
-        Probability column (``binary=False``) or R/S string column (``binary=True``).
-    extra_re_col : str | None
-        Optional second random-intercept column added as a variance component
-        (e.g. ``"country"``).
     binary : bool
-        ``True`` for R/S → 0/1 (EBI ground truth); ``False`` for probabilities.
-    df_spline : int
-        Polynomial degree for the fixed-effect time term in stage 1.
+        ``True`` → ``value_col`` is an R/S string; treat as 0/1 in linear scale
+        (the rate-of-R quantity, matching the legend). ``False`` → ``value_col``
+        is a probability; logit-transform first (legacy / probability-scale).
     bin_freq : str
-        Pandas resample alias for stage-2 binning. ``"MS"`` = month-start (default;
-        good for ~24 years of dense data). ``"QS"`` = quarterly, ``"YS"`` = yearly
-        for sparser strata.
+        Pandas resample alias. ``"QS"`` = quarterly (default), ``"MS"`` = monthly,
+        ``"YS"`` = yearly.
 
     Returns
     -------
-    (bin_dates, pred, ci_low, ci_high) on the **probability scale**, or ``None``
-    if the fit fails or there isn't enough data.
+    pd.Series indexed by bin start, values on the **same scale as ``_y``**
+    (i.e. 0/1 if binary, logit-prob otherwise). Callers (Kalman, ARIMA) are
+    responsible for the final sigmoid-back / clip. ``None`` on insufficient
+    data or fit failure.
     """
-    from scipy.special import expit
     from statsmodels.regression.mixed_linear_model import MixedLM
 
     required_cols = [value_col, date_col, group_col]
@@ -141,13 +148,11 @@ def _fit_smooth_trend(
     if binary:
         work = work[work[value_col].isin(["R", "S"])]
         work["_y"] = (work[value_col] == "R").astype(float)
-        is_logit = False
     else:
         v = pd.to_numeric(work[value_col], errors="coerce")
         work = work.assign(_v=v).dropna(subset=["_v"])
         work["_v"] = work["_v"].clip(0.001, 0.999)
         work["_y"] = np.log(work["_v"] / (1.0 - work["_v"]))
-        is_logit = True
 
     if len(work) < _MIN_ROWS_TO_FIT or work[group_col].nunique() < _MIN_GROUPS_TO_FIT:
         return None
@@ -157,8 +162,8 @@ def _fit_smooth_trend(
         + (pd.to_datetime(work[date_col]).dt.dayofyear - 1) / 366.0
     )
 
-    # Orthogonal-polynomial basis for time, centered + standardised (numerical
-    # stability for high powers + decoupled from intercept). Degree = df_spline.
+    # Centered + standardised polynomial basis (numerical stability + decoupled
+    # from the implicit intercept).
     yr_centre = float(work["_yr"].mean())
     yr_scale = float(work["_yr"].std()) or 1.0
     yr_norm = (work["_yr"] - yr_centre) / yr_scale
@@ -184,14 +189,14 @@ def _fit_smooth_trend(
                 formula, groups=work[group_col], vc_formula=vc_formula, data=work
             )
             result = md.fit(reml=reml, method=methods)
-        except Exception as exc:  # noqa: BLE001  MixedLM can raise LinAlg, Conv, Value, etc.
+        except Exception as exc:  # noqa: BLE001  MixedLM can raise LinAlg/Conv/Value etc.
             last_exc = exc
             continue
         if result is not None and getattr(result, "converged", True):
             break
         result = None
     if result is None and vc_formula is not None:
-        # Fall back to fit without the extra variance component.
+        # Fall back: drop the extra variance component if it makes the fit singular.
         for reml, methods in (
             (True, ["lbfgs", "bfgs", "powell"]),
             (False, ["lbfgs", "bfgs", "powell"]),
@@ -210,11 +215,9 @@ def _fit_smooth_trend(
         print(f"  LMM fit failed for {value_col}: {last_exc}")
         return None
 
-    # === STAGE 1: DENOISE PER SAMPLE ===
-    # denoised_y = y_obs − random-effect contribution = fitted_marginal + residual.
-    # statsmodels gives `fittedvalues` = fitted_conditional (which includes the
-    # random effects); subtracting the marginal fixed-effect prediction isolates
-    # the RE part.
+    # Denoise per sample: subtract the RE contribution.
+    # fitted_cond = fitted_marginal + RE_contribution; denoised = obs − RE_contribution
+    # = obs − (fitted_cond − fitted_marginal) = fitted_marginal + residual.
     fitted_cond = np.asarray(result.fittedvalues, dtype=float)
     X_sample = np.column_stack([np.ones(len(work))] + [work[c].values for c in poly_cols])
     fe = np.asarray(result.fe_params.values, dtype=float)
@@ -223,51 +226,136 @@ def _fit_smooth_trend(
     fitted_marg = X_sample @ fe
     denoised = work["_y"].values - (fitted_cond - fitted_marg)
 
-    # === STAGE 2: KALMAN SMOOTH ON REGULAR-BIN AGGREGATION ===
-    from statsmodels.tsa.statespace.structural import UnobservedComponents
-
     df_d = pd.DataFrame({
         "date": pd.to_datetime(work[date_col]),
         "y": denoised,
     }).sort_values("date").set_index("date")
     binned = df_d["y"].resample(bin_freq).mean()
-    if binned.notna().sum() < 12:
+    binned.attrs["binary"] = binary
+    return binned
+
+
+def _smooth_kalman(
+    binned: pd.Series,
+    *,
+    binary: bool,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
+    """Stage 2a: state-space **local linear trend** smoother on a binned series.
+
+    Uses ``statsmodels.tsa.statespace.structural.UnobservedComponents`` — the
+    Kalman filter + RTS smoother give the posterior mean + variance of the
+    latent level at every bin. Empty bins are handled natively (state
+    propagates without an update; CI widens through gaps).
+
+    Falls back to ``"local level"`` (pure random-walk) if local-linear-trend
+    optimisation fails.
+
+    Returns
+    -------
+    (bin_dates, mean, ci_lo, ci_hi) on the **probability scale** [0, 1].
+    """
+    from scipy.special import expit
+    from statsmodels.tsa.statespace.structural import UnobservedComponents
+
+    if binned is None or binned.notna().sum() < 12:
         return None
 
     try:
         ss = UnobservedComponents(binned.values, level="local linear trend")
         ss_fit = ss.fit(disp=False, maxiter=200)
-    except Exception as exc:  # noqa: BLE001  SS optimisation can throw LinAlg/SVD.
-        # Fall back to the simpler local-level (random-walk) model.
+    except Exception as exc:  # noqa: BLE001
         try:
             ss = UnobservedComponents(binned.values, level="local level")
             ss_fit = ss.fit(disp=False, maxiter=200)
-            print(f"  ({value_col}: SS local-linear-trend failed, fell back to local-level — {exc})")
+            print(f"  (Kalman: local-linear-trend failed, fell back to local-level — {exc})")
         except Exception as exc2:  # noqa: BLE001
-            print(f"  SS smoother failed for {value_col}: {exc2}")
+            print(f"  Kalman smoother failed: {exc2}")
             return None
 
-    # Smoothed posterior level + its variance (Kalman smoother / RTS).
-    # smoothed_state shape: (n_state, n_obs); state[0] is the level for both
-    # "local linear trend" and "local level".
-    smoothed_level = np.asarray(ss_fit.smoothed_state[0], dtype=float)
-    smoothed_var = np.asarray(ss_fit.smoothed_state_cov[0, 0, :], dtype=float)
-    smoothed_se = np.sqrt(np.maximum(smoothed_var, 0.0))
+    level = np.asarray(ss_fit.smoothed_state[0], dtype=float)
+    var = np.asarray(ss_fit.smoothed_state_cov[0, 0, :], dtype=float)
+    se = np.sqrt(np.maximum(var, 0.0))
+    lo_lin = level - 1.96 * se
+    hi_lin = level + 1.96 * se
 
-    lo_lin = smoothed_level - 1.96 * smoothed_se
-    hi_lin = smoothed_level + 1.96 * smoothed_se
-
-    if is_logit:
-        pred = expit(smoothed_level)
-        lo = expit(lo_lin)
-        hi = expit(hi_lin)
-    else:
-        pred = np.clip(smoothed_level, 0.0, 1.0)
+    if binary:
+        pred = np.clip(level, 0.0, 1.0)
         lo = np.clip(lo_lin, 0.0, 1.0)
         hi = np.clip(hi_lin, 0.0, 1.0)
+    else:
+        pred = expit(level)
+        lo = expit(lo_lin)
+        hi = expit(hi_lin)
 
-    grid_dates = np.asarray(binned.index.values)
-    return grid_dates, pred, lo, hi
+    return np.asarray(binned.index.values), pred, lo, hi
+
+
+def _smooth_arima(
+    binned: pd.Series,
+    *,
+    order: tuple[int, int, int] = (1, 1, 1),
+    trend: str = "c",
+    binary: bool = True,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
+    """Stage 2b: ARIMA(p, d, q) with constant drift on the non-empty bins.
+
+    Uses ``statsmodels.tsa.arima.model.ARIMA``. The in-sample fitted values
+    give the smoothed trend; the residual SE × 1.96 gives a homoscedastic 95%
+    band (same width everywhere — unlike Kalman, ARIMA cannot widen its
+    in-sample CI through sparse periods).
+
+    Drops NaN bins before fitting and reindexes the fitted values back onto
+    the full bin index so the plot keeps consistent x-axis alignment with the
+    Kalman line.
+
+    Returns
+    -------
+    (bin_dates, mean, ci_lo, ci_hi) on the **probability scale** [0, 1].
+    """
+    from scipy.special import expit
+    from statsmodels.tsa.arima.model import ARIMA
+
+    if binned is None or binned.notna().sum() < 12:
+        return None
+
+    non_empty = binned.dropna()
+    try:
+        # Note: ARIMA() with `trend` requires a stationary differenced series; if
+        # the optimiser stalls we drop the drift and refit.
+        ar = ARIMA(non_empty.values, order=order, trend=trend)
+        ar_fit = ar.fit()
+    except Exception as exc:  # noqa: BLE001
+        try:
+            ar = ARIMA(non_empty.values, order=order, trend="n")
+            ar_fit = ar.fit()
+            print(f"  (ARIMA: drift dropped (trend='n') after fit error — {exc})")
+        except Exception as exc2:  # noqa: BLE001
+            print(f"  ARIMA fit failed: {exc2}")
+            return None
+
+    # In-sample fitted values + residual SE (homoscedastic).
+    fitted_nonempty = np.asarray(ar_fit.fittedvalues, dtype=float)
+    resid = np.asarray(ar_fit.resid, dtype=float)
+    sigma = float(np.std(resid)) if len(resid) > 1 else 0.0
+    se_lin = 1.96 * sigma
+
+    # Reindex onto the full bin index (with NaN at empty bins so the plot shows gaps).
+    fitted_series = pd.Series(fitted_nonempty, index=non_empty.index)
+    full = fitted_series.reindex(binned.index)
+    level = full.values
+    lo_lin = level - se_lin
+    hi_lin = level + se_lin
+
+    if binary:
+        pred = np.clip(level, 0.0, 1.0)
+        lo = np.clip(lo_lin, 0.0, 1.0)
+        hi = np.clip(hi_lin, 0.0, 1.0)
+    else:
+        pred = expit(level)
+        lo = expit(lo_lin)
+        hi = expit(hi_lin)
+
+    return np.asarray(binned.index.values), pred, lo, hi
 
 
 def plot_one_drug(
@@ -279,14 +367,20 @@ def plot_one_drug(
     group_col: str = "study_accession",
     extra_re_col: str | None = None,
     df_spline: int = 5,
-    bin_freq: str = "MS",
+    bin_freq: str = "QS",
+    smoothers: tuple[str, ...] = ("kalman", "arima"),
+    arima_order: tuple[int, int, int] = (1, 1, 1),
+    arima_trend: str = "c",
 ) -> Path | None:
     """Render and save the per-drug fitted-trend plot.
 
-    Single panel: for each amr_study stratum (and the combined "All non-mixed"
-    line + the EBI ground-truth overlay), fits a two-stage trend (LMM denoise →
-    Kalman smoother) and plots it with a 95% CI ribbon. Returns the output
-    path, or ``None`` if no stratum could be fit.
+    Per amr_study stratum (and the combined "All non-mixed" + EBI overlay):
+    LMM-denoise (stage 1) → bin → smooth with each smoother in ``smoothers``
+    (stage 2). Kalman drawn solid, ARIMA dotted (same colour per stratum).
+    Returns the output path, or ``None`` if no stratum could be fit.
+
+    The predicted strata smooth the **binary R-call indicator** (0/1) so the
+    rendered line matches the legend's printed R rate; EBI is binary already.
     """
     pred_col = f"predicted_{drug}_AST"
     prob_col = f"predicted_{drug}_AST_prob"
@@ -298,65 +392,91 @@ def plot_one_drug(
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
 
-    base = df[df[prob_col].notna()].copy()
+    base = df[df[pred_col].isin(["R", "S"])].copy()
     if len(base) < _MIN_ROWS_TO_FIT:
         return None
 
     fig, ax = plt.subplots(figsize=(11.5, 5.5))
     anything_plotted = False
+    smoother_styles = {"kalman": "-", "arima": ":"}
 
-    def _plot_fit(sub, color, ls, lw, alpha, label_prefix, ribbon=True, binary=False, value_col=None):
+    def _plot_fit(sub, color, lw, alpha, label_prefix, *, value_col, ribbon=True):
+        """Fit LMM → bin → run every requested smoother → draw all lines."""
         nonlocal anything_plotted
-        if value_col is None:
-            value_col = prob_col
-        fit = _fit_smooth_trend(
+        binned = _lmm_denoise_to_bins(
             sub, value_col=value_col, date_col=date_col, group_col=group_col,
             extra_re_col=extra_re_col, df_spline=df_spline, bin_freq=bin_freq,
-            binary=binary,
+            binary=True,
         )
-        if fit is None:
+        if binned is None:
             return
-        grid_dates, pred, lo, hi = fit
-        if ribbon:
-            ax.fill_between(grid_dates, lo, hi, color=color, alpha=_RIBBON_ALPHA, linewidth=0)
-        r_rate = (
-            float((sub[value_col].astype(str) == "R").mean()) if binary
-            else float((sub[pred_col] == "R").mean())
-        )
-        ax.plot(
-            grid_dates, pred, color=color, lw=lw, linestyle=ls, alpha=alpha,
-            label=f"{label_prefix} (n={len(sub):,}, R rate {r_rate:.2f})",
-        )
-        anything_plotted = True
+        # Legend label uses the same quantity as the plotted line:
+        # fraction of stratum samples called R.
+        r_rate = float((sub[value_col].astype(str) == "R").mean())
+        legend_label = f"{label_prefix} (n={len(sub):,}, R rate {r_rate:.2f})"
+        first = True
+        for smoother in smoothers:
+            if smoother == "kalman":
+                fit = _smooth_kalman(binned, binary=True)
+            elif smoother == "arima":
+                fit = _smooth_arima(binned, order=arima_order, trend=arima_trend, binary=True)
+            else:
+                continue
+            if fit is None:
+                continue
+            grid_dates, pred, lo, hi = fit
+            ls = smoother_styles.get(smoother, "-")
+            if ribbon:
+                ax.fill_between(grid_dates, lo, hi, color=color, alpha=_RIBBON_ALPHA, linewidth=0)
+            # Only the first smoother carries the stratum legend label — the
+            # smoother-style key sits in a separate inset legend.
+            ax.plot(
+                grid_dates, pred, color=color, lw=lw, linestyle=ls, alpha=alpha,
+                label=legend_label if first else None,
+            )
+            first = False
+            anything_plotted = True
 
-    # Stratified fits on predicted probability.
-    for stratum, (color, ls, lw, alpha) in _STUDY_STRATA.items():
+    # Predicted strata: smooth the binary R/S call.
+    for stratum, (color, _, lw, alpha) in _STUDY_STRATA.items():
         sub = base[base["_study_cat"] == stratum]
-        _plot_fit(sub, color, ls, lw, alpha, stratum)
+        _plot_fit(sub, color, lw, alpha, stratum, value_col=pred_col)
 
     # All non-mixed combined.
-    color, ls, lw, alpha = _ALL_STYLE
+    color, _, lw, alpha = _ALL_STYLE
     all_sub = base[base["_study_cat"].notna()]
-    _plot_fit(all_sub, color, ls, lw, alpha, "All", ribbon=False)
+    _plot_fit(all_sub, color, lw, alpha, "All", value_col=pred_col, ribbon=False)
 
-    # EBI ground truth (R/S → 0/1) — uses the same model but on observed call.
+    # EBI ground truth (R/S → 0/1) — same model.
     if ebi_col in df.columns:
-        color, ls, lw, alpha = _EBI_STYLE
+        color, _, lw, alpha = _EBI_STYLE
         ebi_sub = df[df[ebi_col].isin(["R", "S"])]
-        _plot_fit(ebi_sub, color, ls, lw, alpha, "EBI actual",
-                  ribbon=True, binary=True, value_col=ebi_col)
+        _plot_fit(ebi_sub, color, lw, alpha, "EBI actual",
+                  value_col=ebi_col, ribbon=True)
 
     if not anything_plotted:
         plt.close(fig)
         return None
 
-    ax.set_xlabel("collection_date_parsed")
-    ax.set_ylabel("fitted P(R)")
-    ax.set_title(f"{drug} — LMM-denoised + Kalman-smoothed trend (95% CI), stratified by amr_study")
+    ax.set_xlabel(date_col)
+    ax.set_ylabel("R rate")
+    ax.set_title(f"{drug} — LMM-denoised R rate, stratified by amr_study (95% CI)")
     ax.set_ylim(0, 1.0)
     ax.grid(True, alpha=0.3)
-    ax.legend(loc="best", fontsize=9)
+    main_legend = ax.legend(loc="upper left", fontsize=9)
+    ax.add_artist(main_legend)
+
+    # Smoother-style inset legend (shown only when both smoothers ran).
+    if len(smoothers) > 1:
+        style_handles = []
+        if "kalman" in smoothers:
+            style_handles.append(Line2D([0], [0], color="black", linestyle="-", label="Kalman (local linear trend)"))
+        if "arima" in smoothers:
+            arima_lbl = f"ARIMA{arima_order}"
+            style_handles.append(Line2D([0], [0], color="black", linestyle=":", label=arima_lbl))
+        ax.legend(handles=style_handles, loc="upper right", fontsize=8, framealpha=0.75)
 
     fig.tight_layout()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -401,11 +521,34 @@ def main() -> None:
         help="Polynomial degree for the LMM fixed time term (stage 1 anchor). Default 5.",
     )
     p.add_argument(
-        "--bin-freq", default="MS",
-        help="Stage-2 Kalman binning frequency (pandas resample alias). Default 'MS' "
-             "(month-start). Use 'QS' for quarterly or 'YS' for yearly when data is sparse.",
+        "--bin-freq", default="QS",
+        help="Stage-2 binning frequency (pandas resample alias). Default 'QS' "
+             "(quarterly). Use 'MS' for monthly or 'YS' for yearly.",
+    )
+    p.add_argument(
+        "--smoothers", default="kalman,arima",
+        help="Comma-separated stage-2 smoothers to plot. Choices: 'kalman', 'arima'. "
+             "Default 'kalman,arima' draws both (Kalman solid, ARIMA dotted).",
+    )
+    p.add_argument(
+        "--arima-order", default="1,1,1",
+        help="ARIMA order as 'p,d,q'. Default '1,1,1'.",
+    )
+    p.add_argument(
+        "--arima-trend", default="c",
+        help="ARIMA trend term (passed to statsmodels). Default 'c' (constant drift).",
     )
     args = p.parse_args()
+
+    smoothers = tuple(s.strip().lower() for s in args.smoothers.split(",") if s.strip())
+    for s in smoothers:
+        if s not in ("kalman", "arima"):
+            raise SystemExit(f"--smoothers: unknown smoother {s!r}; choices are kalman, arima")
+    try:
+        arima_order = tuple(int(x) for x in args.arima_order.split(","))
+        assert len(arima_order) == 3
+    except (ValueError, AssertionError) as exc:
+        raise SystemExit(f"--arima-order must be three comma-separated ints (e.g. '1,1,1'); got {args.arima_order!r}") from exc
 
     print(f"Reading metadata: {args.metadata_tsv}")
     needed_cols = [
@@ -466,6 +609,9 @@ def main() -> None:
             extra_re_col=extra_re_col,
             df_spline=args.df_spline,
             bin_freq=args.bin_freq,
+            smoothers=smoothers,
+            arima_order=arima_order,
+            arima_trend=args.arima_trend,
         )
         if path is not None:
             written.append(drug)
