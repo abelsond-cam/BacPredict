@@ -33,6 +33,19 @@ logger = logging.getLogger(__name__)
 
 ESMC_MODEL_PATH = "Synthyra/ESMplusplus_small"
 
+# Pin the trust_remote_code revision. Upstream pushed a broken
+# modeling_esm_plusplus.py to `main` (commit 286a9db, 2026-06-09) whose
+# ESMplusplusForMaskedLM subclasses an *undefined* `FastPLMTestTimeTrainingMixin`,
+# so it raises NameError at import — and HF auto-downloads whatever `main` points
+# to. We pin the 960-d ESM-C revision that produced the production embedding store
+# (and that Bacformer Large consumes): the May-2026 `0c0b9c57` upload. PROVEN by
+# byte-match — pooling this revision's per-residue states reproduces a stored
+# pooled rpoB vector at cosine 0.999 (residual = bf16 rounding). The earlier
+# Feb-2026 `d0be1083` upload is a *different model* (cosine 0.81 vs the same stored
+# vector; its config.json claims 960 but its forward is not the store's ESM-C), so
+# it must NOT be used. Pinning also dodges the broken `main` (286a9db).
+ESMC_REVISION = "0c0b9c57a7c3da867c8512176ecddb3922816f80"
+
 # Token-index of amino-acid position p, given the leading <cls> token.
 _CLS_OFFSET = 1
 
@@ -40,9 +53,11 @@ _CLS_OFFSET = 1
 def load_esmc_mlm(device: str = "cpu", dtype: str = "auto"):
     """Load the ESM++ masked-LM head + tokeniser.
 
-    Uses ``dtype="auto"`` (not a manual ``.to(bfloat16)`` cast) so the model
-    keeps its checkpoint dtype and Stage A CPU smoke tests work — matching the
-    repo's Bacformer-loading idiom.
+    Pinned to :data:`ESMC_REVISION` — the 960-d ESM-C upload behind the production
+    embedding store (proven by byte-match) — so it never pulls the broken ``main``.
+    Uses ``dtype="auto"`` (not a manual ``.to(bfloat16)`` cast) so the model keeps
+    its checkpoint dtype and Stage A CPU smoke tests work — matching the repo's
+    Bacformer-loading idiom.
 
     Parameters
     ----------
@@ -59,6 +74,7 @@ def load_esmc_mlm(device: str = "cpu", dtype: str = "auto"):
     """
     model = AutoModelForMaskedLM.from_pretrained(
         ESMC_MODEL_PATH,
+        revision=ESMC_REVISION,
         trust_remote_code=True,
         dtype=dtype,
     )
