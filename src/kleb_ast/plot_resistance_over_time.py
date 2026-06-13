@@ -130,7 +130,7 @@ def _lmm_denoise_to_bins(
     df_spline: int = 5,
     bin_freq: str = "QS",
     binary: bool = True,
-    min_per_bin: int = 10,
+    min_per_bin: int = 4,
 ) -> pd.Series | None:
     """Stage 1: fit LMM, denoise per sample, aggregate to regular bins.
 
@@ -447,7 +447,7 @@ def plot_one_drug(
     arima_trend: str = "t",
     strata: frozenset[str] = frozenset({"AMR", "Surveillance", "NA", "All", "EBI"}),
     ribbon_model: str = "kalman",
-    min_per_bin: int = 10,
+    min_per_bin: int = 4,
     kalman_level: str = "local level",
 ) -> Path | None:
     """Render and save the per-drug fitted-trend plot.
@@ -582,7 +582,7 @@ def plot_class_composite(
     extra_re_col: str | None = None,
     df_spline: int = 5,
     bin_freq: str = "QS",
-    min_per_bin: int = 10,
+    min_per_bin: int = 4,
     kalman_level: str = "local level",
 ) -> Path | None:
     """Composite headline figure: per-drug-class panel of surveillance R rate trends.
@@ -764,9 +764,11 @@ def main() -> None:
              "NA, All, EBI. Default plots all 5 lines.",
     )
     p.add_argument(
-        "--min-per-bin", type=int, default=10,
-        help="Quarters with fewer than this many samples are treated as missing "
-             "(noisy bin mean → 'incoherent bits'). Default 10.",
+        "--min-per-bin", type=int, default=4,
+        help="Bins with fewer than this many samples are treated as missing "
+             "(noisy bin mean → 'incoherent bits'). Default 4 (right for monthly "
+             "bins; the per-quarter equivalent is ~12 samples). For --bin-freq QS "
+             "you may want --min-per-bin 10 to match the older quarterly default.",
     )
     p.add_argument(
         "--kalman-level", default="local level",
