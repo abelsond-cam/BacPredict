@@ -442,22 +442,22 @@ def plot_one_drug(
     extra_re_col: str | None = None,
     df_spline: int = 5,
     bin_freq: str = "QS",
-    smoothers: tuple[str, ...] = ("kalman", "arima"),
+    time_series_models: tuple[str, ...] = ("kalman",),
     arima_order: tuple[int, int, int] = (1, 1, 1),
     arima_trend: str = "t",
     strata: frozenset[str] = frozenset({"AMR", "Surveillance", "NA", "All", "EBI"}),
-    ribbon_smoother: str = "kalman",
+    ribbon_model: str = "kalman",
     min_per_bin: int = 10,
     kalman_level: str = "local level",
 ) -> Path | None:
     """Render and save the per-drug fitted-trend plot.
 
     Per amr_study stratum (and the combined "All non-mixed" + EBI overlay):
-    LMM-denoise (stage 1) → bin → smooth with each smoother in ``smoothers``
+    LMM-denoise (stage 1) → bin → fit each model in ``time_series_models``
     (stage 2). Kalman drawn solid, ARIMA dotted (same colour per stratum).
     Returns the output path, or ``None`` if no stratum could be fit.
 
-    The predicted strata smooth the **binary R-call indicator** (0/1) so the
+    The predicted strata model the **binary R-call indicator** (0/1) so the
     rendered line matches the legend's printed R rate; EBI is binary already.
     """
     pred_col = f"predicted_{drug}_AST"
@@ -478,15 +478,15 @@ def plot_one_drug(
 
     fig, ax = plt.subplots(figsize=(11.5, 5.5))
     anything_plotted = False
-    smoother_styles = {"kalman": "-", "arima": ":"}
+    model_styles = {"kalman": "-", "arima": ":"}
 
     def _plot_fit(sub, color, lw, alpha, label_prefix, *, value_col, ribbon=True):
-        """Fit LMM → bin → run every requested smoother → draw all lines.
+        """Fit LMM → bin → run every requested time-series model → draw all lines.
 
         ``ribbon`` controls whether *any* ribbon is drawn at all for this
-        stratum. The ribbon — when drawn — comes from ``ribbon_smoother``
-        only (one smoother's CI per stratum), so paired Kalman + ARIMA lines
-        share the same band rather than producing two overlapping ribbons.
+        stratum. The ribbon — when drawn — comes from ``ribbon_model`` only
+        (one model's CI per stratum), so paired Kalman + ARIMA lines share the
+        same band rather than producing two overlapping ribbons.
         """
         nonlocal anything_plotted
         binned = _lmm_denoise_to_bins(
@@ -499,18 +499,18 @@ def plot_one_drug(
         r_rate = float((sub[value_col].astype(str) == "R").mean())
         legend_label = f"{label_prefix} (n={len(sub):,}, R rate {r_rate:.2f})"
         first = True
-        for smoother in smoothers:
-            if smoother == "kalman":
+        for model_name in time_series_models:
+            if model_name == "kalman":
                 fit = _smooth_kalman(binned, binary=True, level_spec=kalman_level)
-            elif smoother == "arima":
+            elif model_name == "arima":
                 fit = _smooth_arima(binned, order=arima_order, trend=arima_trend, binary=True)
             else:
                 continue
             if fit is None:
                 continue
             grid_dates, pred, lo, hi = fit
-            ls = smoother_styles.get(smoother, "-")
-            if ribbon and smoother == ribbon_smoother:
+            ls = model_styles.get(model_name, "-")
+            if ribbon and model_name == ribbon_model:
                 ax.fill_between(grid_dates, lo, hi, color=color, alpha=_RIBBON_ALPHA, linewidth=0)
             ax.plot(
                 grid_dates, pred, color=color, lw=lw, linestyle=ls, alpha=alpha,
@@ -554,12 +554,12 @@ def plot_one_drug(
     main_legend = ax.legend(loc="upper left", fontsize=9)
     ax.add_artist(main_legend)
 
-    # Smoother-style inset legend (shown only when both smoothers ran).
-    if len(smoothers) > 1:
+    # Time-series-model style key (shown only when more than one model ran).
+    if len(time_series_models) > 1:
         style_handles = []
-        if "kalman" in smoothers:
-            style_handles.append(Line2D([0], [0], color="black", linestyle="-", label="Kalman (local linear trend)"))
-        if "arima" in smoothers:
+        if "kalman" in time_series_models:
+            style_handles.append(Line2D([0], [0], color="black", linestyle="-", label=f"Kalman ({kalman_level})"))
+        if "arima" in time_series_models:
             arima_lbl = f"ARIMA{arima_order}"
             style_handles.append(Line2D([0], [0], color="black", linestyle=":", label=arima_lbl))
         ax.legend(handles=style_handles, loc="upper right", fontsize=8, framealpha=0.75)
@@ -733,14 +733,19 @@ def main() -> None:
         help="Polynomial degree for the LMM fixed time term (stage 1 anchor). Default 5.",
     )
     p.add_argument(
-        "--bin-freq", default="QS",
-        help="Stage-2 binning frequency (pandas resample alias). Default 'QS' "
-             "(quarterly). Use 'MS' for monthly or 'YS' for yearly.",
+        "--bin-freq", default="MS",
+        help="Stage-2 binning frequency (pandas resample alias). Default 'MS' "
+             "(monthly). Use 'QS' for quarterly or 'YS' for yearly. Monthly is "
+             "the right default for Kalman-only — the smoother handles sparse "
+             "bins natively, and finer bins let real quarter-to-quarter movement "
+             "come through.",
     )
     p.add_argument(
-        "--smoothers", default="kalman,arima",
-        help="Comma-separated stage-2 smoothers to plot. Choices: 'kalman', 'arima'. "
-             "Default 'kalman,arima' draws both (Kalman solid, ARIMA dotted).",
+        "--time-series-model", default="kalman",
+        help="Comma-separated stage-2 time-series model(s) to plot. Choices: "
+             "'kalman' (state-space local-level random walk; default) or 'arima' "
+             "(ARIMA(p,d,q) with drift). 'kalman' alone is the recommended setup; "
+             "pass 'kalman,arima' to draw both for direct visual comparison.",
     )
     p.add_argument(
         "--arima-order", default="1,1,1",
@@ -772,9 +777,9 @@ def main() -> None:
              "'smooth trend' (slope-only) is the smoothest fit.",
     )
     p.add_argument(
-        "--ribbon-smoother", default="kalman",
+        "--ribbon-model", default="kalman",
         choices=("kalman", "arima", "none"),
-        help="Which smoother's CI to draw as a ribbon. Default 'kalman' — only "
+        help="Which model's CI to draw as a ribbon. Default 'kalman' — only "
              "Kalman's smoother-posterior CI is shown even when both Kalman and "
              "ARIMA lines are drawn (ARIMA's in-sample CI is much wider and the "
              "Kalman band is the more interpretable one). Use 'arima' to pick "
@@ -785,14 +790,14 @@ def main() -> None:
         help="Instead of per-drug panels, render the single drug-class composite "
              "PNG (5 subplots, surveillance-only, Kalman+CI). Writes to "
              "<out-dir>/composite_surveillance_classes.png and ignores --strata "
-             "(always Surveillance) and --smoothers (always Kalman).",
+             "(always Surveillance) and --time-series-model (always Kalman).",
     )
     args = p.parse_args()
 
-    smoothers = tuple(s.strip().lower() for s in args.smoothers.split(",") if s.strip())
-    for s in smoothers:
+    time_series_models = tuple(s.strip().lower() for s in args.time_series_model.split(",") if s.strip())
+    for s in time_series_models:
         if s not in ("kalman", "arima"):
-            raise SystemExit(f"--smoothers: unknown smoother {s!r}; choices are kalman, arima")
+            raise SystemExit(f"--time-series-model: unknown model {s!r}; choices are kalman, arima")
     try:
         arima_order = tuple(int(x) for x in args.arima_order.split(","))
         assert len(arima_order) == 3
@@ -888,11 +893,11 @@ def main() -> None:
             extra_re_col=extra_re_col,
             df_spline=args.df_spline,
             bin_freq=args.bin_freq,
-            smoothers=smoothers,
+            time_series_models=time_series_models,
             arima_order=arima_order,
             arima_trend=args.arima_trend,
             strata=strata,
-            ribbon_smoother=args.ribbon_smoother,
+            ribbon_model=args.ribbon_model,
             min_per_bin=args.min_per_bin,
             kalman_level=args.kalman_level,
         )
