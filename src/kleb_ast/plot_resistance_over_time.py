@@ -46,6 +46,20 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+# Drug classes for the composite headline figure (surveillance R rate over time).
+# Aztreonam (monobactam) is included in beta-lactams per user direction.
+DRUG_CLASSES: list[tuple[str, list[str]]] = [
+    ("Beta-lactams", [
+        "ampicillin-sulbactam", "piperacillin-tazobactam", "cefazolin",
+        "cefoxitin", "cefuroxime", "ceftriaxone", "ceftazidime",
+        "cefepime", "cefotaxime", "aztreonam",
+    ]),
+    ("Carbapenems", ["meropenem", "imipenem", "ertapenem"]),
+    ("Fluoroquinolones", ["ciprofloxacin", "levofloxacin"]),
+    ("Aminoglycosides", ["gentamicin", "amikacin", "tobramycin"]),
+    ("Other", ["azithromycin", "colistin", "tetracycline", "trimethoprim-sulfamethoxazole"]),
+]
+
 # Panel order matches eval_panel_on_slurm.sh + predict_amr_panel_on_slurm.sh.
 DRUG_PANEL: list[str] = [
     "gentamicin", "ceftazidime", "meropenem", "ciprofloxacin",
@@ -542,6 +556,125 @@ def plot_one_drug(
     return out_path
 
 
+def plot_class_composite(
+    df: pd.DataFrame,
+    classes: list[tuple[str, list[str]]],
+    out_path: Path,
+    *,
+    date_col: str = "collection_date_parsed",
+    group_col: str = "study_accession",
+    extra_re_col: str | None = None,
+    df_spline: int = 5,
+    bin_freq: str = "QS",
+    min_per_bin: int = 10,
+) -> Path | None:
+    """Composite headline figure: per-drug-class panel of surveillance R rate trends.
+
+    Single PNG with one subplot per drug class (laid out as a 2×3 grid).
+    Each subplot contains one Kalman-smoothed line + 95% CI ribbon per drug
+    in the class, distinguished by colour. Surveillance stratum only — this
+    is the "what is the deployed model saying about R rates in unbiased
+    surveillance sampling" figure.
+
+    Bottom-right cell holds a methodology note (LMM denoise → quarterly
+    binning → Kalman local linear trend; sparse-bin auto-trim).
+
+    Returns the output path, or ``None`` if no class produced any line.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    rows, cols = 2, 3
+    fig, axes = plt.subplots(rows, cols, figsize=(16.5, 9.0), sharex=True, sharey=True)
+    flat_axes = axes.flatten()
+    anything_plotted = False
+
+    base = df[df["_study_cat"] == "Surveillance"].copy()
+    if base.empty:
+        return None
+
+    for ax, (cls_name, drugs) in zip(flat_axes[: len(classes)], classes, strict=False):
+        cmap = plt.get_cmap("tab10" if len(drugs) <= 10 else "tab20")
+        # CI alpha is inversely tied to crowding so dense panels stay readable.
+        ribbon_alpha = max(0.04, min(0.13, 0.18 - 0.012 * len(drugs)))
+
+        n_drug_plotted = 0
+        for i, drug in enumerate(drugs):
+            pred_col = f"predicted_{drug}_AST"
+            if pred_col not in df.columns:
+                continue
+            sub = base[base[pred_col].isin(["R", "S"])]
+            if len(sub) < _MIN_ROWS_TO_FIT:
+                continue
+            binned = _lmm_denoise_to_bins(
+                sub, value_col=pred_col, date_col=date_col, group_col=group_col,
+                extra_re_col=extra_re_col, df_spline=df_spline, bin_freq=bin_freq,
+                binary=True, min_per_bin=min_per_bin,
+            )
+            if binned is None:
+                continue
+            fit = _smooth_kalman(binned, binary=True)
+            if fit is None:
+                continue
+            grid_dates, pred, lo, hi = fit
+            color = cmap(i % cmap.N)
+            r_rate = float((sub[pred_col].astype(str) == "R").mean())
+            ax.fill_between(grid_dates, lo, hi, color=color, alpha=ribbon_alpha, linewidth=0)
+            ax.plot(grid_dates, pred, color=color, lw=1.7, label=f"{drug} ({r_rate:.2f})")
+            n_drug_plotted += 1
+            anything_plotted = True
+
+        ax.set_title(f"{cls_name} (n drugs: {n_drug_plotted})", fontsize=11)
+        ax.set_ylim(0, 1.0)
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="upper left", fontsize=7, ncol=1 if len(drugs) <= 4 else 2,
+                  framealpha=0.75)
+
+    # Methodology note in the unused bottom-right cell.
+    note_ax = flat_axes[len(classes)] if len(classes) < rows * cols else None
+    if note_ax is not None:
+        note_ax.axis("off")
+        note_ax.text(
+            0.02, 0.95,
+            "Surveillance-stratum R rate over time.\n"
+            "\n"
+            "Per drug: predicted R/S call \n"
+            "(Youden-tuned) per kpsc_final_list\n"
+            "sample, then\n"
+            "  1. LMM denoise: removes \n"
+            "     study + country batch noise\n"
+            "     ( ~poly(year) + (1|study) + (1|country) )\n"
+            "  2. Quarterly bin (≥10 samples)\n"
+            "  3. Kalman local linear trend\n"
+            "     smoother + 95% posterior CI\n"
+            "  4. Per-stratum auto-trim of\n"
+            "     leading sparse / dropout quarters\n"
+            "\n"
+            f"Window: {df[date_col].min().date()} – {df[date_col].max().date()}.\n"
+            "Legend value = stratum R rate (overall).",
+            transform=note_ax.transAxes,
+            fontsize=9, verticalalignment="top",
+            family="monospace",
+        )
+
+    # Shared x/y labels via figure-level supxlabel/supylabel.
+    fig.supxlabel(date_col, fontsize=11)
+    fig.supylabel("R rate (Kalman-smoothed, 95% CI ribbon)", fontsize=11)
+    fig.suptitle("Klebsiella surveillance R rate over time, per drug class",
+                 fontsize=14, fontweight="bold")
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+
+    if not anything_plotted:
+        plt.close(fig)
+        return None
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=160, bbox_inches="tight")
+    plt.close(fig)
+    return out_path
+
+
 def main() -> None:
     """CLI entry point."""
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -622,6 +755,13 @@ def main() -> None:
              "Kalman band is the more interpretable one). Use 'arima' to pick "
              "ARIMA's band instead, or 'none' to suppress all ribbons.",
     )
+    p.add_argument(
+        "--composite", action="store_true",
+        help="Instead of per-drug panels, render the single drug-class composite "
+             "PNG (5 subplots, surveillance-only, Kalman+CI). Writes to "
+             "<out-dir>/composite_surveillance_classes.png and ignores --strata "
+             "(always Surveillance) and --smoothers (always Kalman).",
+    )
     args = p.parse_args()
 
     smoothers = tuple(s.strip().lower() for s in args.smoothers.split(",") if s.strip())
@@ -694,6 +834,24 @@ def main() -> None:
         )
 
     out_dir = Path(args.out_dir)
+
+    if args.composite:
+        out_path = out_dir / "composite_surveillance_classes.png"
+        print(f"\nBuilding composite drug-class figure → {out_path}")
+        path = plot_class_composite(
+            df, DRUG_CLASSES, out_path,
+            date_col=args.date_column,
+            group_col=args.group_column,
+            extra_re_col=extra_re_col,
+            df_spline=args.df_spline,
+            bin_freq=args.bin_freq,
+            min_per_bin=args.min_per_bin,
+        )
+        if path is None:
+            raise SystemExit("Composite figure produced no lines — check stratum / data filters.")
+        print(f"Wrote composite: {path}")
+        return
+
     written, skipped = [], []
     for drug in DRUG_PANEL:
         print(f"\nFitting {drug}...")
