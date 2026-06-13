@@ -130,7 +130,7 @@ def _lmm_denoise_to_bins(
     df_spline: int = 5,
     bin_freq: str = "QS",
     binary: bool = True,
-    min_per_bin: int = 4,
+    min_per_bin: int = 10,
     mode: str = "binned",
 ) -> pd.Series | None:
     """Stage 1: fit LMM, denoise per sample, aggregate to regular bins.
@@ -463,7 +463,7 @@ def plot_one_drug(
     arima_trend: str = "t",
     strata: frozenset[str] = frozenset({"AMR", "Surveillance", "NA", "All", "EBI"}),
     ribbon_model: str = "kalman",
-    min_per_bin: int = 4,
+    min_per_bin: int = 10,
     kalman_level: str = "local level",
     mode: str = "binned",
 ) -> Path | None:
@@ -566,7 +566,8 @@ def plot_one_drug(
     ax.set_xlabel(date_col)
     ax.set_ylabel("R rate")
     ax.set_title(f"{drug} — LMM-denoised R rate, stratified by amr_study (95% CI)")
-    ax.set_ylim(0, 1.0)
+    ax.set_ylim(0, 0.75)
+    ax.set_yticks([0.0, 0.25, 0.5, 0.75])
     ax.grid(True, alpha=0.3)
     main_legend = ax.legend(loc="upper left", fontsize=9)
     ax.add_artist(main_legend)
@@ -599,7 +600,8 @@ def plot_class_composite(
     extra_re_col: str | None = None,
     df_spline: int = 5,
     bin_freq: str = "QS",
-    min_per_bin: int = 4,
+    min_per_bin: int = 10,
+
     kalman_level: str = "local level",
     mode: str = "binned",
 ) -> Path | None:
@@ -662,7 +664,8 @@ def plot_class_composite(
             anything_plotted = True
 
         ax.set_title(f"{cls_name} (n drugs: {n_drug_plotted})", fontsize=11)
-        ax.set_ylim(0, 1.0)
+        ax.set_ylim(0, 0.75)
+        ax.set_yticks([0.0, 0.25, 0.5, 0.75])
         ax.grid(True, alpha=0.3)
         ax.legend(loc="upper left", fontsize=7, ncol=1 if len(drugs) <= 4 else 2,
                   framealpha=0.75)
@@ -766,12 +769,12 @@ def main() -> None:
         help="Polynomial degree for the LMM fixed time term (stage 1 anchor). Default 5.",
     )
     p.add_argument(
-        "--bin-freq", default="MS",
-        help="Stage-2 binning frequency (pandas resample alias). Default 'MS' "
-             "(monthly). Use 'QS' for quarterly or 'YS' for yearly. Monthly is "
-             "the right default for Kalman-only — the smoother handles sparse "
-             "bins natively, and finer bins let real quarter-to-quarter movement "
-             "come through.",
+        "--bin-freq", default="QS",
+        help="Stage-2 binning frequency (pandas resample alias). Default 'QS' "
+             "(quarterly) — quarterly aggregation absorbs sample-level noise so "
+             "the Kalman random walk on the bin means stays locally adaptive "
+             "without overfitting per-sample binary noise. Use 'MS' for monthly "
+             "or 'YS' for yearly when there is much more data per bin.",
     )
     p.add_argument(
         "--time-series-model", default="kalman",
@@ -797,12 +800,11 @@ def main() -> None:
              "NA, All, EBI. Default plots all 5 lines.",
     )
     p.add_argument(
-        "--min-per-bin", type=int, default=4,
+        "--min-per-bin", type=int, default=10,
         help="Bins with fewer than this many samples are treated as missing "
-             "(noisy bin mean → 'incoherent bits'). Default 4 (right for monthly "
-             "bins; the per-quarter equivalent is ~12 samples). For --bin-freq QS "
-             "you may want --min-per-bin 10 to match the older quarterly default. "
-             "Ignored when --mode per-sample.",
+             "(noisy bin mean → 'incoherent bits'). Default 10 (right for "
+             "quarterly bins). Set lower for monthly. Ignored when --mode "
+             "per-sample.",
     )
     p.add_argument(
         "--mode", default="binned", choices=("binned", "per-sample"),
