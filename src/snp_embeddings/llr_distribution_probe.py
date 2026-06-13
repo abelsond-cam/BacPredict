@@ -1,39 +1,38 @@
-r"""Phase 0 surprise diagnostic — validate the cheap proxy, then map the distributions.
+r"""Phase 0 surprise diagnostic — proxy proof (0A) + per-protein SNP-flag (0B).
 
 Experiment 4 wants to hand each protein an undiluted **per-protein anomaly feature**
-(the most-surprising-residue log-prob) and let an attention pool upweight the
-anomalous protein. Two questions block the architecture, and this one read-only
-probe answers both:
+(a scalar derived from its residue "surprise") and let an **attention pool** upweight
+the SNP-bearing protein out of the ~4,000 in a genome. Two separable questions:
 
-**0A — windowed masked-vs-unmasked proxy test.** For a resistant isolate's rpoB,
-take the resistance hotspot codon(s) (where the sample differs from H37Rv) and
-``±W`` residues either side. At each window position compute the **masked**
-surprise (``log P(observed | context\\i)``, ablation-by-masking; the gold standard,
-one forward per position) and the **unmasked** surprise (``log P(observed | full
-context)``; cheap, one forward for the whole protein). Then:
+**0A — is the cheap proxy faithful? (publication-grade, n isolates).** The gold
+standard is masked-marginal ablation (``log P(observed | context\i)``, one forward per
+residue → ``L`` per protein). The cheap genome-wide signal is the unmasked naturalness
+(``log P(observed | full context)``, one forward per protein). For each of N resistant
+isolates, score **both over the whole rpoB gene** (``--masked-scope gene``) and:
 
-- show the masked signal is a sharp **trough only at the SNP**, ~flat across the WT
-  neighbours → "the only ablation anomaly is the amino-acid SNP";
-- **correlate** masked vs unmasked across the window (Pearson + Spearman) → how well
-  the cheap unmasked surprise proxies the expensive masked ablation;
-- report the SNP's **z-score / rank** in each profile → how much it stands out.
+- per-isolate Pearson/Spearman of masked vs unmasked across all residues;
+- the **across-isolate** scatter at the mutated residue (masked vs unmasked, n points);
+- the fraction where the resistance residue is the **top unmasked anomaly** in rpoB;
+- the **distinct-genotype count**, so an "n=100" claim is honest about how many
+  independent mutations it spans.
 
-A WT/susceptible isolate's same window is the negative control (no SNP → no trough).
+**0B — does a per-protein summary act as a sparse "a SNP is here" flag? (a handful of
+genomes).** This is *not* about resistant-vs-susceptible magnitude within one protein,
+nor one neighbour — it is whether, **across all ~4,000 proteins of a genome**, a
+per-protein statistic singles the SNP-bearing protein(s) into a short high tail an
+attention pool can exploit (long conserved genes carry surprising residues too, so the
+tail may not be sparse). We compute a **list** of candidate per-protein statistics
+(max-surprise, hotspot-z, max−p99, top1−top2, …; see :func:`protein_surprise_stats`),
+persist every protein's row to a parquet sidecar so new statistics can be added without
+re-running, and report where mutated rpoB ranks among the ~4,000 by each, plus what
+*else* gets flagged.
 
-**0B — full-gene + 2-neighbour distributions.** Run **unmasked** surprise across all
-positions of rpoB and its two flat-adjacent neighbour proteins (``records[F±1]`` —
-genomic neighbours, no resistance mutation), for the resistant and WT isolates.
-Summarise each (min / p1 / p5 / mean-of-bottom-3 / skew / kurtosis, and the
-resistance residue's rank within rpoB) and plot the distributions. This picks the
-per-protein summary statistic (max vs top-k vs tail/skew) → the feature dimension.
-
-Reuses :func:`snp_embeddings.snp_vs_esm_prediction.resolve_clean_splits` (canonical
-labels), :func:`snp_embeddings.rpob_genotype.build_genotype_table` (single-copy rpoB
-genotype + flat index), :func:`~snp_embeddings.rpob_genotype.sample_codon_positions`
-(hotspot → sample coordinate), :func:`snp_embeddings.locate_gene.flatten_proteins`
-(rpoB flat index + neighbours) and the pinned ESM-C MLM
-(:func:`tl.embed.esm_residue_level.load_esmc_mlm`). Read-only diagnostics — no
-training, no embedding store needed (works straight from the protein parquets).
+Read-only — no training, no embedding store (runs from the protein parquets + the pinned
+ESM-C MLM). Reuses :func:`snp_embeddings.snp_vs_esm_prediction.resolve_clean_splits`,
+:func:`snp_embeddings.rpob_genotype.build_genotype_table` /
+:func:`~snp_embeddings.rpob_genotype.sample_codon_positions`,
+:func:`snp_embeddings.locate_gene.flatten_proteins`, and
+:func:`tl.embed.esm_residue_level.unmasked_logprobs` / ``masked_logprobs``.
 """
 
 from __future__ import annotations
@@ -42,6 +41,7 @@ import argparse
 import json
 import logging
 import socket
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -64,41 +64,19 @@ from tl.embed.esm_residue_level import load_esmc_mlm, masked_logprobs, unmasked_
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# Columns the neighbour re-read needs (matches build_genotype_table's subset read).
+# Columns the all-protein flatten needs (matches build_genotype_table's subset read).
 _NEEDED_COLS = ["contig_idx", "gene_name", "protein_sequence"]
+
+# Per-protein statistics ranked to test the "a SNP is here" flag (higher = more
+# anomalous → should sit in the high tail). Plotted subset is PLOT_STATS.
+RANK_STATS = ("max_surprise", "hotspot_z", "max_minus_p99", "top1_minus_top2")
+PLOT_STATS = ("max_surprise", "hotspot_z", "max_minus_p99")
+_EPS = 1e-6
 
 
 # ---------------------------------------------------------------------------
 # Isolate selection + genotype helpers
 # ---------------------------------------------------------------------------
-
-
-def select_isolates(
-    genotype: pd.DataFrame,
-    label_map: dict[str, int],
-    *,
-    n_resistant: int,
-    n_wt: int,
-) -> tuple[list[str], list[str]]:
-    """Pick resistant rpoB-mutant isolates and WT/susceptible controls from the genotype.
-
-    Resistant = label 1 with ≥1 RRDR substitution (a hotspot to centre 0A on); WT =
-    label 0 with zero RRDR substitutions (no trough expected). Taken in table order
-    for reproducibility.
-    """
-    resistant: list[str] = []
-    wt: list[str] = []
-    for sample_id, row in genotype.iterrows():
-        sid = str(sample_id)
-        label = label_map.get(sid)
-        n_sub = int(row["n_rrdr_substitutions"])
-        if label == 1 and n_sub >= 1 and len(resistant) < n_resistant:
-            resistant.append(sid)
-        elif label == 0 and n_sub == 0 and len(wt) < n_wt:
-            wt.append(sid)
-        if len(resistant) >= n_resistant and len(wt) >= n_wt:
-            break
-    return resistant, wt
 
 
 def hotspot_codons(genotype_row: pd.Series, reference: str) -> list[tuple[int, str, str]]:
@@ -112,188 +90,368 @@ def hotspot_codons(genotype_row: pd.Series, reference: str) -> list[tuple[int, s
     return hotspots
 
 
-def _neighbour_records(parquet_dir: Path, sample_id: str, flat_index: int) -> dict:
-    """Flatten one sample's parquet and return its rpoB record + the two flat neighbours.
+def hotspot_label(hotspots: list[tuple[int, str, str]]) -> str:
+    """A compact genotype label, e.g. ``"S450L"`` or ``"D435V+H445Y"`` (``"none"`` if empty)."""
+    return "+".join(f"{wt}{codon}{alt}" for codon, wt, alt in hotspots) or "none"
 
-    Returns ``{"rpob": rec, "neighbour_minus1": rec|None, "neighbour_plus1": rec|None}``
-    where each rec is a :func:`~snp_embeddings.locate_gene.flatten_proteins` dict.
+
+def select_isolates(
+    genotype: pd.DataFrame,
+    label_map: dict[str, int],
+    reference: str,
+    *,
+    n_resistant: int,
+    n_wt: int,
+    diverse: bool = True,
+) -> tuple[list[str], list[str]]:
+    """Pick resistant rpoB-mutant isolates and WT/susceptible controls from the genotype.
+
+    Resistant = label 1 with ≥1 RRDR substitution (a hotspot to centre on); WT = label 0
+    with zero RRDR substitutions. With ``diverse`` the resistant picks span **distinct
+    hotspot codon-sets** (so clonal S450L alleles — the dominant ~70% RIF-R mutation, with
+    a highly-conserved byte-identical rpoB — don't fill every slot); without it the first
+    matching isolates in table order are taken (the natural mutation distribution, for the
+    n=100 proof). Table order throughout for reproducibility.
     """
-    parquet_path = parquet_dir / f"{sample_id}_protein_sequences.parquet"
-    df_p = pd.read_parquet(parquet_path, columns=_NEEDED_COLS)
-    records = flatten_proteins(df_p)
-    rpob = records[flat_index]
-    if rpob["gene_name"] is None or str(rpob["gene_name"]).lower() != "rpob":
-        raise ValueError(
-            f"{sample_id}: flat index {flat_index} is {rpob['gene_name']!r}, not rpoB — flat order misaligned."
-        )
-    return {
-        "rpob": rpob,
-        "neighbour_minus1": records[flat_index - 1] if flat_index - 1 >= 0 else None,
-        "neighbour_plus1": records[flat_index + 1] if flat_index + 1 < len(records) else None,
-    }
+    resistant: list[str] = []
+    wt: list[str] = []
+    seen_signatures: set[frozenset[int]] = set()
+    for sample_id, row in genotype.iterrows():
+        sid = str(sample_id)
+        label = label_map.get(sid)
+        n_sub = int(row["n_rrdr_substitutions"])
+        if label == 1 and n_sub >= 1 and len(resistant) < n_resistant:
+            signature = frozenset(codon for codon, _wt, _alt in hotspot_codons(row, reference))
+            if not (diverse and signature in seen_signatures):
+                seen_signatures.add(signature)
+                resistant.append(sid)
+        elif label == 0 and n_sub == 0 and len(wt) < n_wt:
+            wt.append(sid)
+        if len(resistant) >= n_resistant and len(wt) >= n_wt:
+            break
+    return resistant, wt
+
+
+def _rank_ascending(values: np.ndarray, idx: int) -> int:
+    """Ascending rank of ``values[idx]`` (1 = lowest). For log P, rank 1 = most surprising."""
+    return int((values < values[idx]).sum()) + 1
+
+
+def _zscore(values: np.ndarray, idx: int) -> float:
+    """z-score of ``values[idx]`` (0 if the spread is degenerate)."""
+    std = float(values.std())
+    return float((values[idx] - float(values.mean())) / std) if std > 0 else 0.0
 
 
 # ---------------------------------------------------------------------------
-# 0A — windowed masked-vs-unmasked proxy test
+# 0A — whole-gene masked-vs-unmasked proxy proof
 # ---------------------------------------------------------------------------
 
 
-def _window_positions(centres: list[int], half: int, length: int) -> list[int]:
-    """Sorted unique 0-based positions within ``±half`` of any centre, clipped to the protein."""
-    positions: set[int] = set()
-    for c in centres:
-        positions.update(range(max(0, c - half), min(length, c + half + 1)))
-    return sorted(positions)
-
-
-def _outlier_stats(values: np.ndarray, idx: int) -> dict:
-    """z-score and ascending rank (1 = lowest = most surprising) of ``values[idx]``."""
-    mean, std = float(values.mean()), float(values.std())
-    z = float((values[idx] - mean) / std) if std > 0 else 0.0
-    rank = int((values < values[idx]).sum()) + 1
-    return {"value": float(values[idx]), "z": z, "rank": rank, "n": int(values.size)}
-
-
-def windowed_proxy(
+def isolate_proxy(
     model,
     tokenizer,
     seq: str,
     reference: str,
-    *,
-    role: str,
-    sample_id: str,
     hotspots: list[tuple[int, str, str]],
-    primary_codon: int,
+    *,
+    sample_id: str,
+    role: str,
+    scope: str,
     window: int,
     device: str,
 ) -> dict:
-    """Masked + unmasked surprise across a hotspot window for one isolate.
+    """Masked + unmasked surprise for one isolate's rpoB; correlate, locate the SNP.
 
-    For a resistant isolate the window is centred on its hotspot codon(s); for the
-    WT control it is centred on ``primary_codon`` (the resistant isolate's hotspot,
-    mapped into the WT sample's own coordinates) so the same biological region is
-    compared. Returns per-position profiles, the masked-vs-unmasked correlation, and
-    each hotspot's outlier z-score / rank in both profiles.
+    ``scope='gene'`` masks **every** residue (the publication proof); ``scope='window'``
+    masks only ``±window`` around the hotspot(s) (cheap smoke). Returns a record plus the
+    raw per-position arrays (for the pooled NPZ) under ``_arrays``.
     """
     length = len(seq)
-    # Hotspot positions in the sample's own rpoB coordinates (None where gapped).
-    hotspot_codon_list = [c for c, _wt, _alt in hotspots]
-    codon_to_pos = sample_codon_positions(seq, reference, hotspot_codon_list) if hotspot_codon_list else {}
+    codon_to_pos = sample_codon_positions(seq, reference, [c for c, _w, _a in hotspots]) if hotspots else {}
     hotspot_pos = {c: p for c, p in codon_to_pos.items() if p is not None}
 
-    # Window centres: the hotspots (resistant) or the primary codon mapped in (WT).
-    if hotspot_pos:
-        centres = sorted(hotspot_pos.values())
+    if scope == "gene":
+        positions = list(range(length))
     else:
-        primary_pos = sample_codon_positions(seq, reference, [primary_codon]).get(primary_codon)
-        if primary_pos is None:
-            raise ValueError(f"{sample_id}: primary codon {primary_codon} maps to a gap — cannot centre WT window.")
-        centres = [primary_pos]
-    primary_pos = centres[0]
+        centres = sorted(hotspot_pos.values()) or [length // 2]
+        keep: set[int] = set()
+        for c in centres:
+            keep.update(range(max(0, c - window), min(length, c + window + 1)))
+        positions = sorted(keep)
 
-    positions = _window_positions(centres, window, length)
     masked = masked_logprobs(model, tokenizer, seq, positions=positions, device=device).numpy()
     unmasked_full = unmasked_logprobs(model, tokenizer, seq, device=device).numpy()
     unmasked = unmasked_full[positions]
+    pos_to_idx = {p: i for i, p in enumerate(positions)}
 
-    hotspot_pos_set = set(hotspot_pos.values())
-    profile = [
-        {
-            "position": int(p),
-            "offset_from_primary": int(p - primary_pos),
-            "residue": seq[p],
-            "masked_logp": float(masked[i]),
-            "unmasked_logp": float(unmasked[i]),
-            "is_hotspot": p in hotspot_pos_set,
-        }
-        for i, p in enumerate(positions)
-    ]
+    spread_ok = masked.size > 2 and masked.std() > 0 and unmasked.std() > 0
+    pearson_r = float(pearsonr(masked, unmasked)[0]) if spread_ok else None
+    spearman_r = float(spearmanr(masked, unmasked)[0]) if spread_ok else None
 
-    snp_outliers = []
-    pos_to_window_idx = {p: i for i, p in enumerate(positions)}
+    snp_records = []
     for codon, wt, alt in hotspots:
         p = hotspot_pos.get(codon)
-        if p is None:
+        if p is None or p not in pos_to_idx:
             continue
-        i = pos_to_window_idx[p]
-        snp_outliers.append({
+        i = pos_to_idx[p]
+        snp_records.append({
             "codon": codon, "wt": wt, "alt": alt, "position": int(p),
-            "masked": _outlier_stats(masked, i),
-            "unmasked": _outlier_stats(unmasked, i),
+            "masked_logp": float(masked[i]), "unmasked_logp": float(unmasked[i]),
+            "masked_z_scope": _zscore(masked, i), "unmasked_z_scope": _zscore(unmasked, i),
+            "masked_rank_scope": _rank_ascending(masked, i), "unmasked_rank_scope": _rank_ascending(unmasked, i),
+            "unmasked_rank_gene": _rank_ascending(unmasked_full, p),
+            "masked_scope_n": int(masked.size), "gene_length": length,
         })
 
-    pearson_r = float(pearsonr(masked, unmasked)[0]) if masked.size > 2 else None
-    spearman_r = float(spearmanr(masked, unmasked)[0]) if masked.size > 2 else None
-    return {
-        "sample": sample_id,
-        "role": role,
-        "primary_codon": int(primary_codon),
-        "window": window,
-        "n_positions": len(positions),
-        "hotspots": [{"codon": c, "wt": w, "alt": a} for c, w, a in hotspots],
-        "pearson_masked_vs_unmasked": pearson_r,
-        "spearman_masked_vs_unmasked": spearman_r,
-        "snp_outliers": snp_outliers,
-        "profile": profile,
+    record = {
+        "sample": sample_id, "role": role, "genotype": hotspot_label(hotspots),
+        "gene_length": length, "scope": scope, "n_scored": int(masked.size),
+        "pearson_masked_vs_unmasked": pearson_r, "spearman_masked_vs_unmasked": spearman_r,
+        "snp": snp_records,
+        "_arrays": {"masked": masked, "unmasked": unmasked, "positions": np.array(positions)},
     }
+    return record
 
 
-# ---------------------------------------------------------------------------
-# 0B — full-gene + 2-neighbour unmasked distributions
-# ---------------------------------------------------------------------------
-
-
-def _distribution_stats(logp: np.ndarray) -> dict:
-    """Summary of a per-residue ``log P(observed)`` vector (low = surprising)."""
-    order = np.sort(logp)  # ascending → most-surprising first
-    return {
-        "length": int(logp.size),
-        "min_logp": float(order[0]),
-        "p1_logp": float(np.percentile(logp, 1)),
-        "p5_logp": float(np.percentile(logp, 5)),
-        "mean_logp": float(logp.mean()),
-        "std_logp": float(logp.std()),
-        "mean_bottom3_logp": float(order[: min(3, logp.size)].mean()),
-        "skew_logp": float(skew(logp)),
-        "kurtosis_logp": float(kurtosis(logp)),
-    }
-
-
-def gene_distribution(
+def run_0a(
     model,
     tokenizer,
-    seq: str,
+    genotype: pd.DataFrame,
+    resistant_ids: list[str],
+    wt_ids: list[str],
+    reference: str,
     *,
-    sample_id: str,
-    role: str,
-    gene_slot: str,
-    gene_name: str | None,
-    flat_index: int,
+    scope: str,
+    window: int,
     device: str,
-    resistance_position: int | None = None,
-) -> tuple[dict, np.ndarray]:
-    """Unmasked surprise over a whole protein → stats + (for rpoB) the SNP's rank.
+) -> tuple[dict, dict]:
+    """0A over all selected isolates → (JSON payload, NPZ array bundle)."""
+    records: list[dict] = []
+    for role, ids in (("resistant", resistant_ids), ("wt", wt_ids)):
+        for n, sid in enumerate(ids):
+            hotspots = hotspot_codons(genotype.loc[sid], reference) if role == "resistant" else []
+            logger.info("0A %s %d/%d %s (%s)", role, n + 1, len(ids), sid, hotspot_label(hotspots))
+            records.append(isolate_proxy(
+                model, tokenizer, genotype.loc[sid, "rpob_sequence"], reference, hotspots,
+                sample_id=sid, role=role, scope=scope, window=window, device=device,
+            ))
 
-    Returns ``(record, logp_array)`` — the array is kept for the pooled violin plot.
-    """
-    logp = unmasked_logprobs(model, tokenizer, seq, device=device).numpy()
-    stats = _distribution_stats(logp)
-    resistance_rank = None
-    resistance_logp = None
-    if resistance_position is not None and 0 <= resistance_position < logp.size:
-        resistance_rank = int((logp < logp[resistance_position]).sum()) + 1
-        resistance_logp = float(logp[resistance_position])
-    record = {
-        "sample": sample_id,
-        "role": role,
-        "gene_slot": gene_slot,
-        "gene_name": gene_name,
-        "flat_index": int(flat_index),
-        "stats": stats,
-        "resistance_residue_rank": resistance_rank,
-        "resistance_residue_logp": resistance_logp,
+    # Pooled (isolate, position) points + per-isolate / per-SNP aggregates.
+    pooled_m, pooled_u, pooled_idx = [], [], []
+    iso_pearson, iso_spearman, iso_labels, iso_roles = [], [], [], []
+    snp_masked, snp_unmasked, snp_rank_gene, snp_labels = [], [], [], []
+    for k, rec in enumerate(records):
+        a = rec["_arrays"]
+        pooled_m.append(a["masked"])
+        pooled_u.append(a["unmasked"])
+        pooled_idx.append(np.full(a["masked"].size, k))
+        iso_pearson.append(rec["pearson_masked_vs_unmasked"])
+        iso_spearman.append(rec["spearman_masked_vs_unmasked"])
+        iso_labels.append(rec["genotype"])
+        iso_roles.append(rec["role"])
+        if rec["snp"]:
+            primary = rec["snp"][0]
+            snp_masked.append(primary["masked_logp"])
+            snp_unmasked.append(primary["unmasked_logp"])
+            snp_rank_gene.append(primary["unmasked_rank_gene"])
+            snp_labels.append(rec["genotype"])
+        del rec["_arrays"]
+
+    pm, pu = np.concatenate(pooled_m), np.concatenate(pooled_u)
+    pooled_r = float(pearsonr(pm, pu)[0]) if pm.size > 2 else None
+    pooled_rho = float(spearmanr(pm, pu)[0]) if pm.size > 2 else None
+    res_pearson = [r for r, role in zip(iso_pearson, iso_roles, strict=True) if role == "resistant" and r is not None]
+    sm, su = np.array(snp_masked), np.array(snp_unmasked)
+    snp_scatter_r = float(pearsonr(sm, su)[0]) if sm.size > 2 and sm.std() > 0 and su.std() > 0 else None
+    snp_scatter_rho = float(spearmanr(sm, su)[0]) if sm.size > 2 and sm.std() > 0 and su.std() > 0 else None
+    ranks = np.array(snp_rank_gene) if snp_rank_gene else np.array([])
+
+    summary = {
+        "n_isolates": len(records),
+        "n_resistant": len(resistant_ids),
+        "n_wt": len(wt_ids),
+        "distinct_genotypes": dict(Counter(snp_labels)),
+        "n_distinct_genotypes": len(set(snp_labels)),
+        "scope": scope,
+        "pooled_pearson": pooled_r,
+        "pooled_spearman": pooled_rho,
+        "pooled_n_points": int(pm.size),
+        "per_isolate_pearson_resistant": {
+            "mean": float(np.mean(res_pearson)) if res_pearson else None,
+            "median": float(np.median(res_pearson)) if res_pearson else None,
+            "sd": float(np.std(res_pearson)) if res_pearson else None,
+            "min": float(np.min(res_pearson)) if res_pearson else None,
+            "n": len(res_pearson),
+        },
+        "snp_site_scatter": {"pearson": snp_scatter_r, "spearman": snp_scatter_rho, "n": int(sm.size)},
+        "snp_unmasked_rank_in_gene": {
+            "frac_rank1": float((ranks == 1).mean()) if ranks.size else None,
+            "frac_top3": float((ranks <= 3).mean()) if ranks.size else None,
+            "median_rank": float(np.median(ranks)) if ranks.size else None,
+            "n": int(ranks.size),
+        },
     }
-    return record, logp
+    payload = {"summary": summary, "isolates": records}
+    arrays = {
+        "pooled_masked": pm, "pooled_unmasked": pu, "pooled_isolate_idx": np.concatenate(pooled_idx),
+        "isolate_pearson": np.array([r if r is not None else np.nan for r in iso_pearson]),
+        "isolate_label": np.array(iso_labels), "isolate_role": np.array(iso_roles),
+        "snp_masked": sm, "snp_unmasked": su, "snp_rank_gene": ranks, "snp_label": np.array(snp_labels),
+    }
+    return payload, arrays
+
+
+# ---------------------------------------------------------------------------
+# 0B — per-protein surprise statistics across the whole genome
+# ---------------------------------------------------------------------------
+
+
+def protein_surprise_stats(logp: np.ndarray) -> dict:
+    """Candidate per-protein "a SNP is here" statistics from one protein's residue log P.
+
+    ``surprise = -log P`` (higher = more anomalous). The family flags *singular* anomalies
+    — one residue standing out from the rest of the protein — which is the SNP signature,
+    as opposed to a uniformly hard-to-predict (long conserved) protein. Easy to extend:
+    add a key here and it flows to the parquet sidecar + ranking.
+    """
+    surprise = -np.asarray(logp, dtype=float)
+    n = surprise.size
+    order = np.sort(surprise)[::-1]  # descending: most surprising first
+    top1 = float(order[0])
+    top2 = float(order[1]) if n > 1 else None
+    median = float(np.median(surprise))
+    mad = float(np.median(np.abs(surprise - median)))
+    p99 = float(np.percentile(surprise, 99))
+    p95 = float(np.percentile(surprise, 95))
+    return {
+        "length": int(n),
+        "max_surprise": top1,
+        "top2_surprise": top2,
+        "top1_minus_top2": (top1 - top2) if top2 is not None else None,
+        "max_minus_p99": top1 - p99,
+        "max_minus_p95": top1 - p95,
+        "max_minus_median": top1 - median,
+        "hotspot_z": (top1 - median) / (mad + _EPS),
+        "mean_top3": float(order[: min(3, n)].mean()),
+        "median_surprise": median,
+        "mad_surprise": mad,
+        "p99_surprise": p99,
+        "p95_surprise": p95,
+        "skew_surprise": float(skew(surprise)) if n > 2 else None,
+        "kurtosis_surprise": float(kurtosis(surprise)) if n > 3 else None,
+    }
+
+
+def genome_protein_flags(
+    model,
+    tokenizer,
+    records: list[dict],
+    *,
+    device: str,
+    max_proteins: int | None = None,
+) -> list[dict]:
+    """Unmasked surprise stats for every protein in a genome (flat order preserved)."""
+    rows: list[dict] = []
+    use = records if max_proteins is None else records[:max_proteins]
+    for n, rec in enumerate(use):
+        seq = rec["protein_sequence"]
+        if not seq:
+            continue
+        logp = unmasked_logprobs(model, tokenizer, seq, device=device).numpy()
+        rows.append({"flat_index": rec["flat_index"], "gene_name": rec["gene_name"], **protein_surprise_stats(logp)})
+        if (n + 1) % 1000 == 0:
+            logger.info("  ...scored %d/%d proteins", n + 1, len(use))
+    return rows
+
+
+def _rpob_ranking(flags: pd.DataFrame, rpob_flat_index: int, *, min_length: int) -> dict:
+    """Where mutated rpoB ranks among the genome's proteins by each candidate statistic."""
+    ranked = flags[flags["length"] >= min_length].copy()
+    out: dict = {"n_ranked": int(len(ranked)), "min_length": min_length, "by_stat": {}}
+    rpob_rows = ranked[ranked["flat_index"] == rpob_flat_index]
+    if rpob_rows.empty:
+        out["rpob_present_in_ranking"] = False
+        return out
+    out["rpob_present_in_ranking"] = True
+    out["rpob_gene_name"] = str(rpob_rows.iloc[0]["gene_name"])
+    n = len(ranked)
+    for stat in RANK_STATS:
+        if stat not in ranked.columns:
+            continue
+        s = ranked[stat]
+        rpob_val = float(rpob_rows.iloc[0][stat]) if pd.notna(rpob_rows.iloc[0][stat]) else None
+        if rpob_val is None:
+            continue
+        rank = int((s > rpob_val).sum()) + 1  # 1 = most anomalous
+        out["by_stat"][stat] = {
+            "rpob_value": rpob_val, "rpob_rank": rank, "rpob_percentile": float(100.0 * (1 - (rank - 1) / n)),
+        }
+    return out
+
+
+def _top_proteins(flags: pd.DataFrame, *, min_length: int, top_n: int) -> dict:
+    """The top-N proteins by each plotted statistic (what the flag actually selects)."""
+    ranked = flags[flags["length"] >= min_length]
+    out: dict = {}
+    for stat in PLOT_STATS:
+        top = ranked.nlargest(top_n, stat)[["flat_index", "gene_name", stat, "length"]]
+        out[stat] = [
+            {"flat_index": int(r.flat_index), "gene_name": (None if pd.isna(r.gene_name) else str(r.gene_name)),
+             "value": float(getattr(r, stat)), "length": int(r.length)}
+            for r in top.itertuples()
+        ]
+    return out
+
+
+def run_0b(
+    model,
+    tokenizer,
+    genotype: pd.DataFrame,
+    resistant_ids: list[str],
+    wt_ids: list[str],
+    parquet_dir: Path,
+    *,
+    device: str,
+    min_length: int,
+    top_n: int,
+    max_proteins: int | None,
+) -> tuple[dict, pd.DataFrame]:
+    """0B over a handful of genomes → (JSON payload, per-protein parquet frame)."""
+    genomes: list[dict] = []
+    all_rows: list[pd.DataFrame] = []
+    for role, ids in (("resistant", resistant_ids), ("wt", wt_ids)):
+        for sid in ids:
+            flat_index = int(genotype.loc[sid, "rpob_flat_index"])
+            records = flatten_proteins(pd.read_parquet(parquet_dir / f"{sid}_protein_sequences.parquet",
+                                                       columns=_NEEDED_COLS))
+            logger.info("0B %s %s: scoring %d proteins (rpoB flat idx %d)", role, sid, len(records), flat_index)
+            flags = pd.DataFrame(genome_protein_flags(model, tokenizer, records, device=device,
+                                                      max_proteins=max_proteins))
+            flags.insert(0, "sample", sid)
+            flags.insert(1, "role", role)
+            all_rows.append(flags)
+            genomes.append({
+                "sample": sid, "role": role, "n_proteins": int(len(flags)),
+                "rpob_flat_index": flat_index,
+                "rpob_ranking": _rpob_ranking(flags, flat_index, min_length=min_length),
+                "top_proteins": _top_proteins(flags, min_length=min_length, top_n=top_n),
+            })
+
+    parquet_df = pd.concat(all_rows, ignore_index=True) if all_rows else pd.DataFrame()
+    # Aggregate: rpoB percentile by stat, resistant vs susceptible.
+    agg: dict = {"rpob_percentile_by_stat": {}}
+    for stat in RANK_STATS:
+        for role in ("resistant", "wt"):
+            pcts = [g["rpob_ranking"]["by_stat"].get(stat, {}).get("rpob_percentile")
+                    for g in genomes if g["role"] == role and g["rpob_ranking"].get("rpob_present_in_ranking")]
+            pcts = [p for p in pcts if p is not None]
+            agg["rpob_percentile_by_stat"].setdefault(stat, {})[role] = (
+                float(np.mean(pcts)) if pcts else None)
+    payload = {"summary": {"n_genomes": len(genomes), "min_length": min_length,
+                           "rank_stats": list(RANK_STATS), "aggregate": agg},
+               "genomes": genomes}
+    return payload, parquet_df
 
 
 # ---------------------------------------------------------------------------
@@ -301,94 +459,84 @@ def gene_distribution(
 # ---------------------------------------------------------------------------
 
 
-def plot_window(window_result: dict, out_path: Path) -> None:
-    """0A: masked + unmasked log-prob across the window, SNP marked (offset axis)."""
+def plot_0a(payload: dict, arrays: dict, out_dir: Path) -> None:
+    """0A: across-isolate SNP scatter, per-isolate r histogram, pooled hexbin."""
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    profile = window_result["profile"]
-    offsets = [e["offset_from_primary"] for e in profile]
-    masked = [e["masked_logp"] for e in profile]
-    unmasked = [e["unmasked_logp"] for e in profile]
+    sm, su = arrays["snp_masked"], arrays["snp_unmasked"]
+    if sm.size:
+        fig, ax = plt.subplots(figsize=(6, 6))
+        ax.scatter(sm, su, s=40, alpha=0.6, color="C3")
+        lim = [min(sm.min(), su.min()) - 0.5, max(sm.max(), su.max()) + 0.5]
+        ax.plot(lim, lim, ls="--", lw=1, color="grey")
+        r = payload["summary"]["snp_site_scatter"]["pearson"]
+        ax.set_xlabel("masked log P at resistance residue")
+        ax.set_ylabel("unmasked log P at resistance residue")
+        ax.set_title(f"0A across-isolate SNP scatter (n={sm.size}, Pearson {r:.3f})" if r else "0A SNP scatter")
+        ax.grid(alpha=0.3)
+        fig.tight_layout()
+        fig.savefig(out_dir / "phase0a_snp_scatter.png", dpi=150)
+        plt.close(fig)
 
-    fig, ax = plt.subplots(figsize=(9, 4))
-    ax.plot(offsets, masked, marker="o", ms=3, color="C3", label="masked log P(obs)")
-    ax.plot(offsets, unmasked, marker="s", ms=3, color="C0", label="unmasked log P(obs)")
-    for e in profile:
-        if e["is_hotspot"]:
-            ax.axvline(e["offset_from_primary"], ls="--", lw=1, color="grey")
-    ax.set_xlabel("residue offset from primary hotspot")
-    ax.set_ylabel("log P(observed)  (low = surprising)")
-    ax.set_title(f"0A window — {window_result['role']} {window_result['sample']} (codon {window_result['primary_codon']})")
-    ax.legend()
-    ax.grid(alpha=0.3)
-    fig.tight_layout()
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=150)
-    plt.close(fig)
+    rp = arrays["isolate_pearson"][arrays["isolate_role"] == "resistant"]
+    rp = rp[~np.isnan(rp)]
+    if rp.size:
+        fig, ax = plt.subplots(figsize=(7, 4))
+        ax.hist(rp, bins=min(30, max(5, rp.size)), color="C0", alpha=0.8)
+        ax.set_xlabel("per-isolate Pearson r (masked vs unmasked, whole gene)")
+        ax.set_ylabel("isolates")
+        ax.set_title(f"0A per-isolate proxy correlation (n={rp.size} resistant)")
+        ax.grid(axis="y", alpha=0.3)
+        fig.tight_layout()
+        fig.savefig(out_dir / "phase0a_per_isolate_r_hist.png", dpi=150)
+        plt.close(fig)
+
+    pm, pu = arrays["pooled_masked"], arrays["pooled_unmasked"]
+    if pm.size:
+        fig, ax = plt.subplots(figsize=(6, 6))
+        hb = ax.hexbin(pm, pu, gridsize=50, bins="log", cmap="viridis")
+        fig.colorbar(hb, ax=ax, label="log10(count)")
+        ax.set_xlabel("masked log P(observed)")
+        ax.set_ylabel("unmasked log P(observed)")
+        ax.set_title(f"0A pooled positions (n={pm.size}, Pearson {payload['summary']['pooled_pearson']:.3f})")
+        fig.tight_layout()
+        fig.savefig(out_dir / "phase0a_pooled_hexbin.png", dpi=150)
+        plt.close(fig)
 
 
-def plot_proxy_scatter(windows: list[dict], out_path: Path) -> None:
-    """0A: masked vs unmasked across all resistant window positions, with hotspots flagged."""
+def plot_0b(payload: dict, parquet_df: pd.DataFrame, *, min_length: int, out_dir: Path) -> None:
+    """0B: per-stat rank curve (sorted across proteins) with rpoB marked, R vs S."""
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    masked, unmasked, is_hot = [], [], []
-    for w in windows:
-        if w["role"] != "resistant":
-            continue
-        for e in w["profile"]:
-            masked.append(e["masked_logp"])
-            unmasked.append(e["unmasked_logp"])
-            is_hot.append(e["is_hotspot"])
-    if not masked:
-        return
-    masked, unmasked, is_hot = np.array(masked), np.array(unmasked), np.array(is_hot)
-
-    fig, ax = plt.subplots(figsize=(6, 6))
-    ax.scatter(masked[~is_hot], unmasked[~is_hot], s=12, alpha=0.5, color="C0", label="WT window residue")
-    ax.scatter(masked[is_hot], unmasked[is_hot], s=60, color="C3", marker="*", label="resistance SNP")
-    pr = pearsonr(masked, unmasked)[0]
-    sr = spearmanr(masked, unmasked)[0]
-    ax.set_xlabel("masked log P(observed)")
-    ax.set_ylabel("unmasked log P(observed)")
-    ax.set_title(f"0A masked vs unmasked proxy — Pearson {pr:.3f}, Spearman {sr:.3f}")
-    ax.legend()
-    ax.grid(alpha=0.3)
-    fig.tight_layout()
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=150)
-    plt.close(fig)
-
-
-def plot_distributions(groups: dict[str, list[float]], out_path: Path) -> None:
-    """0B: violin of per-residue log P pooled by (role, gene-category)."""
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    labels = [k for k, v in groups.items() if v]
-    data = [np.array(groups[k]) for k in labels]
-    if not data:
-        return
-    fig, ax = plt.subplots(figsize=(1.6 * len(labels) + 3, 5))
-    parts = ax.violinplot(data, showmedians=True, showextrema=True)
-    for pc in parts["bodies"]:
-        pc.set_alpha(0.6)
-    ax.set_xticks(range(1, len(labels) + 1))
-    ax.set_xticklabels(labels, rotation=20, ha="right")
-    ax.set_ylabel("log P(observed)  (low = surprising)")
-    ax.set_title("0B per-residue surprise distributions (unmasked)")
-    ax.grid(axis="y", alpha=0.3)
-    fig.tight_layout()
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=150)
-    plt.close(fig)
+    rpob_by_sample = {g["sample"]: g["rpob_flat_index"] for g in payload["genomes"]}
+    role_by_sample = {g["sample"]: g["role"] for g in payload["genomes"]}
+    ranked = parquet_df[parquet_df["length"] >= min_length]
+    for stat in PLOT_STATS:
+        fig, ax = plt.subplots(figsize=(9, 5))
+        for sample, sub in ranked.groupby("sample"):
+            vals = np.sort(sub[stat].to_numpy(dtype=float))[::-1]
+            role = role_by_sample[sample]
+            color = "C3" if role == "resistant" else "C0"
+            ax.plot(range(1, vals.size + 1), vals, lw=1, alpha=0.6, color=color)
+            rp = sub[sub["flat_index"] == rpob_by_sample[sample]]
+            if not rp.empty:
+                rank = int((sub[stat] > float(rp.iloc[0][stat])).sum()) + 1
+                ax.scatter([rank], [float(rp.iloc[0][stat])], s=80, marker="*",
+                           edgecolor="k", color=color, zorder=5)
+        ax.set_xscale("log")
+        ax.set_xlabel("protein rank (1 = most anomalous)")
+        ax.set_ylabel(stat)
+        ax.set_title(f"0B per-protein {stat} across the genome (★ = rpoB; red R, blue S)")
+        ax.grid(alpha=0.3)
+        fig.tight_layout()
+        fig.savefig(out_dir / f"phase0b_rankcurve_{stat}.png", dpi=150)
+        plt.close(fig)
 
 
 # ---------------------------------------------------------------------------
@@ -401,111 +549,73 @@ def run_probe(
     ast_sheet_path: Path,
     parquet_dir: Path,
     drug: str,
+    phase: str,
     device: str,
+    scope: str,
     window: int,
     n_resistant: int,
     n_wt: int,
     pool_size: int,
+    diverse: bool,
+    min_length: int,
+    top_n: int,
+    max_proteins: int | None,
     out_json: Path,
     out_dir: Path,
     qc_log_path: Path,
 ) -> dict:
-    """Run 0A + 0B over a few resistant + WT isolates; write JSON + plots."""
+    """Genotype a pool, select isolates, run the requested phase(s); write JSON + sidecars + plots."""
     reference = load_reference()
     label_map, train_ids, validate_ids, evaluate_ids, split_info = resolve_clean_splits(ast_sheet_path, drug)
     pool = [*train_ids, *validate_ids, *evaluate_ids][:pool_size]
     logger.info("Genotyping a pool of %d labelled samples to source isolates", len(pool))
     genotype = build_genotype_table(pool, parquet_dir, reference, qc_log_path=qc_log_path)
 
-    resistant_ids, wt_ids = select_isolates(genotype, label_map, n_resistant=n_resistant, n_wt=n_wt)
+    resistant_ids, wt_ids = select_isolates(
+        genotype, label_map, reference, n_resistant=n_resistant, n_wt=n_wt, diverse=diverse
+    )
     if not resistant_ids:
         raise RuntimeError("No resistant rpoB-mutant isolate found in the pool — raise --pool-size.")
-    logger.info("Selected resistant=%s wt=%s", resistant_ids, wt_ids)
+    logger.info("Selected %d resistant + %d wt isolates", len(resistant_ids), len(wt_ids))
 
     model, tokenizer = load_esmc_mlm(device=device)
-
-    # The primary codon controls where the WT window is centred (first resistant hotspot).
-    first_hotspots = hotspot_codons(genotype.loc[resistant_ids[0]], reference)
-    primary_codon = first_hotspots[0][0]
-
-    # --- 0A: windowed masked-vs-unmasked proxy --------------------------------
-    windows: list[dict] = []
-    for sid in resistant_ids:
-        hotspots = hotspot_codons(genotype.loc[sid], reference)
-        logger.info("0A resistant %s hotspots=%s", sid, hotspots)
-        windows.append(windowed_proxy(
-            model, tokenizer, genotype.loc[sid, "rpob_sequence"], reference,
-            role="resistant", sample_id=sid, hotspots=hotspots,
-            primary_codon=hotspots[0][0], window=window, device=device,
-        ))
-    for sid in wt_ids:
-        logger.info("0A wt control %s (codon %d)", sid, primary_codon)
-        windows.append(windowed_proxy(
-            model, tokenizer, genotype.loc[sid, "rpob_sequence"], reference,
-            role="wt", sample_id=sid, hotspots=[], primary_codon=primary_codon,
-            window=window, device=device,
-        ))
-
-    # --- 0B: full-gene + 2-neighbour distributions ----------------------------
-    distributions: list[dict] = []
-    pooled: dict[str, list[float]] = {
-        "rpoB (resistant)": [], "rpoB (WT)": [], "neighbours (resistant)": [], "neighbours (WT)": [],
-    }
-    for role, ids in (("resistant", resistant_ids), ("wt", wt_ids)):
-        for sid in ids:
-            flat_index = int(genotype.loc[sid, "rpob_flat_index"])
-            neigh = _neighbour_records(parquet_dir, sid, flat_index)
-            # rpoB — with the resistance residue's rank, if this isolate has a hotspot.
-            res_pos = None
-            if role == "resistant":
-                hs = hotspot_codons(genotype.loc[sid], reference)
-                res_pos = sample_codon_positions(
-                    genotype.loc[sid, "rpob_sequence"], reference, [hs[0][0]]
-                ).get(hs[0][0])
-            rec, logp = gene_distribution(
-                model, tokenizer, genotype.loc[sid, "rpob_sequence"], sample_id=sid, role=role,
-                gene_slot="rpoB", gene_name="rpoB", flat_index=flat_index, device=device,
-                resistance_position=res_pos,
-            )
-            distributions.append(rec)
-            pooled[f"rpoB ({'resistant' if role == 'resistant' else 'WT'})"].extend(logp.tolist())
-            for slot in ("neighbour_minus1", "neighbour_plus1"):
-                nrec = neigh[slot]
-                if nrec is None:
-                    continue
-                rec_n, logp_n = gene_distribution(
-                    model, tokenizer, nrec["protein_sequence"], sample_id=sid, role=role,
-                    gene_slot=slot, gene_name=nrec["gene_name"], flat_index=nrec["flat_index"], device=device,
-                )
-                distributions.append(rec_n)
-                pooled[f"neighbours ({'resistant' if role == 'resistant' else 'WT'})"].extend(logp_n.tolist())
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     payload: dict = {
-        "schema_version": "1.0",
+        "schema_version": "2.0",
         "task": "snp_embeddings",
         "analysis": "llr_distribution_probe",
         "drug": drug,
         "device": device,
-        "window": window,
+        "phase": phase,
         "reference": "UniProt P9WGY9 (H37Rv rpoB)",
         "split": split_info,
-        "primary_codon": int(primary_codon),
         "selected": {"resistant": resistant_ids, "wt": wt_ids, "pool_size": len(pool),
                      "n_single_copy_genotyped": int(len(genotype))},
-        "phase_0a": {"windows": windows},
-        "phase_0b": {"distributions": distributions},
     }
 
-    # Plots.
-    out_dir.mkdir(parents=True, exist_ok=True)
-    for w in windows:
-        plot_window(w, out_dir / f"phase0a_window_{w['role']}_{w['sample']}.png")
-    plot_proxy_scatter(windows, out_dir / "phase0a_masked_vs_unmasked_scatter.png")
-    plot_distributions(pooled, out_dir / "phase0b_distributions.png")
+    if phase in ("0a", "both"):
+        payload_0a, arrays = run_0a(model, tokenizer, genotype, resistant_ids, wt_ids, reference,
+                                    scope=scope, window=window, device=device)
+        payload["phase_0a"] = payload_0a
+        npz_path = out_json.with_name(out_json.stem + "_0a_points.npz")
+        np.savez(npz_path, **arrays)
+        logger.info("Wrote %s", npz_path)
+        plot_0a(payload_0a, arrays, out_dir)
 
-    out_json.parent.mkdir(parents=True, exist_ok=True)
+    if phase in ("0b", "both"):
+        payload_0b, parquet_df = run_0b(model, tokenizer, genotype, resistant_ids, wt_ids, parquet_dir,
+                                        device=device, min_length=min_length, top_n=top_n, max_proteins=max_proteins)
+        payload["phase_0b"] = payload_0b
+        if not parquet_df.empty:
+            pq_path = out_json.with_name(out_json.stem + "_0b_protein_stats.parquet")
+            parquet_df.to_parquet(pq_path, index=False)
+            logger.info("Wrote %s (%d protein rows)", pq_path, len(parquet_df))
+            plot_0b(payload_0b, parquet_df, min_length=min_length, out_dir=out_dir)
+
     payload["timestamp"] = datetime.now(timezone.utc).isoformat()
     payload["host"] = socket.gethostname()
+    out_json.parent.mkdir(parents=True, exist_ok=True)
     out_json.write_text(json.dumps(payload, indent=2))
     logger.info("Wrote %s + plots in %s", out_json, out_dir)
     return payload
@@ -518,31 +628,47 @@ def main() -> None:
                         help="binary_ast_with_split.csv (Sample/phenotype-BioSample_ID, drug, train_val_eval).")
     parser.add_argument("--parquet-dir", type=Path, required=True, help="Dir of *_protein_sequences.parquet.")
     parser.add_argument("--output-json", type=Path, required=True, help="Where to write the probe JSON.")
-    parser.add_argument("--output-dir", type=Path, default=None, help="Dir for the plots (default: JSON's dir).")
+    parser.add_argument("--output-dir", type=Path, default=None, help="Dir for plots + sidecars (default: JSON's dir).")
     parser.add_argument("--drug", type=str, default="rifampin", help="Phenotype column (default rifampin).")
+    parser.add_argument("--phase", choices=["0a", "0b", "both"], default="both",
+                        help="0a = whole-gene proxy proof; 0b = cross-genome per-protein flag (default both).")
     parser.add_argument("--device", type=str, default="cpu", help="Torch device (default cpu — Stage-A smoke).")
+    parser.add_argument("--masked-scope", choices=["gene", "window"], default="gene",
+                        help="0A masked coverage: 'gene' (every residue, the proof) or 'window' (±W, cheap smoke).")
     parser.add_argument("--window", type=int, default=25,
-                        help="±W residues around the hotspot for 0A (default 25; 100 for a stronger test).")
+                        help="±W residues around the hotspot when --masked-scope window (default 25).")
     parser.add_argument("--n-resistant", type=int, default=3, help="Resistant rpoB-mutant isolates (default 3).")
-    parser.add_argument("--n-wt", type=int, default=1, help="WT/susceptible control isolates (default 1).")
-    parser.add_argument("--pool-size", type=int, default=300,
-                        help="Labelled samples to genotype when sourcing isolates (default 300).")
-    parser.add_argument("--qc-log", type=Path, default=Path("rpob_copy_qc.log"),
-                        help="Where to write the rpoB-copy QC log (default: ./rpob_copy_qc.log).")
+    parser.add_argument("--n-wt", type=int, default=3, help="WT/susceptible control isolates (default 3).")
+    parser.add_argument("--pool-size", type=int, default=500,
+                        help="Labelled samples to genotype when sourcing isolates (default 500).")
+    parser.add_argument("--diverse-hotspots", action=argparse.BooleanOptionalAction, default=True,
+                        help="Span distinct hotspot codon-sets for the resistant picks (default on; "
+                             "--no-diverse-hotspots takes the natural distribution, for the n=100 proof).")
+    parser.add_argument("--min-protein-length", type=int, default=30,
+                        help="0B: exclude proteins shorter than this from the cross-genome ranking (default 30).")
+    parser.add_argument("--top-n", type=int, default=20, help="0B: report the top-N flagged proteins per stat.")
+    parser.add_argument("--max-proteins-per-genome", type=int, default=None,
+                        help="0B: cap proteins scored per genome (CPU smoke; default all).")
     args = parser.parse_args()
 
     run_probe(
         ast_sheet_path=args.ast_sheet_path,
         parquet_dir=args.parquet_dir,
         drug=args.drug,
+        phase=args.phase,
         device=args.device,
+        scope=args.masked_scope,
         window=args.window,
         n_resistant=args.n_resistant,
         n_wt=args.n_wt,
         pool_size=args.pool_size,
+        diverse=args.diverse_hotspots,
+        min_length=args.min_protein_length,
+        top_n=args.top_n,
+        max_proteins=args.max_proteins_per_genome,
         out_json=args.output_json,
         out_dir=args.output_dir or args.output_json.parent,
-        qc_log_path=args.qc_log,
+        qc_log_path=args.output_json.with_name("rpob_copy_qc.log"),
     )
 
 
