@@ -47,17 +47,24 @@ import numpy as np
 import pandas as pd
 
 # Drug classes for the composite headline figure (surveillance R rate over time).
-# Aztreonam (monobactam) is included in beta-lactams per user direction.
+# Aztreonam (monobactam) sits with the beta-lactams (same general path).
+# Cefoxitin (cephamycin) is grouped under "Other" — its resistance in Kp is
+# driven by AmpC β-lactamases (chromosomal or pAmpC: CMY/DHA/FOX/ACT/MIR),
+# not by the ESBLs (CTX-M / SHV-ESBL / TEM-ESBL) that drive the rest of the
+# 3rd-gen cephalosporins; lumping them together obscures both stories.
 DRUG_CLASSES: list[tuple[str, list[str]]] = [
     ("Beta-lactams", [
         "ampicillin-sulbactam", "piperacillin-tazobactam", "cefazolin",
-        "cefoxitin", "cefuroxime", "ceftriaxone", "ceftazidime",
-        "cefepime", "cefotaxime", "aztreonam",
+        "cefuroxime", "ceftriaxone", "ceftazidime", "cefepime",
+        "cefotaxime", "aztreonam",
     ]),
     ("Carbapenems", ["meropenem", "imipenem", "ertapenem"]),
     ("Fluoroquinolones", ["ciprofloxacin", "levofloxacin"]),
     ("Aminoglycosides", ["gentamicin", "amikacin", "tobramycin"]),
-    ("Other", ["azithromycin", "colistin", "tetracycline", "trimethoprim-sulfamethoxazole"]),
+    ("Other", [
+        "cefoxitin", "azithromycin", "colistin", "tetracycline",
+        "trimethoprim-sulfamethoxazole",
+    ]),
 ]
 
 # Panel order matches eval_panel_on_slurm.sh + predict_amr_panel_on_slurm.sh.
@@ -277,16 +284,23 @@ def _smooth_kalman(
     binned: pd.Series,
     *,
     binary: bool,
+    level_spec: str = "local level",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
-    """Stage 2a: state-space **local linear trend** smoother on a binned series.
+    """Stage 2a: state-space smoother on a binned series via Kalman filter + RTS.
 
-    Uses ``statsmodels.tsa.statespace.structural.UnobservedComponents`` — the
-    Kalman filter + RTS smoother give the posterior mean + variance of the
-    latent level at every bin. Empty bins are handled natively (state
-    propagates without an update; CI widens through gaps).
+    Uses ``statsmodels.tsa.statespace.structural.UnobservedComponents``. Posterior
+    mean + variance of the latent level at every bin. Empty bins are handled
+    natively (state propagates without an update; CI widens through gaps).
 
-    Falls back to ``"local level"`` (pure random-walk) if local-linear-trend
-    optimisation fails.
+    Parameters
+    ----------
+    level_spec : str
+        Underlying state-space level form. Default ``"local level"`` (pure
+        random walk — locally adaptive, lets genuine quarter-to-quarter rate
+        movement come through; user's preferred form). Use ``"local linear
+        trend"`` (random walk + random slope) for stronger smoothing of
+        smooth-trended drugs, or ``"smooth trend"`` (slope-only) for the
+        smoothest fit.
 
     Returns
     -------
@@ -299,13 +313,14 @@ def _smooth_kalman(
         return None
 
     try:
-        ss = UnobservedComponents(binned.values, level="local linear trend")
+        ss = UnobservedComponents(binned.values, level=level_spec)
         ss_fit = ss.fit(disp=False, maxiter=200)
     except Exception as exc:  # noqa: BLE001
+        # Fall back to the simplest level form if MLE optimisation fails.
         try:
             ss = UnobservedComponents(binned.values, level="local level")
             ss_fit = ss.fit(disp=False, maxiter=200)
-            print(f"  (Kalman: local-linear-trend failed, fell back to local-level — {exc})")
+            print(f"  (Kalman: {level_spec!r} failed, fell back to local-level — {exc})")
         except Exception as exc2:  # noqa: BLE001
             print(f"  Kalman smoother failed: {exc2}")
             return None
@@ -433,6 +448,7 @@ def plot_one_drug(
     strata: frozenset[str] = frozenset({"AMR", "Surveillance", "NA", "All", "EBI"}),
     ribbon_smoother: str = "kalman",
     min_per_bin: int = 10,
+    kalman_level: str = "local level",
 ) -> Path | None:
     """Render and save the per-drug fitted-trend plot.
 
@@ -485,7 +501,7 @@ def plot_one_drug(
         first = True
         for smoother in smoothers:
             if smoother == "kalman":
-                fit = _smooth_kalman(binned, binary=True)
+                fit = _smooth_kalman(binned, binary=True, level_spec=kalman_level)
             elif smoother == "arima":
                 fit = _smooth_arima(binned, order=arima_order, trend=arima_trend, binary=True)
             else:
@@ -567,6 +583,7 @@ def plot_class_composite(
     df_spline: int = 5,
     bin_freq: str = "QS",
     min_per_bin: int = 10,
+    kalman_level: str = "local level",
 ) -> Path | None:
     """Composite headline figure: per-drug-class panel of surveillance R rate trends.
 
@@ -615,7 +632,7 @@ def plot_class_composite(
             )
             if binned is None:
                 continue
-            fit = _smooth_kalman(binned, binary=True)
+            fit = _smooth_kalman(binned, binary=True, level_spec=kalman_level)
             if fit is None:
                 continue
             grid_dates, pred, lo, hi = fit
@@ -747,6 +764,14 @@ def main() -> None:
              "(noisy bin mean → 'incoherent bits'). Default 10.",
     )
     p.add_argument(
+        "--kalman-level", default="local level",
+        help="State-space level form for the Kalman smoother. Default "
+             "'local level' (random walk; locally adaptive, lets genuine "
+             "quarter-to-quarter movement come through). 'local linear trend' "
+             "is the previous default (random walk + random slope — smoother). "
+             "'smooth trend' (slope-only) is the smoothest fit.",
+    )
+    p.add_argument(
         "--ribbon-smoother", default="kalman",
         choices=("kalman", "arima", "none"),
         help="Which smoother's CI to draw as a ribbon. Default 'kalman' — only "
@@ -846,6 +871,7 @@ def main() -> None:
             df_spline=args.df_spline,
             bin_freq=args.bin_freq,
             min_per_bin=args.min_per_bin,
+            kalman_level=args.kalman_level,
         )
         if path is None:
             raise SystemExit("Composite figure produced no lines — check stratum / data filters.")
@@ -868,6 +894,7 @@ def main() -> None:
             strata=strata,
             ribbon_smoother=args.ribbon_smoother,
             min_per_bin=args.min_per_bin,
+            kalman_level=args.kalman_level,
         )
         if path is not None:
             written.append(drug)
