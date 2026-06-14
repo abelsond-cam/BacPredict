@@ -1,0 +1,450 @@
+{
+  "task": "snp_embeddings",
+  "analysis": "unmasked_surprisal_scan",
+  "n_genomes": 1000,
+  "n_proteins": 4072339,
+  "params": {
+    "mad_floor": 0.7315223217010498,
+    "min_protein_length": 30
+  },
+  "stat_descriptions": {
+    "max_surprisal": "sharpest single anomaly (the SNP); inflated by length & intrinsic divergence",
+    "mean_top3": "level of the most-surprising residues (magnitude; orthogonal to the shape stats)",
+    "hotspot_z_floored": "(max\u2212median)/MAD: peak above the protein's typical residue; masking-prone with many outliers",
+    "self_z": "(max\u2212\u03bc)/\u03c3: peak in SDs above its OWN background; shrinks for hypervariable proteins",
+    "self_z_trimmed": "self-z with the top-3 excluded from \u03bc,\u03c3 \u2014 removes self-contamination of the scale",
+    "top_minus_mean_rest": "peak height above the mean of all other residues; shrinks when many residues are elevated",
+    "participation_ratio": "effective # of residues sharing the surprisal mass (\u22481 = single spike \u2192 LOW is anomalous)",
+    "gini": "concentration of surprisal across residues (\u21921 = one residue hogs it)",
+    "kurtosis_surprisal": "peakedness/tail-heaviness of the whole residue distribution (high = spiky)"
+  },
+  "spatial_autocorrelation": {
+    "lags": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20
+    ],
+    "acf": [
+      0.22543072242847612,
+      0.19877609874384247,
+      0.22001596226477738,
+      0.21323606465753092,
+      0.172049056574436,
+      0.1561836830679089,
+      0.16530046917855137,
+      0.15167556737443988,
+      0.13119440026254073,
+      0.13479638750598485,
+      0.13063074179167458,
+      0.12370583775672729,
+      0.11653317129464859,
+      0.11645742952351634,
+      0.11934733477856728,
+      0.11035097912893513,
+      0.10994960048533406,
+      0.11174208168254508,
+      0.10826246961658686,
+      0.10971934371769268
+    ],
+    "lag1": 0.22543072242847612,
+    "profile_offsets": [
+      -25,
+      -24,
+      -23,
+      -22,
+      -21,
+      -20,
+      -19,
+      -18,
+      -17,
+      -16,
+      -15,
+      -14,
+      -13,
+      -12,
+      -11,
+      -10,
+      -9,
+      -8,
+      -7,
+      -6,
+      -5,
+      -4,
+      -3,
+      -2,
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25
+    ],
+    "profile_mean": [
+      1.3503931246280432,
+      1.345761507726143,
+      1.3326463643569637,
+      1.3232292156804877,
+      1.3262462609091634,
+      1.338672094181616,
+      1.3450018485934376,
+      1.3734853773984412,
+      1.380469263018465,
+      1.3549114639148916,
+      1.3559974079829933,
+      1.3884222063800895,
+      1.3462022450947142,
+      1.3718424756705756,
+      1.3579880392969874,
+      1.379477430870494,
+      1.348281976762958,
+      1.3805736696422524,
+      1.3659793863220724,
+      1.3970849214286658,
+      1.390676281515659,
+      1.4292111325821042,
+      1.4409945992494024,
+      1.3762878340636944,
+      1.4729820784169854,
+      6.17973575211687,
+      1.4687305138856095,
+      1.4407601071627691,
+      1.4459573521655547,
+      1.4317640179222282,
+      1.3613966971807219,
+      1.374972046958425,
+      1.393596980652128,
+      1.3942320395945582,
+      1.3663270679226125,
+      1.3462716685687732,
+      1.3376443944037806,
+      1.3375031803243633,
+      1.352641124900492,
+      1.3465576216480235,
+      1.3652819160482192,
+      1.3823528686901267,
+      1.3259044648248455,
+      1.3864261745386548,
+      1.3688966105087113,
+      1.396883760105098,
+      1.3350998936065328,
+      1.3879106858464207,
+      1.3522975780063309,
+      1.3466722420274602,
+      1.3424110990576652
+    ],
+    "background_mean": 1.3886955225896944,
+    "n_proteins": 4072339,
+    "n_residues": 1281416634
+  },
+  "rpob_acf_from_0a": [
+    0.26019631990015757,
+    0.22566280193629173,
+    0.22490511534217195,
+    0.3126568946760609,
+    0.22677867187912154,
+    0.192265315138015,
+    0.19540990160532457,
+    0.2192064403363755,
+    0.1764242862733892,
+    0.16920002929806946,
+    0.16218719678352314,
+    0.17441937045575254,
+    0.12462922016735581,
+    0.1596388752448599,
+    0.14935982228899644,
+    0.1524759581220029,
+    0.059837640361390367,
+    0.11000686679485575,
+    0.11806574213195864,
+    0.10381736782220885
+  ],
+  "rpob_percentile_by_stat": {
+    "min_length": 30,
+    "by_stat": {
+      "max_surprisal": {
+        "resistant": {
+          "mean_percentile": 87.83271652885037,
+          "n": 500
+        },
+        "wt": {
+          "mean_percentile": 86.06174889276478,
+          "n": 500
+        }
+      },
+      "mean_top3": {
+        "resistant": {
+          "mean_percentile": 97.3495123441106,
+          "n": 500
+        },
+        "wt": {
+          "mean_percentile": 95.92413247832073,
+          "n": 500
+        }
+      },
+      "hotspot_z_floored": {
+        "resistant": {
+          "mean_percentile": 93.9580051035579,
+          "n": 500
+        },
+        "wt": {
+          "mean_percentile": 93.22434737956875,
+          "n": 500
+        }
+      },
+      "self_z": {
+        "resistant": {
+          "mean_percentile": 91.88604409085077,
+          "n": 500
+        },
+        "wt": {
+          "mean_percentile": 91.4604788183597,
+          "n": 500
+        }
+      },
+      "self_z_trimmed": {
+        "resistant": {
+          "mean_percentile": 86.20534498777933,
+          "n": 500
+        },
+        "wt": {
+          "mean_percentile": 85.68575940134423,
+          "n": 500
+        }
+      },
+      "top_minus_mean_rest": {
+        "resistant": {
+          "mean_percentile": 90.67719172646237,
+          "n": 500
+        },
+        "wt": {
+          "mean_percentile": 89.71675579479526,
+          "n": 500
+        }
+      },
+      "participation_ratio": {
+        "resistant": {
+          "mean_percentile": 3.300654497986637,
+          "n": 500
+        },
+        "wt": {
+          "mean_percentile": 3.6226417943570777,
+          "n": 500
+        }
+      },
+      "gini": {
+        "resistant": {
+          "mean_percentile": 89.05447239091701,
+          "n": 500
+        },
+        "wt": {
+          "mean_percentile": 89.64813473337094,
+          "n": 500
+        }
+      },
+      "kurtosis_surprisal": {
+        "resistant": {
+          "mean_percentile": 88.42611208463333,
+          "n": 500
+        },
+        "wt": {
+          "mean_percentile": 86.63526179995583,
+          "n": 500
+        }
+      }
+    }
+  },
+  "per_gene_stat_descriptions": {
+    "max_surprisal": "highest residue surprisal \u2014 the SNP peak; also rises with length & divergence",
+    "top2_surprisal": "second-highest residue surprisal in the gene",
+    "top3_surprisal": "third-highest residue surprisal (from the raw per-residue dump)",
+    "top10_surprisal": "tenth-highest residue surprisal \u2014 how fast the upper tail decays",
+    "p90_surprisal": "90th-percentile residue surprisal \u2014 bulk upper level, robust to one spike",
+    "median_surprisal": "typical residue surprisal \u2014 the gene's background level",
+    "length": "number of residues; proteins differ in length and it scales the order stats"
+  },
+  "per_gene_stat_summary": {
+    "min_length": 30,
+    "by_stat": {
+      "max_surprisal": {
+        "all_other_genes_median": 6.096966743469238,
+        "resistant_rpob_median": 7.612043380737305,
+        "wt_rpob_median": 7.504063129425049
+      },
+      "top2_surprisal": {
+        "all_other_genes_median": 5.449282646179199,
+        "resistant_rpob_median": 7.479918479919434,
+        "wt_rpob_median": 7.4966206550598145
+      },
+      "top3_surprisal": {
+        "all_other_genes_median": 5.08951997756958,
+        "resistant_rpob_median": 7.458411693572998,
+        "wt_rpob_median": 6.883212089538574
+      },
+      "top10_surprisal": {
+        "all_other_genes_median": 4.106269836425781,
+        "resistant_rpob_median": 6.063012599945068,
+        "wt_rpob_median": 6.000751495361328
+      },
+      "p90_surprisal": {
+        "all_other_genes_median": 3.205915641784668,
+        "resistant_rpob_median": 2.77073211669922,
+        "wt_rpob_median": 2.769350767135621
+      },
+      "median_surprisal": {
+        "all_other_genes_median": 0.9448537826538086,
+        "resistant_rpob_median": 0.3438352942466736,
+        "wt_rpob_median": 0.3338916748762131
+      },
+      "length": {
+        "all_other_genes_median": 268.0,
+        "resistant_rpob_median": 1172.0,
+        "wt_rpob_median": 1172.0
+      }
+    }
+  },
+  "stat_correlation_spearman": {
+    "max_surprisal": {
+      "max_surprisal": 1.0,
+      "mean_top3": 0.9333377814,
+      "hotspot_z_floored": 0.7401231504,
+      "self_z": 0.8715257602,
+      "self_z_trimmed": 0.7853922498,
+      "top_minus_mean_rest": 0.9538608667,
+      "participation_ratio": 0.4660018814,
+      "gini": 0.2911539088,
+      "kurtosis_surprisal": 0.460938467
+    },
+    "mean_top3": {
+      "max_surprisal": 0.9333377814,
+      "mean_top3": 1.0,
+      "hotspot_z_floored": 0.6734037992,
+      "self_z": 0.758677932,
+      "self_z_trimmed": 0.6446481098,
+      "top_minus_mean_rest": 0.8801001393,
+      "participation_ratio": 0.5918286015,
+      "gini": 0.2698659859,
+      "kurtosis_surprisal": 0.3865937825
+    },
+    "hotspot_z_floored": {
+      "max_surprisal": 0.7401231504,
+      "mean_top3": 0.6734037992,
+      "hotspot_z_floored": 1.0,
+      "self_z": 0.8447926095,
+      "self_z_trimmed": 0.8327019373,
+      "top_minus_mean_rest": 0.8675477764,
+      "participation_ratio": 0.0894941493,
+      "gini": 0.7708755928,
+      "kurtosis_surprisal": 0.7220394058
+    },
+    "self_z": {
+      "max_surprisal": 0.8715257602,
+      "mean_top3": 0.758677932,
+      "hotspot_z_floored": 0.8447926095,
+      "self_z": 1.0,
+      "self_z_trimmed": 0.9635479292,
+      "top_minus_mean_rest": 0.9229123871,
+      "participation_ratio": 0.2875515018,
+      "gini": 0.5104580979,
+      "kurtosis_surprisal": 0.7009606121
+    },
+    "self_z_trimmed": {
+      "max_surprisal": 0.7853922498,
+      "mean_top3": 0.6446481098,
+      "hotspot_z_floored": 0.8327019373,
+      "self_z": 0.9635479292,
+      "self_z_trimmed": 1.0,
+      "top_minus_mean_rest": 0.8602595067,
+      "participation_ratio": 0.0810253037,
+      "gini": 0.5495468156,
+      "kurtosis_surprisal": 0.7886895255
+    },
+    "top_minus_mean_rest": {
+      "max_surprisal": 0.9538608667,
+      "mean_top3": 0.8801001393,
+      "hotspot_z_floored": 0.8675477764,
+      "self_z": 0.9229123871,
+      "self_z_trimmed": 0.8602595067,
+      "top_minus_mean_rest": 1.0,
+      "participation_ratio": 0.3309646814,
+      "gini": 0.526544328,
+      "kurtosis_surprisal": 0.5854878065
+    },
+    "participation_ratio": {
+      "max_surprisal": 0.4660018814,
+      "mean_top3": 0.5918286015,
+      "hotspot_z_floored": 0.0894941493,
+      "self_z": 0.2875515018,
+      "self_z_trimmed": 0.0810253037,
+      "top_minus_mean_rest": 0.3309646814,
+      "participation_ratio": 1.0,
+      "gini": -0.2090529354,
+      "kurtosis_surprisal": -0.2152556664
+    },
+    "gini": {
+      "max_surprisal": 0.2911539088,
+      "mean_top3": 0.2698659859,
+      "hotspot_z_floored": 0.7708755928,
+      "self_z": 0.5104580979,
+      "self_z_trimmed": 0.5495468156,
+      "top_minus_mean_rest": 0.526544328,
+      "participation_ratio": -0.2090529354,
+      "gini": 1.0,
+      "kurtosis_surprisal": 0.5770165336
+    },
+    "kurtosis_surprisal": {
+      "max_surprisal": 0.460938467,
+      "mean_top3": 0.3865937825,
+      "hotspot_z_floored": 0.7220394058,
+      "self_z": 0.7009606121,
+      "self_z_trimmed": 0.7886895255,
+      "top_minus_mean_rest": 0.5854878065,
+      "participation_ratio": -0.2152556664,
+      "gini": 0.5770165336,
+      "kurtosis_surprisal": 1.0
+    }
+  },
+  "figures": {
+    "stat_histograms_grid": "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/snp_embeddings/unmasked_surprisal_scan/analysis/stat_histograms_grid.png",
+    "surprisal_autocorrelation": "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/snp_embeddings/unmasked_surprisal_scan/analysis/surprisal_autocorrelation.png",
+    "stat_correlation": "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/snp_embeddings/unmasked_surprisal_scan/analysis/stat_correlation.png",
+    "per_gene_stat_panels": "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/snp_embeddings/unmasked_surprisal_scan/analysis/per_gene_stat_panels.png"
+  }
+}
