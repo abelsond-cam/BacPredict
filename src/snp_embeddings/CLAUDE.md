@@ -250,7 +250,22 @@ Versioned results JSON per the §0.4 / `tl/train/metrics.py` convention:
   `…/snp_embeddings/surprisal_analysis/` subfolder (path echoed on output). Headline figures:
   `surprisal_vs_ablation.png` (0A proxy scatter, resistance residues red) and `esm_surprisal.png`
   (2-panel surprisal histogram: per-residue within rpoB | per-protein across the genome). Both are
-  copied to `src/tb_ast/docs/figures/`.
+  copied to `src/tb_ast/docs/figures/`. It now also carries the **scaled-scan analysis** (below):
+  `--scan-stats-glob`/`--scan-acf-glob` → the per-protein statistic **histogram grid**, the genome-wide
+  **spatial-autocorrelation** figure (with the rpoB-only 0A ACF overlaid), and the **stat correlation**
+  heatmap. The per-protein statistic suite lives in `SCAN_STATS` (magnitude: `max`, `mean_top3`;
+  concentration/shape: robust max-z, `self_z`, `self_z_trimmed`, top−mean(rest), participation ratio,
+  Gini, kurtosis).
+- `unmasked_surprisal_scan.py` + `scripts/unmasked_surprisal_{manifest,scan,analysis}.sh` — the
+  **scalable genome-wide unmasked-surprisal pass** (experiment-4 feature selection). Two modes:
+  `--mode manifest` (CPU: genotype a pool once → `manifest.csv` of ~500 resistant rpoB-mutant + ~500 WT
+  genomes) and `--mode scan` (GPU array, sharded: one unmasked forward per protein → per-shard stats
+  parquet + streaming autocorrelation NPZ + raw per-residue dump). New per-protein stats added to
+  `protein_surprisal_stats` (in `llr_distribution_probe.py`): `participation_ratio`, `gini`, `self_z`,
+  `self_z_trimmed`, `top_minus_mean_rest`. Answers (a) is unmasked surprisal spatially autocorrelated
+  genome-wide (does a residue predict its neighbours' surprisal?) and (b) which per-protein statistic
+  best isolates the single-SNP protein. The stats parquet is the **start of the Phase-1 feature
+  precompute** (eventually all ~36k genomes, with a batched forward), not a throwaway.
 - `reference_gene/rpoB_H37Rv.faa` — the H37Rv rpoB reference (UniProt P9WGY9), a biological
   reference (not a test fixture); `REFERENCE_RPOB_H37RV` in `rpob_genotype.py`.
 - Shared: `../tl/embed/esm_residue_level.py` (MLM loader + `masked_marginals` + residue-level ops).
@@ -332,3 +347,19 @@ Versioned results JSON per the §0.4 / `tl/train/metrics.py` convention:
   broken `hotspot_z`, and writes the two headline figures + JSON to `…/snp_embeddings/surprisal_analysis/`.
   Figures copied to `src/tb_ast/docs/figures/{surprisal_vs_ablation,esm_surprisal}.png` (root
   `.gitignore` whitelists that dir).
+- 2026-06-14 — **SNP drop-off + neighbour test (rpoB, masked).** Added `snp_distance_profile()` to
+  `surprisal_analysis.py`: the masked SNP signal is a **razor single-residue spike** (mean surprisal
+  8.14 at the SNP vs 0.11/0.19 at ±1/±2, below the 0.50 gene background); the 2nd/3rd most-surprising
+  residues are **not** the SNP's neighbours (within ±2 aa in 9%/3%; rank-2 median 617 aa). So a
+  single-residue peak statistic suffices; `mean_top3` ranks rpoB high only via *intrinsic* residues
+  elsewhere (poor SNP-specificity, but a useful orthogonal *magnitude* channel).
+- 2026-06-14 — **Scalable unmasked-surprisal scan built** (`unmasked_surprisal_scan.py` +
+  `scripts/unmasked_surprisal_{manifest,scan,analysis}.sh`). Manifest (CPU) → GPU array (20 shards over
+  ~1,000 genomes, one unmasked forward/protein → per-shard stats parquet + streaming ACF NPZ + raw
+  per-residue dump) → scaled analysis (CPU sbatch). New per-protein stats (`participation_ratio`,
+  `gini`, `self_z`, `self_z_trimmed`, `top_minus_mean_rest`) added to `protein_surprisal_stats`.
+  Deliverables: per-protein **histogram grid** (magnitude vs concentration/shape, rpoB R/WT overlaid),
+  the **genome-wide spatial-autocorrelation** figure (finalises "neighbours don't matter" on the cheap
+  unmasked signal; rpoB-only 0A ACF overlaid), and a **stat correlation** heatmap. Gini / ACF-Pearson /
+  participation-ratio math verified on HPC (sorted==brute-force; sufficient-stat==`np.corrcoef`). Lint +
+  compile clean; **smoke (1 shard, 2 genomes) + the GPU array are pending an HPC push/run go-ahead.**

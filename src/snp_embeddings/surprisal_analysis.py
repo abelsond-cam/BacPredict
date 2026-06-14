@@ -36,6 +36,7 @@ Headline figures (also copied into ``src/tb_ast/docs/figures``):
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import logging
 from pathlib import Path
@@ -46,6 +47,29 @@ from scipy.stats import pearsonr, spearmanr
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+# The per-protein statistic suite for the scaled scan, in plot order, grouped magnitude
+# then concentration/shape. (label, column, higher_is_anomalous, one-line description.)
+SCAN_STATS = [
+    ("max", "max_surprisal", True,
+     "sharpest single anomaly (the SNP); inflated by length & intrinsic divergence"),
+    ("mean top-3", "mean_top3", True,
+     "level of the most-surprising residues (magnitude; orthogonal to the shape stats)"),
+    ("robust max-z", "hotspot_z_floored", True,
+     "(max−median)/MAD: peak above the protein's typical residue; masking-prone with many outliers"),
+    ("self-z", "self_z", True,
+     "(max−μ)/σ: peak in SDs above its OWN background; shrinks for hypervariable proteins"),
+    ("self-z (trimmed)", "self_z_trimmed", True,
+     "self-z with the top-3 excluded from μ,σ — removes self-contamination of the scale"),
+    ("top − mean(rest)", "top_minus_mean_rest", True,
+     "peak height above the mean of all other residues; shrinks when many residues are elevated"),
+    ("participation ratio", "participation_ratio", False,
+     "effective # of residues sharing the surprisal mass (≈1 = single spike → LOW is anomalous)"),
+    ("Gini", "gini", True,
+     "concentration of surprisal across residues (→1 = one residue hogs it)"),
+    ("kurtosis", "kurtosis_surprisal", True,
+     "peakedness/tail-heaviness of the whole residue distribution (high = spiky)"),
+]
 
 # Legacy parquet column → information-theoretic name. The probe wrote "*_surprise";
 # we standardise on "surprisal" (−log p). Aliased on load so this module reads the
@@ -594,6 +618,278 @@ def plot_snp_distance_profile(result: dict, out_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Scaled scan analysis (many genomes; CPU sbatch)
+# ---------------------------------------------------------------------------
+
+
+def load_scan_stats(stats_glob: str, mad_floor: float | None) -> tuple[pd.DataFrame, float]:
+    """Concatenate the per-shard scan stats parquets and add ``hotspot_z_floored``."""
+    paths = sorted(glob.glob(stats_glob))
+    if not paths:
+        raise FileNotFoundError(f"no scan stats parquets matched {stats_glob!r}")
+    df = pd.concat([load_protein_stats(Path(p)) for p in paths], ignore_index=True)
+    df, mad_floor_used = add_floored_hotspot_z(df, mad_floor)
+    logger.info("Loaded %d protein rows from %d shard(s); %d genomes", len(df), len(paths), df["sample"].nunique())
+    return df, mad_floor_used
+
+
+def merge_acf(acf_glob: str) -> dict:
+    """Sum the per-shard autocorrelation accumulators → Pearson ACF, profile, background."""
+    paths = sorted(glob.glob(acf_glob))
+    if not paths:
+        raise FileNotFoundError(f"no scan ACF npz matched {acf_glob!r}")
+    acc = dict.fromkeys(("sum_x", "sum_y", "sum_xy", "sum_x2", "sum_y2", "count", "prof_sum", "prof_count"))
+    bg_sum = bg_count = n_proteins = n_residues = 0.0
+    max_lag = window = None
+    for p in paths:
+        z = np.load(p)
+        max_lag, window = int(z["max_lag"]), int(z["window"])
+        for k in acc:
+            acc[k] = z[k].astype(float) if acc[k] is None else acc[k] + z[k].astype(float)
+        bg_sum += float(z["bg_sum"])
+        bg_count += float(z["bg_count"])
+        n_proteins += float(z["n_proteins"])
+        n_residues += float(z["n_residues"])
+    cnt = acc["count"]
+    num = cnt * acc["sum_xy"] - acc["sum_x"] * acc["sum_y"]
+    den = np.sqrt((cnt * acc["sum_x2"] - acc["sum_x"] ** 2) * (cnt * acc["sum_y2"] - acc["sum_y"] ** 2))
+    with np.errstate(invalid="ignore", divide="ignore"):
+        acf = np.where(den > 0, num / den, np.nan)
+    background = bg_sum / bg_count if bg_count else None
+    with np.errstate(invalid="ignore", divide="ignore"):
+        profile = np.where(acc["prof_count"] > 0, acc["prof_sum"] / acc["prof_count"], np.nan)
+    return {
+        "lags": list(range(1, max_lag + 1)),
+        "acf": acf.tolist(),
+        "lag1": float(acf[0]) if acf.size else None,
+        "profile_offsets": list(range(-window, window + 1)),
+        "profile_mean": profile.tolist(),
+        "background_mean": background,
+        "n_proteins": int(n_proteins),
+        "n_residues": int(n_residues),
+        "max_lag": max_lag,
+        "window": window,
+    }
+
+
+def rpob_acf_from_0a(npz: dict, max_lag: int) -> list[float]:
+    """Pooled within-rpoB unmasked-surprisal ACF (lag 1..max_lag) from the 0A NPZ (cross-check)."""
+    idx = npz["pooled_isolate_idx"]
+    unmasked_lp = npz["pooled_unmasked"].astype(float)
+    sx, sy, sxy = (np.zeros(max_lag) for _ in range(3))
+    sx2, sy2, cnt = (np.zeros(max_lag) for _ in range(3))
+    for k_iso in sorted({int(i) for i in idx}):
+        s = -unmasked_lp[idx == k_iso]
+        n = s.size
+        for k in range(1, max_lag + 1):
+            if n <= k:
+                break
+            x, y = s[:-k], s[k:]
+            i = k - 1
+            sx[i] += x.sum()
+            sy[i] += y.sum()
+            sxy[i] += x @ y
+            sx2[i] += x @ x
+            sy2[i] += y @ y
+            cnt[i] += x.size
+    num = cnt * sxy - sx * sy
+    den = np.sqrt((cnt * sx2 - sx ** 2) * (cnt * sy2 - sy ** 2))
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return np.where(den > 0, num / den, np.nan).tolist()
+
+
+def scaled_rpob_percentiles(df: pd.DataFrame, *, min_length: int) -> dict:
+    """Per genome, rpoB's percentile among proteins by each scan stat (resistant vs WT aggregate)."""
+    ranked = df[df["length"] >= min_length]
+    out: dict = {"min_length": min_length, "by_stat": {}}
+    for _label, col, higher, _desc in SCAN_STATS:
+        if col not in ranked.columns:
+            continue
+        per_role: dict[str, list] = {"resistant": [], "wt": []}
+        for _sample, sub in ranked.groupby("sample"):
+            rp = sub[sub["is_rpob"]]
+            if rp.empty or pd.isna(rp.iloc[0][col]):
+                continue
+            val = float(rp.iloc[0][col])
+            vals = sub[col].dropna()
+            n = len(vals)
+            beaten = (vals > val).sum() if higher else (vals < val).sum()
+            pct = float(100.0 * (1 - beaten / n)) if n else None
+            per_role.setdefault(str(rp.iloc[0]["role"]), []).append(pct)
+        out["by_stat"][col] = {
+            role: {"mean_percentile": float(np.mean(v)) if v else None, "n": len(v)}
+            for role, v in per_role.items()
+        }
+    return out
+
+
+def plot_stat_histograms_grid(df: pd.DataFrame, out_path: Path, *, min_length: int) -> None:
+    """3×3 grid: pooled per-protein distribution of each stat with R-rpoB / WT-rpoB overlaid."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    ranked = df[df["length"] >= min_length]
+    rpob = ranked[ranked["is_rpob"]]
+    r_rpob = rpob[rpob["role"] == "resistant"]
+    w_rpob = rpob[rpob["role"] == "wt"]
+    fig, axes = plt.subplots(3, 3, figsize=(16, 14))
+    for ax, (label, col, _higher, desc) in zip(axes.ravel(), SCAN_STATS, strict=True):
+        vals = ranked[col].replace([np.inf, -np.inf], np.nan).dropna().to_numpy()
+        if vals.size == 0:
+            ax.set_visible(False)
+            continue
+        lo, hi = np.percentile(vals, [0.5, 99.5])
+        bins = np.linspace(lo, hi, 60)
+        ax.hist(vals, bins=bins, density=True, color="#cccccc", label="all proteins")
+        for sub, color, name in ((w_rpob, "#1f77b4", "WT rpoB"), (r_rpob, "#d62728", "resistant rpoB")):
+            sv = sub[col].replace([np.inf, -np.inf], np.nan).dropna().to_numpy()
+            if sv.size:
+                ax.hist(sv, bins=bins, density=True, histtype="step", lw=2, color=color, label=name)
+        ax.set_title(label, fontsize=12)
+        ax.set_xlabel("\n".join(_wrap(desc, 56)), fontsize=8)
+        ax.grid(alpha=0.2)
+    axes.ravel()[0].legend(fontsize=8, loc="upper right")
+    fig.suptitle("Per-protein surprisal statistics across the genome sample (rpoB overlaid)", fontsize=14)
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
+def plot_autocorrelation(acf: dict, rpob_acf: list[float] | None, out_path: Path) -> None:
+    """ACF (lag 1..K) genome-wide + around-the-max neighbourhood profile."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(13, 5))
+    lags = np.array(acf["lags"])
+    a1.axhline(0, color="k", lw=0.8)
+    a1.plot(lags, acf["acf"], marker="o", color="#d62728", label="genome-wide (unmasked)")
+    if rpob_acf is not None:
+        a1.plot(lags[: len(rpob_acf)], rpob_acf, marker="s", ls="--", color="#1f77b4", label="rpoB-only (0A)")
+    a1.set_xlabel("lag (residues)")
+    a1.set_ylabel("Pearson autocorrelation of surprisal")
+    a1.set_title("Spatial autocorrelation — is a residue's surprisal predicted by its neighbours'?")
+    a1.legend(fontsize=9)
+    a1.grid(alpha=0.25)
+
+    off = np.array(acf["profile_offsets"])
+    a2.plot(off, acf["profile_mean"], color="#d62728", lw=1.6)
+    if acf["background_mean"] is not None:
+        a2.axhline(acf["background_mean"], color="grey", ls=":", lw=1.2, label="genome background")
+    a2.axvline(0, color="k", lw=0.8, alpha=0.5)
+    a2.set_xlabel("residue distance from each protein's top residue")
+    a2.set_ylabel("mean surprisal  −log P")
+    a2.set_title("Neighbourhood around the per-protein peak (genome-wide)")
+    a2.legend(fontsize=9)
+    a2.grid(alpha=0.25)
+    fig.suptitle(f"Unmasked surprisal autocorrelation ({acf['n_proteins']:,} proteins, "
+                 f"{acf['n_residues']:,} residues)", fontsize=12)
+    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
+def plot_stat_correlation(df: pd.DataFrame, out_path: Path, *, min_length: int) -> pd.DataFrame:
+    """Spearman correlation heatmap among the scan stats (which are redundant?)."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    cols = [c for _l, c, _h, _d in SCAN_STATS if c in df.columns]
+    labels = [_l for _l, c, _h, _d in SCAN_STATS if c in df.columns]
+    sub = df[df["length"] >= min_length][cols].replace([np.inf, -np.inf], np.nan)
+    corr = sub.corr(method="spearman")
+    fig, ax = plt.subplots(figsize=(9, 8))
+    im = ax.imshow(corr.to_numpy(), vmin=-1, vmax=1, cmap="RdBu_r")
+    fig.colorbar(im, ax=ax, label="Spearman r")
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=9)
+    ax.set_yticks(range(len(labels)))
+    ax.set_yticklabels(labels, fontsize=9)
+    for i in range(len(labels)):
+        for j in range(len(labels)):
+            ax.text(j, i, f"{corr.iloc[i, j]:.2f}", ha="center", va="center", fontsize=7,
+                    color="white" if abs(corr.iloc[i, j]) > 0.6 else "black")
+    ax.set_title("Spearman correlation among per-protein statistics")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    return corr
+
+
+def _wrap(text: str, width: int) -> list[str]:
+    """Greedy word-wrap to ``width`` chars (avoids a textwrap import for one call)."""
+    words, lines, cur = text.split(), [], ""
+    for w in words:
+        if len(cur) + len(w) + 1 > width:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = f"{cur} {w}".strip()
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def run_scaled_analysis(
+    *,
+    stats_glob: str,
+    acf_glob: str,
+    points_npz: Path | None,
+    output_dir: Path,
+    mad_floor: float | None,
+    min_length: int,
+) -> dict:
+    """Histogram grid + autocorrelation + stat-correlation over the many-genome scan output."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    df, mad_floor_used = load_scan_stats(stats_glob, mad_floor)
+    acf = merge_acf(acf_glob)
+    rpob_acf = None
+    if points_npz is not None and points_npz.exists():
+        rpob_acf = rpob_acf_from_0a(dict(np.load(points_npz, allow_pickle=True)), acf["max_lag"])
+
+    fig_hist = output_dir / "stat_histograms_grid.png"
+    fig_acf = output_dir / "surprisal_autocorrelation.png"
+    fig_corr = output_dir / "stat_correlation.png"
+    plot_stat_histograms_grid(df, fig_hist, min_length=min_length)
+    plot_autocorrelation(acf, rpob_acf, fig_acf)
+    corr = plot_stat_correlation(df, fig_corr, min_length=min_length)
+    rpob_pct = scaled_rpob_percentiles(df, min_length=min_length)
+
+    results = {
+        "task": "snp_embeddings",
+        "analysis": "unmasked_surprisal_scan",
+        "n_genomes": int(df["sample"].nunique()),
+        "n_proteins": int(len(df)),
+        "params": {"mad_floor": mad_floor_used, "min_protein_length": min_length},
+        "stat_descriptions": {c: d for _l, c, _h, d in SCAN_STATS},
+        "spatial_autocorrelation": {k: acf[k] for k in
+                                    ("lags", "acf", "lag1", "profile_offsets", "profile_mean",
+                                     "background_mean", "n_proteins", "n_residues")},
+        "rpob_acf_from_0a": rpob_acf,
+        "rpob_percentile_by_stat": rpob_pct,
+        "stat_correlation_spearman": json.loads(corr.to_json()),
+        "figures": {"stat_histograms_grid": str(fig_hist), "surprisal_autocorrelation": str(fig_acf),
+                    "stat_correlation": str(fig_corr)},
+    }
+    out_json = output_dir / "unmasked_surprisal_scan_analysis.json"
+    out_json.write_text(json.dumps(results, indent=2))
+    logger.info("Wrote %s", out_json)
+    logger.info("=" * 72)
+    logger.info("SCALED SURPRISAL ANALYSIS OUTPUT DIRECTORY:\n  %s", output_dir)
+    logger.info("Figures: %s , %s , %s", fig_hist.name, fig_acf.name, fig_corr.name)
+    logger.info("Spatial autocorrelation lag-1 = %.3f (genome-wide); ~0 ⇒ neighbours carry no signal",
+                acf["lag1"] if acf["lag1"] is not None else float("nan"))
+    logger.info("=" * 72)
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
 
@@ -717,11 +1013,11 @@ def run_analysis(
 
 
 def main() -> None:
-    """CLI entry point."""
+    """CLI entry point — Phase-0 mode (parquet + npz) or scaled-scan mode (``--scan-stats-glob``)."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--protein-stats-parquet", type=Path, required=True,
-                        help="0B *_0b_protein_stats.parquet (one row per protein per genome).")
-    parser.add_argument("--points-npz", type=Path, required=True,
+    parser.add_argument("--protein-stats-parquet", type=Path, default=None,
+                        help="0B *_0b_protein_stats.parquet (Phase-0 mode).")
+    parser.add_argument("--points-npz", type=Path, default=None,
                         help="0A *_0a_points.npz (per-residue masked/unmasked log P + SNP points).")
     parser.add_argument("--protein-stats-json", type=Path, default=None,
                         help="0B JSON for authoritative rpoB flat indices (default: auto-derive from the parquet).")
@@ -732,7 +1028,26 @@ def main() -> None:
     parser.add_argument("--min-protein-length", type=int, default=30,
                         help="Exclude proteins shorter than this from the cross-genome ranking (default 30).")
     parser.add_argument("--top-n", type=int, default=15, help="Report the top-N co-flagged proteins (default 15).")
+    # Scaled-scan mode (many genomes from unmasked_surprisal_scan.py).
+    parser.add_argument("--scan-stats-glob", type=str, default=None,
+                        help="Glob of *_stats_shard*.parquet → scaled histogram/ACF/correlation analysis.")
+    parser.add_argument("--scan-acf-glob", type=str, default=None,
+                        help="Glob of *_acf_shard*.npz (required with --scan-stats-glob).")
     args = parser.parse_args()
+
+    if args.scan_stats_glob:
+        if not args.scan_acf_glob:
+            parser.error("--scan-acf-glob is required with --scan-stats-glob")
+        if args.output_dir is None:
+            parser.error("--output-dir is required in scaled-scan mode")
+        run_scaled_analysis(
+            stats_glob=args.scan_stats_glob, acf_glob=args.scan_acf_glob, points_npz=args.points_npz,
+            output_dir=args.output_dir, mad_floor=args.mad_floor, min_length=args.min_protein_length,
+        )
+        return
+
+    if args.protein_stats_parquet is None or args.points_npz is None:
+        parser.error("--protein-stats-parquet and --points-npz are required in Phase-0 mode")
 
     # Default JSON beside the parquet: strip the "_0b_protein_stats.parquet" suffix → ".json".
     json_path = args.protein_stats_json

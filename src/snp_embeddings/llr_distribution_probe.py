@@ -307,13 +307,33 @@ def run_0a(
 # ---------------------------------------------------------------------------
 
 
+def gini_coefficient(values: np.ndarray) -> float | None:
+    """Gini coefficient of non-negative ``values`` (0 = all equal, →1 = one value hogs it).
+
+    Concentration measure for the per-protein surprisal: high when a single residue carries
+    most of the surprisal mass. Sorted O(n log n) form; ``None`` for empty, 0.0 for zero-sum.
+    """
+    x = np.sort(np.asarray(values, dtype=float))
+    n = x.size
+    if n == 0:
+        return None
+    total = float(x.sum())
+    if total <= 0:
+        return 0.0
+    idx = np.arange(1, n + 1)
+    return float((2.0 * np.sum(idx * x)) / (n * total) - (n + 1) / n)
+
+
 def protein_surprisal_stats(logp: np.ndarray) -> dict:
     """Candidate per-protein "a SNP is here" statistics from one protein's residue log P.
 
-    ``surprisal = -log P`` (higher = more anomalous). The family flags *singular* anomalies
-    — one residue standing out from the rest of the protein — which is the SNP signature,
-    as opposed to a uniformly hard-to-predict (long conserved) protein. Easy to extend:
-    add a key here and it flows to the parquet sidecar + ranking.
+    ``surprisal = -log P`` (higher = more anomalous; non-negative). Two complementary groups:
+    **magnitude/level** (how high the top residues are — ``max_surprisal``, ``mean_top3``) and
+    **concentration/shape** (how *isolated* the peak is — the SNP signature, one residue standing
+    out from an otherwise-conserved protein, vs a uniformly hard / multiply-mutated protein).
+    Self-normalising shape stats (``self_z``, ``self_z_trimmed``) shrink when the protein's own
+    residue spread is large, which is the correction we want against hypervariable proteins. Easy
+    to extend: add a key here and it flows to the parquet sidecar + ranking.
     """
     surprisal = -np.asarray(logp, dtype=float)
     n = surprisal.size
@@ -324,22 +344,40 @@ def protein_surprisal_stats(logp: np.ndarray) -> dict:
     mad = float(np.median(np.abs(surprisal - median)))
     p99 = float(np.percentile(surprisal, 99))
     p95 = float(np.percentile(surprisal, 95))
+    mean = float(surprisal.mean())
+    std = float(surprisal.std())
+    total = float(surprisal.sum())
+    sumsq = float(np.square(surprisal).sum())
+    # self-z with the top residue excluded from the centre/scale (no self-contamination)
+    self_z_trimmed = None
+    if n > 6:
+        rest = order[3:]
+        rstd = float(rest.std())
+        self_z_trimmed = (top1 - float(rest.mean())) / rstd if rstd > 0 else None
     return {
         "length": int(n),
+        # magnitude / level
         "max_surprisal": top1,
+        "mean_top3": float(order[: min(3, n)].mean()),
         "top2_surprisal": top2,
+        # concentration / shape
         "top1_minus_top2": (top1 - top2) if top2 is not None else None,
+        "top_minus_mean_rest": (top1 - (total - top1) / (n - 1)) if n > 1 else None,
+        "self_z": (top1 - mean) / std if std > 0 else None,
+        "self_z_trimmed": self_z_trimmed,
+        "hotspot_z": (top1 - median) / (mad + _EPS),
+        "participation_ratio": (total * total) / sumsq if sumsq > 0 else None,
+        "gini": gini_coefficient(surprisal),
+        "skew_surprisal": float(skew(surprisal)) if n > 2 else None,
+        "kurtosis_surprisal": float(kurtosis(surprisal)) if n > 3 else None,
+        # extra contrasts / moments (kept for continuity)
         "max_minus_p99": top1 - p99,
         "max_minus_p95": top1 - p95,
         "max_minus_median": top1 - median,
-        "hotspot_z": (top1 - median) / (mad + _EPS),
-        "mean_top3": float(order[: min(3, n)].mean()),
         "median_surprisal": median,
         "mad_surprisal": mad,
         "p99_surprisal": p99,
         "p95_surprisal": p95,
-        "skew_surprisal": float(skew(surprisal)) if n > 2 else None,
-        "kurtosis_surprisal": float(kurtosis(surprisal)) if n > 3 else None,
     }
 
 
