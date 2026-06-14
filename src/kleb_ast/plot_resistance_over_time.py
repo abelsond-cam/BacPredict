@@ -97,6 +97,15 @@ _MIN_ROWS_TO_FIT = 200
 _MIN_GROUPS_TO_FIT = 5
 
 
+def _yticks_for(y_max: float) -> list[float]:
+    """0.25-step ticks up to y_max (rounded), with the cap itself included."""
+    step = 0.25
+    ticks = [round(step * k, 2) for k in range(int(y_max / step) + 1)]
+    if abs(ticks[-1] - y_max) > 1e-9:
+        ticks.append(round(y_max, 2))
+    return ticks
+
+
 def _classify_amr_study(value: object) -> str | None:
     """Map a raw amr_study cell to a plotting stratum, or None to drop.
 
@@ -502,6 +511,7 @@ def plot_one_drug(
     kalman_level: str = "local level",
     mode: str = "binned",
     skip_lmm: bool = False,
+    y_max: float = 0.75,
 ) -> Path | None:
     """Render and save the per-drug fitted-trend plot.
 
@@ -602,8 +612,8 @@ def plot_one_drug(
     ax.set_xlabel(date_col)
     ax.set_ylabel("Rate of Resistance")
     ax.set_title(f"{drug.capitalize()} Resistance Over Time", fontsize=12, fontweight="bold")
-    ax.set_ylim(0, 0.75)
-    ax.set_yticks([0.0, 0.25, 0.5, 0.75])
+    ax.set_ylim(0, y_max)
+    ax.set_yticks(_yticks_for(y_max))
     ax.grid(True, alpha=0.3)
     main_legend = ax.legend(loc="upper left", fontsize=9)
     ax.add_artist(main_legend)
@@ -641,6 +651,7 @@ def plot_class_composite(
     mode: str = "binned",
     skip_lmm: bool = False,
     suptitle: str | None = None,
+    y_max: float = 0.75,
 ) -> Path | None:
     """Composite headline figure: per-drug-class panel of surveillance R rate trends.
 
@@ -701,8 +712,8 @@ def plot_class_composite(
             anything_plotted = True
 
         ax.set_title(f"{cls_name} (n drugs: {n_drug_plotted})", fontsize=11)
-        ax.set_ylim(0, 0.75)
-        ax.set_yticks([0.0, 0.25, 0.5, 0.75])
+        ax.set_ylim(0, y_max)
+        ax.set_yticks(_yticks_for(y_max))
         ax.grid(True, alpha=0.3)
         ax.legend(loc="upper left", fontsize=7, ncol=1 if len(drugs) <= 4 else 2,
                   framealpha=0.75)
@@ -837,6 +848,12 @@ def main() -> None:
         "--strata", default="AMR,Surveillance,NA,All,EBI",
         help="Comma-separated list of strata to plot. Choices: AMR, Surveillance, "
              "NA, All, EBI. Default plots all 5 lines.",
+    )
+    p.add_argument(
+        "--y-max", type=float, default=0.75,
+        help="Y-axis cap. Default 0.75 — fits the full kpsc cohort. For "
+             "cohort-restricted views with higher R rates (e.g. SL258) pass "
+             "--y-max 1.0.",
     )
     p.add_argument(
         "--filter", default="",
@@ -1019,6 +1036,7 @@ def main() -> None:
             mode=args.mode,
             skip_lmm=args.skip_lmm,
             suptitle=args.suptitle or None,
+            y_max=args.y_max,
         )
         if path is None:
             raise SystemExit("Composite figure produced no lines — check stratum / data filters.")
@@ -1044,6 +1062,7 @@ def main() -> None:
             kalman_level=args.kalman_level,
             mode=args.mode,
             skip_lmm=args.skip_lmm,
+            y_max=args.y_max,
         )
         if path is not None:
             written.append(drug)
