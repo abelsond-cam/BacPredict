@@ -177,11 +177,11 @@ def substitution_llr(
 def unmasked_logprobs(model, tokenizer, seq: str, *, device: str = "cpu") -> torch.Tensor:
     """Per-residue ``log P(observed | full context)`` from one unmasked forward.
 
-    The cheap "surprise" / naturalness score: forward the protein as-is and read,
+    The cheap "surprisal" / naturalness score: forward the protein as-is and read,
     at every residue, the log-softmax of the observed amino acid given the *whole*
     sequence (the model can see ``x_i`` itself, so this is attenuated relative to
     the masked marginal — but it costs **one** forward for the entire protein, so
-    it scales genome-wide). Low = the model is surprised the residue is there =
+    it scales genome-wide). Low = the model is surprisald the residue is there =
     anomalous. Reference-free: no wild-type or alignment needed.
 
     Parameters
@@ -223,7 +223,7 @@ def masked_logprobs(
 
     For each position in ``positions``, mask the residue, forward, and read the
     log-probability of the residue actually present given the rest of the protein
-    — the ablation-by-masking surprise. One forward **per position** (``L`` per
+    — the ablation-by-masking surprisal. One forward **per position** (``L`` per
     protein if ``positions`` is the whole sequence), so for a genome-wide pass
     prefer :func:`unmasked_logprobs`; ``positions`` lets a caller restrict the
     masked computation to a small window (e.g. a resistance hotspot ±W).

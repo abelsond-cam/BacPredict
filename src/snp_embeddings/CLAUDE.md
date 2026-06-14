@@ -234,6 +234,23 @@ Versioned results JSON per the §0.4 / `tl/train/metrics.py` convention:
 - `geometry_probe.py` + `scripts/smoke_geometry_probe.sh` — Step 3b; extends
   `../tl/embed/esm_residue_level.py` with `residue_states`, `production_mean_pool`,
   `apply_point_mutation` (unit-tested in `tests/tl/embed/test_esm_residue_level.py`).
+- `llr_distribution_probe.py` + `scripts/llr_distribution_probe.sh` — **experiment-4 Phase 0**
+  (GPU). Two phases: **0A** whole-gene masked-vs-unmasked **surprisal** proxy proof on N=100
+  resistant isolates (is the cheap unmasked −log P a faithful stand-in for the masked-marginal
+  ablation gold standard?); **0B** the per-protein "a SNP is here" flag across all ~4,000 proteins
+  of a handful of genomes (does a per-protein surprisal statistic push mutated rpoB into a short
+  high tail an attention pool can exploit?). Writes a `*_0a_points.npz`, a `*_0b_protein_stats.parquet`
+  (one row per protein), the schema-2.0 JSON, and plots. **Terminology:** "surprisal" = −log P
+  (information-theoretic); earlier code/columns said "surprise" — the parquet still carries the
+  legacy `*_surprise` names, which the analysis module aliases on load.
+- `surprisal_analysis.py` — **read-only** (CPU / login-node) analysis + visualisation over the two
+  Phase-0 sidecars: aliases legacy `*_surprise` → `*_surprisal`, recomputes a numerically stable
+  `hotspot_z_floored` (the raw `hotspot_z` blew up at `MAD→0`), reports per-genome rpoB rank/percentile
+  by each statistic (R vs S), and writes the headline figures + a refined JSON to a dedicated
+  `…/snp_embeddings/surprisal_analysis/` subfolder (path echoed on output). Headline figures:
+  `surprisal_vs_ablation.png` (0A proxy scatter, resistance residues red) and `esm_surprisal.png`
+  (2-panel surprisal histogram: per-residue within rpoB | per-protein across the genome). Both are
+  copied to `src/tb_ast/docs/figures/`.
 - `reference_gene/rpoB_H37Rv.faa` — the H37Rv rpoB reference (UniProt P9WGY9), a biological
   reference (not a test fixture); `REFERENCE_RPOB_H37RV` in `rpob_genotype.py`.
 - Shared: `../tl/embed/esm_residue_level.py` (MLM loader + `masked_marginals` + residue-level ops).
@@ -302,3 +319,16 @@ Versioned results JSON per the §0.4 / `tl/train/metrics.py` convention:
   - All new/modified modules lint clean (ruff) and byte-compile; the model-free pool/mutation unit
     tests are in `tests/tl/embed/test_esm_residue_level.py` (run on HPC — no local torch). **Next:**
     HPC login-node smoke (`--max-samples`) of Steps 1+2, then the CPU sbatch, then the GPU pass.
+- 2026-06-14 — **Experiment-4 Phase 0 complete + surprisal analysis module.** Localization chain
+  on the canonical RIF eval (n≈6.9k): SNP one-hot 0.960 → frozen pooled ESM-C rpoB 0.971 → frozen
+  Bacformer rpoB token 0.953 → frozen Bacformer genome mean **0.788** → fine-tuned deployed 0.905.
+  The genome **mean-pool** is the culprit (0.953→0.788); the frozen rpoB token already beats the
+  fine-tuned model → an attention pool over protein tokens is the remedy. 0A (n=100/17 genotypes)
+  validated the cheap unmasked surprisal proxy vs masked ablation; 0B showed mutated rpoB sits in
+  the per-protein anomaly high tail. **Terminology:** renamed "surprise" → **"surprisal"** (−log P)
+  across `llr_distribution_probe.py` (stat keys/`RANK_STATS`/`PLOT_STATS`/`protein_surprisal_stats`),
+  `esm_residue_level.py` + the sbatch (docstrings/comments). New read-only `surprisal_analysis.py`
+  consumes the saved sidecars (no GPU), aliases the legacy `*_surprise` parquet columns, floors the
+  broken `hotspot_z`, and writes the two headline figures + JSON to `…/snp_embeddings/surprisal_analysis/`.
+  Figures copied to `src/tb_ast/docs/figures/{surprisal_vs_ablation,esm_surprisal}.png` (root
+  `.gitignore` whitelists that dir).

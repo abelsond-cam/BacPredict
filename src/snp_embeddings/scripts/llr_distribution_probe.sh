@@ -1,14 +1,14 @@
 #!/bin/bash
-# Phase 0 surprise diagnostic (experiment 4) — proxy proof (0A) + per-protein flag (0B).
+# Phase 0 surprisal diagnostic (experiment 4) — proxy proof (0A) + per-protein flag (0B).
 #
 #   0A  whole-gene masked-vs-unmasked proxy proof on N=100 resistant isolates:
-#       for each isolate's rpoB, score masked (ablation) AND unmasked (cheap) surprise
+#       for each isolate's rpoB, score masked (ablation) AND unmasked (cheap) surprisal
 #       at EVERY residue; report per-isolate Pearson/Spearman, the across-isolate scatter
 #       at the mutated residue, % where the SNP is the top unmasked anomaly, and the
 #       distinct-genotype count (so 'n=100' is honest). Publication-grade.
 #   0B  per-protein 'a SNP is here' flag across ALL ~4,000 proteins of a handful of
 #       genomes (3 resistant w/ distinct codons + 3 susceptible): a LIST of candidate
-#       per-protein statistics (max-surprise, hotspot-z, max-p99, top1-top2, ...) to a
+#       per-protein statistics (max-surprisal, hotspot-z, max-p99, top1-top2, ...) to a
 #       parquet sidecar, plus where mutated rpoB ranks among the ~4,000 and what else
 #       gets flagged.
 #
@@ -63,7 +63,7 @@ else
 fi
 
 echo "========================================================================"
-echo "Phase 0 surprise diagnostic — phase $PHASE"
+echo "Phase 0 surprisal diagnostic — phase $PHASE"
 echo "Split sheet: $SHEET"
 echo "Parquets:    $PARQUET_DIR"
 echo "Output JSON: $OUT_JSON"

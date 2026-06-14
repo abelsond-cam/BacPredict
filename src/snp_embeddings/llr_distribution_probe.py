@@ -1,7 +1,7 @@
-r"""Phase 0 surprise diagnostic — proxy proof (0A) + per-protein SNP-flag (0B).
+r"""Phase 0 surprisal diagnostic — proxy proof (0A) + per-protein SNP-flag (0B).
 
 Experiment 4 wants to hand each protein an undiluted **per-protein anomaly feature**
-(a scalar derived from its residue "surprise") and let an **attention pool** upweight
+(a scalar derived from its residue "surprisal") and let an **attention pool** upweight
 the SNP-bearing protein out of the ~4,000 in a genome. Two separable questions:
 
 **0A — is the cheap proxy faithful? (publication-grade, n isolates).** The gold
@@ -22,7 +22,7 @@ nor one neighbour — it is whether, **across all ~4,000 proteins of a genome**,
 per-protein statistic singles the SNP-bearing protein(s) into a short high tail an
 attention pool can exploit (long conserved genes carry surprising residues too, so the
 tail may not be sparse). We compute a **list** of candidate per-protein statistics
-(max-surprise, hotspot-z, max−p99, top1−top2, …; see :func:`protein_surprise_stats`),
+(max-surprisal, hotspot-z, max−p99, top1−top2, …; see :func:`protein_surprisal_stats`),
 persist every protein's row to a parquet sidecar so new statistics can be added without
 re-running, and report where mutated rpoB ranks among the ~4,000 by each, plus what
 *else* gets flagged.
@@ -69,8 +69,8 @@ _NEEDED_COLS = ["contig_idx", "gene_name", "protein_sequence"]
 
 # Per-protein statistics ranked to test the "a SNP is here" flag (higher = more
 # anomalous → should sit in the high tail). Plotted subset is PLOT_STATS.
-RANK_STATS = ("max_surprise", "hotspot_z", "max_minus_p99", "top1_minus_top2")
-PLOT_STATS = ("max_surprise", "hotspot_z", "max_minus_p99")
+RANK_STATS = ("max_surprisal", "hotspot_z", "max_minus_p99", "top1_minus_top2")
+PLOT_STATS = ("max_surprisal", "hotspot_z", "max_minus_p99")
 _EPS = 1e-6
 
 
@@ -161,7 +161,7 @@ def isolate_proxy(
     window: int,
     device: str,
 ) -> dict:
-    """Masked + unmasked surprise for one isolate's rpoB; correlate, locate the SNP.
+    """Masked + unmasked surprisal for one isolate's rpoB; correlate, locate the SNP.
 
     ``scope='gene'`` masks **every** residue (the publication proof); ``scope='window'``
     masks only ``±window`` around the hotspot(s) (cheap smoke). Returns a record plus the
@@ -303,43 +303,43 @@ def run_0a(
 
 
 # ---------------------------------------------------------------------------
-# 0B — per-protein surprise statistics across the whole genome
+# 0B — per-protein surprisal statistics across the whole genome
 # ---------------------------------------------------------------------------
 
 
-def protein_surprise_stats(logp: np.ndarray) -> dict:
+def protein_surprisal_stats(logp: np.ndarray) -> dict:
     """Candidate per-protein "a SNP is here" statistics from one protein's residue log P.
 
-    ``surprise = -log P`` (higher = more anomalous). The family flags *singular* anomalies
+    ``surprisal = -log P`` (higher = more anomalous). The family flags *singular* anomalies
     — one residue standing out from the rest of the protein — which is the SNP signature,
     as opposed to a uniformly hard-to-predict (long conserved) protein. Easy to extend:
     add a key here and it flows to the parquet sidecar + ranking.
     """
-    surprise = -np.asarray(logp, dtype=float)
-    n = surprise.size
-    order = np.sort(surprise)[::-1]  # descending: most surprising first
+    surprisal = -np.asarray(logp, dtype=float)
+    n = surprisal.size
+    order = np.sort(surprisal)[::-1]  # descending: most surprising first
     top1 = float(order[0])
     top2 = float(order[1]) if n > 1 else None
-    median = float(np.median(surprise))
-    mad = float(np.median(np.abs(surprise - median)))
-    p99 = float(np.percentile(surprise, 99))
-    p95 = float(np.percentile(surprise, 95))
+    median = float(np.median(surprisal))
+    mad = float(np.median(np.abs(surprisal - median)))
+    p99 = float(np.percentile(surprisal, 99))
+    p95 = float(np.percentile(surprisal, 95))
     return {
         "length": int(n),
-        "max_surprise": top1,
-        "top2_surprise": top2,
+        "max_surprisal": top1,
+        "top2_surprisal": top2,
         "top1_minus_top2": (top1 - top2) if top2 is not None else None,
         "max_minus_p99": top1 - p99,
         "max_minus_p95": top1 - p95,
         "max_minus_median": top1 - median,
         "hotspot_z": (top1 - median) / (mad + _EPS),
         "mean_top3": float(order[: min(3, n)].mean()),
-        "median_surprise": median,
-        "mad_surprise": mad,
-        "p99_surprise": p99,
-        "p95_surprise": p95,
-        "skew_surprise": float(skew(surprise)) if n > 2 else None,
-        "kurtosis_surprise": float(kurtosis(surprise)) if n > 3 else None,
+        "median_surprisal": median,
+        "mad_surprisal": mad,
+        "p99_surprisal": p99,
+        "p95_surprisal": p95,
+        "skew_surprisal": float(skew(surprisal)) if n > 2 else None,
+        "kurtosis_surprisal": float(kurtosis(surprisal)) if n > 3 else None,
     }
 
 
@@ -351,7 +351,7 @@ def genome_protein_flags(
     device: str,
     max_proteins: int | None = None,
 ) -> list[dict]:
-    """Unmasked surprise stats for every protein in a genome (flat order preserved)."""
+    """Unmasked surprisal stats for every protein in a genome (flat order preserved)."""
     rows: list[dict] = []
     use = records if max_proteins is None else records[:max_proteins]
     for n, rec in enumerate(use):
@@ -359,7 +359,7 @@ def genome_protein_flags(
         if not seq:
             continue
         logp = unmasked_logprobs(model, tokenizer, seq, device=device).numpy()
-        rows.append({"flat_index": rec["flat_index"], "gene_name": rec["gene_name"], **protein_surprise_stats(logp)})
+        rows.append({"flat_index": rec["flat_index"], "gene_name": rec["gene_name"], **protein_surprisal_stats(logp)})
         if (n + 1) % 1000 == 0:
             logger.info("  ...scored %d/%d proteins", n + 1, len(use))
     return rows
