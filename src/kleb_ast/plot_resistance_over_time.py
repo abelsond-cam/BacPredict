@@ -799,6 +799,14 @@ def main() -> None:
              "NA, All, EBI. Default plots all 5 lines.",
     )
     p.add_argument(
+        "--exclude-drugs", default="azithromycin,colistin",
+        help="Comma-separated drugs to skip in both per-drug and composite "
+             "panels. Default excludes azithromycin (Kp intrinsic macrolide "
+             "resistance — model AUROC 0.83) and colistin (model AUROC 0.81 / "
+             "AUPRC 0.69 — reserve drug, limited training signal). Pass an "
+             "empty string to include all drugs.",
+    )
+    p.add_argument(
         "--min-per-bin", type=int, default=10,
         help="Bins with fewer than this many samples are treated as missing "
              "(noisy bin mean → 'incoherent bits'). Default 10 (right for "
@@ -856,6 +864,15 @@ def main() -> None:
     bad = strata - valid_strata
     if bad:
         raise SystemExit(f"--strata: unknown stratum/strata {sorted(bad)}; choices are {sorted(valid_strata)}")
+
+    exclude_drugs = {s.strip() for s in args.exclude_drugs.split(",") if s.strip()}
+    bad_drugs = exclude_drugs - set(DRUG_PANEL)
+    if bad_drugs:
+        raise SystemExit(f"--exclude-drugs: not in DRUG_PANEL: {sorted(bad_drugs)}")
+    drug_panel = [d for d in DRUG_PANEL if d not in exclude_drugs]
+    drug_classes = [(cls, [d for d in dlist if d not in exclude_drugs]) for cls, dlist in DRUG_CLASSES]
+    if exclude_drugs:
+        print(f"--exclude-drugs: skipping {sorted(exclude_drugs)} ({len(drug_panel)} drugs remain).")
 
     print(f"Reading metadata: {args.metadata_tsv}")
     needed_cols = [
@@ -916,7 +933,7 @@ def main() -> None:
         out_path = out_dir / "composite_surveillance_classes.png"
         print(f"\nBuilding composite drug-class figure → {out_path}")
         path = plot_class_composite(
-            df, DRUG_CLASSES, out_path,
+            df, drug_classes, out_path,
             date_col=args.date_column,
             group_col=args.group_column,
             extra_re_col=extra_re_col,
@@ -932,7 +949,7 @@ def main() -> None:
         return
 
     written, skipped = [], []
-    for drug in DRUG_PANEL:
+    for drug in drug_panel:
         print(f"\nFitting {drug}...")
         path = plot_one_drug(
             df, drug, out_dir,
