@@ -157,6 +157,20 @@ def test_wrapper_frozen_backbone_grad_isolation() -> None:
     assert all(p.grad is None for p in model.bacformer.parameters())
 
 
+def test_frozen_backbone_pinned_to_eval_through_train() -> None:
+    """A frozen backbone stays in eval() even after model.train() (deterministic features)."""
+    model = BacformerAttnPoolForGenomeClassification(_StubBackbone(16), 16, freeze_backbone=True)
+    model.train()  # Trainer flips the whole module to train mode at training start
+    assert not model.bacformer.training, "frozen backbone must remain in eval (dropout off)"
+    assert model.pool.training, "pool/head must follow train mode"
+    # Unfreezing lets the backbone follow the module's train/eval state again.
+    model.set_backbone_frozen(False)
+    model.train()
+    assert model.bacformer.training
+    model.eval()
+    assert not model.bacformer.training
+
+
 def test_wrapper_unfrozen_backbone_receives_grad() -> None:
     """After unfreezing, the backbone receives gradients end-to-end."""
     hidden = 16

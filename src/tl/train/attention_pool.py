@@ -148,10 +148,31 @@ class BacformerAttnPoolForGenomeClassification(nn.Module):
         self.set_backbone_frozen(freeze_backbone)
 
     def set_backbone_frozen(self, frozen: bool = True) -> None:
-        """Freeze or unfreeze the backbone (toggles ``requires_grad`` + the no-grad forward)."""
+        """Freeze or unfreeze the backbone (toggles ``requires_grad`` + the no-grad forward).
+
+        A frozen backbone is also put in ``eval()`` so its dropout is off and the
+        extracted features are deterministic — otherwise the pool/head chase a moving
+        target each step and cannot fit (see :meth:`train`).
+        """
         self.freeze_backbone = frozen
         for p in self.bacformer.parameters():
             p.requires_grad = not frozen
+        if frozen:
+            self.bacformer.eval()
+        else:
+            self.bacformer.train(self.training)
+
+    def train(self, mode: bool = True):
+        """Set training mode, but keep a frozen backbone in ``eval()`` (dropout off).
+
+        ``Trainer.train()`` flips the whole module to train mode at the start of
+        training, which would re-enable backbone dropout and make the frozen features
+        stochastic; this override pins the frozen backbone back to eval each time.
+        """
+        super().train(mode)
+        if self.freeze_backbone:
+            self.bacformer.eval()
+        return self
 
     def _encode(
         self,

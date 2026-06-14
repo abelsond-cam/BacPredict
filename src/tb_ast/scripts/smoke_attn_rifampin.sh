@@ -46,6 +46,7 @@ uv run python src/tb_ast/train_amr.py \
     --drug rifampin \
     --pooling attention \
     --attn-dim 128 \
+    --lr 1e-3 \
     $freeze_flag \
     --n-samples 10 \
     --num-workers 0 \

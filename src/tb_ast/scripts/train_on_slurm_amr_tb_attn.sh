@@ -33,15 +33,20 @@ species=mycobacterium_tuberculosis
 drug=${1:-rifampin}     # TB binary_ast.csv uses US spelling (rifampin)
 mode=${2:-frozen}       # frozen | e2e
 warmup_proportion=0.1
-lr=0.00015
 eval_steps=250
 attn_dim=128
 model_name_or_path="macwiatrak/bacformer-large-masked-complete-genomes"
 
+# Fresh pool+head wants a higher LR than the backbone fine-tune. frozen trains only
+# the new head (5e-4); e2e fine-tunes the pretrained backbone too (1.5e-4, matching
+# the stock mean-pool run for an apples-to-apples comparison).
 freeze_flag=""
 if [ "$mode" = "frozen" ]; then
     freeze_flag="--freeze-encoder"
-elif [ "$mode" != "e2e" ]; then
+    lr=5e-4
+elif [ "$mode" = "e2e" ]; then
+    lr=0.00015
+else
     echo "Unknown mode '$mode' (expected 'frozen' or 'e2e')"; exit 1
 fi
 
