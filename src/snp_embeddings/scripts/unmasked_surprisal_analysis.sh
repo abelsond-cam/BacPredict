@@ -31,6 +31,7 @@ mkdir -p "$ANALYSIS_DIR"
 uv run python src/snp_embeddings/surprisal_analysis.py \
     --scan-stats-glob "$SCAN_DIR/scan_stats_shard*.parquet" \
     --scan-acf-glob "$SCAN_DIR/scan_acf_shard*.npz" \
+    --scan-raw-glob "$SCAN_DIR/scan_raw_shard*.npz" \
     --points-npz "$POINTS_NPZ" \
     --output-dir "$ANALYSIS_DIR"
 

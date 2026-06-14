@@ -71,6 +71,20 @@ SCAN_STATS = [
      "peakedness/tail-heaviness of the whole residue distribution (high = spiky)"),
 ]
 
+# Per-gene surprisal "shape ladder" requested for the rpoB-vs-all-genes panels:
+# the top order statistics (1st/2nd/3rd/10th), two percentiles, and the gene length.
+# max/2nd/median(50th)/length come straight from the stats parquet; 3rd/10th/90th are
+# derived from the raw per-residue dump (see enrich_with_raw_order_stats).
+PER_GENE_STATS = [
+    ("max (1st)", "max_surprisal", "highest residue surprisal — the SNP peak; also rises with length & divergence"),
+    ("2nd highest", "top2_surprisal", "second-highest residue surprisal in the gene"),
+    ("3rd highest", "top3_surprisal", "third-highest residue surprisal (from the raw per-residue dump)"),
+    ("10th highest", "top10_surprisal", "tenth-highest residue surprisal — how fast the upper tail decays"),
+    ("90th centile", "p90_surprisal", "90th-percentile residue surprisal — bulk upper level, robust to one spike"),
+    ("median (50th)", "median_surprisal", "typical residue surprisal — the gene's background level"),
+    ("gene length", "length", "number of residues; proteins differ in length and it scales the order stats"),
+]
+
 # Legacy parquet column → information-theoretic name. The probe wrote "*_surprise";
 # we standardise on "surprisal" (−log p). Aliased on load so this module reads the
 # already-saved parquet and any future re-run identically.
@@ -836,18 +850,137 @@ def _wrap(text: str, width: int) -> list[str]:
     return lines
 
 
+def _median_clean(series: pd.Series) -> float | None:
+    """Median of a series after dropping ±inf / NaN (None if empty)."""
+    v = series.replace([np.inf, -np.inf], np.nan).dropna()
+    return float(v.median()) if len(v) else None
+
+
+def _order_stats_for_shard(values: np.ndarray, offsets: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Per-protein 3rd/10th-highest surprisal and 90th percentile from one shard's raw dump.
+
+    ``values`` are the concatenated per-residue surprisals; protein ``i`` spans
+    ``values[offsets[i]:offsets[i+1]]``. Uses ``np.partition`` for the k-th largest
+    (no full sort). NaN where the protein is shorter than the requested rank.
+    """
+    n = len(offsets) - 1
+    top3 = np.full(n, np.nan)
+    top10 = np.full(n, np.nan)
+    p90 = np.full(n, np.nan)
+    for i in range(n):
+        a = values[offsets[i]:offsets[i + 1]]
+        m = a.size
+        if m == 0:
+            continue
+        p90[i] = np.percentile(a, 90)
+        if m >= 3:
+            top3[i] = np.partition(a, -3)[-3]
+        if m >= 10:
+            top10[i] = np.partition(a, -10)[-10]
+    return top3, top10, p90
+
+
+def enrich_with_raw_order_stats(df: pd.DataFrame, raw_glob: str | None) -> pd.DataFrame:
+    """Add ``top3_surprisal`` / ``top10_surprisal`` / ``p90_surprisal`` from the raw per-residue shards.
+
+    The stats parquet already carries max (1st) / 2nd / median (50th) / length; the
+    3rd, 10th and 90th-centile need per-residue values, so they are computed here from
+    the ``*_raw_shard*.npz`` dumps and merged on ``(sample, flat_index)``. A no-op (with
+    a warning) when ``raw_glob`` is absent or matches nothing — the other panels still plot.
+    """
+    if not raw_glob:
+        return df
+    paths = sorted(glob.glob(raw_glob))
+    if not paths:
+        logger.warning("no raw shards matched %r; skipping top3/top10/p90 panels", raw_glob)
+        return df
+    parts: list[pd.DataFrame] = []
+    for p in paths:
+        z = np.load(p, allow_pickle=False)
+        top3, top10, p90 = _order_stats_for_shard(z["values"].astype(float), z["offsets"].astype(np.int64))
+        parts.append(pd.DataFrame({
+            "sample": [str(s) for s in z["sample"]],
+            "flat_index": z["flat_index"].astype(np.int64),
+            "top3_surprisal": top3,
+            "top10_surprisal": top10,
+            "p90_surprisal": p90,
+        }))
+    extra = pd.concat(parts, ignore_index=True)
+    merged = df.merge(extra, on=["sample", "flat_index"], how="left")
+    logger.info("Enriched %d/%d proteins with raw order-stats (top3/top10/p90) from %d shard(s)",
+                int(merged["p90_surprisal"].notna().sum()), len(merged), len(paths))
+    return merged
+
+
+def per_gene_stat_summary(df: pd.DataFrame, *, min_length: int) -> dict:
+    """Median of each per-gene stat for all-other-genes vs resistant / WT rpoB."""
+    ranked = df[df["length"] >= min_length]
+    others = ranked[~ranked["is_rpob"]]
+    rpob = ranked[ranked["is_rpob"]]
+    out: dict = {"min_length": min_length, "by_stat": {}}
+    for _label, col, _desc in PER_GENE_STATS:
+        if col not in ranked.columns:
+            continue
+        out["by_stat"][col] = {
+            "all_other_genes_median": _median_clean(others[col]),
+            "resistant_rpob_median": _median_clean(rpob[rpob["role"] == "resistant"][col]),
+            "wt_rpob_median": _median_clean(rpob[rpob["role"] == "wt"][col]),
+        }
+    return out
+
+
+def plot_per_gene_stat_panels(df: pd.DataFrame, out_path: Path, *, min_length: int) -> None:
+    """2×4 grid: per-gene distribution of each PER_GENE_STATS quantity, rpoB (R/WT) over all other genes."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    ranked = df[df["length"] >= min_length]
+    others = ranked[~ranked["is_rpob"]]
+    rpob = ranked[ranked["is_rpob"]]
+    r_rpob = rpob[rpob["role"] == "resistant"]
+    w_rpob = rpob[rpob["role"] == "wt"]
+    fig, axes = plt.subplots(2, 4, figsize=(20, 9))
+    flat_axes = axes.ravel()
+    for ax, (label, col, desc) in zip(flat_axes, PER_GENE_STATS, strict=False):
+        base = others[col].replace([np.inf, -np.inf], np.nan).dropna().to_numpy() if col in ranked.columns else np.array([])
+        if base.size == 0:
+            ax.set_visible(False)
+            continue
+        lo, hi = np.percentile(base, [0.5, 99.5])
+        bins = np.linspace(lo, hi, 60) if hi > lo else 60
+        ax.hist(base, bins=bins, density=True, color="#cccccc", label="all other genes")
+        for sub, color, name in ((w_rpob, "#1f77b4", "WT rpoB"), (r_rpob, "#d62728", "resistant rpoB")):
+            sv = sub[col].replace([np.inf, -np.inf], np.nan).dropna().to_numpy()
+            if sv.size:
+                ax.hist(sv, bins=bins, density=True, histtype="step", lw=2, color=color, label=name)
+        ax.set_title(label, fontsize=12)
+        ax.set_xlabel("\n".join(_wrap(desc, 52)), fontsize=8)
+        ax.grid(alpha=0.2)
+    for ax in flat_axes[len(PER_GENE_STATS):]:
+        ax.set_visible(False)
+    flat_axes[0].legend(fontsize=8, loc="upper right")
+    fig.suptitle("Per-gene surprisal statistics: rpoB vs all other genes", fontsize=15)
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
 def run_scaled_analysis(
     *,
     stats_glob: str,
     acf_glob: str,
     points_npz: Path | None,
+    raw_glob: str | None,
     output_dir: Path,
     mad_floor: float | None,
     min_length: int,
 ) -> dict:
-    """Histogram grid + autocorrelation + stat-correlation over the many-genome scan output."""
+    """Histogram grid + autocorrelation + stat-correlation + per-gene panels over the many-genome scan output."""
     output_dir.mkdir(parents=True, exist_ok=True)
     df, mad_floor_used = load_scan_stats(stats_glob, mad_floor)
+    df = enrich_with_raw_order_stats(df, raw_glob)
     acf = merge_acf(acf_glob)
     rpob_acf = None
     if points_npz is not None and points_npz.exists():
@@ -856,10 +989,13 @@ def run_scaled_analysis(
     fig_hist = output_dir / "stat_histograms_grid.png"
     fig_acf = output_dir / "surprisal_autocorrelation.png"
     fig_corr = output_dir / "stat_correlation.png"
+    fig_per_gene = output_dir / "per_gene_stat_panels.png"
     plot_stat_histograms_grid(df, fig_hist, min_length=min_length)
     plot_autocorrelation(acf, rpob_acf, fig_acf)
     corr = plot_stat_correlation(df, fig_corr, min_length=min_length)
     rpob_pct = scaled_rpob_percentiles(df, min_length=min_length)
+    plot_per_gene_stat_panels(df, fig_per_gene, min_length=min_length)
+    per_gene = per_gene_stat_summary(df, min_length=min_length)
 
     results = {
         "task": "snp_embeddings",
@@ -873,9 +1009,11 @@ def run_scaled_analysis(
                                      "background_mean", "n_proteins", "n_residues")},
         "rpob_acf_from_0a": rpob_acf,
         "rpob_percentile_by_stat": rpob_pct,
+        "per_gene_stat_descriptions": {c: d for _l, c, d in PER_GENE_STATS},
+        "per_gene_stat_summary": per_gene,
         "stat_correlation_spearman": json.loads(corr.to_json()),
         "figures": {"stat_histograms_grid": str(fig_hist), "surprisal_autocorrelation": str(fig_acf),
-                    "stat_correlation": str(fig_corr)},
+                    "stat_correlation": str(fig_corr), "per_gene_stat_panels": str(fig_per_gene)},
     }
     out_json = output_dir / "unmasked_surprisal_scan_analysis.json"
     out_json.write_text(json.dumps(results, indent=2))
@@ -1033,6 +1171,8 @@ def main() -> None:
                         help="Glob of *_stats_shard*.parquet → scaled histogram/ACF/correlation analysis.")
     parser.add_argument("--scan-acf-glob", type=str, default=None,
                         help="Glob of *_acf_shard*.npz (required with --scan-stats-glob).")
+    parser.add_argument("--scan-raw-glob", type=str, default=None,
+                        help="Glob of *_raw_shard*.npz (per-residue dump) → adds the top3/top10/p90 per-gene panels.")
     args = parser.parse_args()
 
     if args.scan_stats_glob:
@@ -1042,7 +1182,8 @@ def main() -> None:
             parser.error("--output-dir is required in scaled-scan mode")
         run_scaled_analysis(
             stats_glob=args.scan_stats_glob, acf_glob=args.scan_acf_glob, points_npz=args.points_npz,
-            output_dir=args.output_dir, mad_floor=args.mad_floor, min_length=args.min_protein_length,
+            raw_glob=args.scan_raw_glob, output_dir=args.output_dir, mad_floor=args.mad_floor,
+            min_length=args.min_protein_length,
         )
         return
 
