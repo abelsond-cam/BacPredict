@@ -1,0 +1,263 @@
+"""Gated-attention MIL pooling head for the Bacformer genome classifier.
+
+The deployed Bacformer genome head **mean-pools** the per-protein tokens
+(``einsum("ijk,ij->ik", features, mask) / mask.sum``), which dilutes a single
+causal protein — e.g. an *rpoB* RRDR point mutation — into the ~4,000 others in
+the genome. The Task-7 diagnostic localised the TB-AST defect to exactly this
+step: the frozen *rpoB*-token AUROC (0.953) collapses to 0.788 once mean-pooled,
+and fine-tuning the mean-pool head recovers only to 0.905
+(``src/snp_embeddings/docs/PROGRESS_REPORT.md``).
+
+This module swaps that mean for a learned **gated-attention multiple-instance
+-learning (MIL) pool** (Ilse, Tomczak & Welling, 2018), so the genome
+representation can concentrate on the few signal-bearing proteins. It reuses the
+pretrained Bacformer backbone unchanged — only the pool + classification head are
+new — and returns a :class:`~transformers.modeling_outputs.SequenceClassifierOutput`
+so it drops into a Hugging Face ``Trainer`` exactly like the stock model.
+"""
+
+from __future__ import annotations
+
+import torch
+from torch import nn
+from torch.nn import functional as F
+from transformers import AutoModelForSequenceClassification
+from transformers.modeling_outputs import SequenceClassifierOutput
+
+
+class GatedAttentionMILPool(nn.Module):
+    r"""Gated-attention MIL pool over a variable-length set of instances.
+
+    Implements the gated attention of Ilse, Tomczak & Welling (2018):
+
+    .. math::
+        a_n = \operatorname{softmax}_n\!\big(w^\top (\tanh(V h_n) \odot
+        \sigma(U h_n))\big), \qquad z = \sum_n a_n\, h_n
+
+    The attention is **mask-aware**: padded instances are pushed to the smallest
+    representable logit before the softmax, so they receive (effectively) zero
+    weight and the pooled vector is invariant to padding.
+
+    Parameters
+    ----------
+    hidden : int
+        Instance (protein-token) embedding dimension.
+    attn_dim : int, default 128
+        Width of the attention hidden layer (``V`` / ``U``).
+    dropout : float, default 0.1
+        Dropout applied to the gated attention activation.
+    """
+
+    def __init__(self, hidden: int, attn_dim: int = 128, dropout: float = 0.1) -> None:
+        super().__init__()
+        self.V = nn.Linear(hidden, attn_dim, bias=False)
+        self.U = nn.Linear(hidden, attn_dim, bias=False)
+        self.w = nn.Linear(attn_dim, 1, bias=False)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(
+        self, hidden_states: torch.Tensor, attention_mask: torch.Tensor | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Pool ``hidden_states`` over the instance (protein) axis.
+
+        Parameters
+        ----------
+        hidden_states : torch.Tensor
+            Per-instance embeddings, shape ``(batch, n, hidden)``.
+        attention_mask : torch.Tensor or None
+            ``1`` for valid instances, ``0`` for padding, shape ``(batch, n)``.
+            ``None`` treats every instance as valid.
+
+        Returns
+        -------
+        pooled : torch.Tensor
+            Attention-weighted sum, shape ``(batch, hidden)``.
+        weights : torch.Tensor
+            Per-instance attention weights summing to 1 over valid instances,
+            shape ``(batch, n)`` (kept for interpretability).
+        """
+        gated = torch.tanh(self.V(hidden_states)) * torch.sigmoid(self.U(hidden_states))
+        gated = self.dropout(gated)
+        logits = self.w(gated).squeeze(-1)  # (batch, n)
+
+        if attention_mask is not None:
+            pad = attention_mask <= 0
+            logits = logits.masked_fill(pad, torch.finfo(logits.dtype).min)
+
+        weights = torch.softmax(logits, dim=-1)
+        pooled = torch.einsum("bn,bnh->bh", weights, hidden_states)
+        return pooled, weights
+
+
+class BacformerAttnPoolForGenomeClassification(nn.Module):
+    """Bacformer genome classifier with a gated-attention MIL pool head.
+
+    Reuses a pretrained ``BacformerLargeModel`` backbone (contextualised
+    per-protein tokens) and replaces the stock mean-pool genome head with a
+    :class:`GatedAttentionMILPool` followed by LayerNorm → Dropout → Linear.
+    Mirrors the upstream ``BacformerLargeForGenomeClassification`` forward
+    signature and loss, and returns a
+    :class:`~transformers.modeling_outputs.SequenceClassifierOutput`, so it is a
+    drop-in for a Hugging Face ``Trainer``.
+
+    Parameters
+    ----------
+    backbone : nn.Module
+        The pretrained ``.bacformer`` encoder. Its ``forward`` must accept
+        ``protein_embeddings`` / ``attention_mask`` / ``contig_ids`` /
+        ``return_dict`` and return a sequence output whose element ``[0]`` is
+        ``last_hidden_state`` of shape ``(batch, n, hidden)``.
+    hidden : int
+        Backbone hidden size.
+    num_labels : int, default 1
+        Output dimension (``1`` ⇒ a single binary logit).
+    attn_dim : int, default 128
+        Attention hidden width.
+    dropout : float, default 0.1
+        Dropout for the attention pool and the classification head.
+    freeze_backbone : bool, default False
+        If ``True`` the backbone runs under ``torch.no_grad`` and its parameters
+        are frozen — only the pool + head train.
+    problem_type : str, default "binary_classification"
+        Loss selector; ``"single_label_classification"`` (with ``num_labels>1``)
+        uses cross-entropy, everything else binary-cross-entropy-with-logits.
+    """
+
+    def __init__(
+        self,
+        backbone: nn.Module,
+        hidden: int,
+        *,
+        num_labels: int = 1,
+        attn_dim: int = 128,
+        dropout: float = 0.1,
+        freeze_backbone: bool = False,
+        problem_type: str = "binary_classification",
+        config=None,
+    ) -> None:
+        super().__init__()
+        self.config = config  # backbone PretrainedConfig (HF Trainer reads model.config); None in unit tests
+        self.bacformer = backbone
+        self.pool = GatedAttentionMILPool(hidden, attn_dim=attn_dim, dropout=dropout)
+        self.norm = nn.LayerNorm(hidden)
+        self.dropout = nn.Dropout(dropout)
+        self.out_proj = nn.Linear(hidden, num_labels)
+        self.num_labels = num_labels
+        self.problem_type = problem_type
+        self.last_attention_weights: torch.Tensor | None = None
+        self.set_backbone_frozen(freeze_backbone)
+
+    def set_backbone_frozen(self, frozen: bool = True) -> None:
+        """Freeze or unfreeze the backbone (toggles ``requires_grad`` + the no-grad forward)."""
+        self.freeze_backbone = frozen
+        for p in self.bacformer.parameters():
+            p.requires_grad = not frozen
+
+    def _encode(
+        self,
+        protein_embeddings: torch.Tensor,
+        attention_mask: torch.Tensor | None,
+        contig_ids: torch.Tensor | None,
+    ) -> torch.Tensor:
+        """Run the backbone and return its ``last_hidden_state`` ``(batch, n, hidden)``."""
+        out = self.bacformer(
+            protein_embeddings=protein_embeddings,
+            attention_mask=attention_mask,
+            contig_ids=contig_ids,
+            return_dict=True,
+        )
+        return out[0]
+
+    def forward(
+        self,
+        protein_embeddings: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        contig_ids: torch.Tensor | None = None,
+        labels: torch.Tensor | None = None,
+        return_dict: bool = True,
+        special_tokens_mask: torch.Tensor | None = None,
+        **kwargs,
+    ) -> SequenceClassifierOutput:
+        """Backbone → gated-attention pool → norm/dropout/linear → logits (and loss if labelled).
+
+        The signature mirrors the upstream classifier (``special_tokens_mask`` /
+        extra kwargs accepted for collate compatibility); the pooled attention
+        weights are stashed on ``self.last_attention_weights`` for inspection.
+        """
+        if self.freeze_backbone:
+            with torch.no_grad():
+                last_hidden = self._encode(protein_embeddings, attention_mask, contig_ids)
+        else:
+            last_hidden = self._encode(protein_embeddings, attention_mask, contig_ids)
+
+        pooled, weights = self.pool(last_hidden, attention_mask)
+        self.last_attention_weights = weights.detach()
+
+        x = self.norm(pooled)
+        x = self.dropout(x)
+        logits = self.out_proj(x)  # (batch, num_labels)
+
+        loss = None
+        if labels is not None:
+            labels = labels.to(logits.device)
+            if self.problem_type == "single_label_classification" and self.num_labels > 1:
+                loss = F.cross_entropy(logits.view(-1, self.num_labels), labels.view(-1).long())
+            else:
+                loss = F.binary_cross_entropy_with_logits(logits.view(-1), labels.view(-1).type_as(logits))
+
+        return SequenceClassifierOutput(loss=loss, logits=logits)
+
+    @classmethod
+    def from_pretrained_backbone(
+        cls,
+        model_id: str,
+        *,
+        num_labels: int = 1,
+        freeze_backbone: bool = False,
+        attn_dim: int = 128,
+        dropout: float = 0.1,
+        **load_kwargs,
+    ) -> BacformerAttnPoolForGenomeClassification:
+        """Load the upstream classifier, lift its pretrained ``.bacformer`` backbone, swap the head.
+
+        Parameters
+        ----------
+        model_id : str
+            Hugging Face model id or local path of the Bacformer
+            complete-genomes model.
+        num_labels, freeze_backbone, attn_dim, dropout
+            Forwarded to :meth:`__init__`.
+        **load_kwargs
+            Passed through to ``from_pretrained`` (e.g. ``dtype="auto"`` so a
+            CPU smoke stays fp32 while GPU runs in bf16).
+
+        Returns
+        -------
+        BacformerAttnPoolForGenomeClassification
+            Wrapper whose new pool + head match the backbone dtype.
+        """
+        full = AutoModelForSequenceClassification.from_pretrained(
+            model_id,
+            num_labels=num_labels,
+            problem_type="binary_classification",
+            trust_remote_code=True,
+            **load_kwargs,
+        )
+        backbone = full.bacformer  # discard full.classifier (the stock mean-pool head)
+        hidden = full.config.hidden_size
+        model = cls(
+            backbone,
+            hidden,
+            num_labels=num_labels,
+            attn_dim=attn_dim,
+            dropout=dropout,
+            freeze_backbone=freeze_backbone,
+            config=full.config,
+        )
+        # Match the freshly-built modules to the backbone dtype (dtype="auto" ⇒ bf16
+        # on GPU), so the pooled bf16 hidden states feed dtype-compatible Linears.
+        backbone_dtype = next(backbone.parameters()).dtype
+        model.pool.to(dtype=backbone_dtype)
+        model.norm.to(dtype=backbone_dtype)
+        model.out_proj.to(dtype=backbone_dtype)
+        return model

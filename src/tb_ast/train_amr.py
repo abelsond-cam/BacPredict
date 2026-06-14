@@ -23,6 +23,7 @@ from transformers import (
     TrainingArguments,
 )
 
+from tl.train.attention_pool import BacformerAttnPoolForGenomeClassification
 from tl.train.datasets import LabelInjectingFileDataset
 from tl.train.metrics import (
     build_results_payload,
@@ -124,6 +125,8 @@ def run(
     drug: str = "rifampin",
     max_n_proteins: int = 6000,
     freeze_encoder: bool = False,
+    pooling: str = "mean",
+    attn_dim: int = 128,
     logging_steps: int = 10,
     n_samples: int = 10000,
     seed: int = 1,
@@ -155,6 +158,9 @@ def run(
             DeprecationWarning,
             stacklevel=2,
         )
+
+    if pooling not in ("mean", "attention"):
+        raise ValueError(f"--pooling must be 'mean' or 'attention', got {pooling!r}")
 
     if n_folds is not None:
         output_dir = f"{output_dir}_fold{fold:02d}_seed{seed}"
@@ -271,18 +277,33 @@ def run(
     load_from = resume_from_checkpoint or model_name_or_path
     if resume_from_checkpoint:
         print(f"Resume mode: loading model weights from {resume_from_checkpoint}")
-    bacformer_model = AutoModelForSequenceClassification.from_pretrained(
-        load_from,
-        num_labels=1,
-        problem_type="binary_classification",
-        return_dict=True,
-        trust_remote_code=True,
-        dtype="auto",
-    )
 
-    if freeze_encoder:
-        for param in bacformer_model.bacformer.parameters():
-            param.requires_grad = False
+    if pooling == "attention":
+        # Reuse the pretrained BacformerLarge backbone (contig-aware embeddings +
+        # encoder, unchanged) and swap the mask-mean genome head for a gated-attention
+        # MIL pool. Built from the base model id; on resume the Trainer restores the
+        # full wrapper state (backbone + pool + head) from the checkpoint at train() time.
+        print(f"Pooling: gated-attention MIL (attn_dim={attn_dim})")
+        bacformer_model = BacformerAttnPoolForGenomeClassification.from_pretrained_backbone(
+            model_name_or_path,
+            num_labels=1,
+            freeze_backbone=freeze_encoder,
+            attn_dim=attn_dim,
+            dtype="auto",
+        )
+    else:
+        print("Pooling: mask-normalised mean (stock genome head)")
+        bacformer_model = AutoModelForSequenceClassification.from_pretrained(
+            load_from,
+            num_labels=1,
+            problem_type="binary_classification",
+            return_dict=True,
+            trust_remote_code=True,
+            dtype="auto",
+        )
+        if freeze_encoder:
+            for param in bacformer_model.bacformer.parameters():
+                param.requires_grad = False
 
     print("Nr of parameters:", sum(p.numel() for p in bacformer_model.parameters()))
     print("Nr of trainable:", sum(p.numel() for p in bacformer_model.parameters() if p.requires_grad))
@@ -423,6 +444,10 @@ class ArgumentParser(Tap):
     drug: str = "rifampin"
     max_n_proteins: int = 9000
     freeze_encoder: bool = False
+    pooling: str = "mean"
+    """Genome pooling head: 'mean' (stock mask-normalised mean) or 'attention' (gated-attention MIL pool)."""
+    attn_dim: int = 128
+    """Attention hidden width when --pooling attention."""
     logging_steps: int = 10
     n_samples: int = 10000
     ast_sheet_path: str = str(AST_SHEET_PATH_DEFAULT)
@@ -457,6 +482,8 @@ if __name__ == "__main__":
         drug=args.drug,
         max_n_proteins=args.max_n_proteins,
         freeze_encoder=args.freeze_encoder,
+        pooling=args.pooling,
+        attn_dim=args.attn_dim,
         logging_steps=args.logging_steps,
         seed=args.seed,
         n_samples=args.n_samples,
