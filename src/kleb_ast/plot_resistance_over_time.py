@@ -132,6 +132,7 @@ def _lmm_denoise_to_bins(
     binary: bool = True,
     min_per_bin: int = 10,
     mode: str = "binned",
+    skip_lmm: bool = False,
 ) -> pd.Series | None:
     """Stage 1: fit LMM, denoise per sample, aggregate to regular bins.
 
@@ -176,6 +177,40 @@ def _lmm_denoise_to_bins(
         work = work.assign(_v=v).dropna(subset=["_v"])
         work["_v"] = work["_v"].clip(0.001, 0.999)
         work["_y"] = np.log(work["_v"] / (1.0 - work["_v"]))
+
+    if skip_lmm:
+        # No LMM, no random-effect denoising — feed raw observations straight
+        # into the binning step. Used for cohort-restricted sanity checks
+        # (e.g. one sublineage) where the study/country batch confounders
+        # we usually denoise out are partly the question being asked.
+        if len(work) < _MIN_ROWS_TO_FIT:
+            return None
+        denoised = work["_y"].values
+        df_d = pd.DataFrame({
+            "date": pd.to_datetime(work[date_col]),
+            "y": denoised,
+        }).sort_values("date")
+        if mode == "per-sample":
+            ser = pd.Series(df_d["y"].values, index=df_d["date"].values)
+            ser.attrs["binary"] = binary
+            return ser
+        df_d = df_d.set_index("date")
+        bin_mean = df_d["y"].resample(bin_freq).mean()
+        bin_count = df_d["y"].resample(bin_freq).count()
+        binned = bin_mean.where(bin_count >= min_per_bin)
+        non_empty = binned.notna().values
+        if not non_empty.any():
+            return None
+        last_full = int(np.where(non_empty)[0].max())
+        first_in_run = last_full
+        for i in range(last_full - 1, -1, -1):
+            if non_empty[i]:
+                first_in_run = i
+            else:
+                break
+        binned = binned.iloc[first_in_run:last_full + 1]
+        binned.attrs["binary"] = binary
+        return binned
 
     if len(work) < _MIN_ROWS_TO_FIT or work[group_col].nunique() < _MIN_GROUPS_TO_FIT:
         return None
@@ -466,6 +501,7 @@ def plot_one_drug(
     min_per_bin: int = 10,
     kalman_level: str = "local level",
     mode: str = "binned",
+    skip_lmm: bool = False,
 ) -> Path | None:
     """Render and save the per-drug fitted-trend plot.
 
@@ -509,7 +545,7 @@ def plot_one_drug(
         binned = _lmm_denoise_to_bins(
             sub, value_col=value_col, date_col=date_col, group_col=group_col,
             extra_re_col=extra_re_col, df_spline=df_spline, bin_freq=bin_freq,
-            binary=True, min_per_bin=min_per_bin, mode=mode,
+            binary=True, min_per_bin=min_per_bin, mode=mode, skip_lmm=skip_lmm,
         )
         if binned is None:
             return
@@ -601,9 +637,10 @@ def plot_class_composite(
     df_spline: int = 5,
     bin_freq: str = "QS",
     min_per_bin: int = 10,
-
     kalman_level: str = "local level",
     mode: str = "binned",
+    skip_lmm: bool = False,
+    suptitle: str | None = None,
 ) -> Path | None:
     """Composite headline figure: per-drug-class panel of surveillance R rate trends.
 
@@ -648,7 +685,7 @@ def plot_class_composite(
             binned = _lmm_denoise_to_bins(
                 sub, value_col=pred_col, date_col=date_col, group_col=group_col,
                 extra_re_col=extra_re_col, df_spline=df_spline, bin_freq=bin_freq,
-                binary=True, min_per_bin=min_per_bin, mode=mode,
+                binary=True, min_per_bin=min_per_bin, mode=mode, skip_lmm=skip_lmm,
             )
             if binned is None:
                 continue
@@ -700,10 +737,13 @@ def plot_class_composite(
             "Per drug: predicted R/S call \n"
             "(Youden-tuned) per kpsc_final_list\n"
             "sample, then\n"
-            "  1. LMM denoise: removes \n"
-            "     study + country batch noise\n"
-            "     ( ~poly(year) + (1|study) + (1|country) )\n"
-            f"{stage2}\n"
+            + ("  1. (LMM denoise SKIPPED — raw\n"
+               "     R/S call goes straight to bin)\n"
+               if skip_lmm else
+               "  1. LMM denoise: removes \n"
+               "     study + country batch noise\n"
+               "     ( ~poly(year) + (1|study) + (1|country) )\n")
+            + f"{stage2}\n"
             "\n"
             f"Window: {df[date_col].min().date()} – {df[date_col].max().date()}.\n"
             "Legend value = stratum R rate (overall).",
@@ -715,7 +755,7 @@ def plot_class_composite(
     # Shared x/y labels via figure-level supxlabel/supylabel.
     fig.supxlabel(date_col, fontsize=11)
     fig.supylabel("Rate of Resistance", fontsize=11)
-    fig.suptitle("Antibiotic Resistance Over Time", fontsize=16, fontweight="bold")
+    fig.suptitle(suptitle or "Antibiotic Resistance Over Time", fontsize=16, fontweight="bold")
     fig.tight_layout(rect=(0, 0, 1, 0.97))
 
     if not anything_plotted:
@@ -797,6 +837,24 @@ def main() -> None:
         "--strata", default="AMR,Surveillance,NA,All,EBI",
         help="Comma-separated list of strata to plot. Choices: AMR, Surveillance, "
              "NA, All, EBI. Default plots all 5 lines.",
+    )
+    p.add_argument(
+        "--filter", default="",
+        help="Optional row filter in COL=VALUE form (e.g. 'Sublineage=SL258'). "
+             "Applied to the metadata after the standard kpsc_final_list + "
+             "date-window filters. Empty = no extra filter.",
+    )
+    p.add_argument(
+        "--skip-lmm", action="store_true",
+        help="Skip the stage-1 LMM denoise (study + country random intercepts) "
+             "and feed raw R/S calls straight into the bin stage. Useful for "
+             "cohort-restricted sanity checks where the study/country batch "
+             "confounders are partly the question being asked.",
+    )
+    p.add_argument(
+        "--suptitle", default="",
+        help="Override the composite figure's suptitle. Empty = default "
+             "'Antibiotic Resistance Over Time'.",
     )
     p.add_argument(
         "--exclude-drugs", default="azithromycin,colistin",
@@ -883,6 +941,16 @@ def main() -> None:
         extra_re_col = None
     if extra_re_col:
         needed_cols.append(extra_re_col)
+
+    filter_col, filter_val = None, None
+    if args.filter:
+        if "=" not in args.filter:
+            raise SystemExit(f"--filter must be COL=VALUE; got {args.filter!r}")
+        filter_col, filter_val = args.filter.split("=", 1)
+        filter_col, filter_val = filter_col.strip(), filter_val.strip()
+        if filter_col and filter_col not in needed_cols:
+            needed_cols.append(filter_col)
+
     needed_cols += [f"predicted_{d}_AST" for d in DRUG_PANEL]
     needed_cols += [f"predicted_{d}_AST_prob" for d in DRUG_PANEL]
     needed_cols += [f"EBI_{d}_AST" for d in DRUG_PANEL]
@@ -913,6 +981,13 @@ def main() -> None:
         df = df[df[args.date_column] < cutoff_hi]
         print(f"--max-date {args.max_date}: dropped {before - len(df):,} rows; {len(df):,} remain.")
 
+    if filter_col is not None:
+        if filter_col not in df.columns:
+            raise SystemExit(f"--filter column {filter_col!r} not present in metadata TSV.")
+        before = len(df)
+        df = df[df[filter_col].astype(str) == filter_val]
+        print(f"--filter {filter_col}={filter_val!r}: dropped {before - len(df):,} rows; {len(df):,} remain.")
+
     if "amr_study" in df.columns:
         df["_study_cat"] = df["amr_study"].apply(_classify_amr_study)
         cat_counts = df["_study_cat"].value_counts(dropna=False).to_dict()
@@ -942,6 +1017,8 @@ def main() -> None:
             min_per_bin=args.min_per_bin,
             kalman_level=args.kalman_level,
             mode=args.mode,
+            skip_lmm=args.skip_lmm,
+            suptitle=args.suptitle or None,
         )
         if path is None:
             raise SystemExit("Composite figure produced no lines — check stratum / data filters.")
@@ -966,6 +1043,7 @@ def main() -> None:
             min_per_bin=args.min_per_bin,
             kalman_level=args.kalman_level,
             mode=args.mode,
+            skip_lmm=args.skip_lmm,
         )
         if path is not None:
             written.append(drug)
