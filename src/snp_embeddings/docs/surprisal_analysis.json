@@ -1,0 +1,464 @@
+{
+  "task": "snp_embeddings",
+  "analysis": "surprisal_analysis",
+  "inputs": {
+    "protein_stats_parquet": "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/snp_embeddings/llr_distribution_probe/llr_phase0_0b_30535851_0b_protein_stats.parquet",
+    "points_npz": "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/snp_embeddings/llr_distribution_probe/llr_phase0_0a_30535846_0a_points.npz",
+    "protein_stats_json": "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/snp_embeddings/llr_distribution_probe/llr_phase0_0b_30535851.json"
+  },
+  "params": {
+    "mad_floor": 0.7315132766962051,
+    "min_protein_length": 30,
+    "top_n": 15,
+    "stat_family": [
+      "max_surprisal",
+      "max_minus_p99",
+      "max_minus_p95",
+      "top1_minus_top2",
+      "mean_top3",
+      "hotspot_z_floored"
+    ]
+  },
+  "phase_0a_proxy": {
+    "n_isolates": 100,
+    "n_resistant_with_snp": 100,
+    "n_distinct_genotypes": 17,
+    "pooled_pearson": 0.9477751197848105,
+    "pooled_spearman": 0.973933097569573,
+    "pooled_n_points": 117200,
+    "per_isolate_pearson_resistant": {
+      "mean": 0.9477718138694763,
+      "median": 0.9479472637176514,
+      "sd": 0.0008779276345925202,
+      "min": 0.9426397681236267,
+      "n": 100
+    },
+    "snp_site_pearson": 0.8927969063879425,
+    "snp_unmasked_rank_in_gene": {
+      "frac_rank1": 0.7,
+      "frac_top3": 0.83,
+      "median_rank": 1.0,
+      "n": 100
+    }
+  },
+  "phase_0b": {
+    "n_genomes": 6,
+    "per_genome_rpob_ranking": [
+      {
+        "sample": "SAMEA10029752",
+        "role": "resistant",
+        "n_ranked": 4107,
+        "rpob_flat_index": 337,
+        "rpob_present": true,
+        "by_stat": {
+          "max_surprisal": {
+            "rpob_value": 7.612043380737305,
+            "rpob_rank": 493,
+            "rpob_percentile": 88.02045288531775
+          },
+          "max_minus_p99": {
+            "rpob_value": 2.132957239151014,
+            "rpob_rank": 680,
+            "rpob_percentile": 83.4672510348186
+          },
+          "max_minus_p95": {
+            "rpob_value": 4.125202524662017,
+            "rpob_rank": 346,
+            "rpob_percentile": 91.59970781592403
+          },
+          "top1_minus_top2": {
+            "rpob_value": 0.1321249008178711,
+            "rpob_rank": 3416,
+            "rpob_percentile": 16.84928171414658
+          },
+          "mean_top3": {
+            "rpob_value": 7.516791184743245,
+            "rpob_rank": 97,
+            "rpob_percentile": 97.66252739225713
+          },
+          "hotspot_z_floored": {
+            "rpob_value": 9.935852592199899,
+            "rpob_rank": 246,
+            "rpob_percentile": 94.0345751156562
+          }
+        }
+      },
+      {
+        "sample": "SAMEA10029764",
+        "role": "wt",
+        "n_ranked": 4089,
+        "rpob_flat_index": 989,
+        "rpob_present": true,
+        "by_stat": {
+          "max_surprisal": {
+            "rpob_value": 7.504063129425049,
+            "rpob_rank": 565,
+            "rpob_percentile": 86.20689655172413
+          },
+          "max_minus_p99": {
+            "rpob_value": 2.229827318191534,
+            "rpob_rank": 620,
+            "rpob_percentile": 84.86182440694546
+          },
+          "max_minus_p95": {
+            "rpob_value": 4.021687674522399,
+            "rpob_rank": 384,
+            "rpob_percentile": 90.63340670090487
+          },
+          "top1_minus_top2": {
+            "rpob_value": 0.007442474365234375,
+            "rpob_rank": 4047,
+            "rpob_percentile": 1.0516018586451459
+          },
+          "mean_top3": {
+            "rpob_value": 7.2946319580078125,
+            "rpob_rank": 145,
+            "rpob_percentile": 96.47835656639765
+          },
+          "hotspot_z_floored": {
+            "rpob_value": 9.801833654929796,
+            "rpob_rank": 283,
+            "rpob_percentile": 93.10344827586206
+          }
+        }
+      },
+      {
+        "sample": "SAMEA10029767",
+        "role": "resistant",
+        "n_ranked": 4082,
+        "rpob_flat_index": 1275,
+        "rpob_present": true,
+        "by_stat": {
+          "max_surprisal": {
+            "rpob_value": 9.804838180541992,
+            "rpob_rank": 38,
+            "rpob_percentile": 99.09358157765801
+          },
+          "max_minus_p99": {
+            "rpob_value": 4.3456433725357195,
+            "rpob_rank": 55,
+            "rpob_percentile": 98.67711905928466
+          },
+          "max_minus_p95": {
+            "rpob_value": 6.311940121650695,
+            "rpob_rank": 25,
+            "rpob_percentile": 99.41205291523762
+          },
+          "top1_minus_top2": {
+            "rpob_value": 2.331507682800293,
+            "rpob_rank": 176,
+            "rpob_percentile": 95.71288584027438
+          },
+          "mean_top3": {
+            "rpob_value": 8.249735991160074,
+            "rpob_rank": 23,
+            "rpob_percentile": 99.4610485056345
+          },
+          "hotspot_z_floored": {
+            "rpob_value": 12.932794864234348,
+            "rpob_rank": 20,
+            "rpob_percentile": 99.5345418912298
+          }
+        }
+      },
+      {
+        "sample": "SAMEA10029777",
+        "role": "wt",
+        "n_ranked": 4088,
+        "rpob_flat_index": 279,
+        "rpob_present": true,
+        "by_stat": {
+          "max_surprisal": {
+            "rpob_value": 7.504063129425049,
+            "rpob_rank": 567,
+            "rpob_percentile": 86.1545988258317
+          },
+          "max_minus_p99": {
+            "rpob_value": 2.229827318191534,
+            "rpob_rank": 634,
+            "rpob_percentile": 84.51565557729941
+          },
+          "max_minus_p95": {
+            "rpob_value": 4.021687674522399,
+            "rpob_rank": 387,
+            "rpob_percentile": 90.55772994129158
+          },
+          "top1_minus_top2": {
+            "rpob_value": 0.007442474365234375,
+            "rpob_rank": 4049,
+            "rpob_percentile": 0.9784735812133127
+          },
+          "mean_top3": {
+            "rpob_value": 7.2946319580078125,
+            "rpob_rank": 150,
+            "rpob_percentile": 96.35518590998043
+          },
+          "hotspot_z_floored": {
+            "rpob_value": 9.801833654929796,
+            "rpob_rank": 282,
+            "rpob_percentile": 93.12622309197651
+          }
+        }
+      },
+      {
+        "sample": "SAMEA10029780",
+        "role": "resistant",
+        "n_ranked": 4076,
+        "rpob_flat_index": 458,
+        "rpob_present": true,
+        "by_stat": {
+          "max_surprisal": {
+            "rpob_value": 8.221799850463867,
+            "rpob_rank": 242,
+            "rpob_percentile": 94.08734052993131
+          },
+          "max_minus_p99": {
+            "rpob_value": 2.7383950233459595,
+            "rpob_rank": 340,
+            "rpob_percentile": 91.68302257114819
+          },
+          "max_minus_p95": {
+            "rpob_value": 4.73411133289337,
+            "rpob_rank": 161,
+            "rpob_percentile": 96.07458292443573
+          },
+          "top1_minus_top2": {
+            "rpob_value": 0.7270183563232422,
+            "rpob_rank": 1468,
+            "rpob_percentile": 64.00883218842002
+          },
+          "mean_top3": {
+            "rpob_value": 7.727894147237142,
+            "rpob_rank": 66,
+            "rpob_percentile": 98.40529931305201
+          },
+          "hotspot_z_floored": {
+            "rpob_value": 10.773444901588427,
+            "rpob_rank": 129,
+            "rpob_percentile": 96.85966633954858
+          }
+        }
+      },
+      {
+        "sample": "SAMEA10029794",
+        "role": "wt",
+        "n_ranked": 4097,
+        "rpob_flat_index": 318,
+        "rpob_present": true,
+        "by_stat": {
+          "max_surprisal": {
+            "rpob_value": 7.504063129425049,
+            "rpob_rank": 567,
+            "rpob_percentile": 86.18501342445693
+          },
+          "max_minus_p99": {
+            "rpob_value": 2.229827318191534,
+            "rpob_rank": 628,
+            "rpob_percentile": 84.69611911154503
+          },
+          "max_minus_p95": {
+            "rpob_value": 4.021687674522399,
+            "rpob_rank": 382,
+            "rpob_percentile": 90.7005125701733
+          },
+          "top1_minus_top2": {
+            "rpob_value": 0.007442474365234375,
+            "rpob_rank": 4059,
+            "rpob_percentile": 0.9519160361239898
+          },
+          "mean_top3": {
+            "rpob_value": 7.2946319580078125,
+            "rpob_rank": 148,
+            "rpob_percentile": 96.41200878691726
+          },
+          "hotspot_z_floored": {
+            "rpob_value": 9.801833654929796,
+            "rpob_rank": 277,
+            "rpob_percentile": 93.26336343666097
+          }
+        }
+      }
+    ],
+    "aggregate": {
+      "min_length": 30,
+      "by_stat": {
+        "max_surprisal": {
+          "resistant": {
+            "mean_percentile": 93.73379166430236,
+            "n_genomes": 3
+          },
+          "wt": {
+            "mean_percentile": 86.18216960067092,
+            "n_genomes": 3
+          }
+        },
+        "max_minus_p99": {
+          "resistant": {
+            "mean_percentile": 91.27579755508383,
+            "n_genomes": 3
+          },
+          "wt": {
+            "mean_percentile": 84.69119969859663,
+            "n_genomes": 3
+          }
+        },
+        "max_minus_p95": {
+          "resistant": {
+            "mean_percentile": 95.69544788519913,
+            "n_genomes": 3
+          },
+          "wt": {
+            "mean_percentile": 90.63054973745659,
+            "n_genomes": 3
+          }
+        },
+        "top1_minus_top2": {
+          "resistant": {
+            "mean_percentile": 58.85699991428032,
+            "n_genomes": 3
+          },
+          "wt": {
+            "mean_percentile": 0.9939971586608162,
+            "n_genomes": 3
+          }
+        },
+        "mean_top3": {
+          "resistant": {
+            "mean_percentile": 98.50962507031454,
+            "n_genomes": 3
+          },
+          "wt": {
+            "mean_percentile": 96.41518375443178,
+            "n_genomes": 3
+          }
+        },
+        "hotspot_z_floored": {
+          "resistant": {
+            "mean_percentile": 96.80959444881152,
+            "n_genomes": 3
+          },
+          "wt": {
+            "mean_percentile": 93.16434493483318,
+            "n_genomes": 3
+          }
+        }
+      }
+    },
+    "representative_genome": "SAMEA10029752",
+    "top_coflagged_in_representative": [
+      {
+        "flat_index": 4037,
+        "gene_name": "BOLBDL_20580",
+        "max_surprisal": 14.150946617126465,
+        "length": 698
+      },
+      {
+        "flat_index": 595,
+        "gene_name": "ilvA",
+        "max_surprisal": 12.270318031311035,
+        "length": 429
+      },
+      {
+        "flat_index": 3508,
+        "gene_name": "lppI",
+        "max_surprisal": 11.396428108215332,
+        "length": 218
+      },
+      {
+        "flat_index": 2895,
+        "gene_name": "emrB",
+        "max_surprisal": 11.164494514465332,
+        "length": 540
+      },
+      {
+        "flat_index": 1960,
+        "gene_name": "nadC",
+        "max_surprisal": 10.865338325500488,
+        "length": 285
+      },
+      {
+        "flat_index": 1333,
+        "gene_name": "aidB",
+        "max_surprisal": 10.763721466064453,
+        "length": 401
+      },
+      {
+        "flat_index": 2764,
+        "gene_name": "hrcA",
+        "max_surprisal": 10.653992652893066,
+        "length": 343
+      },
+      {
+        "flat_index": 198,
+        "gene_name": "iniB",
+        "max_surprisal": 10.475753784179688,
+        "length": 479
+      },
+      {
+        "flat_index": 2906,
+        "gene_name": "purD",
+        "max_surprisal": 10.414313316345215,
+        "length": 422
+      },
+      {
+        "flat_index": 1344,
+        "gene_name": "nuoG",
+        "max_surprisal": 10.373537063598633,
+        "length": 806
+      },
+      {
+        "flat_index": 1819,
+        "gene_name": "atpA",
+        "max_surprisal": 10.349762916564941,
+        "length": 549
+      },
+      {
+        "flat_index": 3897,
+        "gene_name": "argH",
+        "max_surprisal": 10.335442543029785,
+        "length": 470
+      },
+      {
+        "flat_index": 934,
+        "gene_name": "BOLBDL_04770",
+        "max_surprisal": 10.302677154541016,
+        "length": 592
+      },
+      {
+        "flat_index": 2320,
+        "gene_name": "dLH",
+        "max_surprisal": 10.268327713012695,
+        "length": 245
+      },
+      {
+        "flat_index": 3243,
+        "gene_name": "ligA",
+        "max_surprisal": 10.24618148803711,
+        "length": 691
+      }
+    ]
+  },
+  "headline_figures": {
+    "surprisal_vs_ablation": "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/snp_embeddings/surprisal_analysis/surprisal_vs_ablation.png",
+    "esm_surprisal": "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/snp_embeddings/surprisal_analysis/esm_surprisal.png"
+  },
+  "figure_panels": {
+    "left": {
+      "isolate_index": 0,
+      "genotype": "S450L",
+      "n_residues": 1172,
+      "snp_surprisal": 7.612043380737305
+    },
+    "right": {
+      "sample": "SAMEA10029752",
+      "n_proteins": 4107,
+      "rpob_max_surprisal": 7.612043380737305,
+      "rpob_percentile": 88.02045288531775
+    }
+  },
+  "verdict": [
+    "0A proxy: unmasked surprisal tracks masked ablation \u2014 pooled Pearson 0.948 over 117200 residues; per-isolate mean r 0.948 (sd 0.001) across 100 resistant isolates / 17 distinct genotypes.",
+    "0A localisation: the resistance residue is the #1 unmasked surprisal anomaly in rpoB for 70% of isolates (top-3 83%).",
+    "0B hotspot flag: by mean_top3, mutated rpoB sits at mean percentile 98.5 in resistant genomes vs 96.4 for WT rpoB (among proteins \u2265 30 aa) \u2014 i.e. it is pushed into the high tail an attention pool could attend to. hotspot_z recomputed with a MAD floor of 0.732 to remove the MAD\u21920 blow-ups in the raw statistic."
+  ]
+}

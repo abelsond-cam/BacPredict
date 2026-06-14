@@ -37,4 +37,5 @@ __pycache__/
 # …but documentation figures (small, committed) are kept.
 !src/kleb_iso_source/docs/figures/*.png
 !src/tb_ast/docs/figures/*.png
+!src/snp_embeddings/docs/figures/*.png
 
