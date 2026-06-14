@@ -899,7 +899,7 @@ def enrich_with_raw_order_stats(df: pd.DataFrame, raw_glob: str | None) -> pd.Da
         z = np.load(p, allow_pickle=False)
         top3, top10, p90 = _order_stats_for_shard(z["values"].astype(float), z["offsets"].astype(np.int64))
         parts.append(pd.DataFrame({
-            "sample": [str(s) for s in z["sample"]],
+            "sample": [str(s) for s in z["samples"]],  # raw npz stores the id array as "samples"
             "flat_index": z["flat_index"].astype(np.int64),
             "top3_surprisal": top3,
             "top10_surprisal": top10,
