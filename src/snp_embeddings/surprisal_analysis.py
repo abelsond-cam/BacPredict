@@ -259,6 +259,106 @@ def _pick_representative_resistant(npz: dict) -> tuple[int, int | None]:
     return k, snp_idx
 
 
+def snp_distance_profile(npz: dict, *, max_distance: int = 100) -> dict:
+    """Surprisal as a function of residue distance from the resistance SNP.
+
+    Aligns each resistant isolate's rpoB on its primary resistance residue (recovered
+    by matching the stored SNP log P inside the isolate's per-residue slice) and pools
+    the per-residue surprisal at each signed offset ``d`` across all isolates. Because
+    the 100 isolates span 17 distinct hotspot codons, intrinsic position-specific
+    surprisal averages out at ``d != 0`` while a genuine mutation-induced local effect
+    stays aligned — so the profile isolates the drop-off around the SNP. Also tests the
+    "are the 2nd/3rd most-surprising residues the SNP's neighbours?" hypothesis by
+    measuring how far the top-ranked residues sit from the SNP.
+
+    Parameters
+    ----------
+    npz : dict
+        The loaded 0A points NPZ.
+    max_distance : int, default 100
+        Largest offset (± aa) to profile.
+
+    Returns
+    -------
+    dict
+        ``profile`` (per-distance aggregates), ``neighbour_rank`` (top-residue
+        distances), ``dropoff_masked`` (symmetric mean at small offsets),
+        ``background_masked_median``, ``max_distance``.
+    """
+    idx = npz["pooled_isolate_idx"]
+    masked_lp = npz["pooled_masked"].astype(float)
+    unmasked_lp = npz["pooled_unmasked"].astype(float)
+    roles = npz["isolate_role"]
+    snp_masked = npz["snp_masked"].astype(float)
+    n_res = int((roles == "resistant").sum())
+    aligned = snp_masked.size == n_res  # 0A is all-resistant → snp[k] ↔ isolate k
+
+    offsets = list(range(-max_distance, max_distance + 1))
+    bucket_m: dict[int, list] = {d: [] for d in offsets}
+    bucket_u: dict[int, list] = {d: [] for d in offsets}
+    top_dists: list[list[int]] = []  # [|d| of rank-1, rank-2, rank-3] per isolate
+    snp_top1: list[bool] = []
+    backgrounds: list[float] = []
+    for k in sorted({int(i) for i in idx}):
+        if str(roles[k]) != "resistant" or not aligned:
+            continue
+        sel = idx == k
+        m_lp = masked_lp[sel]
+        m_sur = -m_lp
+        u_sur = -unmasked_lp[sel]
+        length = m_sur.size
+        p = int(np.argmin(np.abs(m_lp - snp_masked[k])))  # SNP position via exact value match
+        order = np.argsort(m_sur)[::-1]  # residues by descending masked surprisal
+        top_dists.append([abs(int(order[r]) - p) for r in range(min(3, length))])
+        snp_top1.append(bool(order[0] == p))
+        for d in offsets:
+            q = p + d
+            if 0 <= q < length:
+                bucket_m[d].append(float(m_sur[q]))
+                bucket_u[d].append(float(u_sur[q]))
+        far = np.abs(np.arange(length) - p) > max_distance
+        if far.any():
+            backgrounds.append(float(np.median(m_sur[far])))
+
+    def _agg(bucket: dict, fn) -> list:
+        return [float(fn(bucket[d])) if bucket[d] else None for d in offsets]
+
+    profile = {
+        "distance": offsets,
+        "mean_masked": _agg(bucket_m, np.mean),
+        "median_masked": _agg(bucket_m, np.median),
+        "q25_masked": [float(np.percentile(bucket_m[d], 25)) if bucket_m[d] else None for d in offsets],
+        "q75_masked": [float(np.percentile(bucket_m[d], 75)) if bucket_m[d] else None for d in offsets],
+        "mean_unmasked": _agg(bucket_u, np.mean),
+        "n_per_distance": [len(bucket_m[d]) for d in offsets],
+    }
+    dropoff = {}
+    for o in (0, 1, 2, 3, 5, 10, 25, 50, 100):
+        if o > max_distance:
+            continue
+        vals = bucket_m[0] if o == 0 else bucket_m.get(o, []) + bucket_m.get(-o, [])
+        dropoff[f"d{o}"] = float(np.mean(vals)) if vals else None
+
+    td = np.array(top_dists) if top_dists else np.zeros((0, 3))
+    neighbour = {
+        "n_isolates": int(td.shape[0]),
+        "snp_is_top1_frac": float(np.mean(snp_top1)) if snp_top1 else None,
+        "rank2_median_dist": float(np.median(td[:, 1])) if td.shape[0] and td.shape[1] > 1 else None,
+        "rank3_median_dist": float(np.median(td[:, 2])) if td.shape[0] and td.shape[1] > 2 else None,
+        "frac_rank2_within_2aa": float(np.mean(td[:, 1] <= 2)) if td.shape[0] and td.shape[1] > 1 else None,
+        "frac_rank3_within_2aa": float(np.mean(td[:, 2] <= 2)) if td.shape[0] and td.shape[1] > 2 else None,
+        "frac_top3_all_within_2aa": float(np.mean((td[:, 1:3] <= 2).all(axis=1)))
+        if td.shape[0] and td.shape[1] > 2 else None,
+    }
+    return {
+        "profile": profile,
+        "neighbour_rank": neighbour,
+        "dropoff_masked": dropoff,
+        "background_masked_median": float(np.median(backgrounds)) if backgrounds else None,
+        "max_distance": max_distance,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Figures
 # ---------------------------------------------------------------------------
@@ -454,12 +554,51 @@ def plot_rankcurves(df: pd.DataFrame, rpob_by_sample: dict[str, int], *, min_len
         plt.close(fig)
 
 
+def plot_snp_distance_profile(result: dict, out_path: Path) -> None:
+    """Headline: masked (+ unmasked) surprisal vs residue distance from the SNP, ±10 and ±wide."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    prof = result["profile"]
+    d = np.array(prof["distance"], dtype=float)
+
+    def _arr(key: str) -> np.ndarray:
+        return np.array([np.nan if v is None else v for v in prof[key]], dtype=float)
+
+    mm, q25, q75, mu = _arr("mean_masked"), _arr("q25_masked"), _arr("q75_masked"), _arr("mean_unmasked")
+    bg = result["background_masked_median"]
+    nb = result["neighbour_rank"]
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+    for ax, win in zip(axes, (10, result["max_distance"]), strict=True):
+        sel = np.abs(d) <= win
+        ax.fill_between(d[sel], q25[sel], q75[sel], color="#fdd0d0", alpha=0.7, label="masked IQR")
+        ax.plot(d[sel], mm[sel], color="#d62728", lw=1.8, marker="o" if win <= 10 else None, ms=4,
+                label="mean masked surprisal")
+        ax.plot(d[sel], mu[sel], color="#1f77b4", lw=1.2, ls="--", label="mean unmasked surprisal")
+        if bg is not None:
+            ax.axhline(bg, color="grey", ls=":", lw=1.2, label="gene-wide background (masked median)")
+        ax.axvline(0, color="k", lw=0.8, alpha=0.5)
+        ax.set_xlabel("residue distance from SNP (aa)")
+        ax.set_ylabel("surprisal  −log P")
+        ax.set_title(f"±{win} aa around the resistance residue")
+        ax.grid(alpha=0.25)
+    axes[0].legend(fontsize=8, loc="upper right")
+    top1 = "" if nb["snp_is_top1_frac"] is None else f" — SNP is top-1 in {100 * nb['snp_is_top1_frac']:.0f}%"
+    fig.suptitle(f"Surprisal drop-off around the SNP (masked, n={nb['n_isolates']} isolates){top1}", fontsize=12)
+    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
 # ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
 
 
-def _verdict_lines(proxy: dict, aggregate: dict, mad_floor: float) -> list[str]:
+def _verdict_lines(proxy: dict, aggregate: dict, mad_floor: float, distance: dict | None = None) -> list[str]:
     """Plain-language read-outs for the JSON (what we have actually shown)."""
     lines: list[str] = []
     pir = proxy["per_isolate_pearson_resistant"]
@@ -485,6 +624,23 @@ def _verdict_lines(proxy: dict, aggregate: dict, mad_floor: float) -> list[str]:
         f"high tail an attention pool could attend to. hotspot_z recomputed with a MAD floor of {mad_floor:.3f} "
         f"to remove the MAD→0 blow-ups in the raw statistic."
     )
+    if distance is not None:
+        do = distance["dropoff_masked"]
+        nb = distance["neighbour_rank"]
+        bg = distance["background_masked_median"]
+        lines.append(
+            f"SNP distance profile (masked, n={nb['n_isolates']}): mean surprisal is {do.get('d0'):.2f} at the SNP, "
+            f"{do.get('d1'):.2f} at ±1, {do.get('d2'):.2f} at ±2, {do.get('d5'):.2f} at ±5, vs gene-wide "
+            f"background {bg:.2f} — the signal is {'a sharp single-residue spike' if (do.get('d1') and bg and (do['d1'] - bg) < 0.3 * (do['d0'] - bg)) else 'spread over the local window'}."
+        )
+        lines.append(
+            f"Neighbour test: the SNP is the top-1 masked anomaly in {100 * nb['snp_is_top1_frac']:.0f}% of isolates; "
+            f"the 2nd/3rd most-surprising residues lie within ±2 aa of the SNP in "
+            f"{100 * nb['frac_rank2_within_2aa']:.0f}%/{100 * nb['frac_rank3_within_2aa']:.0f}% of isolates "
+            f"(median distance {nb['rank2_median_dist']:.0f}/{nb['rank3_median_dist']:.0f} aa) — so 'use top-3' "
+            f"{'IS' if nb['frac_top3_all_within_2aa'] and nb['frac_top3_all_within_2aa'] > 0.5 else 'is NOT'} "
+            f"justified by a neighbour smear."
+        )
     return lines
 
 
@@ -508,12 +664,15 @@ def run_analysis(
 
     npz = dict(np.load(points_npz, allow_pickle=True))
     proxy = proxy_summary(npz)
+    distance = snp_distance_profile(npz, max_distance=100)
 
     # Figures.
     fig_vs = output_dir / "surprisal_vs_ablation.png"
     fig_2p = output_dir / "esm_surprisal.png"
+    fig_dist = output_dir / "snp_distance_profile.png"
     plot_surprisal_vs_ablation(npz, proxy, fig_vs)
     panel_meta = plot_esm_surprisal_2panel(npz, df, rpob_by_sample, min_length=min_length, out_path=fig_2p)
+    plot_snp_distance_profile(distance, fig_dist)
     plot_proxy_r_hist(npz, output_dir / "supp_proxy_r_hist.png")
     plot_rpob_percentile_by_stat(aggregate, output_dir / "supp_rpob_percentile_by_stat.png")
     plot_rankcurves(df, rpob_by_sample, min_length=min_length, out_dir=output_dir)
@@ -530,6 +689,7 @@ def run_analysis(
         "params": {"mad_floor": mad_floor_used, "min_protein_length": min_length, "top_n": top_n,
                    "stat_family": list(STAT_FAMILY)},
         "phase_0a_proxy": proxy,
+        "snp_distance_profile": distance,
         "phase_0b": {
             "n_genomes": len(per_genome),
             "per_genome_rpob_ranking": per_genome,
@@ -537,9 +697,10 @@ def run_analysis(
             "representative_genome": representative,
             "top_coflagged_in_representative": top_coflagged(df, representative, min_length=min_length, top_n=top_n),
         },
-        "headline_figures": {"surprisal_vs_ablation": str(fig_vs), "esm_surprisal": str(fig_2p)},
+        "headline_figures": {"surprisal_vs_ablation": str(fig_vs), "esm_surprisal": str(fig_2p),
+                             "snp_distance_profile": str(fig_dist)},
         "figure_panels": panel_meta,
-        "verdict": _verdict_lines(proxy, aggregate, mad_floor_used),
+        "verdict": _verdict_lines(proxy, aggregate, mad_floor_used, distance),
     }
     out_json = output_dir / "surprisal_analysis.json"
     out_json.write_text(json.dumps(results, indent=2))
@@ -548,7 +709,7 @@ def run_analysis(
     logger.info("=" * 72)
     logger.info("SURPRISAL ANALYSIS OUTPUT DIRECTORY:")
     logger.info("  %s", output_dir)
-    logger.info("Headline figures: %s , %s", fig_vs.name, fig_2p.name)
+    logger.info("Headline figures: %s , %s , %s", fig_vs.name, fig_2p.name, fig_dist.name)
     logger.info("=" * 72)
     for line in results["verdict"]:
         logger.info("VERDICT: %s", line)
