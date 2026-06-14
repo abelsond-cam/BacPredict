@@ -79,10 +79,12 @@ PER_GENE_STATS = [
     ("max (1st)", "max_surprisal", "highest residue surprisal — the SNP peak; also rises with length & divergence"),
     ("2nd highest", "top2_surprisal", "second-highest residue surprisal in the gene"),
     ("3rd highest", "top3_surprisal", "third-highest residue surprisal (from the raw per-residue dump)"),
-    ("10th highest", "top10_surprisal", "tenth-highest residue surprisal — how fast the upper tail decays"),
+    ("10th highest", "top10_surprisal", "tenth-highest — a FIXED rank, so it climbs with gene length (rpoB is long)"),
+    ("99th centile", "p99_surprisal", "99th-percentile residue surprisal — length-normalised upper extreme"),
+    ("95th centile", "p95_surprisal", "95th-percentile residue surprisal — length-normalised upper level"),
     ("90th centile", "p90_surprisal", "90th-percentile residue surprisal — bulk upper level, robust to one spike"),
     ("median (50th)", "median_surprisal", "typical residue surprisal — the gene's background level"),
-    ("gene length", "length", "number of residues; proteins differ in length and it scales the order stats"),
+    ("gene length", "length", "number of residues; rpoB ~1172 vs ~270 median, so fixed-rank stats favour it"),
 ]
 
 # Legacy parquet column → information-theoretic name. The probe wrote "*_surprise";
@@ -913,24 +915,46 @@ def enrich_with_raw_order_stats(df: pd.DataFrame, raw_glob: str | None) -> pd.Da
 
 
 def per_gene_stat_summary(df: pd.DataFrame, *, min_length: int) -> dict:
-    """Median of each per-gene stat for all-other-genes vs resistant / WT rpoB."""
+    """Where rpoB (all copies) sits among the genome's genes for each per-gene stat.
+
+    Per stat: the all-other-genes median, the rpoB median, and rpoB's mean percentile +
+    median rank among the genome's genes (averaged over genomes) — i.e. "rpoB is typically
+    rank R of ~N by this statistic". This is the rpoB-vs-all-genes view (no R/WT split):
+    a length-driven stat (10th-highest, length) ranks rpoB near the top; a length-robust
+    percentile (p95/p99) shows whether rpoB is genuinely anomalous beyond its size.
+    """
     ranked = df[df["length"] >= min_length]
     others = ranked[~ranked["is_rpob"]]
-    rpob = ranked[ranked["is_rpob"]]
     out: dict = {"min_length": min_length, "by_stat": {}}
     for _label, col, _desc in PER_GENE_STATS:
         if col not in ranked.columns:
             continue
+        ranks: list[int] = []
+        pcts: list[float] = []
+        for _sample, sub in ranked.groupby("sample"):
+            rp = sub[sub["is_rpob"]]
+            if rp.empty or pd.isna(rp.iloc[0][col]):
+                continue
+            val = float(rp.iloc[0][col])
+            vals = sub[col].replace([np.inf, -np.inf], np.nan).dropna()
+            n = len(vals)
+            if not n:
+                continue
+            higher = int((vals > val).sum())
+            ranks.append(higher + 1)  # rank 1 = rpoB is the highest gene in the genome
+            pcts.append(100.0 * (1 - higher / n))
         out["by_stat"][col] = {
             "all_other_genes_median": _median_clean(others[col]),
-            "resistant_rpob_median": _median_clean(rpob[rpob["role"] == "resistant"][col]),
-            "wt_rpob_median": _median_clean(rpob[rpob["role"] == "wt"][col]),
+            "rpob_median": _median_clean(ranked[ranked["is_rpob"]][col]),
+            "rpob_mean_percentile": float(np.mean(pcts)) if pcts else None,
+            "rpob_median_rank": float(np.median(ranks)) if ranks else None,
+            "n_genomes_with_rpob": len(ranks),
         }
     return out
 
 
 def plot_per_gene_stat_panels(df: pd.DataFrame, out_path: Path, *, min_length: int) -> None:
-    """2×4 grid: per-gene distribution of each PER_GENE_STATS quantity, rpoB (R/WT) over all other genes."""
+    """3×3 grid: per-gene distribution of each PER_GENE_STATS quantity — all rpoB over all other genes."""
     import matplotlib
 
     matplotlib.use("Agg")
@@ -939,30 +963,31 @@ def plot_per_gene_stat_panels(df: pd.DataFrame, out_path: Path, *, min_length: i
     ranked = df[df["length"] >= min_length]
     others = ranked[~ranked["is_rpob"]]
     rpob = ranked[ranked["is_rpob"]]
-    r_rpob = rpob[rpob["role"] == "resistant"]
-    w_rpob = rpob[rpob["role"] == "wt"]
-    fig, axes = plt.subplots(2, 4, figsize=(20, 9))
+    fig, axes = plt.subplots(3, 3, figsize=(18, 14))
     flat_axes = axes.ravel()
     for ax, (label, col, desc) in zip(flat_axes, PER_GENE_STATS, strict=False):
-        base = others[col].replace([np.inf, -np.inf], np.nan).dropna().to_numpy() if col in ranked.columns else np.array([])
+        if col not in ranked.columns:
+            ax.set_visible(False)
+            continue
+        base = others[col].replace([np.inf, -np.inf], np.nan).dropna().to_numpy()
+        rp = rpob[col].replace([np.inf, -np.inf], np.nan).dropna().to_numpy()
         if base.size == 0:
             ax.set_visible(False)
             continue
-        lo, hi = np.percentile(base, [0.5, 99.5])
+        span = np.concatenate([base, rp]) if rp.size else base
+        lo, hi = np.percentile(span, [0.5, 99.5])
         bins = np.linspace(lo, hi, 60) if hi > lo else 60
         ax.hist(base, bins=bins, density=True, color="#cccccc", label="all other genes")
-        for sub, color, name in ((w_rpob, "#1f77b4", "WT rpoB"), (r_rpob, "#d62728", "resistant rpoB")):
-            sv = sub[col].replace([np.inf, -np.inf], np.nan).dropna().to_numpy()
-            if sv.size:
-                ax.hist(sv, bins=bins, density=True, histtype="step", lw=2, color=color, label=name)
+        if rp.size:
+            ax.hist(rp, bins=bins, density=True, histtype="step", lw=2, color="#d62728", label="rpoB (all)")
         ax.set_title(label, fontsize=12)
-        ax.set_xlabel("\n".join(_wrap(desc, 52)), fontsize=8)
+        ax.set_xlabel("\n".join(_wrap(desc, 56)), fontsize=8)
         ax.grid(alpha=0.2)
     for ax in flat_axes[len(PER_GENE_STATS):]:
         ax.set_visible(False)
-    flat_axes[0].legend(fontsize=8, loc="upper right")
-    fig.suptitle("Per-gene surprisal statistics: rpoB vs all other genes", fontsize=15)
-    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    flat_axes[0].legend(fontsize=9, loc="upper right")
+    fig.suptitle("Per-gene surprisal statistics: rpoB vs all other genes (n=1000 genomes)", fontsize=15)
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
 
