@@ -1,365 +1,114 @@
-# Task 7 — `snp_embeddings`: why is TB AST so poor? Diagnosing SNP-level signal loss in ESM-C → Bacformer
+# Task 7 — `snp_embeddings`: diagnosing TB-AST signal loss
 
-**Status: active — diagnostic.** The SNP-vs-ESM linear probes (`snp_vs_esm_prediction.py`) are
-the first build. No new model training for the diagnostic itself. Runs against the existing TB
-ESM-C embeddings + protein-sequence parquets, on the **same canonical holdout the deployed
-Bacformer model used**; the geometry probe (Step 3b) runs fully local on CPU.
+**Status: active diagnostic.** Branch `dev`. This file is the **operational reference** for an agent
+picking up the work — paths, models, the file map, and current state. The **results, AUROCs,
+conclusions, and open questions live in [`PROGRESS_REPORT.md`](PROGRESS_REPORT.md)** (the shareable
+write-up). Global conventions: root [CLAUDE.md](../../CLAUDE.md) §0. Cross-task tracker:
+[ToDo.md](../../ToDo.md). Approved plan: `~/.claude/plans/i-d-like-to-start-crystalline-allen.md`.
 
-See the root [CLAUDE.md](../../CLAUDE.md) for §0 global conventions. Cross-task status lives in
-[ToDo.md](../../ToDo.md). The authoritative spec for this task is **this file**; the approved
-implementation plan is `~/.claude/plans/i-d-like-to-start-crystalline-allen.md`.
+## What this task is
 
-## Aim
+*M. tuberculosis* rifampicin AST underperforms (deployed eval AUROC ~0.905 vs a SNP ceiling ~0.96)
+while *Klebsiella* AST is strong. The programme hypothesis: **Bacformer reads HGT/gene-acquisition
+resistance well but is comparatively blind to chromosomal point mutations** — TB's regime. This task
+finds *where* the single-residue *rpoB*/RRDR signal is lost and what fixes it.
 
-TB AST prediction underperforms badly (rifampin Stage C val AUROC ~0.88 vs a WHO-catalogue
-ceiling ≥0.97), while *Klebsiella* AST is strong. The central programme hypothesis is that
-**Bacformer is strong on HGT/gene-acquisition resistance but blind to chromosomal point
-mutations** — exactly TB's regime. This task tests *why*, and points to the remedy.
+**Headline finding (see the report for the full ladder):** the signal is *present* in Bacformer's
+contextualised *rpoB* token (AUROC 0.953) and is destroyed by the **protein→genome mean-pool**
+(0.788). Fine-tuning the mean partly recovers it (0.905) but a naive learned attention pool does
+*worse* (0.868) — so the open problem is the **read-out** (making the genome head attend to *rpoB*),
+not the embedding.
 
-**Suspected mechanism — a chain of averaging that dilutes a single causal residue:**
+## Current state (2026-06-15)
 
-1. **ESM-C residue → protein pool.** ESM-C mean-pools ~1,178 rpoB residues into one protein
-   vector (≈1/L dilution). A single RRDR substitution moves one residue out of ~1,178.
-2. **Bacformer protein → genome pool.** Bacformer mean-pools ~4,000 protein tokens into a
-   genome vector (≈1/N dilution).
+Three label-blind, read-only **attention diagnostics** are in flight over the 1,000-genome manifest,
+to separate Bacformer's *internal* attention (attends *rpoB*) from the prediction *head's* pooling
+(untested) — see `PROGRESS_REPORT.md` §6 for D1/D2/D3 and the architecture decision they feed.
+After them: pick the read-out fix (multi-head pool / surprisal panel / top-K-attended-gene head).
 
-A causal mutation may be clear *per-residue* yet near-invisible in the *pooled* token Bacformer
-consumes. Because the ESM-C pool is **frozen and non-invertible**, no amount of Bacformer
-fine-tuning can recover signal lost at step 1. Where the model still predicts resistance, it
-may be reading **lineage/phylogeny** (an accessory-genome shortcut) rather than the causal SNP.
+## Models
 
-**Positive control:** *M. tuberculosis* rpoB / rifampicin (US spelling **`rifampin`** in
-`binary_ast.csv`). RRDR mutations used as the panel: **S450L, H445Y, D435V, S441L** (Mtb
-numbering — note the ~80-residue offset vs the older *E. coli* numbering; always **assert** the
-WT residue identity at each codon before scoring).
-
-## Diagnostic gate — Stage 1 (run cheapest-first; stop as soon as the picture is clear)
-
-Stage 1 gathers information to decide between two worlds and to refine *which* remedy and
-*which layer*:
-
-- **Representational** — signal is present per-residue but pooled away (expected). → Remedies
-  A then B; **no retrain needed**.
-- **Absent** — the signal is not in ESM-C at all. → Remedy C only (the sole lever for the
-  variable-site regime).
-
-### The three-step test — `snp_vs_esm_prediction.py` *(the headline numbers)*
-
-Every step is a `sklearn.LogisticRegression` (`C=1.0`, L2, lbfgs, no `class_weight`) fit on the
-**train** split and scored on the **evaluate** split of the *same canonical holdout the deployed
-Bacformer model used* — `binary_ast_with_split.csv` via `tl.train.evaluate.resolve_holdouts` —
-so every number, including Bacformer's own ~0.9, sits in one comparable table. `validate` only
-picks the Youden operating point. Metrics/JSON reuse `tl.train.metrics`. Steps are ordered as the
-story is told (note **Step 2 and 3 were swapped** vs the original plan):
-
-| key | step | features | standardise | compute |
-|---|---|---|---|---|
-| `onehot_rrdr` | 1 | one-hot RRDR codon genotype (parquet) — the SNP **ceiling** (~0.95–0.97) | no | CPU |
-| `pooled_esmc_rpob` | 2 | frozen ESM-C mean-pooled rpoB 960-vector (store, mmap one row) — the suspected loss | yes | CPU |
-| `masked_marginal_llr` | 3a | ESM-C masked-LM LLR at the RRDR codons — is the residue in ESM-C *at all*? | yes | GPU |
-| `bacformer_rpob_token` | 2b | frozen Bacformer contextualised rpoB token (`frozen_bacformer_rpob_vectors.py`) — *bonus* | yes | GPU |
-
-**Head-line:** `AUROC(Step 1) − AUROC(Step 2)` on the **intersection** of the samples every step
-covers = information lost to ESM-C's residue→protein mean. `3a` high while `2` low ⇒ the residue
-survives in ESM-C pre-pool (recoverable). `2b ≈ 2` ⇒ Bacformer's cross-protein attention adds
-nothing — the loss was sealed at the ESM-C pool. Step 2b rides with the Step-3 GPU pass (it needs
-a Bacformer forward), so it is a bonus, not strictly necessary.
-
-**No lineage holdout.** Every probe sees only the rpoB locus, so there is no accessory / phylogeny
-shortcut to block — the canonical random split suffices (Step 2's pooled vector *could* still
-inflate via lineage structure; noted in the JSON).
-
-### Step 3b — embedding-geometry probe *(`geometry_probe.py`; mechanistic, labels-free, local CPU)*
-
-In-silico single-residue WT→mutant rpoB pairs (each RRDR substitution applied one at a time to
-H37Rv; optional real resistant isolates as confirmation). Per layer ℓ: `d_site` (the mutated
-residue), `d_window` (±k neighbours), `d_pool` (the **production** mean-pool, via
-`production_mean_pool`), `d_max`, `d_cls` — in cosine + euclidean; plus the per-position masked-LM
-LLR profile (expect the causal residue as a single sharp outlier).
-
-**Read-out:** `d_site ≳ d_window ≫ d_pool` ⇒ represented per-residue, crushed by the mean ⇒ an
-attention pool could recover it; report the best-preserving layer (max `d_site / d_pool`). This is
-the cheapest analysis and explains where Steps 1–2 land.
-
-### Stage 1.3 — causal ablations *(deferred, more complex; only if gene-vs-tree stays open)*
-
-A genuinely later, heavier step, engaged only if 1.1/1.2 don't settle whether the defect is
-representational. Brings in the **genome-wide** Bacformer predictor: counterfactual SNP
-injection (edit a susceptible isolate's rpoB codon to the R allele in silico, re-embed,
-re-predict — flips ⇒ causally SNP-sensitive); gene-masked ablation (`AUROC(full) −
-AUROC(rpoB-masked)` = real dependence on the causal gene); out-of-lineage transfer. **This is
-where lineage-blocked splits + the existing `tb_ast` predictor are required** — hence it is left
-as subsequent work, not part of establishing the top-level defect.
-
-### Gate
-
-- **Representational** (per-residue present, pooled/counterfactual blind, model leans on
-  phylogeny → expected) → **Remedy A then B; do NOT retrain.**
-- **Absent** (counterfactual-insensitive AND `d_pos` small AND high entropy) → **Remedy C.**
-
-## Remedies (provisional — selected by the gate; least-invasive the evidence supports)
-
-- **A — explicit pre-pooling channel (cheapest, leakage-free).** Inject the `s_i`-derived
-  channel `[max(s_i), mean(top-3 s_i), count(s_i > τ)]` (τ ≈ 90–95th pct, held-out tuned) —
-  and/or population-homoplasy — concatenated onto each protein token; **fine-tune Bacformer
-  only**, ESM-C frozen. Bypasses both averages. Channel is label-blind ⇒ no leakage.
-  Masked-marginal reserved for a candidate-locus list (rpoB, katG, gyrA, gyrB, embB, pncA,
-  rpsL, rrs, ethA, inhA + Kp equivalents); cheap unmasked single-pass as the global default.
-- **B — residue-level attention pooling (if A leaves signal on the table).** Replace mean-pool
-  **at residue → protein** (not genome level) so the variant can dominate the protein token;
-  ascend attention-pool → LoRA through top ESM-C layers → full end-to-end. Watch
-  family-invariance (a two-channel stable-family ⊕ variant-residual token) and catastrophic
-  forgetting.
-- **C — domain-adaptive pretraining (GATED to "absent").** Continued species MLM via
-  adapters/LoRA over frozen ESM-C; **conditional surprise** (P(residue | rest of genome))
-  detects convergence by unpredictability-given-context. Counterproductive for conserved sites
-  (naive MLM learns the site is polymorphic, shrinking `s_i`). **Acceptance = out-of-lineage
-  transfer, not in-distribution AUROC.**
-- **Pyseer / homoplasy — oracle + variable-site track, NOT a predictor feature.** LMM+kinship
-  on the full collection → achievable-association ceiling + which loci the model should attend
-  to; population-level + label-derived, so quarantined from the predictor. Runs in parallel
-  from the start (compute-bound). Conservation-surprise covers conserved sites, homoplasy covers
-  variable sites — complementary.
-
-## Cross-cutting validity (genome-wide predictive steps only — 1.3 and the remedies)
-
-Lineage-/cluster-blocked splits, never random; label-derived features mined train-fold-only or
-from the external WHO catalogue; report AUROC + balanced accuracy and **within- vs cross-lineage
-transfer separately** (the gap = shortcut reliance). **Locus-restricted probes (1.1, 1.2) are
-exempt** — they cannot see the background, so there is no shortcut to block.
-
-## Build order (stepwise, by dependency)
-
-| Increment | What | Where it runs |
-|---|---|---|
-| **0** | scaffold + docs (this file, `__init__.py`, `ToDo.md` block, root-doc entries) | — |
-| **1** | Steps 1 + 2 (CPU): `locate_gene` + `rpob_genotype` + `snp_vs_esm_prediction` on the canonical split | HPC CPU sbatch |
-| **2** | Step 3 GPU pass: 3a masked-marginal LLR + 2b frozen Bacformer token (`frozen_bacformer_rpob_vectors.py`) | HPC GPU |
-| **2′** | Step 3b geometry probe: per-residue states + bundled rpoB reference + probe | local / HPC CPU |
-| later | 1.3 ablations + remedies (gated); pyseer oracle in parallel | HPC |
-
-**Read Steps 1 + 2 before spending the GPU.** If Step 1 ≈ 0.95–0.97 and Step 2 ≈ baseline, the
-core hypothesis (the residue→protein mean throws the signal away) is already supported; the GPU
-pass (3a/2b) then decides whether it is *recoverable* (in ESM-C pre-pool) vs *absent*.
+- **ESM-C:** `Synthyra/ESMplusplus_small` (ESM++). Production forward returns only
+  `.last_hidden_state`. Masked-marginal logits need the **`ESMplusplusForMaskedLM`** variant
+  (`AutoModelForMaskedLM.from_pretrained(..., trust_remote_code=True)` → `.logits [B,T,vocab]`);
+  tokeniser wraps `<cls> A <eos>` so AA position `p` → token `p+1`.
+- **Bacformer:** `macwiatrak/bacformer-large-masked-complete-genomes` (refreshed complete-genomes
+  weights; HPC cache pinned to the 2026-05-15 snapshot). Installed `bacformer==0.2.0` is a VCS install
+  of the **fork** `abelsond-cam/Bacformer@713d878` — `BacformerLargeTrainer` /
+  `BacformerLargeForGenomeClassification` (contig-aware 15-head RoPE head) are the fork's, not
+  upstream. Its own self-attention is exposed via `return_attn_weights=True` →
+  `BacformerModelOutput.attentions`.
+- **Loader idiom:** `dtype="auto"`, **never** a manual `.to(torch.bfloat16)` cast (the cast breaks
+  Stage-A CPU smokes). Single source of truth: `tl/embed/generate_embeddings.load_bacformer_model`.
+- **Genome head pooling** is a straight mask-normalised **mean** (`einsum(...)/mask.sum`), no learned
+  attention — the second link in the chain of averaging.
 
 ## Data paths & repo facts
 
-- **ESM-C model:** `Synthyra/ESMplusplus_small` (ESM++ reimplementation), loaded via
-  `bacformer.pp.load_plm` / `AutoModel.from_pretrained(..., trust_remote_code=True)`; tokenizer
-  is `model.tokenizer`. The production forward returns only `.last_hidden_state` — logits / the
-  MLM head are never requested. Stage 1.1 needs the `ESMplusplusForMaskedLM` variant for
-  masked-marginal logits (**verify the class name / return fields against the cached
-  `trust_remote_code` modeling file day one**; if the encoder-only `AutoModel` has no LM head,
-  tie logits from hidden states via the output embedding).
-- **Bacformer model:** `macwiatrak/bacformer-large-masked-complete-genomes` (refreshed
-  complete-genomes weights; HPC cache pinned to the 2026-05-15 snapshot).
-- **Loader idiom:** `dtype="auto"`, **not** a manual `.to(torch.bfloat16)` cast — the cast pegs
-  Stage A on CPU. (Same memory idiom as the task train entrypoints.)
-- **Mean-pool location:** the einsum over residues with the attention mask in
-  `generate_protein_embeddings` (`.venv/.../bacformer/pp/embed_prot_seqs.py`);
-  `max_prot_seq_len=1024` truncates — rpoB (~1,178 aa) exceeds it, but the RRDR codons (~430–450)
-  survive. The geometry probe must run **without** that truncation.
-- **Embedding store (read-only, shared):** the TB ESM-C store + protein-sequence parquets live
-  under `project_k/david/processed/train_tb_ast/` (`tb_esm_embeddings/`, `binary_ast.csv`; the
-  protein-sequence parquet dir is set by the embedding-prep step — confirm before the first run).
-  The TB `.pt` (verified 2026-06-12) is the **plain per-protein** layout: `protein_embeddings`
-  (`[1, n_proteins, dim]`, one row per protein in flat order, e.g. `[1, 4055, 960]`), `contig_ids`,
-  `attention_mask` — **no** interleaved CLS/SEP/PROT_EMB tokens, so the rpoB flat index maps
-  directly to a row (`attention_mask == 1` drops any padding). `snp_vs_esm_prediction._real_protein_indices`
-  also handles the alternative Bacformer-input bundle (`special_tokens_mask == 4` = PROT_EMB;
-  CLS/SEP/PAD/END = 2/3/0/5) for stores written that way. A protein-count guard (rows vs the
-  parquet's flat count) skips any sample where the two disagree, so a flat-order misalignment can't
-  pass as "signal pooled away". **No labels, no per-residue states, no logits.** (Kp equivalent:
-  `processed/klebsiella_esm_embeddings/{sample_id}_esm_embeddings.pt`.)
-- **rpoB → embedding-index recovery:** protein order is preserved GFF → parquet → `.pt`.
-  `{sample_id}_protein_sequences.parquet` (from
-  [preprocess_assemblies_to_protein_sequences.py](../tl/embed/preprocess_assemblies_to_protein_sequences.py))
-  retains nested `gene_name` / `protein_sequence` / `start` / `end` / `protein_id` / `contig_idx`.
-  Flattening the nested lists in `contig_idx` order maps a gene to its flat index into
-  `protein_embeddings`. This is how predictors (2) and (3) find rpoB.
-- **TB AST table + canonical split:** the probes read `binary_ast_with_split.csv` (drug column
-  `rifampin`, US spelling; `Sample`/`phenotype-BioSample_ID`, `train_val_eval`) under
-  `processed/train_tb_ast/` — the **same 70/10/20 holdout `tb_ast/train_amr.py` trained on**, so the
-  probe AUROCs are directly comparable to the deployed model's. (`binary_ast.csv` is the pre-split
-  source the prepare step derived it from.) The 16 ambiguous `0.5` labels are dropped in code.
-- **Genotype source (decided 2026-06-12):** Stage 1.1 reads the RRDR allele **from the parquet
-  protein sequence**, not from a variant caller — the mutation is in the sequence ESM-C saw.
-  The annotations name the rpoB gene but do *not* carry mutation calls; we don't need them to,
-  because the translated CDS does.
-- **TB-Profiler — parallel ground-truth + lineage, not on the critical path.** The de facto
-  gold standard (maps to H37Rv, annotates against the WHO v2 catalogue, emits per-drug calls +
-  the specific mutation + lineage). We have **assemblies only (no reads)**, so it runs in
-  `--fasta` mode. Use it to (a) validate our sequence-derived RRDR calls, (b) supply **lineage**
-  for the deferred genome-wide steps (1.3) and cross-lineage transfer reports, (c) catch isolates
-  where rpoB is fragmented/truncated in the assembly. `bioconda::tb-profiler`. Mykrobe is the
-  alternative.
-- HPC root: `/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/`.
+HPC root: `/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/`. Everything below is under
+`processed/train_tb_ast/`:
 
-## Three-stage testing protocol (recap of root §0.2)
+- **`tb_esm_embeddings/{sample}_esm_embeddings.pt`** — ESM-C store (read-only, shared). **Plain
+  per-protein** layout: `protein_embeddings` `[1, n_proteins, dim]` (one row per protein in flat
+  order, e.g. `[1, 4055, 960]`), `contig_ids`, `attention_mask` — **no** interleaved CLS/SEP/PROT_EMB
+  tokens, so the *rpoB* flat index maps directly to a row. `snp_vs_esm_prediction._real_protein_indices`
+  also handles the alternative Bacformer-input bundle (`special_tokens_mask == 4` = PROT_EMB). A
+  protein-count guard (rows vs parquet flat count) skips any misaligned sample. No labels/logits.
+- **`tb_protein_sequences/{sample}_protein_sequences.parquet`** — nested `gene_name` /
+  `protein_sequence` / `start` / `end` / `protein_id` / `contig_idx`. Flattening in `contig_idx`
+  order (`locate_gene.flatten_proteins`) maps a gene → its flat index into `protein_embeddings`. This
+  is how every probe finds *rpoB* (and the only reverse flat-index→gene source).
+- **`binary_ast_with_split.csv`** — the canonical 70/10/20 holdout `tb_ast/train_amr.py` trained on;
+  drug column **`rifampin`** (US spelling), `Sample`/`phenotype-BioSample_ID`, `train_val_eval`.
+  Read via `tl.train.evaluate.resolve_holdouts` so probe AUROCs are directly comparable to the model.
+  38,758 labelled (26,147 S / 12,595 R; 16 ambiguous `0.5` dropped in code). `binary_ast.csv` is the
+  pre-split source.
+- **`snp_embeddings/`** — all analysis outputs, one subfolder per analysis (versioned JSON per
+  `tl/train/metrics`): `unmasked_surprisal_scan/` (incl. `manifest.csv` = ~500 R-mutant + ~500 WT,
+  cols `sample`/`role`/`rpob_flat_index`/`genotype`), `surprisal_analysis/`, `intrinsic_attention/`,
+  `head_pool_attention/`, the panel store, etc.
+- **Trained checkpoints:** `checkpoints/<species>_<drug>_attn_<mode>_<jobid>/` (attention pool) and
+  `..._stage_c_<jobid>/` (mean-pool), best checkpoint in a `checkpoint-<step>/` subdir — resolve with
+  `tl.train.evaluate.resolve_checkpoint_dir`. Current RIF runs: e2e gated-MIL `30574525` (0.868),
+  frozen gated-MIL `30574524`, mean-pool `29776879` (0.905).
 
-Diagnostic, so largely N/A for the headline. Stage A discipline still applies:
-
-| Stage | Scale | Where |
-| :-- | :-- | :-- |
-| **A. Smoke** | tiny panel | local CPU — the 1.2 geometry probe is itself the CPU smoke (`--device cpu`) |
-| **C. Full** | full RIF cohort | 1.1 ceiling ladder on HPC / login |
-
-## Reporting
-
-Versioned results JSON per the §0.4 / `tl/train/metrics.py` convention:
-
-- **Stage 1.1:** AUROC + balanced accuracy per predictor; `AUROC(1) − AUROC(3)` (info lost to
-  pooling); placement of (2) (loss-at-pooling vs absent-from-model).
-- **Stage 1.2:** per-mutation `s_i`/LLR, masked entropy, `d_pos`, `d_pool`, `d_max`, `<cls>`
-  distance, and `d_pos`-by-layer; the best-preserving layer; plots (`d_pos` vs `d_pool`;
-  `d_pos`-by-layer).
-- **Decision point:** explicit Representational-vs-Absent gate call and the implied remedy.
+**rpoB specifics.** Single-copy only (`rpob_genotype.build_genotype_table` QC-logs and excludes
+0-copy / >1-copy). Genotype read **from the translated CDS in the assembly** (the sequence ESM-C
+saw) — no variant caller. UniProt P9WGY9 numbering is **+6** vs the standard RRDR codons
+(D435/S441/H445/S450); `rpob_genotype.py` anchors on the motif `DQNNPLSGLTHKRR` and **asserts** WT at
+each panel codon so a wrong reference fails loudly. Reference: `reference_gene/rpoB_H37Rv.faa`
+(`REFERENCE_RPOB_H37RV`). TB-Profiler (`--fasta`, assemblies only) is a parallel ground-truth +
+lineage source, not on the critical path.
 
 ## Files in this folder
 
-- `__init__.py` — package stub.
-- `CLAUDE.md` — this spec.
-- `locate_gene.py` — gene → flat embedding index (rebuilds the flat protein order GFF→parquet→`.pt`).
-- `rpob_genotype.py` — RRDR allele from the parquet protein sequence; **provenance docstring**
-  (reference, no-minimap rpoB location, alignment, WHO catalogue) + **rpoB-copy QC**
-  (`build_genotype_table` keeps single-copy genomes only; 0-copy and >1-copy counted, printed,
-  written to the QC log, excluded).
-- `snp_vs_esm_prediction.py` — the three-step linear probes (Steps 1, 2, 3a, and 2b when its NPZ
-  is supplied) on the canonical `resolve_holdouts` split; reuses `tl.train.metrics`; writes the
-  schema-2.0 JSON + an `*_eval_probs.npz` plotting sidecar. `scripts/run_snp_vs_esm_prediction.sh`
-  (CPU sbatch Steps 1+2; GPU variant commented for 3a+2b).
-- `frozen_bacformer_rpob_vectors.py` — Step 2b (GPU): frozen Bacformer forward → contextualised
-  rpoB token NPZ. Imports `load_bacformer_model` / `bacformer_last_hidden_state` from
-  `../tl/embed/generate_embeddings.py` (extracted there, no behaviour change).
-- `geometry_probe.py` + `scripts/smoke_geometry_probe.sh` — Step 3b; extends
-  `../tl/embed/esm_residue_level.py` with `residue_states`, `production_mean_pool`,
-  `apply_point_mutation` (unit-tested in `tests/tl/embed/test_esm_residue_level.py`).
-- `llr_distribution_probe.py` + `scripts/llr_distribution_probe.sh` — **experiment-4 Phase 0**
-  (GPU). Two phases: **0A** whole-gene masked-vs-unmasked **surprisal** proxy proof on N=100
-  resistant isolates (is the cheap unmasked −log P a faithful stand-in for the masked-marginal
-  ablation gold standard?); **0B** the per-protein "a SNP is here" flag across all ~4,000 proteins
-  of a handful of genomes (does a per-protein surprisal statistic push mutated rpoB into a short
-  high tail an attention pool can exploit?). Writes a `*_0a_points.npz`, a `*_0b_protein_stats.parquet`
-  (one row per protein), the schema-2.0 JSON, and plots. **Terminology:** "surprisal" = −log P
-  (information-theoretic); earlier code/columns said "surprise" — the parquet still carries the
-  legacy `*_surprise` names, which the analysis module aliases on load.
-- `surprisal_analysis.py` — **read-only** (CPU / login-node) analysis + visualisation over the two
-  Phase-0 sidecars: aliases legacy `*_surprise` → `*_surprisal`, recomputes a numerically stable
-  `hotspot_z_floored` (the raw `hotspot_z` blew up at `MAD→0`), reports per-genome rpoB rank/percentile
-  by each statistic (R vs S), and writes the headline figures + a refined JSON to a dedicated
-  `…/snp_embeddings/surprisal_analysis/` subfolder (path echoed on output). Headline figures:
-  `surprisal_vs_ablation.png` (0A proxy scatter, resistance residues red) and `esm_surprisal.png`
-  (2-panel surprisal histogram: per-residue within rpoB | per-protein across the genome). Both are
-  copied to `src/tb_ast/docs/figures/`. It now also carries the **scaled-scan analysis** (below):
-  `--scan-stats-glob`/`--scan-acf-glob` → the per-protein statistic **histogram grid**, the genome-wide
-  **spatial-autocorrelation** figure (with the rpoB-only 0A ACF overlaid), and the **stat correlation**
-  heatmap. The per-protein statistic suite lives in `SCAN_STATS` (magnitude: `max`, `mean_top3`;
-  concentration/shape: robust max-z, `self_z`, `self_z_trimmed`, top−mean(rest), participation ratio,
-  Gini, kurtosis).
-- `unmasked_surprisal_scan.py` + `scripts/unmasked_surprisal_{manifest,scan,analysis}.sh` — the
-  **scalable genome-wide unmasked-surprisal pass** (experiment-4 feature selection). Two modes:
-  `--mode manifest` (CPU: genotype a pool once → `manifest.csv` of ~500 resistant rpoB-mutant + ~500 WT
-  genomes) and `--mode scan` (GPU array, sharded: one unmasked forward per protein → per-shard stats
-  parquet + streaming autocorrelation NPZ + raw per-residue dump). New per-protein stats added to
-  `protein_surprisal_stats` (in `llr_distribution_probe.py`): `participation_ratio`, `gini`, `self_z`,
-  `self_z_trimmed`, `top_minus_mean_rest`. Answers (a) is unmasked surprisal spatially autocorrelated
-  genome-wide (does a residue predict its neighbours' surprisal?) and (b) which per-protein statistic
-  best isolates the single-SNP protein. The stats parquet is the **start of the Phase-1 feature
-  precompute** (eventually all ~36k genomes, with a batched forward), not a throwaway.
-- `reference_gene/rpoB_H37Rv.faa` — the H37Rv rpoB reference (UniProt P9WGY9), a biological
-  reference (not a test fixture); `REFERENCE_RPOB_H37RV` in `rpob_genotype.py`.
-- Shared: `../tl/embed/esm_residue_level.py` (MLM loader + `masked_marginals` + residue-level ops).
+| File | Role |
+|---|---|
+| `locate_gene.py` | gene ↔ flat embedding index (`flatten_proteins`, `locate_gene`) |
+| `rpob_genotype.py` | RRDR allele from the parquet CDS + rpoB-copy QC + provenance docstring |
+| `snp_vs_esm_prediction.py` | the linear-probe ladder (Steps 1/2/3a/2b) on `resolve_holdouts` |
+| `frozen_bacformer_rpob_vectors.py` | frozen Bacformer *rpoB* token + genome-mean vectors (GPU) |
+| `geometry_probe.py` | per-residue WT→mutant geometry (`d_site`/`d_window`/`d_pool` by layer), CPU |
+| `llr_distribution_probe.py` | per-residue + per-protein surprisal (`protein_surprisal_stats`), GPU |
+| `unmasked_surprisal_scan.py` | genome-wide scan: `--mode manifest` (CPU) / `--mode scan` (GPU array) |
+| `surprisal_analysis.py` | read-only figures over the scan/probe sidecars (CPU/login) |
+| `build_surprisal_store.py` | re-key raw dumps → per-sample `{sample}_panel.npz` + standardisation (CPU) |
+| `intrinsic_attention_probe.py` | Bacformer's **internal** self-attention on *rpoB* (± `--checkpoint-dir`, top-K genes) |
+| `head_pool_attention_probe.py` | the prediction **head's** pool weights on a trained checkpoint |
+| `reference_gene/rpoB_H37Rv.faa` | H37Rv *rpoB* reference (UniProt P9WGY9) |
+| `scripts/` | the sbatch wrappers for each step (CPU/GPU as noted) |
 
-## Running notes
+Shared touch-points (call out when editing): `tl/embed/generate_embeddings.py`
+(`load_bacformer_model`, `bacformer_last_hidden_state`, `bacformer_attention_weights`),
+`tl/embed/esm_residue_level.py` (MLM loader, `masked_marginals`, residue-level ops),
+`tl/train/{attention_pool,datasets,evaluate,metrics}.py`.
 
-<!-- Agent appends here as work proceeds. -->
-- 2026-06-12 — Increment 0: package scaffold + this spec created. Plan approved
-  (`~/.claude/plans/i-d-like-to-start-crystalline-allen.md`). Decisions: stay on branch `dev`;
-  Stage 1.1 genotype is **sequence-derived from the parquet** (TB-Profiler `--fasta` in parallel
-  for validation + lineage; assemblies only, no reads); TB store + parquets under
-  `project_k/david/processed/train_tb_ast/`.
-- 2026-06-12 — Increment 1 (Stage 1.1) built. Day-one checks resolved against the HPC caches:
-  - **ESM++ MLM head confirmed:** `ESMplusplusForMaskedLM` (load via
-    `AutoModelForMaskedLM.from_pretrained("Synthyra/ESMplusplus_small", trust_remote_code=True)`)
-    returns `ESMplusplusOutput.logits` `[B, T, vocab]`. Tokeniser wraps `<cls> A <eos>`, so AA
-    position `p` → token `p+1`; `<mask>` is a real token.
-  - **Pooled-vector layout:** the stored `.pt` selects real proteins via `special_tokens_mask == 4`
-    (PROT_EMB); `protein_embeddings_to_inputs` interleaves CLS/SEP/pad rows (bacformer
-    `SPECIAL_TOKENS_DICT`).
-  - **rpoB numbering offset:** UniProt P9WGY9 positions are **+6** vs the standard Mtb RRDR codon
-    numbering (D435/S441/H445/S450). `rpob_genotype.py` anchors on the conserved core motif
-    `DQNNPLSGLTHKRR` (leading D = codon 435) and **asserts** the WT residue at every panel codon,
-    so a wrong/ swapped reference fails loudly. Per-sample RRDR alleles are read by global-aligning
-    the assembled rpoB to the H37Rv reference (no dependence on absolute counts).
-  - Modules lint clean (ruff B/BLE/C4/D/E/F/I/RUF100/TID/UP/W; empty `__init__.py` D104 matches
-    the repo-wide convention).
-  - **TB data verified on HPC:** `rifampin` = the canonical RIF column, 38,758 labelled
-    (26,147 S / 12,595 R; 16 ambiguous `0.5` dropped in code). Sample-ID column is
-    `phenotype-BioSample_ID` (SAMEA… = parquet stems). 38,248 parquets + 38,248 esm `.pt`
-    under `processed/train_tb_ast/{tb_protein_sequences,tb_esm_embeddings}/`.
-  - **Login-node smoke (200 samples) PASS:** pipeline runs end-to-end; one-hot RRDR AUROC 0.969,
-    pooled ESM-C rpoB 0.868 (resistant-enriched subset — numbers not yet meaningful). The
-    protein-count guard did not trip → flat-order alignment of the pooled rpoB row is correct.
-    Measured ~0.3 s/.pt read.
-  - **Full predictors 1+3 submitted:** SLURM job **30485091** (icelake CPU, 12 h),
-    `--skip-masked-marginal`, output
-    `processed/train_tb_ast/snp_embeddings/ceiling_ladder_30485091.json`. (Superseded — see below.)
-- 2026-06-13 — **Re-planned + rebuilt** (the first cut loaded all embeddings and used an ad-hoc
-  `train_test_split`, so its numbers weren't comparable to the deployed model). The approved plan
-  (`~/.claude/plans/i-d-like-to-start-crystalline-allen.md`) reuses the repo infra and renames
-  everything. Job 30485091 (the old `ceiling_ladder.py`) is **dead/superseded** — no action needed.
-  - `ceiling_ladder.py` → **`snp_vs_esm_prediction.py`**, rebuilt on `tl.train.evaluate.resolve_holdouts`
-    (the deployed model's canonical `binary_ast_with_split.csv` holdout) + `tl.train.metrics`
-    (`compute_full_metrics` / `youden_threshold`) + a schema-2.0 JSON. Per-step kept-id alignment +
-    an **intersection-restricted** head-line so Steps 1/2 are strictly comparable; an optional
-    `--reference-results-json` asserts the deployed model's split source / `n_evaluate` match and
-    records its AUROC. Lazy mmap one-row pooled reads kept (optional `--pool-workers`).
-  - **Steps 2 and 3 swapped** (per the user): Step 2 = frozen pooled ESM-C, Step 3 = "is it still
-    inside ESM-C" (3a LLR / 3b geometry); **Step 2b** bonus = frozen Bacformer rpoB token
-    (`frozen_bacformer_rpob_vectors.py`, GPU), which **imports** `load_bacformer_model` /
-    `bacformer_last_hidden_state` (extracted into `tl/embed/generate_embeddings.py`, no behaviour
-    change — shared touch).
-  - **Bacformer genome head pooling corrected:** it is a **straight mask-normalised mean**
-    (`einsum("ijk,ij->ik", …)/mask.sum`), **no** learned attention — strengthens the "chain of two
-    plain means" framing.
-  - `rpob_genotype.py`: **rpoB-copy QC** (single-copy only; 0-copy and >1-copy counted + logged to
-    `rpob_copy_qc.log` + excluded — replaces the old take-the-longest fallback) + a full provenance
-    docstring (NCBI `NC_000962.3` / GenBank `AL123456.3`, `Rv0667`, UniProt `P9WGY9`; Bakta
-    annotation, no minimap; BLOSUM62 global align; WHO 2nd-edition catalogue; TB-Profiler as a
-    deferred `--fasta` validation/lineage fast-follow).
-  - `fixtures/rpoB_H37Rv.faa` → **`reference_gene/rpoB_H37Rv.faa`** (`REFERENCE_RPOB_H37RV`).
-  - `esm_residue_level.py` extended: `residue_states` (all layers, no 1024 truncation, strips
-    `<cls>`/`<eos>`, optional `<cls>` return), `production_mean_pool` (exact einsum; unit-tested),
-    `apply_point_mutation`. `geometry_probe.py` + `scripts/smoke_geometry_probe.sh` written.
-  - All new/modified modules lint clean (ruff) and byte-compile; the model-free pool/mutation unit
-    tests are in `tests/tl/embed/test_esm_residue_level.py` (run on HPC — no local torch). **Next:**
-    HPC login-node smoke (`--max-samples`) of Steps 1+2, then the CPU sbatch, then the GPU pass.
-- 2026-06-14 — **Experiment-4 Phase 0 complete + surprisal analysis module.** Localization chain
-  on the canonical RIF eval (n≈6.9k): SNP one-hot 0.960 → frozen pooled ESM-C rpoB 0.971 → frozen
-  Bacformer rpoB token 0.953 → frozen Bacformer genome mean **0.788** → fine-tuned deployed 0.905.
-  The genome **mean-pool** is the culprit (0.953→0.788); the frozen rpoB token already beats the
-  fine-tuned model → an attention pool over protein tokens is the remedy. 0A (n=100/17 genotypes)
-  validated the cheap unmasked surprisal proxy vs masked ablation; 0B showed mutated rpoB sits in
-  the per-protein anomaly high tail. **Terminology:** renamed "surprise" → **"surprisal"** (−log P)
-  across `llr_distribution_probe.py` (stat keys/`RANK_STATS`/`PLOT_STATS`/`protein_surprisal_stats`),
-  `esm_residue_level.py` + the sbatch (docstrings/comments). New read-only `surprisal_analysis.py`
-  consumes the saved sidecars (no GPU), aliases the legacy `*_surprise` parquet columns, floors the
-  broken `hotspot_z`, and writes the two headline figures + JSON to `…/snp_embeddings/surprisal_analysis/`.
-  Figures copied to `src/tb_ast/docs/figures/{surprisal_vs_ablation,esm_surprisal}.png` (root
-  `.gitignore` whitelists that dir).
-- 2026-06-14 — **SNP drop-off + neighbour test (rpoB, masked).** Added `snp_distance_profile()` to
-  `surprisal_analysis.py`: the masked SNP signal is a **razor single-residue spike** (mean surprisal
-  8.14 at the SNP vs 0.11/0.19 at ±1/±2, below the 0.50 gene background); the 2nd/3rd most-surprising
-  residues are **not** the SNP's neighbours (within ±2 aa in 9%/3%; rank-2 median 617 aa). So a
-  single-residue peak statistic suffices; `mean_top3` ranks rpoB high only via *intrinsic* residues
-  elsewhere (poor SNP-specificity, but a useful orthogonal *magnitude* channel).
-- 2026-06-14 — **Scalable unmasked-surprisal scan built** (`unmasked_surprisal_scan.py` +
-  `scripts/unmasked_surprisal_{manifest,scan,analysis}.sh`). Manifest (CPU) → GPU array (20 shards over
-  ~1,000 genomes, one unmasked forward/protein → per-shard stats parquet + streaming ACF NPZ + raw
-  per-residue dump) → scaled analysis (CPU sbatch). New per-protein stats (`participation_ratio`,
-  `gini`, `self_z`, `self_z_trimmed`, `top_minus_mean_rest`) added to `protein_surprisal_stats`.
-  Deliverables: per-protein **histogram grid** (magnitude vs concentration/shape, rpoB R/WT overlaid),
-  the **genome-wide spatial-autocorrelation** figure (finalises "neighbours don't matter" on the cheap
-  unmasked signal; rpoB-only 0A ACF overlaid), and a **stat correlation** heatmap. Gini / ACF-Pearson /
-  participation-ratio math verified on HPC (sorted==brute-force; sufficient-stat==`np.corrcoef`). Lint +
-  compile clean; **smoke (1 shard, 2 genomes) + the GPU array are pending an HPC push/run go-ahead.**
+## Conventions
+
+- Run everything with `uv run python`; on HPC, `uv run python`. Branch `dev` — stage only your own
+  `snp_embeddings` paths; never `git add -A`/`.`/`-a`. Push/pull on the shared HPC checkout and any
+  GPU launch need explicit go-ahead.
+- Three-stage discipline (root §0.2): an n=10/20 smoke before any full GPU job; login node only for
+  <15 min, <128 MB, CPU-only work.
+- **Surprisal** = −log P (information-theoretic). Legacy parquet columns say `*_surprise`; the
+  analysis modules alias them on load.
