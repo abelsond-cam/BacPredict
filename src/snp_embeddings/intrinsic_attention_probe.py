@@ -40,12 +40,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
-from transformers import AutoModelForSequenceClassification
+from transformers import AutoConfig, AutoModelForSequenceClassification
 
 from snp_embeddings.frozen_bacformer_rpob_vectors import _forward_inputs
 from snp_embeddings.locate_gene import flatten_proteins
 from snp_embeddings.snp_vs_esm_prediction import _real_protein_indices
-from tl.embed.generate_embeddings import bacformer_attention_weights, load_bacformer_model
+from tl.embed.generate_embeddings import BACFORMER_MODEL_ID, bacformer_attention_weights, load_bacformer_model
+from tl.train.attention_pool import BacformerAttnPoolForGenomeClassification
 from tl.train.evaluate import resolve_checkpoint_dir
 
 logger = logging.getLogger(__name__)
@@ -77,20 +78,81 @@ def _rank_stats(received: np.ndarray, rpob_pos: int) -> tuple[float, int]:
     return float((received < v).mean()), int((received > v).sum())
 
 
+def _load_attn_pool_state_dict(model_dir: Path) -> dict:
+    """Load a saved ``state_dict`` from a checkpoint dir (safetensors preferred, then ``.bin``)."""
+    safetensors_path = model_dir / "model.safetensors"
+    if safetensors_path.exists():
+        from safetensors.torch import load_file
+
+        return load_file(str(safetensors_path))
+    bin_path = model_dir / "pytorch_model.bin"
+    if bin_path.exists():
+        return torch.load(str(bin_path), map_location="cpu")
+    raise FileNotFoundError(f"no model.safetensors or pytorch_model.bin in {model_dir}")
+
+
+def load_attn_pool_wrapper(model_dir: Path, device: str, *, dtype: str = "auto") -> torch.nn.Module:
+    """Reconstruct a trained ``BacformerAttnPoolForGenomeClassification`` from a resolved checkpoint dir.
+
+    The wrapper is a local ``nn.Module``, **not** HF remote code, so
+    ``AutoModelForSequenceClassification.from_pretrained(trust_remote_code=True)`` cannot rebuild it
+    from the saved config (that path silently failed the e2e/frozen gated-MIL probe jobs). Instead we
+    build the architecture with :meth:`BacformerAttnPoolForGenomeClassification.from_pretrained_backbone`
+    — reading the stamped ``panel_mode``/``panel_dim``/``attn_dim`` so the pool/head are sized right —
+    then overwrite **every** weight (backbone + pool + head) with the checkpoint ``state_dict``.
+
+    ``model_dir`` must already be a leaf checkpoint dir (``config.json`` + weights); resolve a run dir
+    with :func:`resolve_checkpoint_dir` first.
+    """
+    cfg = AutoConfig.from_pretrained(str(model_dir), trust_remote_code=True)
+    logger.info(
+        "Rebuilding attention-pool wrapper from %s (panel_mode=%s, attn_dim=%s)",
+        model_dir,
+        getattr(cfg, "panel_mode", "none"),
+        getattr(cfg, "attn_dim", 128),
+    )
+    model = BacformerAttnPoolForGenomeClassification.from_pretrained_backbone(
+        BACFORMER_MODEL_ID,
+        num_labels=1,
+        attn_dim=getattr(cfg, "attn_dim", 128),
+        panel_mode=getattr(cfg, "panel_mode", "none"),
+        panel_dim=getattr(cfg, "panel_dim", 9),
+        dtype=dtype,
+    )
+    missing, unexpected = model.load_state_dict(_load_attn_pool_state_dict(model_dir), strict=False)
+    critical = [k for k in missing if k.startswith(("pool.", "out_proj.", "norm."))]
+    if critical:
+        raise RuntimeError(f"checkpoint {model_dir} is missing trained head weights: {critical[:6]}")
+    if missing or unexpected:  # benign buffers (e.g. position_ids) only
+        logger.warning(
+            "attn-pool load: %d non-critical missing, %d unexpected keys (missing=%s unexpected=%s)",
+            len(missing), len(unexpected), missing[:3], unexpected[:3],
+        )
+    if device == "cpu":
+        model = model.float()
+    return model.to(device).eval()
+
+
 def load_attention_encoder(device: str, checkpoint_dir: str | None = None) -> torch.nn.Module:
     """Return the attention-capable Bacformer encoder, frozen-pretrained or from a checkpoint.
 
     With ``checkpoint_dir=None`` this is the frozen complete-genomes model
-    (:func:`load_bacformer_model`). Given a fine-tuned checkpoint (mean-pool or attention-pool
-    classifier), it loads the full classifier and returns its ``.bacformer`` encoder submodule —
-    the same ``BacformerLargeModel`` class, so :func:`bacformer_attention_weights` (which sets
-    ``return_attn_weights=True``) works identically. This is how D2 asks "does a *fine-tuned*
+    (:func:`load_bacformer_model`). Given a fine-tuned checkpoint it returns the ``.bacformer`` encoder
+    submodule — the same ``BacformerLargeModel`` class, so :func:`bacformer_attention_weights` (which
+    sets ``return_attn_weights=True``) works identically. This is how D2 asks "does a *fine-tuned*
     backbone still attend rpoB internally, while its mean pool obliterates it?".
+
+    A stock **mean-pool** classifier loads via ``AutoModel`` (its remote code is cached). Our custom
+    **attention-pool** wrapper (config carries ``attn_dim``) is not HF-loadable, so it is rebuilt with
+    :func:`load_attn_pool_wrapper` and its backbone returned.
     """
     if checkpoint_dir is None:
         return load_bacformer_model(device, dtype="auto")
     model_dir = resolve_checkpoint_dir(Path(checkpoint_dir))
-    logger.info("Loading fine-tuned backbone from %s", model_dir)
+    cfg = AutoConfig.from_pretrained(str(model_dir), trust_remote_code=True)
+    if hasattr(cfg, "attn_dim"):  # our gated-MIL / MHA attention-pool wrapper
+        return load_attn_pool_wrapper(model_dir, device).bacformer
+    logger.info("Loading fine-tuned (mean-pool) backbone from %s", model_dir)
     clf = AutoModelForSequenceClassification.from_pretrained(
         str(model_dir),
         num_labels=1,
