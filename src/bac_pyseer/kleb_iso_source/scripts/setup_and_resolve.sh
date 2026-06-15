@@ -18,13 +18,16 @@
 # Usage: sbatch src/bac_pyseer/kleb_iso_source/scripts/setup_and_resolve.sh
 
 set -euo pipefail
-module purge
-module load samtools/1.14/gcc/v46lwk2d
-
+# samtools (for faidx) comes from the bac_pyseer pixi env, not a spack module (which would
+# leak python-3.9 site-packages onto PYTHONPATH and break uv). Run `pixi install` in
+# src/bac_pyseer/ once before this job.
 export PYTHONUNBUFFERED=1
 export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 export UV_CACHE_DIR=/home/dca36/rds/hpc-work/.uv_cache
+unset PYTHONPATH PYTHONHOME
 cd /home/dca36/workspace/BacPredict
+
+SAMTOOLS=$PWD/src/bac_pyseer/.pixi/envs/default/bin/samtools
 
 DATA=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw
 PHYLO=$DATA/klebsiella/phylogeny
@@ -43,7 +46,7 @@ if [ ! -s "$REF_DIR/ref.fa" ]; then
     SRC_REF=$(find "$PHYLO/snippy_ncbi" -maxdepth 2 -name ref.fa 2>/dev/null | head -1)
     echo "Copying reference from: $SRC_REF"
     cp "$SRC_REF" "$REF_DIR/ref.fa"
-    samtools faidx "$REF_DIR/ref.fa"
+    "$SAMTOOLS" faidx "$REF_DIR/ref.fa"
 fi
 echo "Reference: $REF_DIR/ref.fa"; head -1 "$REF_DIR/ref.fa.fai"
 

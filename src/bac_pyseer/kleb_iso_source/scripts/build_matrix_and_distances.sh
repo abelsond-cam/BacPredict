@@ -19,11 +19,12 @@
 # Usage: sbatch src/bac_pyseer/kleb_iso_source/scripts/build_matrix_and_distances.sh
 
 set -euo pipefail
-module purge
-
+# Pure-Python reduce (scipy/sklearn) under uv — no bcftools, no modules. Clear PYTHONPATH
+# so a stray spack/module leak in the environment can't shadow uv's numpy.
 export PYTHONUNBUFFERED=1
 export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 export UV_CACHE_DIR=/home/dca36/rds/hpc-work/.uv_cache
+unset PYTHONPATH PYTHONHOME
 cd /home/dca36/workspace/BacPredict
 
 DATA=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw
@@ -45,6 +46,6 @@ uv run python src/bac_pyseer/kleb_iso_source/build_presence_and_distances.py \
     --label-col blood_vs_faeces_label \
     --min-freq 0.01 \
     --n-jobs -1 \
-    --min-qual 100 --min-dp 10 --min-altfrac 0.9
+    --min-qual 100 --min-dp 3
 
 echo "Done  $(date)"

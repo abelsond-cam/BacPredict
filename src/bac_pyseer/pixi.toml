@@ -1,0 +1,31 @@
+# Standalone pixi environment for the bac_pyseer variant-collation toolchain.
+#
+# Provides bcftools (+ samtools for `faidx`), used by the per-sample pipeline in
+# extract_sample_loci.py and by reference staging. Kept separate from the repo's uv
+# env so the bioconda toolchain never perturbs the Python library deps — and, crucially,
+# so we never `module load` bcftools on CSD3 (the spack module leaks a python-3.9
+# site-packages dir onto PYTHONPATH, which breaks uv's python 3.12 numpy import).
+#
+# The Python worker runs under `uv run python`; it shells out to this env's bcftools via
+# the absolute path passed as `--bcftools` (conda binaries find their htslib via RPATH, so
+# no LD_LIBRARY_PATH/module is needed). Run pixi commands from this directory:
+#
+#   cd src/bac_pyseer && pixi install
+#   pixi run bcftools --version
+#   pixi run samtools faidx ref.fa
+#
+# The installed env binaries live at:
+#   src/bac_pyseer/.pixi/envs/default/bin/{bcftools,samtools}
+#
+# Note: filter output is version-robust — bcftools 1.14 (CSD3 module) reproduces the
+# collaborators' bcftools-1.21 native snps.vcf exactly — so the version is left loose.
+
+[workspace]
+name = "bac-pyseer-tools"
+channels = ["conda-forge", "bioconda"]
+platforms = ["linux-64", "osx-arm64"]
+
+[dependencies]
+bcftools = ">=1.18"
+samtools = ">=1.18"
+htslib = ">=1.18"

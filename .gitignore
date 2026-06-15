@@ -11,6 +11,9 @@ buck-out/
 __pycache__/
 .*cache/
 
+# pixi tool envs (bac_pyseer bcftools/samtools toolchain); pixi.toml + pixi.lock are committed
+.pixi/
+
 # Distribution / packaging
 /dist/
 

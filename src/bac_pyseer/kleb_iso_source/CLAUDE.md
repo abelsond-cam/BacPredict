@@ -69,9 +69,10 @@ shared, idempotent cache (`<Sample>.loci.tsv.gz`). The cheap reduce (gather → 
 | `resolve_snippy_paths.py` | Vectorised `Sample → raw-VCF path` (reads `all_snippy_dirs.txt` + one `scandir`; **no per-sample `ls`**). Mirrors `BacHGT/.../add_paths_gff_fna_to_metadata.py`. |
 | `extract_sample_loci.py` | Per-sample `bcftools norm -m -any -f ref \| view -v snps,indels -e '<filter>' \| query` → cache file. Idempotent. |
 | `build_presence_and_distances.py` | Reduce: CSR presence matrix → <1% filter → `variant_by_loci_presence.Rtab` + `jaccard_distances.{tsv,npz}` + `phenotype.tsv` + `collation_manifest.json`. |
-| `scripts/setup_and_resolve.sh` | One-time: stage+faidx reference, run resolver (icelake CPU). |
-| `scripts/extract_variants_array.sh` | Extraction job array (icelake, `--array=0-39`, 24 h, modules `bcftools/1.14`). |
-| `scripts/build_matrix_and_distances.sh` | Reduce job (icelake-himem, 76 cores, 480 G). |
+| `../pixi.toml` | Standalone pixi env (bcftools + samtools) — the variant toolchain. **NOT** a spack module (which leaks python-3.9 onto `PYTHONPATH` and breaks uv). `cd src/bac_pyseer && pixi install`. |
+| `scripts/setup_and_resolve.sh` | One-time: stage+faidx reference (pixi samtools), run resolver (icelake CPU). |
+| `scripts/extract_variants_array.sh` | Extraction job array (icelake, `--array=0-39`, 24 h, pixi bcftools via `--bcftools`). |
+| `scripts/build_matrix_and_distances.sh` | Reduce job (icelake-himem, 76 cores, 480 G; pure-Python uv). |
 
 Tests: `tests/bac_pyseer/test_collation.py` (locus keying, multiallelic unification,
 1% filter, end-to-end artifacts, filter expr, resolver parsing).
@@ -84,11 +85,12 @@ and `blood_faeces/<cohort>/` holding the four pyseer inputs + manifest.
 ### How to run (HPC)
 
 ```bash
-# tools come from modules, no env change needed for collation; pyseer deferred to GWAS step
+cd src/bac_pyseer && pixi install && cd -                                 # one-time: bcftools+samtools toolchain
 sbatch src/bac_pyseer/kleb_iso_source/scripts/setup_and_resolve.sh        # stage ref + resolve
 sbatch src/bac_pyseer/kleb_iso_source/scripts/extract_variants_array.sh   # per-sample extraction
 sbatch src/bac_pyseer/kleb_iso_source/scripts/build_matrix_and_distances.sh  # reduce → pyseer inputs
 ```
+(pyseer itself is deferred to the GWAS step; collation needs only the pixi toolchain above.)
 
 Smoke first (Stage A): the 121 seb/adam samples retain native `snps.vcf` — use them to
 validate the reconstructed filter and (optionally) `bcftools merge` equality before the

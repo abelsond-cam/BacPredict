@@ -23,13 +23,16 @@
 # Usage: sbatch src/bac_pyseer/kleb_iso_source/scripts/extract_variants_array.sh
 
 set -euo pipefail
-module purge
-module load bcftools/1.14/gcc/intel-oneapi-mkl/xrcih6dy
-
+# bcftools comes from the bac_pyseer pixi env (NOT a spack module — that would leak a
+# python-3.9 site-packages dir onto PYTHONPATH and break uv's python). unset PYTHONPATH
+# belt-and-braces; the conda bcftools finds htslib via RPATH so no module/LD path needed.
 export PYTHONUNBUFFERED=1
 export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 export UV_CACHE_DIR=/home/dca36/rds/hpc-work/.uv_cache
+unset PYTHONPATH PYTHONHOME
 cd /home/dca36/workspace/BacPredict
+
+BCFTOOLS=$PWD/src/bac_pyseer/.pixi/envs/default/bin/bcftools
 
 DATA=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw
 PYSEER=$DATA/david/processed/pyseer_iso_source
@@ -38,7 +41,7 @@ CACHE_DIR=$PYSEER/locus_cache
 RESOLUTION_TSV=$PYSEER/resolution/blood_faeces_union_resolution.tsv
 
 echo "Job $SLURM_JOB_ID  Array task $SLURM_ARRAY_TASK_ID  Node $SLURMD_NODENAME  $(date)"
-echo "bcftools: $(which bcftools)  $(bcftools --version | head -1)"
+echo "bcftools: $BCFTOOLS  $($BCFTOOLS --version | head -1)"
 
 # Chunk by the stable TOTAL resolution-row count (header excluded).
 TOTAL=$(($(wc -l < "$RESOLUTION_TSV") - 1))
@@ -55,7 +58,8 @@ uv run python src/bac_pyseer/kleb_iso_source/extract_sample_loci.py \
     --cache-dir "$CACHE_DIR" \
     --start-idx "$START" \
     --end-idx "$END" \
-    --min-qual 100 --min-dp 10 --min-altfrac 0.9 \
+    --min-qual 100 --min-dp 3 \
+    --bcftools "$BCFTOOLS" \
     --skip-existing
 
 echo "Array task $SLURM_ARRAY_TASK_ID done  $(date)"
