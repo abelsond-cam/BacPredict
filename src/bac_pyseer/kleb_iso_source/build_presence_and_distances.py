@@ -201,8 +201,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--n-jobs", type=int, default=-1, help="Cores for parallel read + Jaccard (-1 = all).")
     # Recorded in the manifest for provenance (the filter is applied upstream in extract).
     parser.add_argument("--min-qual", type=float, default=100.0)
-    parser.add_argument("--min-dp", type=int, default=10)
-    parser.add_argument("--min-altfrac", type=float, default=0.9)
+    parser.add_argument("--min-dp", type=int, default=3)
+    parser.add_argument("--require-hom", action="store_true", default=True, help="Record GT=='1/1' requirement.")
     args = parser.parse_args(argv)
 
     run(
@@ -214,7 +214,7 @@ def main(argv: list[str] | None = None) -> None:
         min_freq=args.min_freq,
         contig=args.contig,
         n_jobs=args.n_jobs,
-        filter_params={"min_qual": args.min_qual, "min_dp": args.min_dp, "min_altfrac": args.min_altfrac},
+        filter_params={"min_qual": args.min_qual, "min_dp": args.min_dp, "require_hom": bool(args.require_hom)},
     )
 
 

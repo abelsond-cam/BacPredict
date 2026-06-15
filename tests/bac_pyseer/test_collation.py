@@ -20,7 +20,7 @@ from bac_pyseer.kleb_iso_source.build_presence_and_distances import (
     run,
 )
 from bac_pyseer.kleb_iso_source.extract_sample_loci import build_filter_expr
-from bac_pyseer.kleb_iso_source.resolve_snippy_paths import _build_sr_run_to_vcf
+from bac_pyseer.kleb_iso_source.resolve_snippy_paths import _build_sr_run_to_vcf, _two_token_accession
 
 
 def _write_loci(path: Path, loci: list[tuple[int, str, str]]) -> None:
@@ -80,7 +80,7 @@ def test_run_end_to_end_with_frequency_filter(tmp_path: Path) -> None:
         min_freq=0.5,  # min_count = ceil(0.5 * 3) = 2 -> drops the singleton 100_A_C
         contig="NC_009648",
         n_jobs=1,
-        filter_params={"min_qual": 100.0, "min_dp": 10, "min_altfrac": 0.9},
+        filter_params={"min_qual": 100.0, "min_dp": 3, "require_hom": True},
     )
 
     manifest = json.loads((out / "collation_manifest.json").read_text())
@@ -103,9 +103,17 @@ def test_run_end_to_end_with_frequency_filter(tmp_path: Path) -> None:
 
 
 def test_build_filter_expr() -> None:
-    """The exclude expression wires the three thresholds in the bcftools syntax."""
-    expr = build_filter_expr(100, 10, 0.9)
-    assert expr == "QUAL<100 || FMT/DP<10 || (FMT/AO)/(FMT/DP)<0.9"
+    """The include expression mirrors the collaborators' snippy filter (GT=1/1, QUAL, DP)."""
+    expr = build_filter_expr(100, 3)
+    assert expr == 'FMT/GT="1/1" && QUAL>=100 && FMT/DP>=3'
+    # Optional homozygous requirement can be dropped.
+    assert build_filter_expr(100, 3, require_hom=False) == "QUAL>=100 && FMT/DP>=3"
+
+
+def test_two_token_accession() -> None:
+    """Assembly Sample stems normalise to the 2-token accession keying snippy_ncbi/."""
+    assert _two_token_accession("GCF_000009885.1_ASM988v1_genomic") == "GCF_000009885.1"
+    assert _two_token_accession("GCA_900451185.1") == "GCA_900451185.1"
 
 
 def test_resolve_sr_run_to_vcf(tmp_path: Path) -> None:

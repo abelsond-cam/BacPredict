@@ -8,8 +8,10 @@ differently:
 - ``klebsiella/phylogeny/snippy/<RUN>_snippy/snps.raw.vcf.gz`` — keyed by SRA **run**
   accession (84,549 folders). A biosample reaches its run via metadata_v2's
   ``sr_run_accession`` (falling back to ``run_accession_used`` / ``run_accession``).
-- ``klebsiella/phylogeny/snippy_ncbi/<GCF_/GCA_acc>/snps.raw.vcf`` — keyed by the same
-  versioned assembly accession used as the long-read ``Sample`` (3,620 folders).
+- ``klebsiella/phylogeny/snippy_ncbi/<GCF_/GCA_acc>/snps.raw.vcf`` — keyed by the bare
+  2-token assembly accession (``GCF_000009885.1``; ~3,610 folders). The cohort labels these
+  rows with the full assembly stem (``GCF_000009885.1_ASM988v1_genomic``), so the accession
+  is normalised to its first two underscore-tokens before lookup (:func:`_two_token_accession`).
 
 This module mirrors the vectorised, single-filesystem-pass pattern of
 ``BacHGT/src/bac_metadata/pp/add_paths_gff_fna_to_metadata.py``: it reads the pre-made
@@ -52,6 +54,16 @@ _META_COLS = [
 ]
 # Preference order for the short-read run accession that keys snippy/<RUN>_snippy.
 _RUN_COLS = ["sr_run_accession", "run_accession_used", "run_accession"]
+
+
+def _two_token_accession(sample: str) -> str:
+    """Normalise an assembly ``Sample`` to the 2-token accession keying ``snippy_ncbi/``.
+
+    The cohort labels long-read/assembly rows with the full assembly stem
+    (``GCF_000009885.1_ASM988v1_genomic``) but ``snippy_ncbi/`` dirs are named by the bare
+    accession (``GCF_000009885.1``). Keep the first two underscore-tokens.
+    """
+    return "_".join(sample.split("_")[:2])
 
 
 def _build_sr_run_to_vcf(snippy_dirs_list: Path, phylogeny_root: Path) -> dict[str, str]:
@@ -144,8 +156,11 @@ def resolve(
     run_pick = meta_runs.bfill(axis=1).iloc[:, 0]  # first non-null across the preference order
     df["run_accession"] = df["Sample"].map(run_pick).where(~is_lr, other=pd.NA)
 
-    # Resolve VCF paths: LR via accession dict, SR via run dict.
-    vcf_lr = df["Sample"].map(ncbi_acc_to_vcf)
+    # Resolve VCF paths: LR via accession dict, SR via run dict. Assembly Samples carry the
+    # full stem (GCF_000009885.1_ASM988v1_genomic); snippy_ncbi keys on the 2-token accession
+    # (GCF_000009885.1), so try the full name first, then the normalised accession.
+    acc2 = df["Sample"].map(_two_token_accession)
+    vcf_lr = df["Sample"].map(ncbi_acc_to_vcf).fillna(acc2.map(ncbi_acc_to_vcf))
     vcf_sr = df["run_accession"].map(sr_run_to_vcf)
     df["vcf_path"] = vcf_lr.where(is_lr, vcf_sr)
 

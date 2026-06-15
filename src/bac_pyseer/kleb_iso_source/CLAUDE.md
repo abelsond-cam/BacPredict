@@ -37,11 +37,18 @@ Full design + rationale: `~/.claude/plans/our-next-task-is-cuddly-cosmos.md`.
 - **Cohort (first target):** pooled country-balanced `sampled_country_2_1_all`
   (~14.2k); matches the Bacformer iso-source comparator (AUROC 0.786).
 - **Uniform re-filter from raw** for every sample (snippy's native `snps.vcf` was
-  discarded for the SR set): `QUAL≥100`, `FMT/DP≥10`, `FMT/AO/FMT/DP≥0.9` — snippy
-  defaults + a clonal alt-fraction cut. Calibrate against native `snps.vcf` on
-  snippy_ncbi/seb (ground truth) and report discordance.
-- **Variant types:** SNPs + simple indels (`bcftools view -v snps,indels`; MNP/complex
-  excluded).
+  discarded for the SR set), using the collaborators' **exact** filter — recovered from
+  the command snippy recorded in the `snippy_ncbi` native `snps.vcf` header:
+  `FMT/GT="1/1" && QUAL>=100 && FMT/DP>=3` (their 4th term `(FMT/AO)/(FMT/DP)>=0` is a
+  no-op). `GT="1/1"` (homozygous-alt, clonal) replaces an alt-fraction cut; **DP≥3, not 10**
+  — assembly-based `snippy_ncbi` samples have median depth ~6x, so DP≥10 would erase them;
+  per-sample noise is removed by the downstream >1% locus filter instead.
+- **Variant types:** SNPs + simple indels (`bcftools view -v snps,indels` after the
+  acceptance filter + `norm`; MNP/complex excluded). This is a locus-universe choice layered
+  *on top of* the collaborators' acceptance filter.
+- **Reference / assembly samples:** ~662 of the cohort are assembly rows keyed by the full
+  stem (`GCF_..._ASM..v1_genomic`); they resolve to `snippy_ncbi/` via the 2-token accession.
+  ~644 biosample rows are absent from metadata_v2 (no run accession) and stay unresolved.
 - **Distance:** Jaccard on the 0/1 loci presence matrix after dropping loci present in
   **<1%** of samples (collaborator's chosen design).
 
