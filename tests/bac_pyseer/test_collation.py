@@ -13,10 +13,13 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy.sparse import csr_matrix
+from scipy.spatial.distance import pdist, squareform
 
 from bac_pyseer.kleb_iso_source.build_presence_and_distances import (
     _read_locus_keys,
     build_presence_matrix,
+    jaccard_distance_matrix,
     run,
 )
 from bac_pyseer.kleb_iso_source.extract_sample_loci import build_filter_expr
@@ -100,6 +103,22 @@ def test_run_end_to_end_with_frequency_filter(tmp_path: Path) -> None:
     pheno = pd.read_csv(out / "phenotype.tsv", sep="\t")
     assert list(pheno["samples"]) == ["A", "B", "C"]
     assert list(pheno["blood_vs_faeces_label"]) == [1, 0, 1]
+
+
+def test_jaccard_matches_scipy() -> None:
+    """The vectorised matmul Jaccard reproduces scipy's per-pair jaccard exactly."""
+    rng = np.random.default_rng(0)
+    dense = (rng.random((25, 40)) < 0.3).astype(np.uint8)
+    dense[7] = 0  # an all-zero row: scipy convention is distance 0 to any other empty row
+    x = csr_matrix(dense)
+
+    got = jaccard_distance_matrix(x)
+    expected = squareform(pdist(dense.astype(bool), metric="jaccard"))
+
+    assert got.shape == (25, 25)
+    assert np.allclose(np.diag(got), 0.0)
+    assert np.allclose(got, got.T)
+    assert np.allclose(got, expected)
 
 
 def test_build_filter_expr() -> None:

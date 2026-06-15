@@ -15,9 +15,11 @@ Also emits ``phenotype.tsv`` (the four pyseer inputs are then co-located and
 sample-aligned) and ``collation_manifest.json`` recording the effective n, per-source
 counts, locus counts pre/post filter, and filter provenance.
 
-Scaling note: at the Tier-1 14-21k cohort scale the dense Jaccard
-(``pairwise_distances(n_jobs=-1)``) fits comfortably in a big-mem node. The ~79k Tier-2
-reduce needs a blocked Jaccard (a ~50 GB dense matrix) — out of scope here.
+Scaling note: the Jaccard is computed as a single sparse matmul (``X·Xᵀ`` intersection
+counts) plus broadcast arithmetic — fully vectorised, so at the Tier-1 14-21k cohort
+scale it runs in seconds with a few GB peak (no densified feature matrix, no per-pair
+loop). The ~79k Tier-2 reduce only needs blocking because the dense ``n × n`` *output*
+is ~50 GB — out of scope here.
 """
 
 from __future__ import annotations
@@ -33,8 +35,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy.sparse import coo_matrix
-from sklearn.metrics import pairwise_distances
+from scipy.sparse import coo_matrix, csr_matrix
 
 DEFAULT_CONTIG = "NC_009648"
 
@@ -93,6 +94,40 @@ def build_presence_matrix(
     return x, np.asarray(uniq, dtype=object)
 
 
+def jaccard_distance_matrix(x_csr: csr_matrix) -> np.ndarray:
+    """Pairwise Jaccard distance over a binary sparse presence matrix, fully vectorised.
+
+    For binary rows the intersection size is one matrix product,
+    ``|a ∩ b| = (X · Xᵀ)_{ab}``, and ``|a ∪ b| = |a| + |b| − |a ∩ b|``, so the entire
+    ``n × n`` distance matrix is a single sparse matmul plus broadcast arithmetic — no
+    per-pair loop and no densified feature matrix (unlike ``pairwise_distances(metric=
+    "jaccard")``, which is an O(n²·loci) C loop and needs the matrix densified first).
+
+    Matches ``scipy.spatial.distance.jaccard`` exactly, including its convention that two
+    all-zero rows have distance 0 (``0/0 → 0``).
+
+    Parameters
+    ----------
+    x_csr
+        Binary samples × loci sparse matrix.
+
+    Returns
+    -------
+    numpy.ndarray
+        Dense ``n × n`` Jaccard distance matrix (``float64``).
+    """
+    xb = x_csr.astype(bool).astype(np.float64).tocsr()
+    inter = np.asarray((xb @ xb.T).todense())
+    sizes = np.asarray(xb.sum(axis=1)).ravel()
+    union = sizes[:, None] + sizes[None, :] - inter
+    with np.errstate(divide="ignore", invalid="ignore"):
+        # union == 0 ⇔ both rows empty ⇒ identical ⇒ similarity 1 ⇒ distance 0.
+        sim = np.where(union > 0, inter / union, 1.0)
+    dist = 1.0 - sim
+    np.fill_diagonal(dist, 0.0)
+    return dist
+
+
 def run(
     *,
     cohort_csv: Path,
@@ -136,9 +171,9 @@ def run(
     rtab_path = out_dir / "variant_by_loci_presence.Rtab"
     rtab.to_csv(rtab_path, sep="\t", index_label="variant")
 
-    # 2) Jaccard pairwise distances over the filtered presence matrix.
-    dense = np.asarray(xf.todense(), dtype=bool)
-    dist = pairwise_distances(dense, metric="jaccard", n_jobs=n_jobs)
+    # 2) Jaccard pairwise distances over the filtered presence matrix (vectorised
+    #    sparse matmul — no densify, no per-pair loop; fast + low-mem even single-core).
+    dist = jaccard_distance_matrix(xf)
     dist_path = out_dir / "jaccard_distances.tsv"
     pd.DataFrame(dist, index=present, columns=present).to_csv(dist_path, sep="\t")
     np.savez_compressed(out_dir / "jaccard_distances.npz", distances=dist, samples=np.array(present, dtype=object))
