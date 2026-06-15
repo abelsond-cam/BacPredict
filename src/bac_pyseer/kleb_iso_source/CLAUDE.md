@@ -104,6 +104,18 @@ full cohort.
 
 ### Status
 
-- 2026-06-15 — collation code + SLURM scripts + tests built and lint-clean locally
-  (`uvx ruff`, `pytest tests/bac_pyseer/` = 5 passed). Not yet run on HPC. Next: confirm
-  branch, then Stage A smoke on seb → Stage C full cohort.
+- 2026-06-15 — **Stage A validated, Stage C running.** Committed/pushed on `dev`. Pixi env
+  installed on HPC (`src/bac_pyseer/.pixi`). Resolver → **20,776/21,420 resolved** (20,114 SR +
+  662 assembly; 644 biosamples absent from metadata_v2 unresolved). Resolution TSV + faidx'd
+  reference staged at `…/processed/pyseer_iso_source/{resolution,ref}/`. Filter fidelity =
+  **exact** (reconstructed == native `snps.vcf`, 0 discordance on GCF_000009885.1).
+  - **Stage C jobs (submitted from `…/pyseer_iso_source/slurm_logs/`):**
+    `30593900` = extraction array `[0-39]` → `…/pyseer_iso_source/locus_cache/`;
+    `30593901` = reduce on pooled `sampled_country_2_1_all` (14,119 samples; blood 7,510 /
+    faeces 6,609), `afterok:30593900` → 4 pyseer inputs at
+    `…/pyseer_iso_source/blood_faeces/sampled_country_2_1_all/`.
+  - **To resume:** `ssh … squeue -u dca36 -j 30593900,30593901`; on completion read
+    `…/sampled_country_2_1_all/collation_manifest.json` (effective n, loci pre/post 1% filter,
+    label balance) + confirm `variant_by_loci_presence.Rtab`, `jaccard_distances.{tsv,npz}`,
+    `phenotype.tsv`. Re-run a failed array task: same sbatch (idempotent, `--skip-existing`).
+  - **Next increment (out of scope):** the pyseer GWAS run; Tier-2 ~79k extraction (`--all-kpsc`).
