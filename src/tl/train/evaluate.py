@@ -55,12 +55,16 @@ def collate_fn(samples: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor
     prot_list = [s["protein_embeddings"].squeeze(0) for s in samples]
     am_list = [s["attention_mask"].squeeze(0) for s in samples]
     contig_list = [s["contig_ids"].squeeze(0) for s in samples]
-    return {
+    batch = {
         "protein_embeddings": pad_sequence(prot_list, batch_first=True, padding_value=0.0),
         "labels": torch.stack([s["labels"] for s in samples], dim=0),
         "attention_mask": pad_sequence(am_list, batch_first=True, padding_value=0.0),
         "contig_ids": pad_sequence(contig_list, batch_first=True, padding_value=0),
     }
+    # Pass the surprisal panel through when present (panel-mode attention checkpoints).
+    if "panel" in samples[0]:
+        batch["panel"] = pad_sequence([s["panel"].squeeze(0) for s in samples], batch_first=True, padding_value=0.0)
+    return batch
 
 
 def resolve_holdouts(
@@ -184,7 +188,10 @@ def run_inference(
             pe = batch["protein_embeddings"].to(device=device, dtype=dtype)
             am = batch["attention_mask"].to(device=device, dtype=dtype)
             cid = batch["contig_ids"].to(device=device)
-            out = model(protein_embeddings=pe, attention_mask=am, contig_ids=cid)
+            extra = {}
+            if "panel" in batch:
+                extra["panel"] = batch["panel"].to(device=device, dtype=dtype)
+            out = model(protein_embeddings=pe, attention_mask=am, contig_ids=cid, **extra)
             logits = out.logits.reshape(-1).float().cpu()
             y_prob_parts.append(torch.sigmoid(logits))
             y_true_parts.append(labels.reshape(-1).cpu())

@@ -340,10 +340,13 @@ def protein_surprisal_stats(logp: np.ndarray) -> dict:
     order = np.sort(surprisal)[::-1]  # descending: most surprising first
     top1 = float(order[0])
     top2 = float(order[1]) if n > 1 else None
+    top3 = float(order[2]) if n > 2 else None
+    top10 = float(order[9]) if n > 9 else None
     median = float(np.median(surprisal))
     mad = float(np.median(np.abs(surprisal - median)))
     p99 = float(np.percentile(surprisal, 99))
     p95 = float(np.percentile(surprisal, 95))
+    p90 = float(np.percentile(surprisal, 90))
     mean = float(surprisal.mean())
     std = float(surprisal.std())
     total = float(surprisal.sum())
@@ -360,6 +363,8 @@ def protein_surprisal_stats(logp: np.ndarray) -> dict:
         "max_surprisal": top1,
         "mean_top3": float(order[: min(3, n)].mean()),
         "top2_surprisal": top2,
+        "top3_surprisal": top3,
+        "top10_surprisal": top10,
         # concentration / shape
         "top1_minus_top2": (top1 - top2) if top2 is not None else None,
         "top_minus_mean_rest": (top1 - (total - top1) / (n - 1)) if n > 1 else None,
@@ -378,6 +383,7 @@ def protein_surprisal_stats(logp: np.ndarray) -> dict:
         "mad_surprisal": mad,
         "p99_surprisal": p99,
         "p95_surprisal": p95,
+        "p90_surprisal": p90,
     }
 
 

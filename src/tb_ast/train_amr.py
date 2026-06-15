@@ -7,6 +7,7 @@ Labels are injected at load time from the split CSV; no pre-built per-experiment
 
 Note: the TB binary_ast.csv uses US drug spellings — ``rifampin`` (not ``rifampicin``).
 """
+import json
 import os
 import warnings
 from datetime import datetime
@@ -14,7 +15,7 @@ from pathlib import Path
 
 import pandas as pd
 import torch
-from bacformer.modeling.trainer import BacformerLargeTrainer
+from bacformer.modeling.trainer import BacformerLargeTrainer, _extract_loss_and_logits
 from tap import Tap
 from torch.nn.utils.rnn import pad_sequence
 from transformers import (
@@ -24,7 +25,7 @@ from transformers import (
 )
 
 from tl.train.attention_pool import BacformerAttnPoolForGenomeClassification
-from tl.train.datasets import LabelInjectingFileDataset
+from tl.train.datasets import LabelInjectingFileDataset, PanelInjectingFileDataset
 from tl.train.metrics import (
     build_results_payload,
     compute_full_metrics,
@@ -111,6 +112,39 @@ class PyTorchFileDataset(torch.utils.data.Dataset):
         return sample
 
 
+############################################################## Panel-aware trainer ##############################################################
+
+
+class PanelBacformerLargeTrainer(BacformerLargeTrainer):
+    """:class:`BacformerLargeTrainer` that also forwards the per-protein surprisal ``panel``.
+
+    The stock ``compute_loss`` passes only protein_embeddings/labels/attention_mask/contig_ids
+    to the model, so a ``panel`` key in the batch would be silently dropped (and the
+    panel-mode model would error for the missing tensor). This override mirrors the stock
+    logic and additionally pops + forwards ``panel``. Used for both training and
+    ``trainer.predict`` (stock HF ``prediction_step`` routes through ``compute_loss`` when
+    labels are present).
+    """
+
+    def compute_loss(self, model, inputs, num_items_in_batch=None, return_outputs=False):  # noqa: D102
+        protein_embeddings = inputs.pop("protein_embeddings")
+        labels = inputs.pop("labels")
+        attention_mask = inputs.pop("attention_mask", None)
+        contig_ids = inputs.pop("contig_ids", inputs.pop("token_type_ids", None))
+        panel = inputs.pop("panel", None)
+        outputs = model(
+            protein_embeddings=protein_embeddings,
+            labels=labels,
+            attention_mask=attention_mask,
+            contig_ids=contig_ids,
+            panel=panel,
+        )
+        loss, logits = _extract_loss_and_logits(outputs)
+        if return_outputs:
+            return loss, {"logits": logits}
+        return loss
+
+
 ############################################################## Main run function ##############################################################
 
 
@@ -127,6 +161,9 @@ def run(
     freeze_encoder: bool = False,
     pooling: str = "mean",
     attn_dim: int = 128,
+    panel_mode: str = "none",
+    panel_store: str | None = None,
+    panel_stats: str | None = None,
     logging_steps: int = 10,
     n_samples: int = 10000,
     seed: int = 1,
@@ -161,6 +198,22 @@ def run(
 
     if pooling not in ("mean", "attention"):
         raise ValueError(f"--pooling must be 'mean' or 'attention', got {pooling!r}")
+
+    if panel_mode not in ("none", "att_head", "e2e"):
+        raise ValueError(f"--panel-mode must be 'none', 'att_head' or 'e2e', got {panel_mode!r}")
+    use_panel = panel_mode != "none"
+    panel_standardization = None
+    panel_dim = 0
+    if use_panel:
+        if pooling != "attention":
+            raise ValueError("--panel-mode requires --pooling attention.")
+        if not panel_store or not panel_stats:
+            raise ValueError("--panel-mode != none requires --panel-store and --panel-stats.")
+        if panel_mode == "e2e" and freeze_encoder:
+            raise ValueError("--panel-mode e2e fine-tunes the backbone end-to-end; do not set --freeze-encoder.")
+        panel_standardization = json.loads(Path(panel_stats).read_text())
+        panel_dim = len(panel_standardization["columns"])
+        print(f"Panel mode: {panel_mode} (panel_dim={panel_dim}, store={panel_store})")
 
     if n_folds is not None:
         output_dir = f"{output_dir}_fold{fold:02d}_seed{seed}"
@@ -256,8 +309,16 @@ def run(
     print(f"Number of train samples (with '{drug}'): {len(train_ids)}")
     print(f"Number of validation samples: {len(val_ids)}")
 
-    train_dataset = LabelInjectingFileDataset(train_ids, embeddings_path, label_map, drug)
-    val_dataset = LabelInjectingFileDataset(val_ids, embeddings_path, label_map, drug)
+    def make_dataset(ids: list[str]):
+        """Build a label dataset, augmented with the surprisal panel when panel-mode is on."""
+        if use_panel:
+            return PanelInjectingFileDataset(
+                ids, embeddings_path, label_map, drug, Path(panel_store), panel_standardization
+            )
+        return LabelInjectingFileDataset(ids, embeddings_path, label_map, drug)
+
+    train_dataset = make_dataset(train_ids)
+    val_dataset = make_dataset(val_ids)
 
     # Verify structure
     try:
@@ -289,6 +350,8 @@ def run(
             num_labels=1,
             freeze_backbone=freeze_encoder,
             attn_dim=attn_dim,
+            panel_mode=panel_mode,
+            panel_dim=panel_dim if use_panel else 9,
             dtype="auto",
         )
     else:
@@ -322,6 +385,11 @@ def run(
             "attention_mask": pad_sequence(am_list, batch_first=True, padding_value=0.0),
             "contig_ids": pad_sequence(contig_list, batch_first=True, padding_value=0),
         }
+        # Pad the surprisal panel to the batch's protein length; 0.0 == the standardized
+        # column mean, and padded rows are masked out of the attention softmax anyway.
+        if "panel" in samples[0]:
+            panel_list = [s["panel"].squeeze(0) for s in samples]
+            batch["panel"] = pad_sequence(panel_list, batch_first=True, padding_value=0.0)
         return batch
 
     training_args_dict = {
@@ -371,7 +439,8 @@ def run(
 
     training_args = TrainingArguments(**training_args_dict)
 
-    trainer = BacformerLargeTrainer(
+    trainer_cls = PanelBacformerLargeTrainer if use_panel else BacformerLargeTrainer
+    trainer = trainer_cls(
         model=bacformer_model,
         data_collator=collate_fn,
         train_dataset=train_dataset,
@@ -387,9 +456,7 @@ def run(
     # for end-to-end pipeline verification.
     if evaluate_ids:
         print(f"Running post-training evaluation on {len(evaluate_ids)} samples.")
-        evaluate_dataset = LabelInjectingFileDataset(
-            evaluate_ids, embeddings_path, label_map, drug
-        )
+        evaluate_dataset = make_dataset(evaluate_ids)
         preds = trainer.predict(evaluate_dataset)
         logits = torch.as_tensor(preds.predictions).flatten()
         labels = torch.as_tensor(preds.label_ids).flatten().long()
@@ -448,6 +515,12 @@ class ArgumentParser(Tap):
     """Genome pooling head: 'mean' (stock mask-normalised mean) or 'attention' (gated-attention MIL pool)."""
     attn_dim: int = 128
     """Attention hidden width when --pooling attention."""
+    panel_mode: str = "none"
+    """Surprisal-panel wiring: 'none', 'att_head' (panel steers the gate only) or 'e2e' (panel into pooled value + head). Requires --pooling attention."""
+    panel_store: str | None = None
+    """Directory of {sample}_panel.npz surprisal panels (required when --panel-mode != none)."""
+    panel_stats: str | None = None
+    """panel_standardization.json with train-only mean/std (required when --panel-mode != none)."""
     logging_steps: int = 10
     n_samples: int = 10000
     ast_sheet_path: str = str(AST_SHEET_PATH_DEFAULT)
@@ -484,6 +557,9 @@ if __name__ == "__main__":
         freeze_encoder=args.freeze_encoder,
         pooling=args.pooling,
         attn_dim=args.attn_dim,
+        panel_mode=args.panel_mode,
+        panel_store=args.panel_store,
+        panel_stats=args.panel_stats,
         logging_steps=args.logging_steps,
         seed=args.seed,
         n_samples=args.n_samples,

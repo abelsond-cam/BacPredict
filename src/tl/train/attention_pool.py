@@ -38,44 +38,69 @@ class GatedAttentionMILPool(nn.Module):
     representable logit before the softmax, so they receive (effectively) zero
     weight and the pooled vector is invariant to padding.
 
+    The **scoring** input (which drives the gate ``V`` / ``U``) is decoupled from
+    the **value** that is pooled: ``forward`` accepts a separate ``value_states``
+    so the attention can be computed from a panel-augmented token while the pooled
+    vector stays the pure backbone token (the ``att_head`` panel mode). When
+    ``value_states`` is omitted it defaults to ``hidden_states`` — identical to the
+    original single-input pool.
+
     Parameters
     ----------
     hidden : int
-        Instance (protein-token) embedding dimension.
+        Value (pooled instance) embedding dimension — the width of the pooled
+        output ``z``.
     attn_dim : int, default 128
         Width of the attention hidden layer (``V`` / ``U``).
     dropout : float, default 0.1
         Dropout applied to the gated attention activation.
+    score_hidden : int or None, default None
+        Width of the **scoring** input fed to ``V`` / ``U``. Defaults to
+        ``hidden`` (scoring == value, the original behaviour); set larger to score
+        from a panel-augmented token (e.g. ``hidden + panel_dim``).
     """
 
-    def __init__(self, hidden: int, attn_dim: int = 128, dropout: float = 0.1) -> None:
+    def __init__(
+        self, hidden: int, attn_dim: int = 128, dropout: float = 0.1, score_hidden: int | None = None
+    ) -> None:
         super().__init__()
-        self.V = nn.Linear(hidden, attn_dim, bias=False)
-        self.U = nn.Linear(hidden, attn_dim, bias=False)
+        score_hidden = hidden if score_hidden is None else score_hidden
+        self.V = nn.Linear(score_hidden, attn_dim, bias=False)
+        self.U = nn.Linear(score_hidden, attn_dim, bias=False)
         self.w = nn.Linear(attn_dim, 1, bias=False)
         self.dropout = nn.Dropout(dropout)
 
     def forward(
-        self, hidden_states: torch.Tensor, attention_mask: torch.Tensor | None = None
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        value_states: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Pool ``hidden_states`` over the instance (protein) axis.
+        """Pool over the instance (protein) axis, scoring from ``hidden_states``.
 
         Parameters
         ----------
         hidden_states : torch.Tensor
-            Per-instance embeddings, shape ``(batch, n, hidden)``.
+            Per-instance **scoring** embeddings (drive the gate), shape
+            ``(batch, n, score_hidden)``.
         attention_mask : torch.Tensor or None
             ``1`` for valid instances, ``0`` for padding, shape ``(batch, n)``.
             ``None`` treats every instance as valid.
+        value_states : torch.Tensor or None
+            Per-instance **value** embeddings that are actually pooled, shape
+            ``(batch, n, hidden)``. Defaults to ``hidden_states`` (scoring ==
+            value).
 
         Returns
         -------
         pooled : torch.Tensor
-            Attention-weighted sum, shape ``(batch, hidden)``.
+            Attention-weighted sum of ``value_states``, shape ``(batch, hidden)``.
         weights : torch.Tensor
             Per-instance attention weights summing to 1 over valid instances,
             shape ``(batch, n)`` (kept for interpretability).
         """
+        if value_states is None:
+            value_states = hidden_states
         gated = torch.tanh(self.V(hidden_states)) * torch.sigmoid(self.U(hidden_states))
         gated = self.dropout(gated)
         logits = self.w(gated).squeeze(-1)  # (batch, n)
@@ -85,7 +110,7 @@ class GatedAttentionMILPool(nn.Module):
             logits = logits.masked_fill(pad, torch.finfo(logits.dtype).min)
 
         weights = torch.softmax(logits, dim=-1)
-        pooled = torch.einsum("bn,bnh->bh", weights, hidden_states)
+        pooled = torch.einsum("bn,bnh->bh", weights, value_states)
         return pooled, weights
 
 
@@ -121,6 +146,25 @@ class BacformerAttnPoolForGenomeClassification(nn.Module):
     problem_type : str, default "binary_classification"
         Loss selector; ``"single_label_classification"`` (with ``num_labels>1``)
         uses cross-entropy, everything else binary-cross-entropy-with-logits.
+    panel_mode : {"none", "att_head", "e2e"}, default "none"
+        How the per-protein surprisal **panel** (``panel_dim`` extra features
+        concatenated onto each backbone token, *after* the backbone) is wired in:
+
+        ===========  ================  =============  =========================
+        mode         V/U in (score)    einsum value   head in (norm / out_proj)
+        ===========  ================  =============  =========================
+        ``none``     ``hidden``        ``hidden``     ``hidden``
+        ``att_head`` ``hidden+panel``  ``hidden``     ``hidden``
+        ``e2e``      ``hidden+panel``  ``hidden+panel`` ``hidden+panel``
+        ===========  ================  =============  =========================
+
+        ``none`` is byte-identical to the panel-free model. ``att_head`` lets the
+        panel steer the gate while the pooled value stays the pure backbone token.
+        ``e2e`` carries the panel into the pooled value (and head) too. In both
+        panel modes the panel is glued onto the backbone *output*, never its input
+        — Bacformer's 960-d input and pretraining are untouched.
+    panel_dim : int, default 9
+        Number of per-protein panel features (ignored when ``panel_mode="none"``).
     """
 
     def __init__(
@@ -133,19 +177,36 @@ class BacformerAttnPoolForGenomeClassification(nn.Module):
         dropout: float = 0.1,
         freeze_backbone: bool = False,
         problem_type: str = "binary_classification",
+        panel_mode: str = "none",
+        panel_dim: int = 9,
         config=None,
     ) -> None:
         super().__init__()
+        if panel_mode not in ("none", "att_head", "e2e"):
+            raise ValueError(f"panel_mode must be 'none', 'att_head' or 'e2e', got {panel_mode!r}")
         self.config = config  # backbone PretrainedConfig (HF Trainer reads model.config); None in unit tests
         self.bacformer = backbone
-        self.pool = GatedAttentionMILPool(hidden, attn_dim=attn_dim, dropout=dropout)
-        self.norm = nn.LayerNorm(hidden)
+        self.panel_mode = panel_mode
+        self.panel_dim = panel_dim if panel_mode != "none" else 0
+        self.hidden = hidden
+        # Size table (single source of truth): scoring width feeds V/U; value width
+        # is what the einsum pools and what the head consumes.
+        score_hidden = hidden + self.panel_dim if panel_mode in ("att_head", "e2e") else hidden
+        value_hidden = hidden + self.panel_dim if panel_mode == "e2e" else hidden
+        self.pool = GatedAttentionMILPool(value_hidden, attn_dim=attn_dim, dropout=dropout, score_hidden=score_hidden)
+        self.norm = nn.LayerNorm(value_hidden)
         self.dropout = nn.Dropout(dropout)
-        self.out_proj = nn.Linear(hidden, num_labels)
+        self.out_proj = nn.Linear(value_hidden, num_labels)
         self.num_labels = num_labels
         self.problem_type = problem_type
+        self.attn_dim = attn_dim
         self.last_attention_weights: torch.Tensor | None = None
         self.set_backbone_frozen(freeze_backbone)
+        # Stamp panel config so a reloaded checkpoint rebuilds the right sizes.
+        if self.config is not None:
+            self.config.panel_mode = panel_mode
+            self.config.panel_dim = self.panel_dim
+            self.config.attn_dim = attn_dim
 
     def set_backbone_frozen(self, frozen: bool = True) -> None:
         """Freeze or unfreeze the backbone (toggles ``requires_grad`` + the no-grad forward).
@@ -197,6 +258,7 @@ class BacformerAttnPoolForGenomeClassification(nn.Module):
         labels: torch.Tensor | None = None,
         return_dict: bool = True,
         special_tokens_mask: torch.Tensor | None = None,
+        panel: torch.Tensor | None = None,
         **kwargs,
     ) -> SequenceClassifierOutput:
         """Backbone → gated-attention pool → norm/dropout/linear → logits (and loss if labelled).
@@ -204,6 +266,11 @@ class BacformerAttnPoolForGenomeClassification(nn.Module):
         The signature mirrors the upstream classifier (``special_tokens_mask`` /
         extra kwargs accepted for collate compatibility); the pooled attention
         weights are stashed on ``self.last_attention_weights`` for inspection.
+
+        When ``panel_mode`` ≠ ``"none"`` a per-protein ``panel`` tensor of shape
+        ``(batch, n, panel_dim)`` is concatenated onto the backbone tokens to form
+        the scoring input; ``att_head`` pools the pure backbone value, ``e2e`` pools
+        the panel-augmented value.
         """
         if self.freeze_backbone:
             with torch.no_grad():
@@ -211,7 +278,15 @@ class BacformerAttnPoolForGenomeClassification(nn.Module):
         else:
             last_hidden = self._encode(protein_embeddings, attention_mask, contig_ids)
 
-        pooled, weights = self.pool(last_hidden, attention_mask)
+        if self.panel_mode == "none":
+            pooled, weights = self.pool(last_hidden, attention_mask)
+        else:
+            if panel is None:
+                raise ValueError(f"panel_mode={self.panel_mode!r} requires a `panel` tensor")
+            panel = panel.to(dtype=last_hidden.dtype)
+            score = torch.cat([last_hidden, panel], dim=-1)
+            value = score if self.panel_mode == "e2e" else last_hidden
+            pooled, weights = self.pool(score, attention_mask, value_states=value)
         self.last_attention_weights = weights.detach()
 
         x = self.norm(pooled)
@@ -237,6 +312,8 @@ class BacformerAttnPoolForGenomeClassification(nn.Module):
         freeze_backbone: bool = False,
         attn_dim: int = 128,
         dropout: float = 0.1,
+        panel_mode: str = "none",
+        panel_dim: int = 9,
         **load_kwargs,
     ) -> BacformerAttnPoolForGenomeClassification:
         """Load the upstream classifier, lift its pretrained ``.bacformer`` backbone, swap the head.
@@ -246,7 +323,7 @@ class BacformerAttnPoolForGenomeClassification(nn.Module):
         model_id : str
             Hugging Face model id or local path of the Bacformer
             complete-genomes model.
-        num_labels, freeze_backbone, attn_dim, dropout
+        num_labels, freeze_backbone, attn_dim, dropout, panel_mode, panel_dim
             Forwarded to :meth:`__init__`.
         **load_kwargs
             Passed through to ``from_pretrained`` (e.g. ``dtype="auto"`` so a
@@ -273,6 +350,8 @@ class BacformerAttnPoolForGenomeClassification(nn.Module):
             attn_dim=attn_dim,
             dropout=dropout,
             freeze_backbone=freeze_backbone,
+            panel_mode=panel_mode,
+            panel_dim=panel_dim,
             config=full.config,
         )
         # Match the freshly-built modules to the backbone dtype (dtype="auto" ⇒ bf16

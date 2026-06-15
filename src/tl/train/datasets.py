@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+import numpy as np
 import torch
 
 
@@ -75,4 +77,69 @@ class LabelInjectingFileDataset(torch.utils.data.Dataset):
         else:
             sample["contig_ids"] = torch.zeros(1, seq_len, dtype=torch.long)
 
+        return sample
+
+
+class PanelInjectingFileDataset(LabelInjectingFileDataset):
+    """:class:`LabelInjectingFileDataset` that also injects the per-protein surprisal panel.
+
+    Loads a sibling ``{sample_id}_panel.npz`` (``panel`` ``[n_proteins, panel_dim]`` in flat
+    protein order, built by ``snp_embeddings.build_panel_store``), standardises it with a
+    train-only mean/std, and attaches it as ``sample["panel"]`` of shape ``[1, n, panel_dim]``
+    so it concatenates onto the backbone tokens in the attention pool. ``none``-mode runs keep
+    using the plain :class:`LabelInjectingFileDataset` — this subclass is opt-in.
+
+    The panel rows must align with the embedding's protein rows: ``__getitem__`` enforces
+    ``panel.shape[0] == n_proteins`` (mirrors the count-guard in
+    ``snp_embeddings.snp_vs_esm_prediction``) so a flat-order misalignment fails loudly rather
+    than silently feeding the gate the wrong protein's anomaly score.
+
+    Parameters
+    ----------
+    sample_ids, embeddings_dir, label_map, label_column
+        As :class:`LabelInjectingFileDataset`.
+    panel_dir : Path
+        Directory of ``{sample_id}_panel.npz`` files.
+    standardization : dict or Path
+        ``panel_standardization.json`` (or its parsed dict) with ``columns``/``mean``/``std``.
+    """
+
+    def __init__(
+        self,
+        sample_ids: list[str],
+        embeddings_dir: Path,
+        label_map: dict[str, int],
+        label_column: str,
+        panel_dir: Path,
+        standardization: dict | Path,
+    ) -> None:
+        super().__init__(sample_ids, embeddings_dir, label_map, label_column)
+        self.panel_dir = Path(panel_dir)
+        if isinstance(standardization, (str, Path)):
+            standardization = json.loads(Path(standardization).read_text())
+        self.panel_columns = list(standardization["columns"])
+        self.panel_mean = np.asarray(standardization["mean"], dtype=np.float32)
+        self.panel_std = np.asarray(standardization["std"], dtype=np.float32)
+        self.panel_dim = len(self.panel_columns)
+
+    def __getitem__(self, idx: int) -> dict:
+        sample = super().__getitem__(idx)
+        sample_id = self.sample_ids[idx]
+        n_proteins = sample["protein_embeddings"].shape[1]
+
+        panel_path = self.panel_dir / f"{sample_id}_panel.npz"
+        if not panel_path.exists():
+            raise FileNotFoundError(f"Panel file not found for {sample_id}: {panel_path}")
+        with np.load(panel_path) as z:
+            panel = z["panel"].astype(np.float32)
+
+        if panel.shape[0] != n_proteins:
+            raise ValueError(
+                f"Panel/embedding flat-order mismatch for {sample_id}: panel has {panel.shape[0]} "
+                f"proteins but the embedding has {n_proteins}."
+            )
+
+        panel = (panel - self.panel_mean) / self.panel_std
+        panel = np.nan_to_num(panel, nan=0.0, posinf=0.0, neginf=0.0)
+        sample["panel"] = torch.from_numpy(panel).unsqueeze(0)  # [1, n_proteins, panel_dim]
         return sample

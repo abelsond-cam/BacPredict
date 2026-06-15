@@ -954,7 +954,13 @@ def per_gene_stat_summary(df: pd.DataFrame, *, min_length: int) -> dict:
 
 
 def plot_per_gene_stat_panels(df: pd.DataFrame, out_path: Path, *, min_length: int) -> None:
-    """3×3 grid: per-gene distribution of each PER_GENE_STATS quantity — all rpoB over all other genes."""
+    """3×3 grid: per-gene distribution of each PER_GENE_STATS quantity.
+
+    Three series per panel — all other genes (grey), and rpoB split into WT (blue) vs
+    mutant (red), using the same colours as ``stat_histograms_grid.png`` so the two figures
+    read consistently. The WT/mutant split comes from the manifest ``role`` column
+    (``wt`` / ``resistant``); when it is absent rpoB is drawn as a single series.
+    """
     import matplotlib
 
     matplotlib.use("Agg")
@@ -963,30 +969,44 @@ def plot_per_gene_stat_panels(df: pd.DataFrame, out_path: Path, *, min_length: i
     ranked = df[df["length"] >= min_length]
     others = ranked[~ranked["is_rpob"]]
     rpob = ranked[ranked["is_rpob"]]
+    has_role = "role" in rpob.columns
+    wt_rpob = rpob[rpob["role"] == "wt"] if has_role else rpob.iloc[0:0]
+    mut_rpob = rpob[rpob["role"] == "resistant"] if has_role else rpob.iloc[0:0]
+    # rpoB series to overlay: WT vs mutant when the role split exists, else all rpoB.
+    rpob_series = (
+        [(wt_rpob, "#1f77b4", "WT rpoB"), (mut_rpob, "#d62728", "mutant rpoB")]
+        if has_role
+        else [(rpob, "#d62728", "rpoB (all)")]
+    )
+
+    def _clean(frame, col):
+        return frame[col].replace([np.inf, -np.inf], np.nan).dropna().to_numpy()
+
     fig, axes = plt.subplots(3, 3, figsize=(18, 14))
     flat_axes = axes.ravel()
     for ax, (label, col, desc) in zip(flat_axes, PER_GENE_STATS, strict=False):
         if col not in ranked.columns:
             ax.set_visible(False)
             continue
-        base = others[col].replace([np.inf, -np.inf], np.nan).dropna().to_numpy()
-        rp = rpob[col].replace([np.inf, -np.inf], np.nan).dropna().to_numpy()
+        base = _clean(others, col)
         if base.size == 0:
             ax.set_visible(False)
             continue
-        span = np.concatenate([base, rp]) if rp.size else base
+        overlays = [(_clean(sub, col), color, name) for sub, color, name in rpob_series]
+        span = np.concatenate([base, *(v for v, _, _ in overlays if v.size)])
         lo, hi = np.percentile(span, [0.5, 99.5])
         bins = np.linspace(lo, hi, 60) if hi > lo else 60
         ax.hist(base, bins=bins, density=True, color="#cccccc", label="all other genes")
-        if rp.size:
-            ax.hist(rp, bins=bins, density=True, histtype="step", lw=2, color="#d62728", label="rpoB (all)")
+        for vals, color, name in overlays:
+            if vals.size:
+                ax.hist(vals, bins=bins, density=True, histtype="step", lw=2, color=color, label=name)
         ax.set_title(label, fontsize=12)
         ax.set_xlabel("\n".join(_wrap(desc, 56)), fontsize=8)
         ax.grid(alpha=0.2)
     for ax in flat_axes[len(PER_GENE_STATS):]:
         ax.set_visible(False)
     flat_axes[0].legend(fontsize=9, loc="upper right")
-    fig.suptitle("Per-gene surprisal statistics: rpoB vs all other genes (n=1000 genomes)", fontsize=15)
+    fig.suptitle("Per-gene surprisal statistics: rpoB (WT vs mutant) over all other genes (n=1000 genomes)", fontsize=15)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
