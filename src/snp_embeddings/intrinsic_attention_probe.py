@@ -18,6 +18,16 @@ Read-out:
 Label-blind (uses only the manifest's rpoB flat index), read-only, GPU. Modelled on
 :mod:`snp_embeddings.frozen_bacformer_rpob_vectors` — same frozen-forward + flat-index pattern,
 reading the existing 1000-genome ``manifest.csv`` (``sample`` / ``role`` / ``rpob_flat_index``).
+
+Two extensions:
+
+- **D2 — ``--checkpoint-dir``:** probe a *fine-tuned* backbone's ``.bacformer`` encoder instead of
+  the frozen model, to test whether fine-tuning *keeps* rpoB attended internally while the mean
+  pool obliterates it (companion to :mod:`snp_embeddings.head_pool_attention_probe`, which measures
+  the *head's* pool directly).
+- **D3 — ``--protein-parquet-dir``:** name the **top-K most-attended genes** per genome
+  (``flatten_proteins``), to ask whether rpoB is *by far* the strongest and what else recurs at the
+  top — the evidence for a top-K-attended-gene selection head.
 """
 
 from __future__ import annotations
@@ -30,8 +40,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
+from transformers import AutoModelForSequenceClassification
 
 from snp_embeddings.frozen_bacformer_rpob_vectors import _forward_inputs
+from snp_embeddings.locate_gene import flatten_proteins
 from snp_embeddings.snp_vs_esm_prediction import _real_protein_indices
 from tl.embed.generate_embeddings import bacformer_attention_weights, load_bacformer_model
 
@@ -64,6 +76,38 @@ def _rank_stats(received: np.ndarray, rpob_pos: int) -> tuple[float, int]:
     return float((received < v).mean()), int((received > v).sum())
 
 
+def load_attention_encoder(device: str, checkpoint_dir: str | None = None) -> torch.nn.Module:
+    """Return the attention-capable Bacformer encoder, frozen-pretrained or from a checkpoint.
+
+    With ``checkpoint_dir=None`` this is the frozen complete-genomes model
+    (:func:`load_bacformer_model`). Given a fine-tuned checkpoint (mean-pool or attention-pool
+    classifier), it loads the full classifier and returns its ``.bacformer`` encoder submodule —
+    the same ``BacformerLargeModel`` class, so :func:`bacformer_attention_weights` (which sets
+    ``return_attn_weights=True``) works identically. This is how D2 asks "does a *fine-tuned*
+    backbone still attend rpoB internally, while its mean pool obliterates it?".
+    """
+    if checkpoint_dir is None:
+        return load_bacformer_model(device, dtype="auto")
+    clf = AutoModelForSequenceClassification.from_pretrained(
+        str(checkpoint_dir),
+        num_labels=1,
+        problem_type="binary_classification",
+        return_dict=True,
+        trust_remote_code=True,
+        torch_dtype="auto",
+    )
+    if device == "cpu":
+        clf = clf.float()
+    clf = clf.to(device).eval()
+    return getattr(clf, "bacformer", clf)
+
+
+def _flat_to_gene(parquet_dir: Path, sample_id: str) -> dict[int, str | None]:
+    """Map every real-protein flat index → gene name for one sample (via ``flatten_proteins``)."""
+    df = pd.read_parquet(parquet_dir / f"{sample_id}_protein_sequences.parquet")
+    return {r["flat_index"]: r["gene_name"] for r in flatten_proteins(df)}
+
+
 def probe_intrinsic_attention(
     manifest: pd.DataFrame,
     esm_store_dir: Path,
@@ -71,15 +115,27 @@ def probe_intrinsic_attention(
     device: str,
     pt_suffix: str = "_esm_embeddings.pt",
     max_proteins: int | None = None,
-) -> pd.DataFrame:
+    checkpoint_dir: str | None = None,
+    parquet_dir: Path | None = None,
+    top_k: int = 20,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Per-genome rpoB received-attention rank, per layer + mean-over-layers (R vs WT).
 
-    Returns one row per ``(sample, layer)`` with rpoB's received-attention percentile/rank.
+    Returns ``(df, top_df)``:
+
+    - ``df`` — one row per ``(sample, layer)`` with rpoB's received-attention percentile/rank
+      (the mean-over-layers row also carries ``rpob_gap_ratio`` = rpoB / the most-attended protein).
+    - ``top_df`` — when ``parquet_dir`` is given, the **top-K most-attended genes** per genome by
+      mean-over-layers received attention, named via ``flatten_proteins`` (empty otherwise). This is
+      D3: is rpoB *by far* the strongest, and what else is up there?
+
+    ``checkpoint_dir`` selects a fine-tuned backbone (D2); ``None`` = the frozen pretrained model.
     """
-    model = load_bacformer_model(device, dtype="auto")
+    model = load_attention_encoder(device, checkpoint_dir)
     model_dtype = next(model.parameters()).dtype
 
     rows: list[dict] = []
+    top_rows: list[dict] = []
     skips: dict[str, int] = {}
     for _, m in manifest.iterrows():
         sample_id = str(m["sample"])
@@ -105,6 +161,7 @@ def probe_intrinsic_attention(
         del attentions
         n_layers, n_real = received.shape
         received_mean = received.mean(axis=0)
+        received_mean_max = float(received_mean.max())
 
         for layer in range(n_layers):
             pct, rank = _rank_stats(received[layer], rpob_flat)
@@ -118,11 +175,27 @@ def probe_intrinsic_attention(
             "sample": sample_id, "role": role, "layer": "mean", "n_proteins": int(n_real),
             "rpob_received": float(received_mean[rpob_flat]), "rpob_received_pct": pct,
             "rpob_received_rank": rank,
+            "rpob_gap_ratio": float(received_mean[rpob_flat] / received_mean_max) if received_mean_max else None,
         })
+
+        if parquet_dir is not None:
+            try:
+                gene_map = _flat_to_gene(parquet_dir, sample_id)
+            except FileNotFoundError:
+                skips["missing_parquet"] = skips.get("missing_parquet", 0) + 1
+                gene_map = {}
+            order = np.argsort(received_mean)[::-1][:top_k]
+            for top_rank, idx in enumerate(order):
+                idx = int(idx)
+                top_rows.append({
+                    "sample": sample_id, "role": role, "rank": top_rank, "flat_index": idx,
+                    "gene_name": gene_map.get(idx), "received_mean": float(received_mean[idx]),
+                    "is_rpob": bool(idx == rpob_flat),
+                })
 
     if skips:
         logger.warning("intrinsic-attention probe: skipped %s", skips)
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows), pd.DataFrame(top_rows)
 
 
 def summarise(df: pd.DataFrame) -> dict:
@@ -138,6 +211,65 @@ def summarise(df: pd.DataFrame) -> dict:
             "n_resistant": int(len(r)), "n_wt": int(len(w)),
         }
     return out
+
+
+def summarise_topk(top_df: pd.DataFrame, df: pd.DataFrame) -> dict:
+    """D3 summary — is rpoB *by far* the strongest, and what recurs at the top?
+
+    Combines the per-genome top-K gene list (``top_df``) with the rpoB rank/gap from the
+    mean-over-layers rows of ``df``: how often rpoB lands in the top 1/5/10/20, the median
+    gap ratio (rpoB / most-attended), and the genes that most frequently occupy the top-K.
+    """
+    mean_rows = df[df["layer"] == "mean"]
+    ranks = mean_rows["rpob_received_rank"]
+    out: dict = {
+        "n_genomes": int(top_df["sample"].nunique()) if len(top_df) else 0,
+        "rpob_top1_frac": float((ranks == 0).mean()) if len(ranks) else None,
+        "rpob_in_top5_frac": float((ranks < 5).mean()) if len(ranks) else None,
+        "rpob_in_top10_frac": float((ranks < 10).mean()) if len(ranks) else None,
+        "rpob_in_top20_frac": float((ranks < 20).mean()) if len(ranks) else None,
+        "rpob_gap_ratio_median": (
+            float(mean_rows["rpob_gap_ratio"].median()) if "rpob_gap_ratio" in mean_rows else None
+        ),
+        "top_genes_overall": (
+            {str(k): int(v) for k, v in top_df["gene_name"].value_counts().head(25).items()}
+            if len(top_df) else {}
+        ),
+    }
+    return out
+
+
+def plot_topk(top_df: pd.DataFrame, df: pd.DataFrame, out_path: Path) -> None:
+    """Two panels: top-gene frequency across genomes (left) + rpoB gap-ratio histogram (right)."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(13, 5.5))
+
+    counts = top_df["gene_name"].fillna("(unnamed)").value_counts().head(20)[::-1]
+    ax0.barh(range(len(counts)), counts.to_numpy(), color="#4c72b0")
+    ax0.set_yticks(range(len(counts)))
+    ax0.set_yticklabels(counts.index)
+    ax0.set_xlabel(f"# genomes with gene in top-{int(top_df['rank'].max()) + 1} attended")
+    ax0.set_title("Most frequently top-attended genes")
+    ax0.grid(axis="x", alpha=0.3)
+
+    mean_rows = df[df["layer"] == "mean"]
+    if "rpob_gap_ratio" in mean_rows:
+        ax1.hist(mean_rows["rpob_gap_ratio"].dropna().to_numpy(), bins=30, color="#d62728", alpha=0.8)
+    ax1.axvline(1.0, ls="--", lw=1.5, color="black", label="rpoB = most-attended")
+    ax1.set_xlabel("rpoB received attention / most-attended protein")
+    ax1.set_ylabel("# genomes")
+    ax1.set_title("Is rpoB by far the strongest?")
+    ax1.legend(loc="upper left", fontsize=9)
+    ax1.grid(axis="y", alpha=0.3)
+
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
 
 
 def plot_probe(df: pd.DataFrame, out_path: Path) -> None:
@@ -175,11 +307,16 @@ def plot_probe(df: pd.DataFrame, out_path: Path) -> None:
 
 
 def main() -> None:
-    """CLI entry point — frozen Bacformer intrinsic-attention probe over the manifest genomes."""
+    """CLI entry point — Bacformer intrinsic-attention probe (frozen or fine-tuned) over the manifest."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--manifest-csv", type=Path, required=True, help="manifest.csv (sample/role/rpob_flat_index).")
     parser.add_argument("--esm-store-dir", type=Path, required=True, help="Dir of {sample}_esm_embeddings.pt.")
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--checkpoint-dir", type=str, default=None,
+                        help="D2: fine-tuned checkpoint whose .bacformer backbone to probe (default: frozen model).")
+    parser.add_argument("--protein-parquet-dir", type=Path, default=None,
+                        help="D3: dir of {sample}_protein_sequences.parquet — enables top-K gene naming.")
+    parser.add_argument("--top-k", type=int, default=20, help="D3: number of top-attended genes to record per genome.")
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--max-samples", type=int, default=None, help="Cap genomes (smoke).")
     parser.add_argument("--max-proteins", type=int, default=None, help="Skip genomes with more proteins (memory).")
@@ -191,16 +328,29 @@ def main() -> None:
         r = manifest[manifest["role"] == "resistant"].head(args.max_samples // 2)
         w = manifest[manifest["role"] == "wt"].head(args.max_samples - len(r))
         manifest = pd.concat([r, w]).reset_index(drop=True)
-    logger.info("Probing intrinsic attention over %d genomes on %s", len(manifest), args.device)
+    backbone = "frozen" if args.checkpoint_dir is None else args.checkpoint_dir
+    logger.info("Probing intrinsic attention over %d genomes (backbone=%s) on %s",
+                len(manifest), backbone, args.device)
 
-    df = probe_intrinsic_attention(
-        manifest, args.esm_store_dir, device=args.device, max_proteins=args.max_proteins
+    df, top_df = probe_intrinsic_attention(
+        manifest, args.esm_store_dir, device=args.device, max_proteins=args.max_proteins,
+        checkpoint_dir=args.checkpoint_dir, parquet_dir=args.protein_parquet_dir, top_k=args.top_k,
     )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     df.to_parquet(args.output_dir / "intrinsic_attention_rows.parquet", index=False)
     summary = summarise(df)
     (args.output_dir / "intrinsic_attention_probe.json").write_text(json.dumps(summary, indent=2))
     plot_probe(df, args.output_dir / "intrinsic_attention_probe.png")
+    if not top_df.empty:
+        top_df.to_parquet(args.output_dir / "intrinsic_attention_topk.parquet", index=False)
+        topk_summary = summarise_topk(top_df, df)
+        (args.output_dir / "intrinsic_attention_topk.json").write_text(json.dumps(topk_summary, indent=2))
+        plot_topk(top_df, df, args.output_dir / "intrinsic_attention_topk.png")
+        logger.info("rpoB top1=%.2f top5=%.2f top10=%.2f gap_ratio_median=%.3f",
+                    topk_summary["rpob_top1_frac"] or float("nan"),
+                    topk_summary["rpob_in_top5_frac"] or float("nan"),
+                    topk_summary["rpob_in_top10_frac"] or float("nan"),
+                    topk_summary["rpob_gap_ratio_median"] or float("nan"))
     logger.info("Wrote rows + JSON + figure to %s", args.output_dir)
     logger.info("mean-layer rpoB pct — resistant=%.3f wt=%.3f",
                 summary["by_layer"].get("mean", {}).get("resistant_median_pct") or float("nan"),
