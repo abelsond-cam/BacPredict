@@ -1,10 +1,10 @@
 # Task 7 — SNP-embedding signal-loss diagnostic — Progress Report
 
-**Date:** 2026-06-14 · **Branch:** `dev` · **Status:** diagnostic complete; remedy chosen and starting.
+**Date:** 2026-06-15 · **Branch:** `dev` · **Status:** diagnostic complete; the learned attention pool was built and **underperformed the mean** (0.868 / ~0.78 < 0.905) — pivoting to embedding augmentation (a per-protein ESM-C surprisal panel).
 
 This report summarises the diagnostic phase of [`src/snp_embeddings/`](../) — why TB AST
-(rifampicin) prediction underperforms, what we measured, the AUROC numbers, and the conclusion
-that now drives the next build (an attention pool to replace the genome mean-pool). The
+(rifampicin) prediction underperforms, what we measured, the AUROC numbers, and why the
+attention-pool remedy proved necessary but not sufficient — driving the pivot to embedding augmentation. The
 authoritative running record is [the task `CLAUDE.md`](../CLAUDE.md); the per-figure numbers are
 pinned in [`docs/surprisal_analysis.json`](surprisal_analysis.json).
 
@@ -66,9 +66,12 @@ evaluate split:
 | Bacformer protein token | frozen contextualised *rpoB* token | **0.953** |
 | **Bacformer genome pool** (deployed input) | frozen mask-mean over ~4,000 tokens | **0.788** |
 | Deployed model | fine-tuned mean-pool head | **0.905** |
+| Learned attention pool (e2e gated-MIL) | gated-attention over the ~4,000 tokens | **0.868** |
+| Learned attention pool (frozen gated-MIL) | gated-attention, frozen backbone | **~0.78** |
 
 **The signal survives ESM-C, survives the contextualised token, and collapses only at the genome
-mean-pool.**
+mean-pool.** Replacing that mean-pool with a learned attention pool (last two rows) did **not** help —
+it lost to the mean; §6 diagnoses why.
 
 - The **residue→protein average is NOT the culprit** — the frozen pooled ESM-C *rpoB* vector
   scores **0.971**, at/above the one-hot ceiling (it also carries other *rpoB* residues / lineage
@@ -80,10 +83,12 @@ mean-pool.**
   *below* the frozen *rpoB* token (0.953). A learned classifier on top of a destructive pool
   cannot recover what the pool threw away.
 
-The remedy is therefore unambiguous and least-invasive: **replace the genome mean-pool with a
-learned attention pool** over the per-protein tokens, so the one SNP-bearing protein can dominate
-the genome representation instead of being averaged into ~4,000 others. No re-pretraining of
-ESM-C or Bacformer is required — the signal is present and recoverable at the token level.
+The natural remedy — **replace the genome mean-pool with a learned attention pool** over the
+per-protein tokens — was built and **underperformed the mean** (0.868 / ~0.78 < 0.905). Since a
+uniform set of pool weights *is* the mean, losing to it means the learned head never concentrated on
+rpoB. §6 diagnoses why (the gate does not route to rpoB; fine-tuning erodes rpoB's internal salience)
+and motivates the embedding-augmentation pivot: a per-protein **surprisal panel** (§4) that hands the
+gate an explicit pointer to the anomalous protein.
 
 → Figure: [`figures/esm_surprisal.png`](figures/esm_surprisal.png) (per-residue vs per-protein
 surprisal histograms) and [`figures/surprisal_vs_ablation.png`](figures/surprisal_vs_ablation.png).
@@ -163,7 +168,47 @@ elsewhere in the protein (poor SNP-specificity), so it is retained only as an or
 
 ---
 
-## 6. Conclusions
+## 6. The attention pool was built — and the head still can't find rpoB
+
+Acting on §3, we replaced the genome mean-pool with a **learned gated-attention MIL pool** (Ilse 2018):
+one scalar weight per protein token, softmaxed over the ~4,000 tokens, then a weighted sum. Trained
+freeze-backbone-first then end-to-end on rifampicin. It **lost to the mean** (e2e **0.868**, frozen
+**~0.78** vs the mean-pool's **0.905**). Because a uniform set of weights *is* the mean, losing to it
+means the learned pool collapsed toward uniform (or weighted the wrong genes) rather than concentrating
+on rpoB.
+
+Three label-blind diagnostics over the 1000-genome manifest separate Bacformer's **internal**
+self-attention (between protein tokens, building the representation) from the predictive **head's** pool
+(what collapses ~4,000 tokens → 1 vector), and ask where rpoB lands in each:
+
+| model | backbone internal attention on rpoB | head pool weight on rpoB | eval AUROC |
+|---|---|---|---|
+| **frozen** (pretrained) | 99.8th pct · top-20 **98.8%** · gap 0.82 | — | (rpoB token 0.953) |
+| **mean-pool FT** | 86.7th pct · top-20 **0%** · gap 0.006 | uniform (≡ mean) | **0.905** |
+| **e2e gated-MIL FT** | 99.5th pct but only **rank ~20** (top-20 27%) | **68th pct (R 0.68 / WT 0.66), never #1** | **0.868** |
+| **frozen gated-MIL** | (frozen backbone, as row 1) | 82nd pct, **no R/WT gap** | ~0.78 |
+
+Three findings:
+
+1. **rpoB is a strong attention hub only because it is a conserved core gene.** The *frozen* (pretrained)
+   model attends rpoB in the top ~0.2% — but R ≈ WT, so it attends the *gene*, not the *mutation*. That is
+   structural hub-ness inherited from masked-genome pretraining, not a learned resistance signal.
+2. **Fine-tuning erodes it.** Training degrades rpoB's internal salience — the mean-pool drops it out of
+   the top-20 entirely (gap 0.82 → 0.006); the e2e gated-MIL pushes it down to ~rank 20. "Fine-tuning
+   surfaces the causal gene" is *false* here; if anything it buries it.
+3. **The head never routes to rpoB.** Even a learned pool that *can* concentrate on one gene places rpoB
+   at only the ~68th weight-percentile (never #1), with a faint R>WT difference that is most likely noise.
+   The head cannot, from the resistance label alone, find the one SNP-bearing protein among ~4,000.
+
+**Implication.** The signal is in the tokens (frozen rpoB token 0.953) but unreachable by the head — a
+better *pool* is not the fix. The head needs an explicit, label-blind per-protein **pointer** to the
+anomalous protein: the **surprisal panel** (§4) — feed each token a 9-dim ESM-C surprisal vector so the
+gate can route to rpoB. (A heavier alternative — a per-gene logistic-regression probability channel over
+core genes, with train-only cross-fitting to stay leakage-free — is recorded for later.)
+
+---
+
+## 7. Conclusions
 
 1. **The defect is representational, not absent.** The causal residue is present and linearly
    decodable at every stage up to and including the frozen Bacformer *rpoB* token (0.953). It is
@@ -171,11 +216,14 @@ elsewhere in the protein (poor SNP-specificity), so it is retained only as an or
    head cannot undo that (0.905 < 0.953).
 2. **The first average is innocent.** ESM-C's residue→protein pool preserves the signal (0.971) —
    the original "two averages" suspicion narrows to the *second* average alone.
-3. **Remedy: a learned attention pool at protein→genome.** Let the SNP-bearing protein dominate
-   the genome vector. Cheapest evidence-supported lever; no re-pretraining.
-4. **A pre-pool surprisal channel is cheap and viable.** Unmasked single-forward surprisal tracks
-   the masked gold standard (r 0.948) and flags the mutated protein into the high tail — a
-   leakage-free per-protein feature to concatenate later (gated by the scaled scan in flight).
+3. **A learned attention pool is necessary but not sufficient (§6).** We built it; it *lost to the
+   mean* (0.868 / ~0.78 < 0.905) because the head's gate never routes to rpoB (it sits at the ~68th
+   weight-percentile, never #1) and fine-tuning erodes rpoB's internal salience. A better pool alone
+   cannot recover the signal.
+4. **The remedy is the surprisal panel (§4/§6).** Hand each token a 9-dim ESM-C surprisal vector so the
+   gate can find the mutated protein — a label-blind, leakage-free pointer. Unmasked single-forward
+   surprisal tracks the masked gold standard (r 0.948) and flags the mutated protein into the high tail.
+   Now training on the 1000-genome manifest (att_head panel vs a panel-less baseline).
 5. **One residue, not a window.** Feature design should use a single-residue peak / contrast
    statistic, not a neighbour window.
 
@@ -185,7 +233,7 @@ single chromosomal point mutation.
 
 ---
 
-## 7. Figures
+## 8. Figures
 
 All saved under [`docs/figures/`](figures/); numbers pinned in
 [`docs/surprisal_analysis.json`](surprisal_analysis.json).
@@ -204,18 +252,21 @@ All saved under [`docs/figures/`](figures/); numbers pinned in
 
 ---
 
-## 8. Status & next steps
+## 9. Status & next steps
 
-- **In flight:** the scalable genome-wide unmasked-surprisal scan
-  ([`unmasked_surprisal_scan.py`](../unmasked_surprisal_scan.py)) — GPU array over ~1,000
-  genomes (one forward/protein → per-protein stats parquet + streaming spatial-autocorrelation
-  NPZ + raw per-residue dump). On completion: the per-protein statistic **histogram grid**, the
-  genome-wide **spatial-autocorrelation** figure (finalising "neighbours don't matter" on the
-  cheap unmasked signal at scale), and a **stat-correlation** heatmap, to lock the small feature
-  vector for the attention head.
-- **Next build (approved):** an **attention-pool genome head** for the Bacformer AMR predictor —
-  a gated-attention MIL pool replacing the mean-pool, freeze-backbone-first then end-to-end, run
-  on rifampicin first to (a) overfit a 10-genome smoke and (b) beat the 0.905 mean-pool baseline,
-  targeting the ~0.95 frozen-*rpoB*-token ceiling. Plan:
-  `~/.claude/plans/i-d-like-to-start-crystalline-allen.md`.
-- **Later:** feed the surprisal statistics in as extra per-protein channels (gated by the scan).
+- **Done:** the 1000-genome unmasked-surprisal scan + the per-sample **panel store**
+  (`tb_surprisal_panel/`, 9-panel + train standardisation); the gated-attention pool (built —
+  *underperformed*, §6); the panel→head wiring + the n=10 overfit **smoke** (att_head & e2e, both
+  AUROC 1.0).
+- **In flight — the 1000-genome panel run:** gated-MIL `--panel-mode att_head` (panel) vs a
+  panel-less baseline on a 700/100/200 manifest split (jobs `30602029` / `30602030`), read out by
+  the D1 **head-pool probe** — does the panel lift rpoB's head-pool percentile from ~0.68 toward
+  ~0.99 (R > WT) and beat the baseline? The manifest is a balanced, rpoB-enriched subset, so this is
+  a *routing diagnostic*, not a headline AUROC.
+- **Next (go/no-go):** if the panel routes the gate to rpoB, run the unmasked-surprisal scan over all
+  ~38k genomes, build the full panel store (`build_surprisal_store.py --source parquet`), and train
+  Stage C `--panel-mode att_head` vs the 0.905 mean-pool / 0.868 gated-MIL baselines, stratified by
+  mechanism.
+- **Recorded for later (option 2):** a per-gene logistic-regression probability channel over core
+  genes (Prokka/Bakta-adjudged), fed to the head like the panel — heavier, and needs train-only
+  cross-fitting to stay leakage-free.
