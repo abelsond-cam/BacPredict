@@ -28,8 +28,11 @@ We traced the signal through every pooling step of the model with a ladder of li
 > (AUROC 0.953), and is then destroyed by the mean-pool that collapses ~4,000 protein tokens into
 > one genome vector (AUROC 0.788).** Fine-tuning partly compensates (0.905) but never reaches the
 > token-level ceiling, and — surprisingly — a *learned* attention pool we trained to replace the
-> mean does **worse than the mean** (0.868). The open problem is therefore not the embedding but the
-> **read-out**: making the genome head actually attend to the one protein that carries the signal.
+> mean does **worse than the mean** (0.868). Yet the model's attention is **not** the problem in the
+> way that result suggests: Bacformer's *internal* self-attention already concentrates on *rpoB*
+> (top ~0.2% of all proteins). The signal is sitting in the tokens, attended to inside the network —
+> so the failure is specifically in the prediction **head's** pooling attention, which apparently
+> does *not* route to *rpoB*. That is exactly what we are now diagnosing directly.
 
 ---
 
@@ -136,8 +139,14 @@ core gene (RNA polymerase β), not because of the mutation.
 between protein tokens — it explains why the *rpoB* **token** is well-formed (0.953). It is **not**
 the prediction **head's** pooling, which is what collapses the tokens into the classifier's input.
 The deployed model's head is a plain **mean**; our learned pool is a separate attention that —
-per §4.3 — is failing to route to *rpoB*. The internal attention finding tells us the signal is
-sitting in the tokens, ready to be read, if only the head would attend to it.
+per §4.3 — is failing to route to *rpoB*.
+
+This is the apparent paradox the diagnostic must resolve: **the network attends to *rpoB*
+internally, the learned pool still made prediction worse, so the head's pooling is evidently *not*
+attending to *rpoB*.** The internal-attention finding tells us the signal is sitting in the tokens,
+ready to be read, if only the head would attend to it — and whether the trained head's pool actually
+does is exactly what we are now measuring (D1, §6). The earlier diagnostic answered the *internal*
+attention question; we had not yet measured the *head's*.
 
 ---
 
@@ -149,8 +158,12 @@ sitting in the tokens, ready to be read, if only the head would attend to it.
 2. **The protein→genome mean-pool is the bottleneck.** It is where 0.953 collapses to 0.788; it is
    the chain-of-averaging's fatal link for a single-residue cause.
 3. **Fine-tuning the mean is a partial patch (0.905), not a fix.** It never reaches the token ceiling.
-4. **A naive learned attention pool is not yet the fix either** — it underperforms the mean (0.868),
-   because it has not learned to attend to the one causal protein among ~4,000 from the label alone.
+4. **Bacformer attends to *rpoB* internally, but the prediction head apparently does not.** The
+   backbone's own self-attention places *rpoB* in the top ~0.2% of proteins — the signal is in the
+   tokens — yet a naive learned attention pool still underperforms the mean (0.868). So the head's
+   *pooling* attention is evidently not routing to *rpoB*, even though the network internally does.
+   **We are now diagnosing the head's attention directly** (D1) to confirm this is the precise
+   failure — the previous attention diagnostic measured the *internal* attention, not the head's.
 5. **The mutation is a clean single-residue spike**, cheaply flaggable by unmasked surprisal — which
    is what motivates giving the pool an explicit per-protein anomaly signal (the panel) and/or
    selecting candidate proteins by attention before the head reads them.

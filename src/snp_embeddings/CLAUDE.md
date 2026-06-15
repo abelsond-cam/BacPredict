@@ -16,8 +16,11 @@ finds *where* the single-residue *rpoB*/RRDR signal is lost and what fixes it.
 **Headline finding (see the report for the full ladder):** the signal is *present* in Bacformer's
 contextualised *rpoB* token (AUROC 0.953) and is destroyed by the **protein→genome mean-pool**
 (0.788). Fine-tuning the mean partly recovers it (0.905) but a naive learned attention pool does
-*worse* (0.868) — so the open problem is the **read-out** (making the genome head attend to *rpoB*),
-not the embedding.
+*worse* (0.868). Yet Bacformer's **internal** self-attention still concentrates on *rpoB* (top
+~0.2% of proteins) — so the signal is in the tokens and the failure is in the prediction **head's**
+pooling attention, which apparently does *not* route to *rpoB*. We are now diagnosing the head's
+attention directly (the prior diagnostic measured the *internal* attention, not the head's). The
+open problem is the **read-out**, not the embedding.
 
 ## Current state (2026-06-15)
 
