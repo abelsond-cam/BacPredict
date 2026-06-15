@@ -370,6 +370,28 @@
       }
     }
   },
+  "rpob_residue_landscape": {
+    "rrdr_codons": [
+      426,
+      452
+    ],
+    "n_isolates": 100,
+    "gene_length": 1172,
+    "dropoff_mean_top": [
+      8.567,
+      8.068,
+      7.778,
+      7.424,
+      7.173,
+      6.965,
+      6.693,
+      6.469,
+      6.309,
+      6.194
+    ],
+    "dropoff_mean_rank100": 3.101,
+    "mean_frac_topN_in_rrdr": 0.0295
+  },
   "stat_correlation_spearman": {
     "max_surprisal": {
       "max_surprisal": 1.0,
@@ -475,6 +497,7 @@
     "stat_histograms_grid": "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/snp_embeddings/unmasked_surprisal_scan/analysis/stat_histograms_grid.png",
     "surprisal_autocorrelation": "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/snp_embeddings/unmasked_surprisal_scan/analysis/surprisal_autocorrelation.png",
     "stat_correlation": "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/snp_embeddings/unmasked_surprisal_scan/analysis/stat_correlation.png",
-    "per_gene_stat_panels": "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/snp_embeddings/unmasked_surprisal_scan/analysis/per_gene_stat_panels.png"
+    "per_gene_stat_panels": "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/snp_embeddings/unmasked_surprisal_scan/analysis/per_gene_stat_panels.png",
+    "rpob_residue_landscape": "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/snp_embeddings/unmasked_surprisal_scan/analysis/rpob_residue_landscape.png"
   }
 }
