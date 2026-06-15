@@ -295,48 +295,78 @@
     "max_surprisal": "highest residue surprisal \u2014 the SNP peak; also rises with length & divergence",
     "top2_surprisal": "second-highest residue surprisal in the gene",
     "top3_surprisal": "third-highest residue surprisal (from the raw per-residue dump)",
-    "top10_surprisal": "tenth-highest residue surprisal \u2014 how fast the upper tail decays",
+    "top10_surprisal": "tenth-highest \u2014 a FIXED rank, so it climbs with gene length (rpoB is long)",
+    "p99_surprisal": "99th-percentile residue surprisal \u2014 length-normalised upper extreme",
+    "p95_surprisal": "95th-percentile residue surprisal \u2014 length-normalised upper level",
     "p90_surprisal": "90th-percentile residue surprisal \u2014 bulk upper level, robust to one spike",
     "median_surprisal": "typical residue surprisal \u2014 the gene's background level",
-    "length": "number of residues; proteins differ in length and it scales the order stats"
+    "length": "number of residues; rpoB ~1172 vs ~270 median, so fixed-rank stats favour it"
   },
   "per_gene_stat_summary": {
     "min_length": 30,
     "by_stat": {
       "max_surprisal": {
         "all_other_genes_median": 6.096966743469238,
-        "resistant_rpob_median": 7.612043380737305,
-        "wt_rpob_median": 7.504063129425049
+        "rpob_median": 7.504063129425049,
+        "rpob_mean_percentile": 86.94723271080758,
+        "rpob_median_rank": 551.0,
+        "n_genomes_with_rpob": 1000
       },
       "top2_surprisal": {
         "all_other_genes_median": 5.449282646179199,
-        "resistant_rpob_median": 7.479918479919434,
-        "wt_rpob_median": 7.4966206550598145
+        "rpob_median": 7.479918479919434,
+        "rpob_mean_percentile": 97.12910255777965,
+        "rpob_median_rank": 107.0,
+        "n_genomes_with_rpob": 1000
       },
       "top3_surprisal": {
         "all_other_genes_median": 5.08951997756958,
-        "resistant_rpob_median": 7.458411693572998,
-        "wt_rpob_median": 6.883212089538574
+        "rpob_median": 6.883212089538574,
+        "rpob_mean_percentile": 98.3522872670849,
+        "rpob_median_rank": 74.0,
+        "n_genomes_with_rpob": 1000
       },
       "top10_surprisal": {
         "all_other_genes_median": 4.106269836425781,
-        "resistant_rpob_median": 6.063012599945068,
-        "wt_rpob_median": 6.000751495361328
+        "rpob_median": 6.000751495361328,
+        "rpob_mean_percentile": 99.38489937944836,
+        "rpob_median_rank": 15.0,
+        "n_genomes_with_rpob": 1000
+      },
+      "p99_surprisal": {
+        "all_other_genes_median": 4.9189835357666,
+        "rpob_median": 5.318002061843873,
+        "rpob_mean_percentile": 80.39341238943318,
+        "rpob_median_rank": 864.0,
+        "n_genomes_with_rpob": 1000
+      },
+      "p95_surprisal": {
+        "all_other_genes_median": 3.803676128387451,
+        "rpob_median": 3.486840856075288,
+        "rpob_mean_percentile": 17.14564682763785,
+        "rpob_median_rank": 3371.0,
+        "n_genomes_with_rpob": 1000
       },
       "p90_surprisal": {
         "all_other_genes_median": 3.205915641784668,
-        "resistant_rpob_median": 2.77073211669922,
-        "wt_rpob_median": 2.769350767135621
+        "rpob_median": 2.769350767135621,
+        "rpob_mean_percentile": 12.5667781887718,
+        "rpob_median_rank": 3552.0,
+        "n_genomes_with_rpob": 1000
       },
       "median_surprisal": {
         "all_other_genes_median": 0.9448537826538086,
-        "resistant_rpob_median": 0.3438352942466736,
-        "wt_rpob_median": 0.3338916748762131
+        "rpob_median": 0.33913783729076385,
+        "rpob_mean_percentile": 9.634358040829255,
+        "rpob_median_rank": 3669.0,
+        "n_genomes_with_rpob": 1000
       },
       "length": {
         "all_other_genes_median": 268.0,
-        "resistant_rpob_median": 1172.0,
-        "wt_rpob_median": 1172.0
+        "rpob_median": 1172.0,
+        "rpob_mean_percentile": 98.61159346059465,
+        "rpob_median_rank": 50.0,
+        "n_genomes_with_rpob": 1000
       }
     }
   },
