@@ -102,6 +102,22 @@ full cohort.
 - **Reconstructed filter ≠ snippy's exact filter** — quantified vs native `snps.vcf`.
 - **Jaccard-on-loci** is a genetic-similarity proxy, not a phylogeny-derived distance.
 
+### Performance & scaling notes (for Tier-2 ~79k)
+
+The Tier-1 reduce on 13,602 samples runs ~40 min on icelake-himem (peak RSS **63 GB**),
+dominated by three **non-vectorised** costs — the vectorised Jaccard matmul is cheap by
+comparison: (1) `pd.factorize` over hundreds of millions of `(POS,REF,ALT)` **string**
+keys; (2) densifying + writing the **9.5 GB text Rtab** (372,543 loci × 13,602 samples,
+only ~10-30% dense); (3) writing the dense 13,602² distance TSV. Levers before Tier-2:
+
+- **Integer-encode loci at extract time** (emit a compact int key, not a `pos_ref_alt`
+  string) → removes the string-`factorize` bottleneck.
+- **Persist the presence matrix as sparse** (`scipy.sparse.save_npz` + loci/sample-id
+  arrays) as the canonical, fast, ~3-7× smaller artifact; generate the pyseer `--pres`
+  text Rtab **lazily / streamed row-by-row** from the CSR only when feeding pyseer (never
+  densify the full ~5 B-cell matrix). The dense Jaccard *output* at 79k² also needs
+  blocking (~50 GB) as already noted above.
+
 ### Status
 
 - 2026-06-15 — **Stage A validated, Stage C running.** Committed/pushed on `dev`. Pixi env
