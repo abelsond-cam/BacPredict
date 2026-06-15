@@ -1010,7 +1010,7 @@ def plot_rpob_residue_landscape(
     import matplotlib.pyplot as plt
 
     idx = npz["pooled_isolate_idx"]
-    masked = npz["pooled_masked"].astype(float)
+    masked = -npz["pooled_masked"].astype(float)  # NPZ stores log P; surprisal = -log P
     iso_ids = sorted({int(i) for i in idx})
     blocks = [masked[idx == i] for i in iso_ids]
     length = min(len(b) for b in blocks)
