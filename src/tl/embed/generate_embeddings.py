@@ -59,6 +59,35 @@ def bacformer_last_hidden_state(model: torch.nn.Module, inputs: dict) -> torch.T
         outputs = model(**inputs, return_dict=True)
     return outputs["last_hidden_state"]
 
+
+def bacformer_attention_weights(model: torch.nn.Module, inputs: dict) -> list[torch.Tensor]:
+    """Run a frozen Bacformer forward and return its **intrinsic** self-attention weights.
+
+    Mirrors the method Maciej uses in Bacformer's operon-prediction analysis
+    (``run_collect_attention_weight_layers_by_distance``): set ``return_attn_weights=True``
+    so ``BacformerModelOutput.attentions`` is populated. The ``BacformerLarge`` model threads
+    the flag through every forward down to ``RotaryMultiHeadAttention``, which then computes
+    the explicit softmax (instead of fused SDPA) and returns the per-layer weights.
+
+    Parameters
+    ----------
+    model : torch.nn.Module
+        A frozen ``BacformerLargeModel`` (from :func:`load_bacformer_model`).
+    inputs : dict
+        The forward kwargs (``protein_embeddings`` / ``attention_mask`` / ``contig_ids``),
+        already on the model device.
+
+    Returns
+    -------
+    list of torch.Tensor
+        One tensor per layer, each shape ``(batch, n_heads, n_tokens, n_tokens)`` — the
+        attention from every query token (dim −2) to every key token (dim −1). Restrict to
+        protein tokens with the flat index, and average over heads / layers downstream.
+    """
+    with torch.no_grad():
+        outputs = model(**inputs, return_attn_weights=True, return_dict=True)
+    return outputs["attentions"]
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
