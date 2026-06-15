@@ -6,7 +6,7 @@ the root [CLAUDE.md](../../CLAUDE.md) for §0 global conventions; cross-task sta
 in [ToDo.md](../../ToDo.md) under "Pyseer GWAS".
 
 This work runs on **variant calls + unitigs + Panaroo GPA** — it is *not* Bacformer
-fine-tuning. It was moved here from the BacHGT tracker so all pyseer work for every
-task lives in one place.
+fine-tuning but will be used to compare the results from Bacformer and potentially to
+create extra features Bacformer can use.
 
 Per-task plans and running notes live in each subfolder's own `CLAUDE.md`.
