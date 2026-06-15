@@ -995,7 +995,7 @@ def plot_per_gene_stat_panels(df: pd.DataFrame, out_path: Path, *, min_length: i
 def plot_rpob_residue_landscape(
     npz: dict, out_path: Path, *, rrdr: tuple[int, int] = (426, 452), top_n: int = 100
 ) -> dict:
-    """rpoB per-residue surprisal: positional profile (RRDR shaded) + sorted top-N drop-off.
+    """Plot rpoB per-residue surprisal: positional profile (RRDR shaded) + sorted top-N drop-off.
 
     Uses the 0A points NPZ (masked + unmasked per-residue surprisal for rpoB across the
     resistant isolates, concatenated per isolate in residue order). The left panel shows
