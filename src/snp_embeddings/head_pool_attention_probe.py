@@ -38,9 +38,8 @@ import pandas as pd
 import torch
 
 from snp_embeddings.frozen_bacformer_rpob_vectors import _forward_inputs
-from snp_embeddings.intrinsic_attention_probe import _rank_stats, load_attn_pool_wrapper
+from snp_embeddings.intrinsic_attention_probe import _rank_stats, _resolve_weight_checkpoint, load_attn_pool_wrapper
 from snp_embeddings.snp_vs_esm_prediction import _real_protein_indices
-from tl.train.evaluate import resolve_checkpoint_dir
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -49,12 +48,13 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 def load_attn_pool_checkpoint(checkpoint_dir: str, device: str) -> torch.nn.Module:
     """Load a trained ``BacformerAttnPoolForGenomeClassification`` checkpoint (eval, on device).
 
-    ``resolve_checkpoint_dir`` finds the best ``checkpoint-<step>/`` inside a run dir; the wrapper is
-    then rebuilt by :func:`~snp_embeddings.intrinsic_attention_probe.load_attn_pool_wrapper`
+    ``_resolve_weight_checkpoint`` finds the best ``checkpoint-<step>/`` inside a run dir (keyed on
+    saved weights, since the gated-MIL checkpoint has no ``config.json``); the wrapper is then rebuilt
+    by :func:`~snp_embeddings.intrinsic_attention_probe.load_attn_pool_wrapper`
     (``from_pretrained_backbone`` + ``load_state_dict``) — the custom pool is a local ``nn.Module``,
     not HF remote code, so ``AutoModel.from_pretrained`` cannot reconstruct it.
     """
-    model_dir = resolve_checkpoint_dir(Path(checkpoint_dir))
+    model_dir = _resolve_weight_checkpoint(Path(checkpoint_dir))
     return load_attn_pool_wrapper(model_dir, device)
 
 

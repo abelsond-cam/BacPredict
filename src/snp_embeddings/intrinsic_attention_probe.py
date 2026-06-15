@@ -47,7 +47,6 @@ from snp_embeddings.locate_gene import flatten_proteins
 from snp_embeddings.snp_vs_esm_prediction import _real_protein_indices
 from tl.embed.generate_embeddings import BACFORMER_MODEL_ID, bacformer_attention_weights, load_bacformer_model
 from tl.train.attention_pool import BacformerAttnPoolForGenomeClassification
-from tl.train.evaluate import resolve_checkpoint_dir
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -91,43 +90,85 @@ def _load_attn_pool_state_dict(model_dir: Path) -> dict:
     raise FileNotFoundError(f"no model.safetensors or pytorch_model.bin in {model_dir}")
 
 
+def _resolve_weight_checkpoint(checkpoint: Path) -> Path:
+    """Like :func:`tl.train.evaluate.resolve_checkpoint_dir` but keyed on saved **weights**.
+
+    A plain-``nn.Module`` (gated-MIL) checkpoint is written by HF Trainer as ``model.safetensors``
+    with **no** ``config.json``, so ``resolve_checkpoint_dir`` (which requires ``config.json``) cannot
+    find it. Resolve over ``checkpoint-*/`` dirs that hold model weights, mirroring the Trainer's
+    ``best_model_checkpoint`` choice (else the highest step).
+    """
+    checkpoint = Path(checkpoint)
+
+    def _has_weights(p: Path) -> bool:
+        return (p / "model.safetensors").exists() or (p / "pytorch_model.bin").exists()
+
+    if _has_weights(checkpoint):
+        return checkpoint
+
+    def _step(p: Path) -> int:
+        tail = p.name.rsplit("-", 1)[-1]
+        return int(tail) if tail.isdigit() else -1
+
+    candidates = sorted((p for p in checkpoint.glob("checkpoint-*") if _has_weights(p)), key=_step)
+    if not candidates:
+        raise FileNotFoundError(f"No model weights in {checkpoint} or any checkpoint-*/ subdir.")
+    by_name = {p.name: p for p in candidates}
+    for c in candidates:
+        state = c / "trainer_state.json"
+        if not state.exists():
+            continue
+        try:
+            best = json.loads(state.read_text()).get("best_model_checkpoint")
+        except (json.JSONDecodeError, OSError):
+            best = None
+        if best and Path(best).name in by_name:
+            return by_name[Path(best).name]
+        break
+    return candidates[-1]
+
+
 def load_attn_pool_wrapper(model_dir: Path, device: str, *, dtype: str = "auto") -> torch.nn.Module:
     """Reconstruct a trained ``BacformerAttnPoolForGenomeClassification`` from a resolved checkpoint dir.
 
-    The wrapper is a local ``nn.Module``, **not** HF remote code, so
-    ``AutoModelForSequenceClassification.from_pretrained(trust_remote_code=True)`` cannot rebuild it
-    from the saved config (that path silently failed the e2e/frozen gated-MIL probe jobs). Instead we
-    build the architecture with :meth:`BacformerAttnPoolForGenomeClassification.from_pretrained_backbone`
-    — reading the stamped ``panel_mode``/``panel_dim``/``attn_dim`` so the pool/head are sized right —
-    then overwrite **every** weight (backbone + pool + head) with the checkpoint ``state_dict``.
+    The wrapper is a local ``nn.Module``, **not** HF remote code, and HF Trainer saves it as a bare
+    ``model.safetensors`` with **no** ``config.json`` — so ``AutoModel.from_pretrained`` cannot rebuild
+    it and there is no stamped config to read (this is what silently failed the gated-MIL probe jobs).
+    Build the architecture with :meth:`BacformerAttnPoolForGenomeClassification.from_pretrained_backbone`
+    (stamped sizes when a ``config.json`` is present, else the training defaults — gated-MIL,
+    ``panel_mode="none"``, ``attn_dim=128``), then overwrite **every** weight (backbone + pool + head)
+    with the checkpoint ``state_dict``; a wrong config surfaces as a loud ``load_state_dict`` shape error.
 
-    ``model_dir`` must already be a leaf checkpoint dir (``config.json`` + weights); resolve a run dir
-    with :func:`resolve_checkpoint_dir` first.
+    ``model_dir`` must already be a leaf checkpoint dir with weights — resolve a run dir with
+    :func:`_resolve_weight_checkpoint` first.
     """
-    cfg = AutoConfig.from_pretrained(str(model_dir), trust_remote_code=True)
+    model_dir = Path(model_dir)
+    if (model_dir / "config.json").exists():  # stamped sizes available (e.g. future panel checkpoints)
+        cfg = AutoConfig.from_pretrained(str(model_dir), trust_remote_code=True)
+        attn_dim = getattr(cfg, "attn_dim", 128)
+        panel_mode = getattr(cfg, "panel_mode", "none")
+        panel_dim = getattr(cfg, "panel_dim", 9)
+    else:  # plain-nn.Module gated-MIL checkpoint saves no config.json — use the training defaults
+        attn_dim, panel_mode, panel_dim = 128, "none", 9
     logger.info(
-        "Rebuilding attention-pool wrapper from %s (panel_mode=%s, attn_dim=%s)",
-        model_dir,
-        getattr(cfg, "panel_mode", "none"),
-        getattr(cfg, "attn_dim", 128),
+        "Rebuilding attention-pool wrapper from %s (panel_mode=%s, attn_dim=%s)", model_dir, panel_mode, attn_dim
     )
     model = BacformerAttnPoolForGenomeClassification.from_pretrained_backbone(
         BACFORMER_MODEL_ID,
         num_labels=1,
-        attn_dim=getattr(cfg, "attn_dim", 128),
-        panel_mode=getattr(cfg, "panel_mode", "none"),
-        panel_dim=getattr(cfg, "panel_dim", 9),
+        attn_dim=attn_dim,
+        panel_mode=panel_mode,
+        panel_dim=panel_dim,
         dtype=dtype,
     )
     missing, unexpected = model.load_state_dict(_load_attn_pool_state_dict(model_dir), strict=False)
-    critical = [k for k in missing if k.startswith(("pool.", "out_proj.", "norm."))]
-    if critical:
-        raise RuntimeError(f"checkpoint {model_dir} is missing trained head weights: {critical[:6]}")
-    if missing or unexpected:  # benign buffers (e.g. position_ids) only
-        logger.warning(
-            "attn-pool load: %d non-critical missing, %d unexpected keys (missing=%s unexpected=%s)",
-            len(missing), len(unexpected), missing[:3], unexpected[:3],
-        )
+    if unexpected:  # every saved weight must map to a param → guarantees backbone+pool+head all loaded
+        raise RuntimeError(f"checkpoint {model_dir} has unexpected keys (arch mismatch): {unexpected[:6]}")
+    substantive_missing = [k for k in missing if not k.endswith("position_ids")]
+    if substantive_missing:  # a fine-tuned backbone left at base weights would fake a frozen-like result
+        raise RuntimeError(f"checkpoint {model_dir} left params unloaded: {substantive_missing[:6]}")
+    if missing:
+        logger.info("attn-pool load: %d benign buffer(s) absent from checkpoint (e.g. %s)", len(missing), missing[:2])
     if device == "cpu":
         model = model.float()
     return model.to(device).eval()
@@ -148,9 +189,8 @@ def load_attention_encoder(device: str, checkpoint_dir: str | None = None) -> to
     """
     if checkpoint_dir is None:
         return load_bacformer_model(device, dtype="auto")
-    model_dir = resolve_checkpoint_dir(Path(checkpoint_dir))
-    cfg = AutoConfig.from_pretrained(str(model_dir), trust_remote_code=True)
-    if hasattr(cfg, "attn_dim"):  # our gated-MIL / MHA attention-pool wrapper
+    model_dir = _resolve_weight_checkpoint(Path(checkpoint_dir))
+    if not (model_dir / "config.json").exists():  # our gated-MIL wrapper saves weights but no config.json
         return load_attn_pool_wrapper(model_dir, device).bacformer
     logger.info("Loading fine-tuned (mean-pool) backbone from %s", model_dir)
     clf = AutoModelForSequenceClassification.from_pretrained(
