@@ -41,6 +41,7 @@ from transformers import AutoModelForSequenceClassification
 from snp_embeddings.frozen_bacformer_rpob_vectors import _forward_inputs
 from snp_embeddings.intrinsic_attention_probe import _rank_stats
 from snp_embeddings.snp_vs_esm_prediction import _real_protein_indices
+from tl.train.evaluate import resolve_checkpoint_dir
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -49,11 +50,14 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 def load_attn_pool_checkpoint(checkpoint_dir: str, device: str) -> torch.nn.Module:
     """Load a trained ``BacformerAttnPoolForGenomeClassification`` checkpoint (eval, on device).
 
-    Mirrors the deployed evaluator (:mod:`tl.train.evaluate`): ``AutoModelForSequenceClassification``
-    with ``trust_remote_code`` reconstructs the custom attention-pool wrapper from the saved config.
+    Mirrors the deployed evaluator (:mod:`tl.train.evaluate`): ``resolve_checkpoint_dir`` finds the
+    best ``checkpoint-<step>/`` inside a run dir, then ``AutoModelForSequenceClassification`` with
+    ``trust_remote_code`` reconstructs the custom attention-pool wrapper from the saved config.
     """
+    model_dir = resolve_checkpoint_dir(Path(checkpoint_dir))
+    logger.info("Loading attention-pool checkpoint from %s", model_dir)
     model = AutoModelForSequenceClassification.from_pretrained(
-        str(checkpoint_dir),
+        str(model_dir),
         num_labels=1,
         problem_type="binary_classification",
         return_dict=True,

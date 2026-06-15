@@ -46,6 +46,7 @@ from snp_embeddings.frozen_bacformer_rpob_vectors import _forward_inputs
 from snp_embeddings.locate_gene import flatten_proteins
 from snp_embeddings.snp_vs_esm_prediction import _real_protein_indices
 from tl.embed.generate_embeddings import bacformer_attention_weights, load_bacformer_model
+from tl.train.evaluate import resolve_checkpoint_dir
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -88,8 +89,10 @@ def load_attention_encoder(device: str, checkpoint_dir: str | None = None) -> to
     """
     if checkpoint_dir is None:
         return load_bacformer_model(device, dtype="auto")
+    model_dir = resolve_checkpoint_dir(Path(checkpoint_dir))
+    logger.info("Loading fine-tuned backbone from %s", model_dir)
     clf = AutoModelForSequenceClassification.from_pretrained(
-        str(checkpoint_dir),
+        str(model_dir),
         num_labels=1,
         problem_type="binary_classification",
         return_dict=True,
