@@ -992,6 +992,72 @@ def plot_per_gene_stat_panels(df: pd.DataFrame, out_path: Path, *, min_length: i
     plt.close(fig)
 
 
+def plot_rpob_residue_landscape(
+    npz: dict, out_path: Path, *, rrdr: tuple[int, int] = (426, 452), top_n: int = 100
+) -> dict:
+    """rpoB per-residue surprisal: positional profile (RRDR shaded) + sorted top-N drop-off.
+
+    Uses the 0A points NPZ (masked + unmasked per-residue surprisal for rpoB across the
+    resistant isolates, concatenated per isolate in residue order). The left panel shows
+    the conserved-vs-non-conserved landscape along the gene with the 27-codon RRDR
+    (Mtb codons ``rrdr``) shaded; the right panel sorts each isolate's residues and shows
+    the top-N drop-off — a steep fall ⇒ a few non-conserved residues over a conserved bulk.
+    Returns a small summary (drop-off values, RRDR share of the top residues).
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    idx = npz["pooled_isolate_idx"]
+    masked = npz["pooled_masked"].astype(float)
+    iso_ids = sorted({int(i) for i in idx})
+    blocks = [masked[idx == i] for i in iso_ids]
+    length = min(len(b) for b in blocks)
+    mat = np.vstack([b[:length] for b in blocks])  # [n_isolates, L], residue order preserved
+    pos = np.arange(1, length + 1)
+    mean_pos = mat.mean(0)
+
+    sorted_desc = np.sort(mat, axis=1)[:, ::-1][:, :top_n]
+    drop_mean = sorted_desc.mean(0)
+    drop_lo = np.percentile(sorted_desc, 25, axis=0)
+    drop_hi = np.percentile(sorted_desc, 75, axis=0)
+
+    fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(18, 6))
+    ax_l.plot(pos, mean_pos, lw=0.7, color="#333333")
+    ax_l.axvspan(rrdr[0], rrdr[1], color="#d62728", alpha=0.25, label=f"RRDR (codons {rrdr[0]}–{rrdr[1]}, 27 aa)")
+    ax_l.set_xlabel("rpoB residue position (Mtb numbering)")
+    ax_l.set_ylabel("mean masked surprisal")
+    ax_l.set_title(f"rpoB per-residue surprisal landscape (n={mat.shape[0]} isolates)")
+    ax_l.legend(fontsize=9)
+    ax_l.grid(alpha=0.2)
+
+    ranks = np.arange(1, top_n + 1)
+    ax_r.fill_between(ranks, drop_lo, drop_hi, color="#1f77b4", alpha=0.2, label="IQR across isolates")
+    ax_r.plot(ranks, drop_mean, color="#1f77b4", lw=2, label="mean")
+    ax_r.set_xlabel(f"residue rank (top {top_n}, sorted by surprisal within rpoB)")
+    ax_r.set_ylabel("masked surprisal")
+    ax_r.set_title("Sorted top-residue drop-off: conserved vs non-conserved")
+    ax_r.legend(fontsize=9)
+    ax_r.grid(alpha=0.2)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+    # What share of each isolate's top-N residues fall inside the RRDR window?
+    in_rrdr = (pos >= rrdr[0]) & (pos <= rrdr[1])
+    topn_idx = np.argsort(mat, axis=1)[:, ::-1][:, :top_n]
+    rrdr_share = float(np.mean([in_rrdr[row].mean() for row in topn_idx]))
+    return {
+        "rrdr_codons": list(rrdr),
+        "n_isolates": int(mat.shape[0]),
+        "gene_length": int(length),
+        "dropoff_mean_top": [round(float(x), 3) for x in drop_mean[: min(10, top_n)]],
+        "dropoff_mean_rank100": round(float(drop_mean[-1]), 3),
+        "mean_frac_topN_in_rrdr": round(rrdr_share, 4),
+    }
+
+
 def run_scaled_analysis(
     *,
     stats_glob: str,
@@ -1008,8 +1074,10 @@ def run_scaled_analysis(
     df = enrich_with_raw_order_stats(df, raw_glob)
     acf = merge_acf(acf_glob)
     rpob_acf = None
+    points_data = None
     if points_npz is not None and points_npz.exists():
-        rpob_acf = rpob_acf_from_0a(dict(np.load(points_npz, allow_pickle=True)), acf["max_lag"])
+        points_data = dict(np.load(points_npz, allow_pickle=True))
+        rpob_acf = rpob_acf_from_0a(points_data, acf["max_lag"])
 
     fig_hist = output_dir / "stat_histograms_grid.png"
     fig_acf = output_dir / "surprisal_autocorrelation.png"
@@ -1021,6 +1089,8 @@ def run_scaled_analysis(
     rpob_pct = scaled_rpob_percentiles(df, min_length=min_length)
     plot_per_gene_stat_panels(df, fig_per_gene, min_length=min_length)
     per_gene = per_gene_stat_summary(df, min_length=min_length)
+    fig_rpob_landscape = output_dir / "rpob_residue_landscape.png"
+    rpob_landscape = plot_rpob_residue_landscape(points_data, fig_rpob_landscape) if points_data is not None else None
 
     results = {
         "task": "snp_embeddings",
@@ -1036,9 +1106,11 @@ def run_scaled_analysis(
         "rpob_percentile_by_stat": rpob_pct,
         "per_gene_stat_descriptions": {c: d for _l, c, d in PER_GENE_STATS},
         "per_gene_stat_summary": per_gene,
+        "rpob_residue_landscape": rpob_landscape,
         "stat_correlation_spearman": json.loads(corr.to_json()),
         "figures": {"stat_histograms_grid": str(fig_hist), "surprisal_autocorrelation": str(fig_acf),
-                    "stat_correlation": str(fig_corr), "per_gene_stat_panels": str(fig_per_gene)},
+                    "stat_correlation": str(fig_corr), "per_gene_stat_panels": str(fig_per_gene),
+                    "rpob_residue_landscape": str(fig_rpob_landscape) if rpob_landscape else None},
     }
     out_json = output_dir / "unmasked_surprisal_scan_analysis.json"
     out_json.write_text(json.dumps(results, indent=2))
