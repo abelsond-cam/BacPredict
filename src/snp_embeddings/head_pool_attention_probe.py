@@ -72,6 +72,41 @@ def _head_pool_weights(model: torch.nn.Module, inputs: dict, real_idx: torch.Ten
     return w.cpu().numpy()
 
 
+def _concentration_stats(weights: np.ndarray, *, top_k: int = 20) -> dict:
+    """How *few* proteins the pool routes to, from one genome's (normalised) weight vector.
+
+    ``weights`` sums to ~1 over the genome's real proteins. The question is not where rpoB ranks
+    but how concentrated the whole distribution is: a plain mean over ``n`` proteins has
+    ``eff_n == n`` and ``topK_mass == K/n``; a pool that picks ~50 genes has ``eff_n ≈ 50`` and a
+    large ``top50_mass``. We also keep the top-``top_k`` flat indices + weights so the dominant
+    genes can be *named* afterwards (the confound test: rpoB, or katG/embB/lineage markers?).
+
+    Returns ``eff_n`` (inverse participation ratio ``1/Σpᵢ²``), ``perplexity`` (entropy effective
+    count ``exp(−Σpᵢ log pᵢ)``), ``max_weight``, cumulative ``topK_mass`` for K∈{1,10,50,100,200},
+    and the ``top{top_k}_flat_idx`` / ``top{top_k}_weight`` of the heaviest proteins.
+    """
+    w = weights.astype(np.float64)
+    n = int(w.size)
+    s = w.sum()
+    p = w / s if s > 0 else w
+    nz = p[p > 0]
+    order = np.argsort(w)[::-1]
+    cmass = np.cumsum(np.sort(p)[::-1])
+    return {
+        "n_proteins": n,
+        "eff_n": float(1.0 / np.square(p).sum()) if s > 0 else None,
+        "perplexity": float(np.exp(-(nz * np.log(nz)).sum())) if nz.size else None,
+        "max_weight": float(p.max()) if n else None,
+        "top1_mass": float(cmass[0]) if n else None,
+        "top10_mass": float(cmass[min(10, n) - 1]) if n else None,
+        "top50_mass": float(cmass[min(50, n) - 1]) if n else None,
+        "top100_mass": float(cmass[min(100, n) - 1]) if n else None,
+        "top200_mass": float(cmass[min(200, n) - 1]) if n else None,
+        f"top{top_k}_flat_idx": order[:top_k].astype(int).tolist(),
+        f"top{top_k}_weight": w[order[:top_k]].astype(float).tolist(),
+    }
+
+
 def probe_head_pool(
     manifest: pd.DataFrame,
     esm_store_dir: Path,
@@ -81,10 +116,12 @@ def probe_head_pool(
     pt_suffix: str = "_esm_embeddings.pt",
     max_proteins: int | None = None,
 ) -> pd.DataFrame:
-    """Per-genome rpoB head-pool-weight rank (R vs WT) for a trained attention-pool checkpoint.
+    """Per-genome rpoB head-pool-weight rank + pool concentration for a trained attention-pool checkpoint.
 
-    Returns one row per kept genome with rpoB's pool weight, its percentile (fraction of
-    proteins it exceeds; 1.0 = the single most-weighted protein) and rank (0 = top).
+    Returns one row per kept genome: rpoB's pool weight, its percentile (fraction of proteins it
+    exceeds; 1.0 = the single most-weighted protein) and rank (0 = top), plus the
+    :func:`_concentration_stats` of the whole weight vector (``eff_n``, top-K mass, the dominant
+    proteins' flat indices) — the latter says how few genes the pool routes to, and which.
     """
     model = load_attn_pool_checkpoint(checkpoint_dir, device)
     model_dtype = next(model.parameters()).dtype
@@ -118,10 +155,11 @@ def probe_head_pool(
         weights = _head_pool_weights(model, inputs, real_idx)
         pct, rank = _rank_stats(weights, rpob_flat)
         rows.append({
-            "sample": sample_id, "role": role, "n_proteins": int(real_idx.numel()),
+            "sample": sample_id, "role": role,
             "rpob_pool_weight": float(weights[rpob_flat]),
             "weight_sum": float(weights.sum()),  # sanity: ~1.0 over real tokens
             "rpob_pool_pct": pct, "rpob_pool_rank": rank,
+            **_concentration_stats(weights),
         })
 
     if skips:
@@ -130,25 +168,49 @@ def probe_head_pool(
 
 
 def summarise(df: pd.DataFrame, checkpoint_label: str) -> dict:
-    """Median rpoB head-pool-weight percentile + top-1 fraction, resistant vs WT.
+    """Summarise rpoB pooling rank **and pool concentration**, resistant vs WT.
 
-    A plain mean pool would put every protein at percentile 0.5 (uniform weight); separation
-    from 0.5 — especially R > WT — is the signature of a head that actually routes to rpoB.
+    Two readings combine here. (1) rpoB's percentile/rank — but on its own the percentile misleads
+    (a heavy-tailed pool can leave rpoB at the 95th pct while weighting it *below* a uniform mean).
+    (2) The decisive metric is the rpoB *enrichment* (its weight ÷ the ``1/n`` a flat mean gives:
+    >1 = up-weighted, <1 = suppressed) plus how concentrated the whole pool is (``eff_n``, top-K
+    mass). A uniform mean has ``eff_n == n`` and ``topK_mass == K/n``; a pool routing to ~50 genes
+    has ``eff_n ≈ 50`` and a large ``top50_mass`` — "doing well" only if rpoB is one of them.
     """
+
+    def _med(s: pd.Series) -> float | None:
+        return float(s.median()) if len(s) else None
+
     out: dict = {
         "checkpoint": checkpoint_label,
         "n_genomes": int(df["sample"].nunique()) if len(df) else 0,
         "mean_pool_reference_pct": 0.5,
-        "weight_sum_median": float(df["weight_sum"].median()) if len(df) else None,
+        "weight_sum_median": _med(df["weight_sum"]) if len(df) else None,
+        "uniform_reference": {
+            "n_proteins_median": _med(df["n_proteins"]) if len(df) else None,
+            "eff_n": _med(df["n_proteins"]) if len(df) else None,  # uniform pool → eff_n == n
+            "top50_mass": float(50.0 / df["n_proteins"].median()) if len(df) else None,
+        },
         "by_role": {},
     }
     for role in ("resistant", "wt"):
-        g = df[df["role"] == role]["rpob_pool_pct"]
-        ranks = df[df["role"] == role]["rpob_pool_rank"]
+        g = df[df["role"] == role]
+        ranks = g["rpob_pool_rank"]
+        # enrichment: rpoB's weight relative to a flat 1/n mean (>1 up-weighted, <1 suppressed).
+        enrich = g["rpob_pool_weight"] * g["n_proteins"]
         out["by_role"][role] = {
-            "median_pct": float(g.median()) if len(g) else None,
-            "top1_frac": float((ranks == 0).mean()) if len(ranks) else None,  # rpoB = most-weighted
             "n": int(len(g)),
+            "median_pct": _med(g["rpob_pool_pct"]),
+            "top1_frac": float((ranks == 0).mean()) if len(ranks) else None,  # rpoB = most-weighted
+            "rpob_rank_median": _med(ranks),
+            "rpob_weight_median": _med(g["rpob_pool_weight"]),
+            "rpob_enrichment_median": _med(enrich),
+            "eff_n_median": _med(g["eff_n"]),
+            "perplexity_median": _med(g["perplexity"]),
+            "max_weight_median": _med(g["max_weight"]),
+            "top10_mass_median": _med(g["top10_mass"]),
+            "top50_mass_median": _med(g["top50_mass"]),
+            "top100_mass_median": _med(g["top100_mass"]),
         }
     return out
 
@@ -218,11 +280,17 @@ def main() -> None:
     (args.output_dir / "head_pool_attention.json").write_text(json.dumps(summary, indent=2))
     plot_probe(df, args.output_dir / "head_pool_attention.png", label)
     logger.info("Wrote rows + JSON + figure to %s", args.output_dir)
-    logger.info(
-        "rpoB head-pool pct — resistant=%.3f wt=%.3f (mean-pool reference=0.500)",
-        summary["by_role"]["resistant"]["median_pct"] or float("nan"),
-        summary["by_role"]["wt"]["median_pct"] or float("nan"),
-    )
+    ref = summary["uniform_reference"]
+    for role in ("resistant", "wt"):
+        b = summary["by_role"][role]
+        logger.info(
+            "%s: rpoB enrichment=%.2fx (rank %.0f, pct %.3f) | pool eff_n=%.0f vs uniform %.0f, "
+            "top50_mass=%.2f vs uniform %.3f",
+            role, b["rpob_enrichment_median"] or float("nan"), b["rpob_rank_median"] or float("nan"),
+            b["median_pct"] or float("nan"), b["eff_n_median"] or float("nan"),
+            ref["eff_n"] or float("nan"), b["top50_mass_median"] or float("nan"),
+            ref["top50_mass"] or float("nan"),
+        )
 
 
 if __name__ == "__main__":
