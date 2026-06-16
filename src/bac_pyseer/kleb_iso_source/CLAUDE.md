@@ -144,3 +144,25 @@ only ~10-30% dense); (3) writing the dense 13,602² distance TSV. Levers before 
     array task just needs the same sbatch (`--skip-existing`).
   - **Next increment (out of scope):** the pyseer GWAS run on these inputs;
     Tier-2 ~79k extraction (`--all-kpsc`) + the sparse-`.npz` optimisation noted above.
+
+- 2026-06-16 — **Pre-pyseer QC done (job `30611301`, icelake 16c/48G; 2:22, peak 4.7 GB).**
+  Two scripts (`qc_variant_spectrum.py`, `qc_distance_umap.py`) run by
+  `scripts/run_qc.sh` (light — **no himem**). Four PNGs in
+  [docs/figures/](docs/figures/); data npz (`postfilter_locus_spectrum.npz`,
+  `umap_coords.npz`) in the cohort `qc/` dir on RDS.
+  - **Frequency spectrum** (`variant_frequency_spectrum.png`) — log10-binned over the
+    372,543 ≥1% loci (per-locus freq streamed straight from the Rtab; **no rebuild** —
+    the `<1%` count comes from the manifest). Bands: 1-10% 296,918 / 10-50% 61,351 /
+    ≥50% 14,274; `<1%` (dropped) 1,665,840 (81.7%).
+  - **Per-position** (`variant_frequency_by_position.png`) — allele freq % vs POS on
+    NC_009648 (single contig, verified via `ref.fa.fai`), ≥1% loci only, unadjusted.
+  - **UMAP** of the Jaccard distances (umap-learn, `metric="precomputed"`), two panels:
+    by top-10 Sublineage (`…_by_sublineage.png`; SL258 2309, SL147 1003, SL17 935,
+    SL307 782, … + rare SL 6798) and by phenotype (`…_by_phenotype.png`). Lineages form
+    crisp clusters; **blood/faeces are intermixed within clusters** — within-lineage
+    signal exists and the lineage-level component is what `--distances` corrects.
+  - SL labels read directly from the split CSV's `Sublineage` column (no metadata_v2
+    join needed — same `Sample` IDs as the Rtab). Pre-filter spectrum (incl `<1%`) is
+    now auto-saved by the reduce (`prefilter_locus_spectrum.npz`) for future cohorts;
+    use `qc_variant_spectrum.py --from-npz` to re-plot the full spectrum cheaply.
+  - **Verdict: inputs look sound — ready for the pyseer GWAS (next increment).**
