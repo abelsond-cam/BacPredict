@@ -28,6 +28,7 @@
 
 set -euo pipefail
 export PYTHONUNBUFFERED=1
+export MPLBACKEND=Agg  # headless node: scree_plot_pyseer (+ any mpl use) must not pick TkAgg
 export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 export UV_CACHE_DIR=/home/dca36/rds/hpc-work/.uv_cache
 unset PYTHONPATH PYTHONHOME
@@ -74,8 +75,11 @@ print(f"wrote {out}: {len(meta)} samples, {meta['Sublineage'].nunique()} subline
 PY
 
 # 1) scree plot of the MDS eigenvalues — eyeball the elbow to pick/justify K (output to GWAS_DIR).
+#    Non-fatal: it is purely informational (K is validated empirically by lambda below), so a
+#    plotting hiccup must never abort the GWAS. MPLBACKEND=Agg (above) keeps it headless-safe.
 ( cd "$GWAS_DIR" && pixi run --manifest-path "$PIXI_MANIFEST" \
-    scree_plot_pyseer "$DIST" --max-dimensions 30 )
+    scree_plot_pyseer "$DIST" --max-dimensions 30 ) \
+    || echo "WARN: scree_plot_pyseer failed (non-fatal) — continuing to pyseer"
 
 # 2) the GWAS itself (fixed-effects + K MDS covariates).
 pixi run --manifest-path "$PIXI_MANIFEST" pyseer \
