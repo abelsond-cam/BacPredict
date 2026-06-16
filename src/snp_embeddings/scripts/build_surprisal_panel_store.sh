@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=phase_p_build_store
+#SBATCH --job-name=build_surprisal_panel_store
 #SBATCH --output=%x_%j.out
 #SBATCH --error=%x_%j.err
 #SBATCH --partition=icelake-himem
@@ -10,13 +10,13 @@
 #SBATCH --mem=64G
 #SBATCH --time=06:00:00
 
-# Phase P — build the per-sample surprisal-panel store from the EXISTING 1000-genome
-# unmasked-surprisal scan (raw per-residue dumps already on disk; verified complete:
-# 20/20 shards, 4.07M proteins, integrity OK). NO GPU — pure CPU re-key of the dumps
-# into {sample}_panel.npz + panel_standardization.json. Also writes a tiny class-balanced
-# smoke AST sheet (manifest samples) so the n=10 panel overfit uses store-covered genomes.
+# Build the per-sample surprisal-panel store from the EXISTING 1000-genome unmasked-surprisal
+# scan (raw per-residue dumps already on disk; verified complete: 20/20 shards, 4.07M proteins,
+# integrity OK). NO GPU — pure CPU re-key of the dumps into {sample}_panel.npz +
+# panel_standardization.json. Also writes a tiny class-balanced smoke AST sheet (manifest
+# samples) so the n=10 panel overfit uses store-covered genomes.
 #
-#   sbatch src/snp_embeddings/scripts/phase_p_build_surprisal_store.sh
+#   sbatch src/snp_embeddings/scripts/build_surprisal_panel_store.sh
 
 cd /home/dca36/workspace/BacPredict
 export PYTHONUNBUFFERED=1
@@ -24,7 +24,7 @@ export PYTHONUNBUFFERED=1
 RDS=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast
 SCAN_DIR=$RDS/snp_embeddings/unmasked_surprisal_scan
 STORE_DIR=$RDS/tb_surprisal_panel
-SMOKE_SHEET=$STORE_DIR/phase_p_smoke_ast.csv
+SMOKE_SHEET=$STORE_DIR/tb_rif_smoke_split.csv
 
 mkdir -p "$STORE_DIR"
 
@@ -53,7 +53,7 @@ print(f"Wrote {len(out)} rows -> {out_csv} ({int(out.rifampin.sum())} R / {int((
 print("First 10 labels (n=10 smoke head):", out["rifampin"].head(10).tolist())
 PY
 
-echo "Phase P store build complete. Sample of store dir:"
+echo "Surprisal panel store build complete. Sample of store dir:"
 ls "$STORE_DIR" | head
 echo "panel_standardization.json:"
 cat "$STORE_DIR/panel_standardization.json"

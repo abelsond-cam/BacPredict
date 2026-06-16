@@ -89,10 +89,13 @@ class PanelInjectingFileDataset(LabelInjectingFileDataset):
     so it concatenates onto the backbone tokens in the attention pool. ``none``-mode runs keep
     using the plain :class:`LabelInjectingFileDataset` — this subclass is opt-in.
 
-    The panel rows must align with the embedding's protein rows: ``__getitem__`` enforces
-    ``panel.shape[0] == n_proteins`` (mirrors the count-guard in
-    ``snp_embeddings.snp_vs_esm_prediction``) so a flat-order misalignment fails loudly rather
-    than silently feeding the gate the wrong protein's anomaly score.
+    The panel rows must align with the embedding's protein rows in flat order. The embedding
+    store caps each genome at the first ``max_n_proteins`` proteins (bacformer's
+    ``protein_embeddings_to_inputs`` does ``[:max_n_proteins]``), while the panel build applies
+    no cap, so an oversized genome's panel is *longer* than its embedding. ``__getitem__`` keeps
+    the panel's first ``n_proteins`` rows in that case (same flat order) and raises only when the
+    panel is *shorter* than the embedding (a genuine misalignment) — mirroring the count-guard in
+    ``snp_embeddings.snp_vs_esm_prediction`` while tolerating the protein cap.
 
     Parameters
     ----------
@@ -133,10 +136,16 @@ class PanelInjectingFileDataset(LabelInjectingFileDataset):
         with np.load(panel_path) as z:
             panel = z["panel"].astype(np.float32)
 
-        if panel.shape[0] != n_proteins:
+        # The embedding caps each genome at its first ``max_n_proteins`` proteins in flat order;
+        # the panel build does not. An over-long panel is therefore expected for oversized genomes
+        # — truncate it to the embedding's first-N rows. A panel *shorter* than the embedding means
+        # the two stores disagree on the protein list, which must fail loudly.
+        if panel.shape[0] > n_proteins:
+            panel = panel[:n_proteins]
+        elif panel.shape[0] < n_proteins:
             raise ValueError(
                 f"Panel/embedding flat-order mismatch for {sample_id}: panel has {panel.shape[0]} "
-                f"proteins but the embedding has {n_proteins}."
+                f"proteins but the embedding has {n_proteins} (panel shorter than embedding)."
             )
 
         panel = (panel - self.panel_mean) / self.panel_std

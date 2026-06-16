@@ -88,8 +88,8 @@ def test_panel_dataset_accepts_json_path(tmp_path: Path) -> None:
     assert ds[0]["panel"].shape == (1, 4, len(PANEL_COLUMNS))
 
 
-def test_panel_dataset_count_mismatch_raises(tmp_path: Path) -> None:
-    """A panel row count != the embedding protein count fails loudly (flat-order guard)."""
+def test_panel_dataset_panel_shorter_raises(tmp_path: Path) -> None:
+    """A panel *shorter* than the embedding is a genuine misalignment and fails loudly."""
     emb_dir, panel_dir = tmp_path / "emb", tmp_path / "panel"
     emb_dir.mkdir()
     panel_dir.mkdir()
@@ -99,6 +99,31 @@ def test_panel_dataset_count_mismatch_raises(tmp_path: Path) -> None:
     ds = PanelInjectingFileDataset(["S1"], emb_dir, {"S1": 1}, "drug", panel_dir, _standardization())
     with pytest.raises(ValueError, match="mismatch"):
         _ = ds[0]
+
+
+def test_panel_dataset_oversized_panel_truncates(tmp_path: Path) -> None:
+    """An over-long panel (embedding capped at its first-N proteins) is truncated, not rejected.
+
+    The embedding store caps each genome at ``max_n_proteins`` in flat order, while the panel
+    build applies no cap — so an oversized genome's panel is longer than its embedding. The
+    dataset keeps the panel's first ``n_proteins`` rows (same flat order).
+    """
+    emb_dir, panel_dir = tmp_path / "emb", tmp_path / "panel"
+    emb_dir.mkdir()
+    panel_dir.mkdir()
+    n_emb = 6
+    n_panel = 9  # genome had 9 proteins; the embedding store kept only the first 6
+    _write_embedding(emb_dir, "S1", n_emb)
+    raw_panel = _write_panel(panel_dir, "S1", n_panel)
+
+    ds = PanelInjectingFileDataset(
+        ["S1"], emb_dir, {"S1": 1}, "drug", panel_dir, _standardization(mean=2.0, std=4.0)
+    )
+    item = ds[0]
+
+    assert item["panel"].shape == (1, n_emb, len(PANEL_COLUMNS))
+    expected = (raw_panel[:n_emb] - 2.0) / 4.0  # first-N rows in flat order
+    assert np.allclose(item["panel"].squeeze(0).numpy(), expected, atol=1e-5)
 
 
 def test_panel_dataset_missing_panel_raises(tmp_path: Path) -> None:

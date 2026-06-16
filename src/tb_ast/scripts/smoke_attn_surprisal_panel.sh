@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=tb_smoke_panel
+#SBATCH --job-name=smoke_attn_surprisal_panel
 #SBATCH --output=%x_%j.out
 #SBATCH --error=%x_%j.err
 #SBATCH --time=00:30:00
@@ -11,18 +11,18 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mem=64G
 
-# Phase P — Stage A/B overfit for the surprisal-PANEL attention head (TB rifampin).
+# Stage A/B overfit for the surprisal-PANEL attention head (TB rifampin).
 # n=10 train=val=eval over the class-balanced smoke sheet → target loss -> 0 / AUROC -> 1.
 # Proves the full panel path: PanelInjectingFileDataset -> collate panel pad ->
 # PanelBacformerLargeTrainer.compute_loss pops panel -> model concatenates panel onto the
-# backbone token -> gated-attention gate. Run AFTER phase_p_build_surprisal_store.sh.
+# backbone token -> gated-attention gate. Run AFTER build_surprisal_panel_store.sh.
 #
 # Mode via the 1st positional arg (default 'att_head'):
 #   att_head : panel steers the gate only; pooled value stays the pure backbone token;
 #              backbone frozen (--freeze-encoder), so pool+head+panel train.
 #   e2e      : panel carried into the pooled value + head; backbone fine-tuned end-to-end.
-#   sbatch src/tb_ast/scripts/phase_p_smoke_panel.sh att_head
-#   sbatch src/tb_ast/scripts/phase_p_smoke_panel.sh e2e
+#   sbatch src/tb_ast/scripts/smoke_attn_surprisal_panel.sh att_head
+#   sbatch src/tb_ast/scripts/smoke_attn_surprisal_panel.sh e2e
 
 cd /home/dca36/workspace/BacPredict
 
@@ -54,12 +54,12 @@ uv run python src/tb_ast/train_amr.py \
     --panel-mode $mode \
     --panel-store $STORE_DIR \
     --panel-stats $STORE_DIR/panel_standardization.json \
-    --ast-sheet-path $STORE_DIR/phase_p_smoke_ast.csv \
+    --ast-sheet-path $STORE_DIR/tb_rif_smoke_split.csv \
     --embeddings-dir $RDS/tb_esm_embeddings \
     --lr 1e-3 \
     $freeze_flag \
     --n-samples 10 \
     --num-workers 0 \
-    --output-dir $RDS/checkpoints/phase_p_smoke_panel_${mode}_$SLURM_JOB_ID
+    --output-dir $RDS/checkpoints/smoke_attn_surprisal_panel_${mode}_$SLURM_JOB_ID
 
 echo "Smoke finished — expect train loss -> ~0 and eval AUROC -> 1.0 (panel path wired)."
