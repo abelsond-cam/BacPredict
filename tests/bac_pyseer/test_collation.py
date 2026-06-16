@@ -25,7 +25,7 @@ from bac_pyseer.kleb_iso_source.build_presence_and_distances import (
 )
 from bac_pyseer.kleb_iso_source.extract_sample_loci import build_filter_expr
 from bac_pyseer.kleb_iso_source.qc_distance_umap import RARE_LABEL, bucket_sublineages
-from bac_pyseer.kleb_iso_source.qc_variant_spectrum import frequency_bands
+from bac_pyseer.kleb_iso_source.qc_variant_spectrum import frequency_bands, spectrum_from_rtab
 from bac_pyseer.kleb_iso_source.resolve_snippy_paths import _build_sr_run_to_vcf, _two_token_accession
 
 
@@ -154,6 +154,21 @@ def test_frequency_bands() -> None:
     # 10-50% ([100,500)): {100,300}; >=50% (>=500): {500,999,1000}.
     assert bands == {"<0.1%": 1, "0.1-1%": 3, "1-10%": 3, "10-50%": 2, ">=50%": 3}
     assert sum(bands.values()) == freq.size
+
+
+def test_spectrum_from_rtab(tmp_path: Path) -> None:
+    """Streaming the Rtab recovers n_samples, per-locus freq (count of 1s), and POS."""
+    rtab = tmp_path / "p.Rtab"
+    rtab.write_text(
+        "variant\tA\tB\tC\n"
+        "NC_009648_12_T_C\t1\t0\t1\n"   # freq 2, pos 12
+        "NC_009648_948_G_A\t0\t0\t1\n"  # freq 1, pos 948
+        "NC_009648_1000_GT_G\t1\t1\t1\n"  # freq 3, pos 1000 (indel; underscores in REF/ALT)
+    )
+    pos, freq, n_samples = spectrum_from_rtab(rtab, "NC_009648")
+    assert n_samples == 3
+    np.testing.assert_array_equal(pos, np.array([12, 948, 1000], dtype=np.int64))
+    np.testing.assert_array_equal(freq, np.array([2, 1, 3], dtype=np.int64))
 
 
 def test_bucket_sublineages() -> None:
