@@ -107,6 +107,34 @@ def _concentration_stats(weights: np.ndarray, *, top_k: int = 20) -> dict:
     }
 
 
+def _rank_profile(weight_arrays: list[np.ndarray], cap: int = 4000) -> dict:
+    """Rank-aligned **mean sorted head-pool weight** across genomes — the cumulative-attention curve.
+
+    Each genome's weights are normalised (sum→1) and sorted descending; rank *r* is then averaged
+    over the genomes that *have* an *r*-th protein (genomes vary in length). The result says, at
+    each rank, how much mean attention mass a gene receives — heavy head, long dead tail. Capped at
+    ``cap`` ranks to fix the array size. A uniform mean over ``n`` proteins gives a flat
+    ``mean_sorted_weight == 1/n``; a pool routing to ~50 genes gives a steep curve whose cumulative
+    sum saturates by rank ~50.
+
+    Returns ``mean_sorted_weight`` ``(cap,)``, ``n_at_rank`` ``(cap,)`` (genomes contributing to each
+    rank), and ``n_genomes``.
+    """
+    prof_sum = np.zeros(cap, dtype=np.float64)
+    prof_cnt = np.zeros(cap, dtype=np.float64)
+    for w in weight_arrays:
+        w = np.asarray(w, dtype=np.float64)
+        s = w.sum()
+        if s <= 0 or w.size == 0:
+            continue
+        sorted_desc = np.sort(w / s)[::-1]
+        k = min(sorted_desc.size, cap)
+        prof_sum[:k] += sorted_desc[:k]
+        prof_cnt[:k] += 1.0
+    mean_sorted = np.divide(prof_sum, prof_cnt, out=np.zeros_like(prof_sum), where=prof_cnt > 0)
+    return {"mean_sorted_weight": mean_sorted, "n_at_rank": prof_cnt, "n_genomes": len(weight_arrays)}
+
+
 def probe_head_pool(
     manifest: pd.DataFrame,
     esm_store_dir: Path,
@@ -115,13 +143,16 @@ def probe_head_pool(
     device: str,
     pt_suffix: str = "_esm_embeddings.pt",
     max_proteins: int | None = None,
-) -> pd.DataFrame:
+    profile_cap: int = 4000,
+) -> tuple[pd.DataFrame, dict]:
     """Per-genome rpoB head-pool-weight rank + pool concentration for a trained attention-pool checkpoint.
 
-    Returns one row per kept genome: rpoB's pool weight, its percentile (fraction of proteins it
-    exceeds; 1.0 = the single most-weighted protein) and rank (0 = top), plus the
-    :func:`_concentration_stats` of the whole weight vector (``eff_n``, top-K mass, the dominant
-    proteins' flat indices) — the latter says how few genes the pool routes to, and which.
+    Returns ``(df, profile)``. ``df`` has one row per kept genome: rpoB's pool weight, its percentile
+    (fraction of proteins it exceeds; 1.0 = the single most-weighted protein) and rank (0 = top), plus
+    the :func:`_concentration_stats` of the whole weight vector (``eff_n``, top-K mass, the dominant
+    proteins' flat indices). ``profile`` holds the rank-aligned :func:`_rank_profile` (mean sorted
+    weight vs rank, capped at ``profile_cap``) for ``all`` / ``resistant`` / ``wt`` — the input to the
+    cumulative-attention figure.
     """
     model = load_attn_pool_checkpoint(checkpoint_dir, device)
     model_dtype = next(model.parameters()).dtype
@@ -132,6 +163,7 @@ def probe_head_pool(
         )
 
     rows: list[dict] = []
+    weights_by_role: dict[str, list[np.ndarray]] = {"all": [], "resistant": [], "wt": []}
     skips: dict[str, int] = {}
     for _, m in manifest.iterrows():
         sample_id = str(m["sample"])
@@ -161,10 +193,14 @@ def probe_head_pool(
             "rpob_pool_pct": pct, "rpob_pool_rank": rank,
             **_concentration_stats(weights),
         })
+        weights_by_role["all"].append(weights)
+        if role in ("resistant", "wt"):
+            weights_by_role[role].append(weights)
 
     if skips:
         logger.warning("head-pool probe: skipped %s", skips)
-    return pd.DataFrame(rows)
+    profile = {key: _rank_profile(arrs, cap=profile_cap) for key, arrs in weights_by_role.items()}
+    return pd.DataFrame(rows), profile
 
 
 def summarise(df: pd.DataFrame, checkpoint_label: str) -> dict:
@@ -247,6 +283,86 @@ def plot_probe(df: pd.DataFrame, out_path: Path, checkpoint_label: str) -> None:
     plt.close(fig)
 
 
+def plot_cumulative_attention(df: pd.DataFrame, profile: dict, out_path: Path, checkpoint_label: str) -> None:
+    """Two-panel head-pool weight distribution with rpoB's rank marked (the headline pp figure).
+
+    Panel A — mean sorted head-pool weight vs gene rank (log-y): the heavy head / dead tail shape,
+    with a dotted line at the uniform weight ``1/n`` (a flat mean). The rank where the curve drops
+    below that line is how few genes are *up-weighted* vs a plain mean; rpoB's red line sits to its
+    right (suppressed below uniform) yet far left of the tail (prioritised above the bulk).
+
+    Panel B — cumulative attention mass vs rank: how much of the pool's mass is spent by each rank.
+    The red line at rpoB's median rank, annotated with the mass already allocated to genes above it,
+    is the headline — most of the attention is gone before rpoB.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    mean_w = np.asarray(profile["all"]["mean_sorted_weight"], dtype=np.float64)
+    cap = mean_w.size
+    ranks = np.arange(1, cap + 1)
+    cum = np.cumsum(mean_w)
+    n_med = float(df["n_proteins"].median()) if len(df) else cap
+    uniform = 1.0 / n_med
+
+    def _rank(role: str) -> float | None:
+        g = df[df["role"] == role]["rpob_pool_rank"]
+        return float(g.median()) if len(g) else None
+
+    r_rank, w_rank = _rank("resistant"), _rank("wt")
+
+    def _cum_at(rk: float | None) -> float | None:
+        if rk is None or np.isnan(rk):
+            return None
+        return float(cum[min(int(rk), cap - 1)])
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5.2))
+
+    ax = axes[0]
+    ax.plot(ranks, mean_w, color="#333333", lw=1.3)
+    ax.axhline(uniform, ls=":", lw=1.5, color="grey", label=f"uniform mean (1/n ≈ {uniform:.2e})")
+    for rk, ls, lbl in ((r_rank, "-", "rpoB rank (R)"), (w_rank, "--", "rpoB rank (WT)")):
+        if rk is not None and not np.isnan(rk):
+            ax.axvline(rk, color="#d62728", ls=ls, lw=1.7, label=f"{lbl} ≈ {rk:.0f}")
+    ax.set_yscale("log")
+    ax.set_xlabel("gene rank (1 = most-weighted)")
+    ax.set_ylabel("mean head-pool weight")
+    ax.set_title("Sorted attention weights")
+    ax.legend(fontsize=8.5, loc="upper right")
+    ax.grid(alpha=0.3)
+
+    ax = axes[1]
+    ax.plot(ranks, cum, color="#1f77b4", lw=2.0)
+    for rk, ls in ((r_rank, "-"), (w_rank, "--")):
+        if rk is not None and not np.isnan(rk):
+            ax.axvline(rk, color="#d62728", ls=ls, lw=1.7)
+    cum_r = _cum_at(r_rank)
+    if cum_r is not None:
+        ax.annotate(
+            f"≈{cum_r * 100:.0f}% of attention mass\nspent before rpoB (R, rank {r_rank:.0f})",
+            xy=(r_rank, cum_r), xytext=(0.42, 0.45), textcoords="axes fraction", fontsize=9.5,
+            arrowprops={"arrowstyle": "->", "color": "#d62728", "lw": 1.3}, color="#d62728",
+        )
+    ax.set_xlabel("gene rank (1 = most-weighted)")
+    ax.set_ylabel("cumulative attention mass")
+    ax.set_ylim(0, 1.02)
+    ax.set_title("Cumulative attention mass")
+    ax.grid(alpha=0.3)
+
+    fig.suptitle(
+        f"Head-pool prioritises rpoB above the bulk, but ~{r_rank:.0f} genes outweigh it"
+        if r_rank is not None and not np.isnan(r_rank) else "Head-pool attention distribution",
+        fontsize=12,
+    )
+    fig.text(0.5, 0.93, checkpoint_label, ha="center", fontsize=9, color="#555555")
+    fig.tight_layout(rect=(0, 0, 1, 0.92))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
 def main() -> None:
     """CLI entry point — trained attention-pool head, rpoB pooling-weight rank over the manifest."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -269,7 +385,7 @@ def main() -> None:
         manifest = pd.concat([r, w]).reset_index(drop=True)
     logger.info("Probing head-pool attention over %d genomes (ckpt=%s) on %s", len(manifest), label, args.device)
 
-    df = probe_head_pool(
+    df, profile = probe_head_pool(
         manifest, args.esm_store_dir, args.checkpoint_dir, device=args.device, max_proteins=args.max_proteins
     )
     if df.empty:
@@ -279,7 +395,19 @@ def main() -> None:
     summary = summarise(df, label)
     (args.output_dir / "head_pool_attention.json").write_text(json.dumps(summary, indent=2))
     plot_probe(df, args.output_dir / "head_pool_attention.png", label)
-    logger.info("Wrote rows + JSON + figure to %s", args.output_dir)
+    plot_cumulative_attention(df, profile, args.output_dir / "head_pool_cumulative_attention.png", label)
+    # Regen-friendly profile bundle: restyle the pp figure on the login node (CPU) without re-running.
+    np.savez(
+        args.output_dir / "head_pool_profile.npz",
+        mean_sorted_weight_all=profile["all"]["mean_sorted_weight"],
+        mean_sorted_weight_resistant=profile["resistant"]["mean_sorted_weight"],
+        mean_sorted_weight_wt=profile["wt"]["mean_sorted_weight"],
+        n_at_rank_all=profile["all"]["n_at_rank"],
+        rpob_rank_median_resistant=df[df["role"] == "resistant"]["rpob_pool_rank"].median(),
+        rpob_rank_median_wt=df[df["role"] == "wt"]["rpob_pool_rank"].median(),
+        uniform_weight=1.0 / df["n_proteins"].median(),
+    )
+    logger.info("Wrote rows + JSON + 2 figures + profile npz to %s", args.output_dir)
     ref = summary["uniform_reference"]
     for role in ("resistant", "wt"):
         b = summary["by_role"][role]

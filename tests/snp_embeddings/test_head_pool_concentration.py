@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from snp_embeddings.head_pool_attention_probe import _concentration_stats
+from snp_embeddings.head_pool_attention_probe import _concentration_stats, _rank_profile
 
 
 def test_uniform_pool_has_eff_n_equal_to_n():
@@ -42,3 +42,25 @@ def test_top_indices_are_the_heaviest():
     assert stats["top3_flat_idx"] == [1, 3, 0]
     assert np.allclose(stats["top3_weight"], [0.5, 0.3, 0.1])
     assert np.isclose(stats["top1_mass"], 0.5)
+
+
+def test_rank_profile_uniform_is_flat_at_one_over_n():
+    """Genomes that are flat means → mean sorted profile is flat at 1/n; cumsum is linear."""
+    genomes = [np.full(100, 7.0), np.full(100, 1.0)]  # unnormalised; profile normalises each
+    prof = _rank_profile(genomes, cap=100)
+    msw = prof["mean_sorted_weight"]
+    assert prof["n_genomes"] == 2
+    assert np.allclose(prof["n_at_rank"], 2.0)
+    assert np.allclose(msw, 0.01)  # 1/100, regardless of the input scale
+    assert np.isclose(np.cumsum(msw)[-1], 1.0)
+
+
+def test_rank_profile_capped_and_rank_aligned_for_unequal_lengths():
+    """cap truncates; shorter genomes only contribute to the ranks they have (n_at_rank drops)."""
+    genomes = [np.r_[np.ones(10), np.zeros(4990)], np.ones(20)]  # lengths 5000 and 20
+    prof = _rank_profile(genomes, cap=4000)
+    assert prof["mean_sorted_weight"].size == 4000
+    assert prof["n_at_rank"][0] == 2  # both genomes have a rank-1 protein
+    assert prof["n_at_rank"][50] == 1  # only the 5000-long genome reaches rank 51
+    # heaviest ranks dominated by the spiky genome (0.1 each) averaged with the flat one (0.05).
+    assert prof["mean_sorted_weight"][0] > prof["mean_sorted_weight"][3999]
