@@ -113,10 +113,11 @@ only ~10-30% dense); (3) writing the dense 13,602² distance TSV. Levers before 
 - **Integer-encode loci at extract time** (emit a compact int key, not a `pos_ref_alt`
   string) → removes the string-`factorize` bottleneck.
 - **Persist the presence matrix as sparse** (`scipy.sparse.save_npz` + loci/sample-id
-  arrays) as the canonical, fast, ~3-7× smaller artifact; generate the pyseer `--pres`
-  text Rtab **lazily / streamed row-by-row** from the CSR only when feeding pyseer (never
-  densify the full ~5 B-cell matrix). The dense Jaccard *output* at 79k² also needs
-  blocking (~50 GB) as already noted above.
+  arrays) as the canonical, fast, ~3-7× smaller artifact. It's only ~9 GB (~5 B cells),
+  so at pyseer time just load it whole into RAM and feed pyseer from memory (whole matrix
+  or one row at a time) — no need to re-emit a 9.5 GB text Rtab. The slow cost was the
+  serial **text write**, not the (cheap, in-RAM) densify. The dense Jaccard *output* at
+  79k² still needs blocking (~50 GB) as noted above.
 
 ### Status
 
