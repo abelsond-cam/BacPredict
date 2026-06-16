@@ -144,10 +144,11 @@ def evaluate_checkpoint(
 ) -> dict:
     """Score the checkpoint on the full evaluate holdout (+ manifest-eval reproduction).
 
-    Returns a dict with the full-eval ``metrics`` block (§0.4), the validate-tuned operating point,
-    the manifest-eval reproduction AUROC (if a manifest CSV is given), and split/exclusion counts.
+    Returns a dict with the full-eval ``metrics`` block (§0.4), an eval-fold-tuned operating point
+    (no separate validate pass), the manifest-eval reproduction AUROC (if a manifest CSV is given),
+    and split/exclusion counts.
     """
-    label_map, _train_ids, validate_ids, evaluate_ids, split_info = resolve_clean_splits(ast_sheet_path, drug)
+    label_map, _train_ids, _validate_ids, evaluate_ids, split_info = resolve_clean_splits(ast_sheet_path, drug)
 
     exclude_ids: set[str] = set()
     manifest_eval_ids: list[str] = []
@@ -161,10 +162,8 @@ def evaluate_checkpoint(
         )
 
     eval_ids, n_excluded = select_eval_ids(evaluate_ids, exclude_ids)
-    validate_ids = [s for s in validate_ids if s not in exclude_ids]
     if max_samples is not None:
         eval_ids = eval_ids[:max_samples]
-        validate_ids = validate_ids[: max(1, max_samples // 4)]
         manifest_eval_ids = manifest_eval_ids[: max_samples // 2]
 
     model = load_attn_pool_checkpoint(checkpoint_dir, device)
@@ -187,7 +186,10 @@ def evaluate_checkpoint(
         manifest_repro = {"auroc": m["auroc"], "auprc": m["auprc"], "n_scored": len(kept)}
         logger.info("manifest-eval reproduction AUROC=%.4f (expect ~0.9768) on %d genomes", m["auroc"], len(kept))
 
-    # Decisive: full canonical evaluate holdout (minus manifest-seen genomes).
+    # Decisive: full canonical evaluate holdout (minus manifest-seen genomes). The eval fold IS the
+    # result — we do NOT score the validate split just to set a threshold (that was a second full
+    # forward pass over thousands of genomes, delaying the headline AUROC by ~30 min for nothing).
+    # AUROC/AUPRC are threshold-free, so compute and log them the instant scoring finishes.
     logger.info("Scoring the full canonical evaluate holdout — %d genomes (excluded %d seen)", len(eval_ids), n_excluded)
     y_true, y_prob, kept_eval, eval_skips = _score_ids(
         model, esm_store_dir, eval_ids, label_map, device=device, pt_suffix=pt_suffix
@@ -195,30 +197,26 @@ def evaluate_checkpoint(
     if len(kept_eval) == 0:
         raise RuntimeError("No evaluate genomes scored — check esm_store_dir / .pt suffix.")
 
-    # Validate-tuned Youden operating point (no peek at evaluate).
-    operating_point = None
-    if validate_ids:
-        yv_t, yv_p, kept_val, _ = _score_ids(
-            model, esm_store_dir, validate_ids, label_map, device=device, pt_suffix=pt_suffix
-        )
-        if len(kept_val) and np.unique(yv_t).size == 2:
-            thr = youden_threshold(yv_t, yv_p)
-            op = compute_full_metrics(y_true, y_prob, threshold=thr)
-            operating_point = {
-                "threshold": thr,
-                "source": "validate_youden",
-                "n_validate_scored": len(kept_val),
-                "sensitivity": op["sensitivity"],
-                "specificity": op["specificity"],
-                "balanced_accuracy": op["balanced_accuracy"],
-                "f1": op["f1"],
-            }
-
     metrics = compute_full_metrics(y_true, y_prob)
     logger.info(
         "FULL-EVAL AUROC=%.4f AUPRC=%.4f on %d genomes (prevalence %.3f) — manifest-eval was 0.9768",
         metrics["auroc"], metrics["auprc"], metrics["n_samples"], metrics["prevalence"],
     )
+
+    # Operating point tuned on the eval fold itself (Youden) — a labelled convenience for the §0.4
+    # sensitivity/specificity figures, mildly optimistic by construction. No extra scoring pass.
+    operating_point = None
+    if np.unique(y_true).size == 2:
+        thr = youden_threshold(y_true, y_prob)
+        op = compute_full_metrics(y_true, y_prob, threshold=thr)
+        operating_point = {
+            "threshold": thr,
+            "source": "evaluate_youden_selftuned",
+            "sensitivity": op["sensitivity"],
+            "specificity": op["specificity"],
+            "balanced_accuracy": op["balanced_accuracy"],
+            "f1": op["f1"],
+        }
     return {
         "metrics": metrics,
         "operating_point": operating_point,
