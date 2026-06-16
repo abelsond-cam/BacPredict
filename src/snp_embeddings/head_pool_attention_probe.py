@@ -283,6 +283,48 @@ def plot_probe(df: pd.DataFrame, out_path: Path, checkpoint_label: str) -> None:
     plt.close(fig)
 
 
+def _cumulative_suptitle(r_rank: float | None, n_med: float, eff_n_med: float, enrich_med: float) -> str:
+    """Regime-aware headline for the cumulative-attention figure.
+
+    Three regimes, read off concentration (``eff_n`` vs ``n``) and rpoB enrichment (its weight ÷ a
+    flat ``1/n`` mean): a pool collapsed to a ~uniform mean (``eff_n`` near ``n`` — the deployable
+    e2e), a concentrated pool that **suppresses** rpoB below a flat mean (``enrichment < 0.8`` — the
+    confound-trained manifest), or a concentrated pool that **up-weights** rpoB. A single template
+    ("prioritises rpoB above the bulk") misreads the uniform case, so we branch.
+    """
+    if r_rank is None or np.isnan(r_rank):
+        return "Head-pool attention distribution"
+    if not np.isnan(eff_n_med) and eff_n_med > 0.5 * n_med:
+        return (
+            f"Head-pool collapsed to a ~uniform mean (eff. {eff_n_med:.0f} of {n_med:.0f} genes) — "
+            f"rpoB gets only its ~1/n share (rank ~{r_rank:.0f})"
+        )
+    if not np.isnan(enrich_med) and enrich_med < 0.8:
+        return (
+            f"Head-pool concentrates on ~{eff_n_med:.0f} genes but suppresses rpoB "
+            f"({enrich_med:.2f}× a flat mean, rank ~{r_rank:.0f})"
+        )
+    return (
+        f"Head-pool concentrates on ~{eff_n_med:.0f} genes and up-weights rpoB "
+        f"({enrich_med:.1f}× a flat mean, rank ~{r_rank:.0f})"
+    )
+
+
+def replot_cumulative_from_dir(out_dir: Path, label: str) -> None:
+    """Re-render the cumulative-attention figure from a prior run's parquet + npz (CPU, no GPU).
+
+    Reads ``head_pool_attention_rows.parquet`` (per-genome rows → ``df``) and
+    ``head_pool_profile.npz`` (rank-aligned mean sorted weight → ``profile["all"]``) and re-calls
+    :func:`plot_cumulative_attention`. This restyles the pp figure on the login node — or locally,
+    after pulling those two small files — without re-running the GPU probe.
+    """
+    df = pd.read_parquet(out_dir / "head_pool_attention_rows.parquet")
+    npz = np.load(out_dir / "head_pool_profile.npz")
+    profile = {"all": {"mean_sorted_weight": npz["mean_sorted_weight_all"]}}
+    plot_cumulative_attention(df, profile, out_dir / "head_pool_cumulative_attention.png", label)
+    logger.info("Re-rendered cumulative figure from %s", out_dir)
+
+
 def plot_cumulative_attention(df: pd.DataFrame, profile: dict, out_path: Path, checkpoint_label: str) -> None:
     """Two-panel head-pool weight distribution with rpoB's rank marked (the headline pp figure).
 
@@ -311,7 +353,18 @@ def plot_cumulative_attention(df: pd.DataFrame, profile: dict, out_path: Path, c
         g = df[df["role"] == role]["rpob_pool_rank"]
         return float(g.median()) if len(g) else None
 
+    def _med_col(role: str, col: str) -> float:
+        g = df[df["role"] == role]
+        return float(g[col].median()) if col in df.columns and len(g) else float("nan")
+
     r_rank, w_rank = _rank("resistant"), _rank("wt")
+    # Regime stats (resistant): how concentrated the pool is (eff_n vs n) and rpoB's absolute
+    # weight relative to a flat 1/n mean (enrichment). These drive the honest, regime-aware title
+    # and the rpoB-weight dot — a concentrated pool that suppresses rpoB (manifest) and a pool that
+    # collapsed to a ~uniform mean (the deployable e2e) need different captions.
+    eff_n_med = _med_col("resistant", "eff_n")
+    rpob_w_med = _med_col("resistant", "rpob_pool_weight")
+    enrich_med = rpob_w_med * n_med if not np.isnan(rpob_w_med) else float("nan")
 
     def _cum_at(rk: float | None) -> float | None:
         if rk is None or np.isnan(rk):
@@ -326,6 +379,13 @@ def plot_cumulative_attention(df: pd.DataFrame, profile: dict, out_path: Path, c
     for rk, ls, lbl in ((r_rank, "-", "rpoB rank (R)"), (w_rank, "--", "rpoB rank (WT)")):
         if rk is not None and not np.isnan(rk):
             ax.axvline(rk, color="#d62728", ls=ls, lw=1.7, label=f"{lbl} ≈ {rk:.0f}")
+    # rpoB's actual weight as a dot: below the uniform line ⇒ suppressed (enrichment <1) despite a
+    # high rank; on the line ⇒ it only gets its fair 1/n share. The headline "downweighted" evidence.
+    if r_rank is not None and not np.isnan(r_rank) and not np.isnan(rpob_w_med) and rpob_w_med > 0:
+        ax.plot(
+            [r_rank], [rpob_w_med], marker="o", ms=8, color="#d62728", mec="black", mew=0.6, zorder=5,
+            label=f"rpoB weight (R) ≈ {rpob_w_med:.1e} ({enrich_med:.2f}× uniform)",
+        )
     ax.set_yscale("log")
     ax.set_xlabel("gene rank (1 = most-weighted)")
     ax.set_ylabel("mean head-pool weight")
@@ -351,11 +411,7 @@ def plot_cumulative_attention(df: pd.DataFrame, profile: dict, out_path: Path, c
     ax.set_title("Cumulative attention mass")
     ax.grid(alpha=0.3)
 
-    fig.suptitle(
-        f"Head-pool prioritises rpoB above the bulk, but ~{r_rank:.0f} genes outweigh it"
-        if r_rank is not None and not np.isnan(r_rank) else "Head-pool attention distribution",
-        fontsize=12,
-    )
+    fig.suptitle(_cumulative_suptitle(r_rank, n_med, eff_n_med, enrich_med), fontsize=12)
     fig.text(0.5, 0.93, checkpoint_label, ha="center", fontsize=9, color="#555555")
     fig.tight_layout(rect=(0, 0, 1, 0.92))
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -366,15 +422,28 @@ def plot_cumulative_attention(df: pd.DataFrame, profile: dict, out_path: Path, c
 def main() -> None:
     """CLI entry point — trained attention-pool head, rpoB pooling-weight rank over the manifest."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--manifest-csv", type=Path, required=True, help="manifest.csv (sample/role/rpob_flat_index).")
-    parser.add_argument("--esm-store-dir", type=Path, required=True, help="Dir of {sample}_esm_embeddings.pt.")
-    parser.add_argument("--checkpoint-dir", type=str, required=True, help="Trained attention-pool checkpoint dir.")
+    parser.add_argument("--manifest-csv", type=Path, default=None, help="manifest.csv (sample/role/rpob_flat_index).")
+    parser.add_argument("--esm-store-dir", type=Path, default=None, help="Dir of {sample}_esm_embeddings.pt.")
+    parser.add_argument("--checkpoint-dir", type=str, default=None, help="Trained attention-pool checkpoint dir.")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--label", type=str, default=None, help="Checkpoint label for titles/JSON (default: dir name).")
     parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--max-samples", type=int, default=None, help="Cap genomes (smoke).")
     parser.add_argument("--max-proteins", type=int, default=None, help="Skip genomes with more proteins (memory).")
+    parser.add_argument("--replot-only", action="store_true",
+                        help="Skip the GPU probe; re-render the cumulative figure from the parquet+npz "
+                             "already in --output-dir (CPU/login-node, or locally after pulling them).")
     args = parser.parse_args()
+
+    if args.replot_only:
+        label = args.label or args.output_dir.name
+        replot_cumulative_from_dir(args.output_dir, label)
+        return
+
+    missing = [n for n, v in (("--manifest-csv", args.manifest_csv), ("--esm-store-dir", args.esm_store_dir),
+                              ("--checkpoint-dir", args.checkpoint_dir)) if v is None]
+    if missing:
+        parser.error(f"missing required args for a probe run: {', '.join(missing)} (or pass --replot-only)")
 
     label = args.label or Path(args.checkpoint_dir).name
     manifest = pd.read_csv(args.manifest_csv)
