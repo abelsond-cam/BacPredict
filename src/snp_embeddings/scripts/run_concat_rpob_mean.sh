@@ -25,11 +25,12 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=128G
-#SBATCH --time=08:00:00
+#SBATCH --time=24:00:00
 #SBATCH --account=FLOTO-SL2-GPU
 #SBATCH --open-mode=append
-# ~2-3 GPU-h estimated (genotype ~30k parquets + one Bacformer forward each); 8 h budget per the
-# never-under-call rule. --pool-workers parallelises the ESM-C rpoB .pt reads across the 8 cores.
+# ~2-3 GPU-h estimated (genotype ~30k parquets + one Bacformer forward each); 24 h budget — never
+# under-call walltime (charged on time used, not requested). --pool-workers parallelises the ESM-C
+# rpoB .pt reads across the 8 cores.
 
 cd /home/dca36/workspace/BacPredict
 
