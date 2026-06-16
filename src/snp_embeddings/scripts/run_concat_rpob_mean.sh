@@ -34,7 +34,9 @@
 cd /home/dca36/workspace/BacPredict
 
 export PYTHONUNBUFFERED=1
-module load cuda/12.4 cudnn/8.9_cuda-12.4
+module purge
+module load cuda/12.4
+module load cudnn/8.9_cuda-12.4
 
 RDS=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast
 SHEET=$RDS/binary_ast_with_split.csv
