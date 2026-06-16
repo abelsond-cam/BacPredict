@@ -1,0 +1,105 @@
+#!/bin/bash
+#SBATCH --job-name=pyseer_blood_faeces
+#SBATCH --output=pyseer_blood_faeces_%j.out
+#SBATCH --error=pyseer_blood_faeces_%j.err
+#SBATCH --partition=icelake
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=64G
+#SBATCH --time=06:00:00
+#SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
+
+# Blood-vs-faeces GWAS with pyseer (fixed-effects + MDS population-structure correction),
+# then our own diagnostics + gene mapping. Four steps:
+#   0) build the sublineage-clusters file (sample -> Sublineage) from the cohort split CSV.
+#   1) scree_plot_pyseer over the Jaccard distances -> scree_plot.png (informs the K choice).
+#   2) pyseer: per-variant logistic regression with K MDS axes as covariates, --save-m so a
+#      K-sensitivity rerun is cheap (--load-m). lrt-pvalue is the structure-adjusted p.
+#   3) pyseer_postprocess.py (uv env): Bonferroni-on-patterns threshold, genomic-inflation λ
+#      + QQ, Manhattan, and the GFF-annotated significant-hit table (+ virulence cross-ref).
+#
+# pyseer + scree_plot_pyseer come from the bac_pyseer pixi env (isolated from the uv env so
+# their numpy/scipy never perturbs the Bacformer pytorch stack); our post-processing runs
+# back under `uv run python`. Default K=10 (pyseer-tutorial ballpark); override as $1 and
+# rerun against --load-m if λ says the correction is mis-calibrated.
+#
+# Usage: sbatch src/bac_pyseer/kleb_iso_source/scripts/run_pyseer.sh [K]
+
+set -euo pipefail
+export PYTHONUNBUFFERED=1
+export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+export UV_CACHE_DIR=/home/dca36/rds/hpc-work/.uv_cache
+unset PYTHONPATH PYTHONHOME
+
+REPO=/home/dca36/workspace/BacPredict
+PIXI_MANIFEST=$REPO/src/bac_pyseer/pixi.toml
+cd "$REPO"
+
+K=${1:-10}
+
+DATA=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw
+COHORT=sampled_country_2_1_all
+COHORT_CSV=$DATA/david/processed/train_iso_source/blood_faeces/$COHORT/kpsc_human/binary_blood_vs_faeces_with_split.csv
+IN_DIR=$DATA/david/processed/pyseer_iso_source/blood_faeces/$COHORT
+GWAS_DIR=$IN_DIR/gwas
+GFF=$DATA/david/raw/related_lr/gff/GCF_000016305.1.gff
+mkdir -p "$GWAS_DIR"
+
+RTAB=$IN_DIR/variant_by_loci_presence.Rtab
+PHENO=$IN_DIR/phenotype.tsv
+DIST=$IN_DIR/jaccard_distances.tsv
+CLUSTERS=$GWAS_DIR/sublineage_clusters.tsv
+PATTERNS=$GWAS_DIR/patterns.txt
+ASSOC=$GWAS_DIR/blood_vs_faeces.assoc
+
+echo "Job $SLURM_JOB_ID  Node $SLURMD_NODENAME  cohort=$COHORT  K=$K  $(date)"
+
+# 0) sublineage-clusters file (tab-sep: sample <TAB> Sublineage; NaN -> 'unknown'), for
+#    pyseer --lineage (reports the lineage each hit is most associated with). Aligned to
+#    the phenotype's samples.
+uv run python - "$COHORT_CSV" "$PHENO" "$CLUSTERS" <<'PY'
+import sys
+import pandas as pd
+
+cohort_csv, pheno_tsv, out = sys.argv[1:4]
+samples = set(pd.read_csv(pheno_tsv, sep="\t")["samples"].astype(str))
+meta = pd.read_csv(cohort_csv, usecols=["Sample", "Sublineage"], low_memory=False)
+meta["Sample"] = meta["Sample"].astype(str)
+meta = meta.drop_duplicates(subset=["Sample"])
+meta = meta[meta["Sample"].isin(samples)]
+meta["Sublineage"] = meta["Sublineage"].fillna("unknown").astype(str).replace({"": "unknown", "nan": "unknown"})
+meta[["Sample", "Sublineage"]].to_csv(out, sep="\t", header=False, index=False)
+print(f"wrote {out}: {len(meta)} samples, {meta['Sublineage'].nunique()} sublineages")
+PY
+
+# 1) scree plot of the MDS eigenvalues — eyeball the elbow to pick/justify K (output to GWAS_DIR).
+( cd "$GWAS_DIR" && pixi run --manifest-path "$PIXI_MANIFEST" \
+    scree_plot_pyseer "$DIST" --max-dimensions 30 )
+
+# 2) the GWAS itself (fixed-effects + K MDS covariates).
+pixi run --manifest-path "$PIXI_MANIFEST" pyseer \
+    --pres "$RTAB" \
+    --phenotypes "$PHENO" --phenotype-column blood_vs_faeces_label \
+    --distances "$DIST" --max-dimensions "$K" \
+    --lineage --lineage-clusters "$CLUSTERS" \
+    --min-af 0.01 --max-af 0.99 \
+    --output-patterns "$PATTERNS" \
+    --save-m "$GWAS_DIR/mds_cache" \
+    --cpu "$SLURM_CPUS_PER_TASK" \
+    > "$ASSOC"
+
+echo "pyseer done: $(wc -l < "$ASSOC") assoc lines  $(date)"
+
+# 3) diagnostics + gene mapping (uv env). Figures land in GWAS_DIR; the small PNGs + hit
+#    table are scp'd to the repo docs/figures from the laptop afterwards (commit from local).
+uv run python src/bac_pyseer/kleb_iso_source/pyseer_postprocess.py \
+    --assoc "$ASSOC" --patterns "$PATTERNS" --gff "$GFF" \
+    --out-fig-dir "$GWAS_DIR" \
+    --out-table "$GWAS_DIR/blood_vs_faeces_hits_annotated.tsv" \
+    --summary-json "$GWAS_DIR/blood_vs_faeces_gwas_summary.json" \
+    --contig NC_009648 --max-dimensions "$K"
+
+echo "GWAS outputs in $GWAS_DIR"
+ls -lh "$GWAS_DIR"
+echo "Done  $(date)"
