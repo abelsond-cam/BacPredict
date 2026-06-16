@@ -22,8 +22,8 @@
 #   $2 = label (required)            e.g. e2e_gated_mil_0868   (names the output subdir)
 #   $3 = max genomes (optional)      smoke; omit for the full 1000 manifest
 #
-#   sbatch src/snp_embeddings/scripts/phase1_head_pool_attention.sh /path/ckpt e2e_gated_mil_0868 20   # smoke
-#   sbatch src/snp_embeddings/scripts/phase1_head_pool_attention.sh /path/ckpt e2e_gated_mil_0868       # full
+#   sbatch src/snp_embeddings/scripts/probe_head_pool_attention.sh /path/ckpt e2e_gated_mil_0868 20   # smoke
+#   sbatch src/snp_embeddings/scripts/probe_head_pool_attention.sh /path/ckpt e2e_gated_mil_0868       # full
 
 cd /home/dca36/workspace/BacPredict
 

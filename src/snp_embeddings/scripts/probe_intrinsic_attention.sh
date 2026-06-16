@@ -24,9 +24,9 @@
 #   $2 = checkpoint dir          optional; "-" or "frozen" → frozen pretrained complete-genomes model
 #   $3 = max genomes             optional smoke cap; omit for the full 1000 manifest
 #
-#   sbatch src/snp_embeddings/scripts/phase1_intrinsic_attention.sh frozen - 20                 # frozen smoke
-#   sbatch src/snp_embeddings/scripts/phase1_intrinsic_attention.sh frozen                      # frozen full
-#   sbatch src/snp_embeddings/scripts/phase1_intrinsic_attention.sh e2e_gated_mil_0868 /path/ckpt  # FT full (D2)
+#   sbatch src/snp_embeddings/scripts/probe_intrinsic_attention.sh frozen - 20                 # frozen smoke
+#   sbatch src/snp_embeddings/scripts/probe_intrinsic_attention.sh frozen                      # frozen full
+#   sbatch src/snp_embeddings/scripts/probe_intrinsic_attention.sh e2e_gated_mil_0868 /path/ckpt  # FT full (D2)
 
 cd /home/dca36/workspace/BacPredict
 
