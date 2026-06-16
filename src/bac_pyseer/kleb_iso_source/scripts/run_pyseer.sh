@@ -6,8 +6,8 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
-#SBATCH --mem=64G
-#SBATCH --time=06:00:00
+#SBATCH --mem=128G
+#SBATCH --time=10:00:00
 #SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
 
 # Blood-vs-faeces GWAS with pyseer (fixed-effects + MDS population-structure correction),
