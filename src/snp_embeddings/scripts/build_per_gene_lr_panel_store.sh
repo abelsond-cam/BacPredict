@@ -6,7 +6,7 @@
 #SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=72
 #SBATCH --mem=128G
 #SBATCH --time=08:00:00
 
@@ -27,7 +27,9 @@
 cd /home/dca36/workspace/BacPredict
 git pull --ff-only || true
 export PYTHONUNBUFFERED=1
-# Pin BLAS to 1 thread/process so the 8 joblib workers (one per-gene LR each) don't oversubscribe.
+# Pin BLAS to 1 thread/process so the 72 joblib workers (one per-gene LR each) don't oversubscribe
+# the icelake-himem node (76 cores). The ~21k LR fits (3,500 genes x 6) then run in ~2 min; the
+# wall is dominated by the sequential .pt I/O passes (assembly + panel build, ~12 min).
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 
 RDS=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast
@@ -49,7 +51,7 @@ uv run python src/snp_embeddings/build_per_gene_lr_store.py \
     --auroc-filter 0.8 \
     --n-folds 5 \
     --seed 1 \
-    --n-jobs 8
+    --n-jobs 72
 
 echo "=== per_gene_lr_build_summary.json ==="
 cat "$OUT/per_gene_lr_build_summary.json"
