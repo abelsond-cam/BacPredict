@@ -2,7 +2,7 @@
 #SBATCH --job-name=pyseer_blood_faeces
 #SBATCH --output=pyseer_blood_faeces_%j.out
 #SBATCH --error=pyseer_blood_faeces_%j.err
-#SBATCH --partition=icelake
+#SBATCH --partition=icelake-himem  # himem: far less oversubscribed than icelake (see ~/check_slurm_nodes.sh) and its ~6.7GB/core fits 128G on 32 cores
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
