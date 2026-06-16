@@ -388,10 +388,10 @@ def run(
     logging.info("variants=%d  unique_patterns=%d  threshold=%.3e  lambda=%.3f",
                  n_variants, n_patterns, threshold, lam)
 
-    pos = variant_positions(assoc["variant"].to_numpy(), contig)
-    plot_qq(pvals, lam, out_fig_dir / "pyseer_qq.png")
-    plot_manhattan(pos, pvals, threshold, out_fig_dir / "pyseer_manhattan.png", contig, contig_len)
-
+    # --- Data first: compute and persist every result table before any plotting, so a
+    #     plotting failure can never cost the run its outputs. The precious raw GWAS data
+    #     (the .assoc + patterns) is already written by pyseer upstream; everything below is
+    #     cheap to recompute from it, and the plots at the end are regenerable by re-running.
     hits = significant_hits(assoc, threshold, pval_col)
     logging.info("significant hits (%s < %.3e): %d", pval_col, threshold, len(hits))
     hit_pos = variant_positions(hits["variant"].to_numpy(), contig) if len(hits) else np.array([], dtype=np.int64)
@@ -438,6 +438,21 @@ def run(
     summary_json.write_text(json.dumps(summary, indent=2))
     logging.info("wrote %s", summary_json)
     print(json.dumps(summary, indent=2))
+
+    # --- Plots last + non-fatal: derived purely from the .assoc + the tables above, so a
+    #     failure here cannot lose data already on disk, and the figures can be regenerated
+    #     by simply re-running this script against the saved .assoc.
+    pos = variant_positions(assoc["variant"].to_numpy(), contig)
+    for name, draw in (
+        ("QQ", lambda: plot_qq(pvals, lam, out_fig_dir / "pyseer_qq.png")),
+        ("Manhattan", lambda: plot_manhattan(pos, pvals, threshold, out_fig_dir / "pyseer_manhattan.png",
+                                             contig, contig_len)),
+    ):
+        try:
+            draw()
+        except Exception as exc:  # noqa: BLE001 — plotting must never abort an already-saved run
+            logging.warning("%s plot failed (non-fatal; data already saved): %s", name, exc)
+
     if not np.isnan(lam) and not (0.9 <= lam <= 1.15):
         logging.warning("λ=%.3f is outside ~[0.9, 1.15] — consider adjusting --max-dimensions K "
                         "(λ≫1 under-corrected ⇒ raise K; λ≪1 over-corrected ⇒ lower K)", lam)
