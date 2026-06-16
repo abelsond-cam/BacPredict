@@ -121,18 +121,26 @@ only ~10-30% dense); (3) writing the dense 13,602² distance TSV. Levers before 
 
 ### Status
 
-- 2026-06-15 — **Stage A validated, Stage C running.** Committed/pushed on `dev`. Pixi env
-  installed on HPC (`src/bac_pyseer/.pixi`). Resolver → **20,776/21,420 resolved** (20,114 SR +
-  662 assembly; 644 biosamples absent from metadata_v2 unresolved). Resolution TSV + faidx'd
-  reference staged at `…/processed/pyseer_iso_source/{resolution,ref}/`. Filter fidelity =
-  **exact** (reconstructed == native `snps.vcf`, 0 discordance on GCF_000009885.1).
-  - **Stage C jobs (submitted from `…/pyseer_iso_source/slurm_logs/`):**
-    `30593900` = extraction array `[0-39]` → `…/pyseer_iso_source/locus_cache/`;
-    `30593901` = reduce on pooled `sampled_country_2_1_all` (14,119 samples; blood 7,510 /
-    faeces 6,609), `afterok:30593900` → 4 pyseer inputs at
-    `…/pyseer_iso_source/blood_faeces/sampled_country_2_1_all/`.
-  - **To resume:** `ssh … squeue -u dca36 -j 30593900,30593901`; on completion read
-    `…/sampled_country_2_1_all/collation_manifest.json` (effective n, loci pre/post 1% filter,
-    label balance) + confirm `variant_by_loci_presence.Rtab`, `jaccard_distances.{tsv,npz}`,
-    `phenotype.tsv`. Re-run a failed array task: same sbatch (idempotent, `--skip-existing`).
-  - **Next increment (out of scope):** the pyseer GWAS run; Tier-2 ~79k extraction (`--all-kpsc`).
+- 2026-06-16 — **Stage C COMPLETE — the four pyseer inputs are built and validated.**
+  Extraction array `30593900` → 20,776/20,776 cache files, 0 failures. Reduce on pooled
+  `sampled_country_2_1_all` completed as job `30601505` (icelake-himem, 32c/128G/4h;
+  elapsed **1:30:49**, peak RSS **63.5 GB**, exit 0). Outputs at
+  `…/processed/pyseer_iso_source/blood_faeces/sampled_country_2_1_all/`:
+  - `variant_by_loci_presence.Rtab` (9.5 GB, `--pres`) — 372,543 loci × 13,602 samples;
+  - `jaccard_distances.tsv` (3.3 GB, `--distances`) + `.npz` (1.3 GB) — square 13,602²;
+  - `phenotype.tsv` (`--phenotypes`) — faeces=0: 6,426 / blood=1: 7,176;
+  - `collation_manifest.json` + `missing_cache_samples.txt` (the 517).
+  - **Effective n = 13,602** of 14,119 labelled (517 unresolved — no run accession in
+    metadata_v2; `per_source_present`: snippy_sr 13,171 + snippy_ncbi 431).
+  - **Loci 2,038,383 → 372,543** after the 1% filter (≥137 of 13,602). Filter
+    `GT="1/1" && QUAL>=100 && FMT/DP>=3`. **Sample IDs aligned identically** across the
+    Rtab columns / distance axes / phenotype rows (verified) — pyseer-ready.
+  - Pixi env on HPC (`src/bac_pyseer/.pixi`); filter fidelity exact vs native `snps.vcf`
+    (0 discordance on GCF_000009885.1). Jaccard is vectorised (sparse `X·Xᵀ`); the wall
+    cost is the string-`factorize` + the two big text writes (see Performance notes above).
+  - **Lesson:** the reduce wall is ~90 min, not the 30 first tried (timed out as
+    `30600267`); the build fits in 128 G (peak 63 G), so right-size future reduces to
+    **icelake-himem, ~96-128 G, ≥4 h**. Re-run is idempotent (cache intact); a failed
+    array task just needs the same sbatch (`--skip-existing`).
+  - **Next increment (out of scope):** the pyseer GWAS run on these inputs;
+    Tier-2 ~79k extraction (`--all-kpsc`) + the sparse-`.npz` optimisation noted above.
