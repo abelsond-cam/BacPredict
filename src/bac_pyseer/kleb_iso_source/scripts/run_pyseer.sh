@@ -24,7 +24,9 @@
 # back under `uv run python`. Default K=10 (pyseer-tutorial ballpark); override as $1 and
 # rerun against --load-m if λ says the correction is mis-calibrated.
 #
-# Usage: sbatch src/bac_pyseer/kleb_iso_source/scripts/run_pyseer.sh [K]
+# Usage: sbatch [--time=H:MM:SS] src/bac_pyseer/kleb_iso_source/scripts/run_pyseer.sh [K] [output_subdir]
+#   output_subdir (default "gwas") isolates outputs — pass a fresh name (e.g. gwas_36h) to run a
+#   second, independent GWAS alongside one already in flight without the two clobbering each other.
 
 set -euo pipefail
 export PYTHONUNBUFFERED=1
@@ -43,7 +45,8 @@ DATA=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw
 COHORT=sampled_country_2_1_all
 COHORT_CSV=$DATA/david/processed/train_iso_source/blood_faeces/$COHORT/kpsc_human/binary_blood_vs_faeces_with_split.csv
 IN_DIR=$DATA/david/processed/pyseer_iso_source/blood_faeces/$COHORT
-GWAS_DIR=$IN_DIR/gwas
+GWAS_SUBDIR=${2:-gwas}   # 2nd arg = output subdir; use a fresh name to run an isolated GWAS alongside another in flight
+GWAS_DIR=$IN_DIR/$GWAS_SUBDIR
 GFF=$DATA/david/raw/related_lr/gff/GCF_000016305.1.gff
 mkdir -p "$GWAS_DIR"
 
