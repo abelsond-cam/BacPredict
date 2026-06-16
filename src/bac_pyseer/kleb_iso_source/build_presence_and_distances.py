@@ -40,6 +40,22 @@ from scipy.sparse import coo_matrix, csr_matrix
 DEFAULT_CONTIG = "NC_009648"
 
 
+def parse_positions(keys: np.ndarray) -> np.ndarray:
+    """Extract the integer ``POS`` from an array of ``pos_ref_alt`` locus keys.
+
+    Parameters
+    ----------
+    keys
+        Array of ``"<POS>_<REF>_<ALT>"`` strings (e.g. ``"948_G_A"``).
+
+    Returns
+    -------
+    numpy.ndarray
+        ``int64`` positions aligned to ``keys``.
+    """
+    return np.fromiter((int(k.split("_", 1)[0]) for k in keys), dtype=np.int64, count=len(keys))
+
+
 def _read_locus_keys(path: str) -> np.ndarray:
     """Read one ``<Sample>.loci.tsv.gz`` file, return an array of ``pos_ref_alt`` keys."""
     keys: list[str] = []
@@ -160,6 +176,17 @@ def run(
     xf = x[:, keep]
     kept_keys = keys[keep]
     print(f"Loci: {n_loci_pre} -> {xf.shape[1]} (>= {min_count} samples = {min_freq:.1%} of {len(present)})")
+
+    # Persist the *pre-filter* per-locus spectrum (POS + sample count) before the <1% loci
+    # are dropped — they are otherwise written nowhere, yet QC (frequency histogram) and
+    # Tier-2 reuse need them. Tiny (~16 MB at 2 M loci); cheap insurance against a rebuild.
+    np.savez_compressed(
+        out_dir / "prefilter_locus_spectrum.npz",
+        pos=parse_positions(keys),
+        freq=freq.astype(np.int64),
+        n_samples=np.int64(len(present)),
+        min_count=np.int64(min_count),
+    )
 
     # Align label vector to the present-sample order.
     label_map = dict(zip(cohort["Sample"], cohort[label_col].astype(int), strict=False))

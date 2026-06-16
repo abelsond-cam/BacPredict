@@ -20,9 +20,12 @@ from bac_pyseer.kleb_iso_source.build_presence_and_distances import (
     _read_locus_keys,
     build_presence_matrix,
     jaccard_distance_matrix,
+    parse_positions,
     run,
 )
 from bac_pyseer.kleb_iso_source.extract_sample_loci import build_filter_expr
+from bac_pyseer.kleb_iso_source.qc_distance_umap import RARE_LABEL, bucket_sublineages
+from bac_pyseer.kleb_iso_source.qc_variant_spectrum import frequency_bands
 from bac_pyseer.kleb_iso_source.resolve_snippy_paths import _build_sr_run_to_vcf, _two_token_accession
 
 
@@ -133,6 +136,35 @@ def test_two_token_accession() -> None:
     """Assembly Sample stems normalise to the 2-token accession keying snippy_ncbi/."""
     assert _two_token_accession("GCF_000009885.1_ASM988v1_genomic") == "GCF_000009885.1"
     assert _two_token_accession("GCA_900451185.1") == "GCA_900451185.1"
+
+
+def test_parse_positions() -> None:
+    """POS is parsed as int from the leading field of each ``pos_ref_alt`` key."""
+    keys = np.array(["12_T_C", "948_G_A", "5315120_GT_G"], dtype=object)
+    np.testing.assert_array_equal(parse_positions(keys), np.array([12, 948, 5315120], dtype=np.int64))
+
+
+def test_frequency_bands() -> None:
+    """Loci are bucketed into the frequency bands and the counts sum to the total."""
+    n = 1000  # so a count c maps to fraction c/1000
+    freq = np.array([0, 1, 5, 9, 10, 50, 99, 100, 300, 500, 999, 1000], dtype=np.int64)
+    bands = frequency_bands(freq, n)
+    assert list(bands) == ["<0.1%", "0.1-1%", "1-10%", "10-50%", ">=50%"]
+    # <0.1% (<1 count): {0}; 0.1-1% ([1,10)): {1,5,9}; 1-10% ([10,100)): {10,50,99};
+    # 10-50% ([100,500)): {100,300}; >=50% (>=500): {500,999,1000}.
+    assert bands == {"<0.1%": 1, "0.1-1%": 3, "1-10%": 3, "10-50%": 2, ">=50%": 3}
+    assert sum(bands.values()) == freq.size
+
+
+def test_bucket_sublineages() -> None:
+    """Top-N Sublineages are kept (freq-ordered); the rest + NaN collapse to one rare label."""
+    sl = np.array(["SL14", "SL14", "SL14", "SL231", "SL231", "SL15", "SL86", None, "nan", ""], dtype=object)
+    labels, top_cats = bucket_sublineages(sl, top_n=2)
+    assert top_cats == ["SL14", "SL231"]  # ordered by descending count (3, 2)
+    # SL15/SL86 fall outside top-2; None/"nan"/"" are treated as rare.
+    assert list(labels) == ["SL14", "SL14", "SL14", "SL231", "SL231", RARE_LABEL,
+                            RARE_LABEL, RARE_LABEL, RARE_LABEL, RARE_LABEL]
+    assert set(labels) == {"SL14", "SL231", RARE_LABEL}  # partition covers everything
 
 
 def test_resolve_sr_run_to_vcf(tmp_path: Path) -> None:
