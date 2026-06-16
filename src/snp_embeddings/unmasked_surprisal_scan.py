@@ -212,6 +212,11 @@ def run_scan(
         rpob_flat = int(m["rpob_flat_index"])
         role = str(m["role"])
         pq = parquet_dir / f"{sid}_protein_sequences.parquet"
+        if not pq.exists():
+            # Full-cohort scans may list a genome whose parquet is absent; skip rather than
+            # crash a multi-hour shard on one missing file.
+            logger.warning("skip %s — no protein parquet at %s", sid, pq)
+            continue
         records = flatten_proteins(pd.read_parquet(pq, columns=_NEEDED_COLS))
         for rec in records:
             seq = rec["protein_sequence"]
