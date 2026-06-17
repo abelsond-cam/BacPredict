@@ -42,6 +42,7 @@ import torch
 from snp_embeddings.rpob_genotype import build_genotype_table, load_reference
 from snp_embeddings.snp_vs_esm_prediction import _real_protein_indices, resolve_clean_splits
 from tl.embed.generate_embeddings import bacformer_last_hidden_state, load_bacformer_model
+from tl.train.evaluate import resolve_checkpoint_dir
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -71,20 +72,44 @@ def _forward_inputs(store: dict, device: str, model_dtype: torch.dtype) -> dict:
     }
 
 
-def compute_bacformer_vectors(
+def load_finetuned_bacformer_backbone(checkpoint: Path, device: str) -> torch.nn.Module:
+    """Load the **Bacformer backbone** of a fine-tuned AMR classification checkpoint, in eval mode.
+
+    The deployed AST model is a ``BacformerForGenomeClassification`` (backbone ``.bacformer`` — a
+    ``BacformerModel`` — plus a classification head). For the fine-tuned genome mean we want the
+    backbone's ``last_hidden_state`` (the same pool the head averages), with the *fine-tuned* weights.
+    Loads exactly as :mod:`tl.train.evaluate` does (``trust_remote_code``, ``torch_dtype="auto"``,
+    ``.float()`` on CPU so Stage-A smokes work), resolves the best ``checkpoint-*`` subdir, and returns
+    ``model.bacformer``.
+    """
+    from transformers import AutoModelForSequenceClassification
+
+    model_dir = resolve_checkpoint_dir(Path(checkpoint))
+    clf = AutoModelForSequenceClassification.from_pretrained(
+        str(model_dir), num_labels=1, problem_type="binary_classification",
+        return_dict=True, trust_remote_code=True, torch_dtype="auto",
+    )
+    if device == "cpu":
+        clf = clf.float()
+    backbone = clf.bacformer
+    logger.info("Loaded fine-tuned Bacformer backbone from %s", model_dir)
+    return backbone.to(device).eval()
+
+
+def _extract_rpob_and_mean(
+    model: torch.nn.Module,
     genotype,
     esm_store_dir: Path,
     *,
     device: str,
-    pt_suffix: str = "_esm_embeddings.pt",
+    pt_suffix: str,
 ) -> tuple[np.ndarray, np.ndarray, list[str]]:
-    """Frozen-Bacformer rpoB token + genome mean per single-copy genome.
+    """Run ``model`` (frozen base or fine-tuned backbone) forward per genome → rpoB token + genome mean.
 
-    Returns ``(rpob_matrix [N, dim], mean_matrix [N, dim], sample_ids)`` — both
-    pulled from the same forward pass. Samples whose ``.pt`` is missing or whose
-    real-protein count fails the flat-order guard are skipped.
+    Shared core of :func:`compute_bacformer_vectors` and :func:`compute_finetuned_bacformer_vectors`;
+    only the model differs. Returns ``(rpob [N, dim], mean [N, dim], sample_ids)`` from one forward
+    pass each, with the day-one length guard and the missing/misaligned-genome skips.
     """
-    model = load_bacformer_model(device, dtype="auto")
     model_dtype = next(model.parameters()).dtype
 
     rpob_vectors: list[np.ndarray] = []
@@ -129,10 +154,46 @@ def compute_bacformer_vectors(
         kept.append(str(sample_id))
 
     if skips:
-        logger.warning("frozen Bacformer vectors: skipped %s", skips)
+        logger.warning("Bacformer vectors: skipped %s", skips)
     rpob = np.vstack(rpob_vectors) if rpob_vectors else np.empty((0, 0))
     mean = np.vstack(mean_vectors) if mean_vectors else np.empty((0, 0))
     return rpob, mean, kept
+
+
+def compute_bacformer_vectors(
+    genotype,
+    esm_store_dir: Path,
+    *,
+    device: str,
+    pt_suffix: str = "_esm_embeddings.pt",
+) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    """Frozen-Bacformer rpoB token + genome mean per single-copy genome.
+
+    Returns ``(rpob_matrix [N, dim], mean_matrix [N, dim], sample_ids)`` — both pulled from the same
+    forward pass of the **frozen base** model. Samples whose ``.pt`` is missing or whose real-protein
+    count fails the flat-order guard are skipped.
+    """
+    model = load_bacformer_model(device, dtype="auto")
+    return _extract_rpob_and_mean(model, genotype, esm_store_dir, device=device, pt_suffix=pt_suffix)
+
+
+def compute_finetuned_bacformer_vectors(
+    genotype,
+    esm_store_dir: Path,
+    *,
+    checkpoint: Path,
+    device: str,
+    pt_suffix: str = "_esm_embeddings.pt",
+) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    """Fine-tuned-Bacformer rpoB token + genome mean per single-copy genome (A.1.i).
+
+    Identical to :func:`compute_bacformer_vectors` but the forward runs through the **fine-tuned**
+    backbone of the deployed AMR checkpoint (the 0.905 mean-pool model). The genome mean is then the
+    fine-tuned analogue of the frozen mean — the A.1.i concat feature (FT-mean ⊕ ESM-rpoB). Its
+    ``mean``-only ablation should reproduce the deployed ~0.905, not the frozen 0.788.
+    """
+    model = load_finetuned_bacformer_backbone(checkpoint, device)
+    return _extract_rpob_and_mean(model, genotype, esm_store_dir, device=device, pt_suffix=pt_suffix)
 
 
 def main() -> None:
@@ -147,6 +208,9 @@ def main() -> None:
                              "(consumed by --steps bacformer_rpob_token / bacformer_mean).")
     parser.add_argument("--drug", type=str, default="rifampin", help="Phenotype column (default rifampin).")
     parser.add_argument("--device", type=str, default="cuda:0", help="Torch device (default cuda:0).")
+    parser.add_argument("--bacformer-checkpoint", type=Path, default=None,
+                        help="Fine-tuned AMR checkpoint dir (A.1.i): extract the *fine-tuned* backbone's "
+                             "rpoB token + genome mean instead of the frozen base model.")
     parser.add_argument("--qc-log", type=Path, default=Path("rpob_copy_qc.log"),
                         help="Where to write the rpoB-copy QC log (default: ./rpob_copy_qc.log).")
     parser.add_argument("--max-samples", type=int, default=None,
@@ -166,9 +230,15 @@ def main() -> None:
 
     logger.info("Genotyping %d labelled samples (single-copy rpoB only) for the rpoB flat index", len(all_ids))
     genotype = build_genotype_table(all_ids, args.parquet_dir, reference, qc_log_path=args.qc_log)
-    logger.info("Running frozen Bacformer over %d genomes on %s", len(genotype), args.device)
+    variant = "fine-tuned" if args.bacformer_checkpoint else "frozen"
+    logger.info("Running %s Bacformer over %d genomes on %s", variant, len(genotype), args.device)
 
-    rpob, mean, kept = compute_bacformer_vectors(genotype, args.esm_store_dir, device=args.device)
+    if args.bacformer_checkpoint:
+        rpob, mean, kept = compute_finetuned_bacformer_vectors(
+            genotype, args.esm_store_dir, checkpoint=args.bacformer_checkpoint, device=args.device
+        )
+    else:
+        rpob, mean, kept = compute_bacformer_vectors(genotype, args.esm_store_dir, device=args.device)
     if not kept:
         raise RuntimeError("No Bacformer vectors recovered — check esm_store_dir / .pt suffix.")
 

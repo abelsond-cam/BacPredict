@@ -42,7 +42,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from snp_embeddings.frozen_bacformer_rpob_vectors import compute_bacformer_vectors
+from snp_embeddings.frozen_bacformer_rpob_vectors import (
+    compute_bacformer_vectors,
+    compute_finetuned_bacformer_vectors,
+)
 from snp_embeddings.kfold_probe import FeatureSpec, run_kfold_probe, summarise_kfold
 from snp_embeddings.rpob_genotype import RIFAMPIN_COLUMN, build_genotype_table, load_reference
 from snp_embeddings.snp_vs_esm_prediction import (
@@ -55,8 +58,9 @@ from snp_embeddings.snp_vs_esm_prediction import (
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# The ladder numbers the two ablations must reproduce before the concat is believed (full run only).
-SANITY_TARGETS = {"esm_rpob_only": 0.971, "bacformer_mean_only": 0.788}
+# The esm-rpoB ablation must reproduce ~0.971 before the concat is believed (full run only); the
+# bacformer_mean_only target depends on the variant (frozen ~0.788, fine-tuned ~0.905) — set per run.
+ESM_RPOB_SANITY_TARGET = 0.971
 
 
 def _slice_splits(
@@ -79,18 +83,27 @@ def _bacformer_mean_df(
     device: str,
     bacformer_vectors: Path | None,
     save_bacformer_vectors: Path | None,
+    bacformer_checkpoint: Path | None,
 ) -> pd.DataFrame:
-    """Frozen Bacformer genome-mean per sample — loaded from an NPZ (CPU) or computed on GPU.
+    """Bacformer genome-mean per sample — loaded from an NPZ (CPU) or computed on GPU.
 
-    With ``--bacformer-vectors`` the whole probe is CPU-only. Without it, runs the frozen Bacformer
-    forward over the genotyped genomes and (optionally) caches ``{sample_ids, rpob_vectors,
-    mean_vectors}`` to ``save_bacformer_vectors`` for reuse by this and the sibling probes.
+    With ``--bacformer-vectors`` the whole probe is CPU-only (the NPZ may hold frozen *or* fine-tuned
+    means — say which with ``--mean-is-finetuned``). Otherwise runs a Bacformer forward over the
+    genotyped genomes: the **fine-tuned** backbone of ``bacformer_checkpoint`` (A.1.i) when given, else
+    the **frozen** base model. Optionally caches ``{sample_ids, rpob_vectors, mean_vectors}`` to
+    ``save_bacformer_vectors`` for reuse (e.g. so the k-fold reruns are CPU-only).
     """
     if bacformer_vectors is not None:
-        logger.info("Loading frozen Bacformer genome-mean vectors from %s", bacformer_vectors)
+        logger.info("Loading Bacformer genome-mean vectors from %s", bacformer_vectors)
         return load_bacformer_vectors(bacformer_vectors, key="mean_vectors")
-    logger.info("Computing frozen Bacformer genome-mean over %d genomes on %s", len(genotype), device)
-    _rpob_mat, mean_mat, kept = compute_bacformer_vectors(genotype, esm_store_dir, device=device)
+    variant = "fine-tuned" if bacformer_checkpoint else "frozen"
+    logger.info("Computing %s Bacformer genome-mean over %d genomes on %s", variant, len(genotype), device)
+    if bacformer_checkpoint is not None:
+        _rpob_mat, mean_mat, kept = compute_finetuned_bacformer_vectors(
+            genotype, esm_store_dir, checkpoint=bacformer_checkpoint, device=device
+        )
+    else:
+        _rpob_mat, mean_mat, kept = compute_bacformer_vectors(genotype, esm_store_dir, device=device)
     if save_bacformer_vectors is not None:
         save_bacformer_vectors.parent.mkdir(parents=True, exist_ok=True)
         np.savez(save_bacformer_vectors, sample_ids=np.array(kept), rpob_vectors=_rpob_mat, mean_vectors=mean_mat)
@@ -107,6 +120,8 @@ def run_concat_probe(
     device: str,
     bacformer_vectors: Path | None,
     save_bacformer_vectors: Path | None,
+    bacformer_checkpoint: Path | None,
+    mean_is_finetuned: bool,
     qc_log_path: Path,
     pool_workers: int,
     max_samples: int | None,
@@ -139,6 +154,7 @@ def run_concat_probe(
     mean_df = _bacformer_mean_df(
         genotype, esm_store_dir, device=device,
         bacformer_vectors=bacformer_vectors, save_bacformer_vectors=save_bacformer_vectors,
+        bacformer_checkpoint=bacformer_checkpoint,
     )
     if mean_df.empty:
         raise RuntimeError("No Bacformer genome-mean vectors recovered.")
@@ -157,14 +173,18 @@ def run_concat_probe(
         "bacformer_mean_only": mean_c,
         "concat_esm_rpob_plus_mean": concat_c,
     }
+    # The mean is fine-tuned (A.1.i) when computed from a checkpoint, or flagged so for a loaded FT NPZ.
+    finetuned = bacformer_checkpoint is not None or mean_is_finetuned
     payload: dict = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "task": "snp_embeddings",
         "analysis": "eval_concat_rpob_mean",
         "label_column": drug,
         "sheet_path": str(ast_sheet_path),
         "esm_store_dir": str(esm_store_dir),
         "bacformer_vectors": str(bacformer_vectors) if bacformer_vectors else None,
+        "bacformer_checkpoint": str(bacformer_checkpoint) if bacformer_checkpoint else None,
+        "mean_variant": "finetuned" if finetuned else "frozen",
         "split": split_info,
         "n_common_samples": len(common),
         "rpob_copy_qc": {"n_single_copy_genotyped": int(len(genotype)), "qc_log": str(qc_log_path)},
@@ -182,7 +202,8 @@ def run_concat_probe(
                 key, res["metrics"]["auroc"], res["metrics"]["auprc"], res["n_evaluate"], res["n_features"],
             )
 
-    payload["headline"] = _build_headline(payload["steps"], smoke=max_samples is not None)
+    mean_target = 0.905 if finetuned else 0.788
+    payload["headline"] = _build_headline(payload["steps"], smoke=max_samples is not None, mean_target=mean_target)
 
     if kfold is not None:
         specs = {key: FeatureSpec(feat_df, kind="numeric", standardise=True) for key, feat_df in features.items()}
@@ -200,8 +221,12 @@ def run_concat_probe(
     return payload
 
 
-def _build_headline(steps: dict, *, smoke: bool) -> dict:
-    """Concat AUROC, the two ablation AUROCs, the lift over mean-only, and the sanity verdict."""
+def _build_headline(steps: dict, *, smoke: bool, mean_target: float) -> dict:
+    """Concat AUROC, the two ablation AUROCs, the lift over mean-only, and the sanity verdict.
+
+    ``mean_target`` is the expected ``bacformer_mean_only`` AUROC for the run's variant (~0.788 frozen,
+    ~0.905 fine-tuned) — the localization-ladder rung the ablation must reproduce for the harness to be trusted.
+    """
     auroc = {k: v["metrics"]["auroc"] for k, v in steps.items() if "metrics" in v}
     headline: dict = {"auroc": auroc}
     if "concat_esm_rpob_plus_mean" in auroc and "bacformer_mean_only" in auroc:
@@ -210,9 +235,10 @@ def _build_headline(steps: dict, *, smoke: bool) -> dict:
         headline["concat_minus_esm_rpob"] = float(auroc["concat_esm_rpob_plus_mean"] - auroc["esm_rpob_only"])
     # Sanity: do the ablations reproduce the localization ladder? (Skipped on a smoke — n=10 AUROC is noise.)
     if not smoke:
+        targets = {"esm_rpob_only": ESM_RPOB_SANITY_TARGET, "bacformer_mean_only": mean_target}
         sanity = {
             k: {"observed": auroc[k], "target": t, "abs_diff": abs(auroc[k] - t), "ok": abs(auroc[k] - t) <= 0.02}
-            for k, t in SANITY_TARGETS.items() if k in auroc
+            for k, t in targets.items() if k in auroc
         }
         headline["ablation_sanity"] = sanity
         for k, s in sanity.items():
@@ -267,6 +293,11 @@ def main() -> None:
                         help="Pre-computed NPZ (mean_vectors) — supply to run the whole probe on CPU.")
     parser.add_argument("--save-bacformer-vectors", type=Path, default=None,
                         help="If computing on GPU, also cache the {rpob,mean}_vectors NPZ here for reuse.")
+    parser.add_argument("--bacformer-checkpoint", type=Path, default=None,
+                        help="A.1.i: compute the FT genome-mean from this AMR checkpoint (the 0.905 model) "
+                             "instead of the frozen base. GPU; mutually exclusive with --bacformer-vectors.")
+    parser.add_argument("--mean-is-finetuned", action="store_true",
+                        help="Mark a loaded --bacformer-vectors NPZ as fine-tuned (sanity target 0.905 not 0.788).")
     parser.add_argument("--qc-log", type=Path, default=Path("rpob_copy_qc.log"),
                         help="Where to write the rpoB-copy QC log (default: ./rpob_copy_qc.log).")
     parser.add_argument("--pool-workers", type=int, default=1,
@@ -283,6 +314,9 @@ def main() -> None:
                         help="Fraction of the universe held out as the fixed k-fold evaluate set (default 0.20).")
     args = parser.parse_args()
 
+    if args.bacformer_vectors is not None and args.bacformer_checkpoint is not None:
+        parser.error("Pass either --bacformer-vectors (load a cached NPZ) or --bacformer-checkpoint (compute FT), not both.")
+
     kfold = None
     if args.kfold is not None:
         kfold = {
@@ -294,6 +328,7 @@ def main() -> None:
         args.ast_sheet_path, args.parquet_dir, args.esm_store_dir,
         drug=args.drug, device=args.device,
         bacformer_vectors=args.bacformer_vectors, save_bacformer_vectors=args.save_bacformer_vectors,
+        bacformer_checkpoint=args.bacformer_checkpoint, mean_is_finetuned=args.mean_is_finetuned,
         qc_log_path=args.qc_log, pool_workers=args.pool_workers, max_samples=args.max_samples,
         kfold=kfold,
     )
