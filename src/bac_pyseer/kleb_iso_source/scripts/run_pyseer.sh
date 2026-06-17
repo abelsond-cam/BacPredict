@@ -30,7 +30,10 @@
 #   min_sl_size (default 0 = keep all) collapses Sublineages with fewer samples into 'other', so
 #   --lineage attributes hits only to the big SLs (e.g. 100) instead of ~1300 tiny n=1-5 clusters.
 #   Env overrides: MIN_AF / MAX_AF (default 0.01/0.99) set the allele-freq window; USE_LINEAGE=0
-#   omits --lineage entirely. e.g. USE_LINEAGE=0 MIN_AF=0.05 MAX_AF=0.95 sbatch ... 10 gwas_nolin_af5 0
+#   omits --lineage entirely; USE_LMM=1 uses a linear mixed model (random effects via a kinship
+#   matrix built from the Rtab by similarity_pyseer) instead of fixed-effects MDS — the better
+#   structure correction for clonal data (no K to truncate). e.g. USE_LMM=1 sbatch ... 10 gwas_lmm 100
+#   e.g. USE_LINEAGE=0 MIN_AF=0.05 MAX_AF=0.95 sbatch ... 10 gwas_nolin_af5 0
 
 set -euo pipefail
 export PYTHONUNBUFFERED=1
@@ -54,6 +57,7 @@ MIN_SL_SIZE=${3:-0}      # 3rd arg = min samples/Sublineage to keep as its own -
 MIN_AF=${MIN_AF:-0.01}          # env: allele-frequency window; raise to 0.05/0.95 to drop the rare, separating variants that force slow Firth fits
 MAX_AF=${MAX_AF:-0.99}
 USE_LINEAGE=${USE_LINEAGE:-1}   # env: 0 = omit --lineage entirely (no per-variant SL attribution); 1 = keep it
+USE_LMM=${USE_LMM:-0}           # env: 1 = LMM (FaST-LMM random effects via a kinship matrix) instead of fixed-effects MDS — better structure control for clonal data
 GWAS_DIR=$IN_DIR/$GWAS_SUBDIR
 GFF=$DATA/david/raw/related_lr/gff/GCF_000016305.1.gff
 mkdir -p "$GWAS_DIR"
@@ -61,6 +65,8 @@ mkdir -p "$GWAS_DIR"
 RTAB=$IN_DIR/variant_by_loci_presence.Rtab
 PHENO=$IN_DIR/phenotype.tsv
 DIST=$IN_DIR/jaccard_distances.tsv
+SAMPLES=$IN_DIR/samples.txt          # sample-id list (phenotype/Rtab order) — input to similarity_pyseer
+SIMILARITY=$IN_DIR/similarity.tsv    # LMM kinship built from the Rtab; built once, shared across LMM runs
 CLUSTERS=$GWAS_DIR/sublineage_clusters.tsv
 PATTERNS=$GWAS_DIR/patterns.txt
 ASSOC=$GWAS_DIR/blood_vs_faeces.assoc
@@ -97,28 +103,47 @@ else
   echo "USE_LINEAGE=0 -> no --lineage; skipping sublineage-clusters build"
 fi
 
-# 1) scree plot of the MDS eigenvalues — eyeball the elbow to pick/justify K (output to GWAS_DIR).
-#    Non-fatal: it is purely informational (K is validated empirically by lambda below), so a
-#    plotting hiccup must never abort the GWAS. MPLBACKEND=Agg (above) keeps it headless-safe.
-( cd "$GWAS_DIR" && pixi run --manifest-path "$PIXI_MANIFEST" \
-    scree_plot_pyseer "$DIST" --max-dimensions 30 ) \
-    || echo "WARN: scree_plot_pyseer failed (non-fatal) — continuing to pyseer"
+# 1) structure inputs (method-dependent).
+if [ "$USE_LMM" = "1" ]; then
+    # LMM: build the kinship/similarity matrix once from the variant Rtab (shared across LMM runs).
+    #      similarity_pyseer wants a sample-id list (phenotype order, == Rtab columns).
+    if [ ! -s "$SIMILARITY" ]; then
+        echo "building LMM similarity (kinship) from Rtab via similarity_pyseer  $(date)"
+        tail -n +2 "$PHENO" | cut -f1 > "$SAMPLES"
+        pixi run --manifest-path "$PIXI_MANIFEST" similarity_pyseer \
+            --pres "$RTAB" --min-af "$MIN_AF" --max-af "$MAX_AF" "$SAMPLES" > "$SIMILARITY"
+        echo "wrote $SIMILARITY ($(wc -l < "$SIMILARITY") rows)  $(date)"
+    else
+        echo "reusing existing similarity matrix $SIMILARITY"
+    fi
+else
+    # fixed-effects: scree plot of the MDS eigenvalues to eyeball/justify K (non-fatal, MDS-only).
+    ( cd "$GWAS_DIR" && pixi run --manifest-path "$PIXI_MANIFEST" \
+        scree_plot_pyseer "$DIST" --max-dimensions 30 ) \
+        || echo "WARN: scree_plot_pyseer failed (non-fatal) — continuing to pyseer"
+fi
 
-# 2) the GWAS itself (fixed-effects + K MDS covariates). --lineage is optional (USE_LINEAGE);
+# 2) the GWAS itself. Structure correction is fixed-effects MDS (--distances + K) by default,
+#    or LMM random effects (--lmm + kinship) when USE_LMM=1. --lineage is optional (USE_LINEAGE);
 #    the af window + the SL-collapse threshold are the levers for the speed-vs-rare-variant tradeoff.
 LINEAGE_ARGS=()
 if [ "$USE_LINEAGE" = "1" ]; then
     LINEAGE_ARGS=(--lineage --lineage-clusters "$CLUSTERS")
 fi
-echo "pyseer config: K=$K  min-af=$MIN_AF  max-af=$MAX_AF  use-lineage=$USE_LINEAGE  min-sl-size=$MIN_SL_SIZE"
+if [ "$USE_LMM" = "1" ]; then
+    STRUCT_ARGS=(--lmm --similarity "$SIMILARITY" --save-lmm "$GWAS_DIR/lmm_cache")
+    echo "pyseer config: LMM (random effects)  min-af=$MIN_AF  max-af=$MAX_AF  use-lineage=$USE_LINEAGE  min-sl-size=$MIN_SL_SIZE"
+else
+    STRUCT_ARGS=(--distances "$DIST" --max-dimensions "$K" --save-m "$GWAS_DIR/mds_cache")
+    echo "pyseer config: fixed-effects K=$K  min-af=$MIN_AF  max-af=$MAX_AF  use-lineage=$USE_LINEAGE  min-sl-size=$MIN_SL_SIZE"
+fi
 pixi run --manifest-path "$PIXI_MANIFEST" pyseer \
     --pres "$RTAB" \
     --phenotypes "$PHENO" --phenotype-column blood_vs_faeces_label \
-    --distances "$DIST" --max-dimensions "$K" \
+    "${STRUCT_ARGS[@]}" \
     ${LINEAGE_ARGS[@]+"${LINEAGE_ARGS[@]}"} \
     --min-af "$MIN_AF" --max-af "$MAX_AF" \
     --output-patterns "$PATTERNS" \
-    --save-m "$GWAS_DIR/mds_cache" \
     --cpu "$SLURM_CPUS_PER_TASK" \
     > "$ASSOC"
 
