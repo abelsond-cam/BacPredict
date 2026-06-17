@@ -132,6 +132,9 @@ if [ "$USE_LINEAGE" = "1" ]; then
 fi
 if [ "$USE_LMM" = "1" ]; then
     STRUCT_ARGS=(--lmm --similarity "$SIMILARITY" --save-lmm "$GWAS_DIR/lmm_cache")
+    # --lmm corrects via the kinship, but pyseer still needs a distance matrix to compute the
+    # --lineage effects report — so pass --distances too whenever lineage attribution is on.
+    [ "$USE_LINEAGE" = "1" ] && STRUCT_ARGS+=(--distances "$DIST")
     echo "pyseer config: LMM (random effects)  min-af=$MIN_AF  max-af=$MAX_AF  use-lineage=$USE_LINEAGE  min-sl-size=$MIN_SL_SIZE"
 else
     STRUCT_ARGS=(--distances "$DIST" --max-dimensions "$K" --save-m "$GWAS_DIR/mds_cache")
