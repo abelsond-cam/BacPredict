@@ -1,0 +1,19 @@
+{
+  "assoc": "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/pyseer_iso_source/blood_faeces/sampled_country_2_1_all/gwas_lmm/blood_vs_faeces.assoc",
+  "n_variants": 372238,
+  "n_unique_patterns": 353051,
+  "alpha": 0.05,
+  "bonferroni_threshold": 1.4162259843478706e-07,
+  "pval_col": "lrt-pvalue",
+  "genomic_inflation_lambda": 0.5623409970399977,
+  "max_dimensions_k": 10,
+  "n_significant": 110,
+  "n_significant_in_gene": 88,
+  "n_significant_virulence": 2,
+  "n_genes_on_contig": 5164,
+  "outputs": {
+    "hits_annotated_tsv": "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/pyseer_iso_source/blood_faeces/sampled_country_2_1_all/gwas_lmm/blood_vs_faeces_hits_annotated.tsv",
+    "qq_png": "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/pyseer_iso_source/blood_faeces/sampled_country_2_1_all/gwas_lmm/pyseer_qq.png",
+    "manhattan_png": "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/pyseer_iso_source/blood_faeces/sampled_country_2_1_all/gwas_lmm/pyseer_manhattan.png"
+  }
+}

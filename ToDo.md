@@ -154,13 +154,27 @@ An agent will plan the work in detail and start.
 
 ### kleb_iso_source — invasive disease (blood vs faeces first)
 
+- [x] **Variant GWAS — blood vs faeces (DONE, 2026-06-17).** LMM (`--lmm`) is the method of
+  record: **λ=0.562** (conservative; MDS fixed-effects gave λ=4.34, abandoned). **110 hits**,
+  of which 18 blood/invasion — a cross-lineage **capsule (wzi) + fimbrial usher + iron/Fe-S**
+  signature. This is the **chromosomal / core-allele axis** (variant calls are reference-anchored
+  core, blind to accessory gain/loss). Figures + hit tables in
+  [src/bac_pyseer/docs/visualise/lmm_model/](src/bac_pyseer/docs/visualise/lmm_model/);
+  detail in the task CLAUDE.md Status.
+- [ ] **Faeces vs respiratory contrast (NEXT).** Re-run the same collation + LMM pipeline on a
+  faeces-vs-respiratory phenotype; do the cross-lineage invasion genes (capsule/fimbrial/iron)
+  recur? Same genes across an independent contrast = strong evidence they're real invasion
+  determinants, not blood-specific or confounded. Then faeces vs liver/abscess.
 - [ ] **Hotspot rates by isolation source.** Compare per-source hotspot rates against
   the whole-population background mutation rate at each locus as control → Chi-sq for
   hotspots strongly associated with invasive disease. *Blocked on Aaron uploading
   hotspots to HPC.*
-- [ ] **Pyseer unitig GWAS (KPSC-wide).** From variant calls, tabulate mutation loci
-  vs the reference genome per sample; filter low-frequency loci; compute pairwise
-  Jaccard distances. Combined with unitigs → whole-of-KPSC GWAS on unitigs.
+- [ ] **Pyseer unitig GWAS (KPSC-wide) — the accessory/HGT axis.** Unitigs capture core SNPs
+  *and* accessory sequence (the variant GWAS sees core only), so a unitig GWAS is both the
+  whole-of-KPSC scan and the **acquired-vs-chromosomal test**: if the invasion signature recurs
+  in an accessory-inclusive feature space, that's strong corroboration. From variant calls,
+  tabulate mutation loci vs the reference per sample; filter low-frequency loci; pairwise
+  Jaccard distances; combine with unitigs.
 - [ ] **Pyseer presence/absence GWAS.** Same variant calls + the per-SL Panaroo we
   have → presence/absence GWAS.
 

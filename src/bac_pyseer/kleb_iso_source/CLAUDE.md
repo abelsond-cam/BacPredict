@@ -121,6 +121,38 @@ only ~10-30% dense); (3) writing the dense 13,602² distance TSV. Levers before 
 
 ### Status
 
+- 2026-06-17 — **GWAS RUN — blood vs faeces, the result.** Ran on the four inputs below
+  (cohort `sampled_country_2_1_all`, n=13,602, 372,238 variants af 1–99%, big-SL `--lineage`
+  with ≥100-sample SLs kept). Two structure-correction methods compared — **LMM is the method
+  of record.** Figures + hit tables under [docs/visualise/](docs/visualise/) (`mds_model/`,
+  `lmm_model/`), each with a README.
+  - **Fixed-effects MDS (`--distances` + K=10): λ=4.34 — dead.** Severe under-correction;
+    scree shows K=10 captures 1.6% of relatedness, K=200 only 12.8% — no low-K projection
+    captures this cohort. 6,657 lineage-confounded hits. Abandoned (`mds_model/`); the
+    fixed-effects K-sweep is **dropped** (MDS is the wrong basis here).
+  - **LMM (`--lmm --similarity` kinship from `similarity_pyseer --pres`): λ=0.562 — the
+    trustworthy, conservative result.** Job `30673611` (1h32m; kinship `similarity.tsv` 1.4 GB,
+    built once and reusable). QQ: controlled bulk + clean separated tail; Manhattan: flat
+    baseline + discrete peaks. λ<1 because the random effect legitimately absorbs the
+    lineage-correlated phenotype — conservative, not inflated → the hits are high-confidence.
+  - **110 hits (Bonferroni 1.42e-7 over 353,051 patterns): 18 blood/invasion (β>0), 92 faeces.**
+    Of the 18 blood hits, **8 are cross-lineage (blank attribution)** — a coherent **capsule
+    (wzi) + fimbrial usher + iron/Fe-S (iron-redox, nfuA, btuB)** invasion signature holding
+    across lineages. 5 are single-SL (dnaK→SL307, siderophore→SL17, HTH/aminotransf→SL147,
+    tRNA-Leu→SL258) = likely lineage-restricted. Annotated Manhattan + a direction→lineage
+    reordered table in `lmm_model/`.
+  - **Scope = the chromosomal / core-allele axis.** The variant Rtab is reference-anchored core
+    calls (1=alt / 0=ref / missing), so it cannot see accessory gene gain/loss — the
+    capsule/fimbrial/iron hits are *core SNPs within* those genes, not acquisition. The
+    accessory/HGT axis needs a **unitig** GWAS (Jaccard retained).
+  - **λ note:** with the feature space fixed as core variants, 0.562 is mostly genuine
+    conservatism. A core NJ-tree kinship (`phylogeny_distance.py --lmm` from the Jaccard) might
+    nudge λ but is a sensitivity check, not a fix — not pursued; 0.562 is the reported baseline.
+  - **Validation (next):** (1) **unitig GWAS** — same genes in an accessory-inclusive space =
+    strong evidence + the acquired-vs-chromosomal test; (2) **other invasion contrasts** (faeces
+    vs respiratory, faeces vs liver/abscess) — same genes across independent splits = strong
+    evidence. Queued in [ToDo.md](../../../ToDo.md); **faeces vs respiratory is the immediate next step.**
+
 - 2026-06-16 — **Stage C COMPLETE — the four pyseer inputs are built and validated.**
   Extraction array `30593900` → 20,776/20,776 cache files, 0 failures. Reduce on pooled
   `sampled_country_2_1_all` completed as job `30601505` (icelake-himem, 32c/128G/4h;
