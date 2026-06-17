@@ -214,12 +214,21 @@ def run_concat_probe(
         if len(common) < kfold["n_folds"] + 1:
             logger.warning("Skipping k-fold: %d common samples < n_folds+1 (%d)", len(common), kfold["n_folds"] + 1)
         else:
+            if finetuned:
+                # The FT backbone was fine-tuned on the original TRAIN labels, so re-splitting the
+                # whole cohort puts FT-training genomes into the new evaluate fold → representation
+                # leakage (optimistic). Honest FT k-fold needs re-fine-tuning per fold. Run it, but flag it.
+                logger.warning(
+                    "k-fold on a FINE-TUNED mean is LEAKY: the backbone saw most genomes' labels during "
+                    "fine-tuning. Treat these numbers as optimistic, not a valid held-out estimate."
+                )
             logger.info("Running k-fold × m-seed harness over the three aligned frames")
             payload["kfold"] = run_kfold_probe(
                 specs, label_map,
                 n_folds=kfold["n_folds"], seeds=kfold["seeds"],
                 evaluate_seed=kfold["evaluate_seed"], evaluate_fraction=kfold["evaluate_fraction"],
             )
+            payload["kfold"]["finetuned_mean_leakage_warning"] = finetuned
             logger.info("\n%s", summarise_kfold(payload["kfold"]))
 
     return payload

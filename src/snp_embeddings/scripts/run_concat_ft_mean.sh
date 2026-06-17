@@ -80,9 +80,11 @@ uv run python src/snp_embeddings/concatenate_bacformer_genome_esm_protein_emb.py
 
 echo "A.1.i FT-mean concat finished — JSON at $OUT_JSON"
 echo
-echo "Follow-up (CPU, no GPU) — k-fold × m-seed significance reusing the cached FT NPZ:"
-echo "  uv run python src/snp_embeddings/concatenate_bacformer_genome_esm_protein_emb.py \\"
-echo "      --ast-sheet-path $SHEET --parquet-dir $PARQUET_DIR --esm-store-dir $ESM_STORE_DIR \\"
-echo "      --output-json $OUT_DIR/concat_ft_mean_kfold.json --drug rifampin --device cpu \\"
-echo "      --bacformer-vectors $SAVE_NPZ --mean-is-finetuned --kfold 5 --seeds 1 2 3 \\"
-echo "      --pool-workers 8"
+echo "This is the k=1, m=1 number on the CANONICAL evaluate holdout (the genomes the FT backbone was"
+echo "held out from) — directly comparable to the deployed 0.905 and the frozen-concat 0.975."
+echo
+echo "Do NOT k-fold this cached FT NPZ across the whole cohort: the backbone was fine-tuned on the"
+echo "original TRAIN labels, so re-splitting would put FT-training genomes into the new evaluate fold"
+echo "(representation leakage → optimistic). Honest FT k-fold needs re-fine-tuning the backbone per"
+echo "fold (GPU per fold). The cheap cached-NPZ k-fold is valid only for the FROZEN concat, where the"
+echo "base model never saw any AST label (see run_concat_rpob_mean.sh --kfold)."
