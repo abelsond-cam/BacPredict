@@ -27,6 +27,7 @@ This root file holds only global conventions and shared-infra docs. **Per-task p
 - All experiments start from the **Bacformer complete-genomes model** (not the MAG-trained model).
 - **Refresh the Bacformer weights from Hugging Face first.** Previous local weights had defects since fixed by the authors. Until that refresh happens no benchmark we publish is comparable to current SOTA.
 - Earlier runs used the older MAG-trained model — every one of those benchmarks needs re-running once the refreshed complete-genomes model is in place.
+- **Bacformer internals — reference of record:** the v2 manuscript *Bacformer_main_text_14062026* (Google Drive id `1yGnKCgJgY56rbDzqtFR8YLZ9bObZLfVa`; D. Abelson 2nd author; the version being submitted) is the source of truth for Bacformer's architecture, its **kNN ESM protein-family construction** (the template for clustering Bacformer protein embeddings into gene families), and its AMR gene-prioritisation. The internal-dev fork of the Bacformer code lives on HPC at `~/workspace/Bacformer-internal` (also a personal GitHub fork).
 
 ### §0.2 Three-stage testing protocol
 
