@@ -36,32 +36,44 @@ FAMILY_LABEL = {
 }
 
 
-def plot_ladder(csv_path: Path, out_path: Path, *, metric: str = "auroc", ymin: float = 0.75) -> None:
-    """Render the ladder bar plot from the metrics CSV, sorted ascending by ``metric``."""
-    df = pd.read_csv(csv_path).sort_values(metric).reset_index(drop=True)
+def _draw_metric_panel(ax, df: pd.DataFrame, metric: str, *, ymin: float, show_xticklabels: bool) -> None:
+    """Render one bar panel of ``metric`` onto ``ax`` (sorted order fixed by the caller)."""
     colours = [FAMILY_COLOURS.get(f, "#888888") for f in df["family"]]
-
-    fig, ax = plt.subplots(figsize=(11, 6))
     x = range(len(df))
     ax.bar(x, df[metric], color=colours, edgecolor="black", linewidth=0.7, width=0.72)
     for xi, v in zip(x, df[metric], strict=True):
         ax.text(xi, v + 0.003, f"{v:.3f}", ha="center", va="bottom", fontsize=9.5, fontweight="bold")
-
     ax.set_xticks(list(x))
-    ax.set_xticklabels(df["method"], rotation=28, ha="right", fontsize=9.5)
+    if show_xticklabels:
+        ax.set_xticklabels(df["method"], rotation=28, ha="right", fontsize=9.5)
+    else:
+        ax.set_xticklabels([])
     ax.set_ylabel(metric.upper(), fontsize=12)
     ax.set_ylim(ymin, 1.0)
-    ax.set_title(
-        "TB-rifampin AST — concatenating the causal-gene vector tops the read-out ladder\n"
-        "(full eval, n≈6.9k; small top-end deltas pending k-fold × seeds)",
-        fontsize=12.5,
-    )
-    # Family legend.
-    handles = [plt.Rectangle((0, 0), 1, 1, color=c, ec="black", lw=0.7) for c in FAMILY_COLOURS.values()]
-    ax.legend(handles, [FAMILY_LABEL[k] for k in FAMILY_COLOURS], loc="upper left", fontsize=9.5, framealpha=0.95)
     ax.grid(axis="y", alpha=0.3)
     ax.spines[["top", "right"]].set_visible(False)
-    fig.tight_layout()
+
+
+def plot_ladder(csv_path: Path, out_path: Path, *, sort_metric: str = "auroc") -> None:
+    """Two-panel ladder bar plot — AUROC (top) and AUPRC (bottom), one bar per method, family-coloured.
+
+    Both panels share the same method ordering (ascending by ``sort_metric``) so the bars line up. The
+    headline read: the **concat** of the ESM-C rpoB vector with the Bacformer genome-mean (purple) tops
+    both panels — above fine-tuned Bacformer (blue) and one-hot mutation alone (red).
+    """
+    df = pd.read_csv(csv_path).sort_values(sort_metric).reset_index(drop=True)
+
+    fig, (ax_top, ax_bot) = plt.subplots(2, 1, figsize=(11.5, 9.5), sharex=True)
+    _draw_metric_panel(ax_top, df, "auroc", ymin=0.75, show_xticklabels=False)
+    _draw_metric_panel(ax_bot, df, "auprc", ymin=0.60, show_xticklabels=True)
+
+    handles = [plt.Rectangle((0, 0), 1, 1, color=c, ec="black", lw=0.7) for c in FAMILY_COLOURS.values()]
+    ax_top.legend(handles, [FAMILY_LABEL[k] for k in FAMILY_COLOURS], loc="upper left", fontsize=9.5, framealpha=0.95)
+    fig.suptitle(
+        "Comparing Bacformer predictions of Rif Resistance in TB with ESM and concatenated models",
+        fontsize=13, y=0.985,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
@@ -73,10 +85,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--csv", type=Path, default=here / "docs" / "rif_ladder_table.csv")
     parser.add_argument("--out", type=Path, default=here / "docs" / "visualisations" / "rif_ladder_barplot.png")
-    parser.add_argument("--metric", type=str, default="auroc", choices=["auroc", "auprc", "sensitivity", "specificity"])
-    parser.add_argument("--ymin", type=float, default=0.75)
     args = parser.parse_args()
-    plot_ladder(args.csv, args.out, metric=args.metric, ymin=args.ymin)
+    plot_ladder(args.csv, args.out)
     print(f"Wrote {args.out}")
 
 
