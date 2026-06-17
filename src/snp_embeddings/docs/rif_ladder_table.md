@@ -20,7 +20,15 @@ to 0.905 and a learned attention head does *worse* (0.868). Injecting the causal
 concat ESM-rpoB ⊕ Bacformer mean → LR — tops the ladder at **0.975**, edging past one-hot mutation alone
 (0.960). The read-out, not the embedding, was the bottleneck.
 
+**Significance (k-fold × m-seed, frozen frames).** The three frozen-mean frames were rerun through the
+k=5 × m=3 harness (job 30673824, its own fixed 20 % holdout; AUROC ± sd are the small whiskers on the bar
+plot): frozen Bacformer mean **0.790 ± 0.0011**, frozen ESM-C rpoB **0.970 ± 0.0006**, concat **0.972 ±
+0.0005**. The headline question — *does concat reliably beat ESM-rpoB alone?* — is **paired** per
+(fold, seed): concat wins **15/15** runs, mean Δ **+0.0023 ± 0.0007 AUROC**. Small but rock-solid: the
+concat gain over the ESM-gene ceiling is real, not split noise. (The k-fold means sit ~0.003 below the
+single-split headline because the harness scores its own holdout, not the canonical fold — expected.)
+
 **Caveats.** The rpoB-based rows are scored on the single-copy-rpoB subset (n≈6931); the fine-tuned
 mean-pool and attention-head rows use the full eval (n=7075) — same fold, slightly different denominator.
-The 0.975 used the **untuned (frozen)** Bacformer mean. Top-end deltas (concat vs ESM-rpoB vs one-hot)
-are small and **not yet significance-tested** — k-fold × seeds confirms them.
+The 0.975 used the **untuned (frozen)** Bacformer mean; the *fine-tuned*-mean concat (A.1.i, job 30673823)
+and its honest eval-holdout error bars are pending and will add one more bar.

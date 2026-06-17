@@ -37,10 +37,19 @@ FAMILY_LABEL = {
 
 
 def _draw_metric_panel(ax, df: pd.DataFrame, metric: str, *, ymin: float, show_xticklabels: bool) -> None:
-    """Render one bar panel of ``metric`` onto ``ax`` (sorted order fixed by the caller)."""
+    """Render one bar panel of ``metric`` onto ``ax`` (sorted order fixed by the caller).
+
+    A ``<metric>_sd`` column (e.g. ``auroc_sd``), if present, is drawn as a black ±sd error bar over
+    each bar — the k-fold × m-seed spread. Rows without a value get 0 (no visible whisker).
+    """
     colours = [FAMILY_COLOURS.get(f, "#888888") for f in df["family"]]
     x = range(len(df))
-    ax.bar(x, df[metric], color=colours, edgecolor="black", linewidth=0.7, width=0.72)
+    sd_col = f"{metric}_sd"
+    yerr = df[sd_col].fillna(0.0).to_numpy() if sd_col in df.columns else None
+    ax.bar(
+        x, df[metric], color=colours, edgecolor="black", linewidth=0.7, width=0.72,
+        yerr=yerr, error_kw={"ecolor": "black", "elinewidth": 1.0, "capsize": 3.5},
+    )
     for xi, v in zip(x, df[metric], strict=True):
         ax.text(xi, v + 0.003, f"{v:.3f}", ha="center", va="bottom", fontsize=9.5, fontweight="bold")
     ax.set_xticks(list(x))

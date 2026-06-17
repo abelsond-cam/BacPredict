@@ -1,8 +1,8 @@
-method,family,auroc,auprc,sensitivity,specificity,n_eval,source
-frozen Bacformer mean,Bacformer,0.7880,0.6593,0.5048,0.8880,6931,snp_vs_esm_2b2c_30519412 bacformer_mean
-fine-tuned + attention head,Bacformer,0.8679,0.8173,0.6315,0.9688,7075,attn_e2e_30574525 results
-fine-tuned Bacformer mean-pool,Bacformer,0.9046,0.8558,0.7026,0.9577,7075,stage_c_29776879 eval_results
-frozen Bacformer rpoB token,Bacformer,0.9527,0.9105,0.8665,0.9597,6931,snp_vs_esm_2b2c_30519412 bacformer_rpob_token
-one-hot RRDR rpoB,one-hot,0.9601,0.9322,0.9171,0.9816,6947,snp_vs_esm_2b2c_30519412 onehot_rrdr
-frozen ESM-C rpoB,ESM,0.9705,0.9408,0.9432,0.9771,6931,snp_vs_esm_2b2c_30519412 pooled_esmc_rpob
-concat: ESM-rpoB + untuned-Bacformer mean,mix,0.9752,0.9535,0.9390,0.9790,6931,concat_rpob_mean_30632514
+method,family,auroc,auprc,auroc_sd,auprc_sd,sensitivity,specificity,n_eval,source
+frozen Bacformer mean,Bacformer,0.7880,0.6593,0.0011,0.0029,0.5048,0.8880,6931,snp_vs_esm_2b2c_30519412 bacformer_mean; sd k5x3 30673824
+fine-tuned + attention head,Bacformer,0.8679,0.8173,,,0.6315,0.9688,7075,attn_e2e_30574525 results
+fine-tuned Bacformer mean-pool,Bacformer,0.9046,0.8558,,,0.7026,0.9577,7075,stage_c_29776879 eval_results
+frozen Bacformer rpoB token,Bacformer,0.9527,0.9105,,,0.8665,0.9597,6931,snp_vs_esm_2b2c_30519412 bacformer_rpob_token
+one-hot RRDR rpoB,one-hot,0.9601,0.9322,,,0.9171,0.9816,6947,snp_vs_esm_2b2c_30519412 onehot_rrdr
+frozen ESM-C rpoB,ESM,0.9705,0.9408,0.0006,0.0016,0.9432,0.9771,6931,snp_vs_esm_2b2c_30519412 pooled_esmc_rpob; sd k5x3 30673824
+concat: ESM-rpoB + untuned-Bacformer mean,mix,0.9752,0.9535,0.0005,0.0015,0.9390,0.9790,6931,concat_rpob_mean_30632514; sd k5x3 30673824
