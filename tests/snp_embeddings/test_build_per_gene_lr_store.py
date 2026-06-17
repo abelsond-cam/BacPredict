@@ -118,6 +118,32 @@ def test_build_panels_filtered_zeroes_low_auroc_gene(tmp_path: Path, monkeypatch
     assert std["standardize_ids_restricted"] is True
 
 
+def test_subsample_balanced_caps_balances_and_is_deterministic() -> None:
+    """Subsample hits ~max_n with both classes represented, is a subset, and is seed-deterministic."""
+    ids, label_map = _label_map(100, 100)
+    picked = bplr.subsample_balanced(ids, label_map, max_n=40, seed=7)
+    assert len(picked) == 40
+    assert set(picked) <= set(ids)
+    n_pos = sum(label_map[s] for s in picked)
+    assert n_pos == 20 and (len(picked) - n_pos) == 20  # balanced halves
+    assert picked == bplr.subsample_balanced(ids, label_map, max_n=40, seed=7)  # deterministic
+
+
+def test_subsample_balanced_backfills_from_larger_class() -> None:
+    """When one class is too small, the target is met by backfilling from the larger class."""
+    ids, label_map = _label_map(5, 100)  # 5 positives only
+    picked = bplr.subsample_balanced(ids, label_map, max_n=40, seed=1)
+    assert len(picked) == 40
+    assert sum(label_map[s] for s in picked) == 5  # all 5 positives kept, rest negatives
+
+
+def test_subsample_balanced_none_or_large_returns_all() -> None:
+    """``max_n`` None or ≥ len returns the input unchanged (no subsampling)."""
+    ids, label_map = _label_map(10, 10)
+    assert bplr.subsample_balanced(ids, label_map, max_n=None, seed=1) == ids
+    assert bplr.subsample_balanced(ids, label_map, max_n=999, seed=1) == ids
+
+
 def test_load_splits_drops_ambiguous_and_reads_split(tmp_path: Path) -> None:
     """``load_splits`` keeps only 0/1 labels and partitions by the train_val_eval column."""
     csv = tmp_path / "sheet.csv"

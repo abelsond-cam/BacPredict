@@ -104,12 +104,38 @@ def load_splits(
 # ---------------------------------------------------------------------------
 
 
-def _genome_gene_names(sample_id: str, parquet_dir: Path) -> list[str | None]:
-    """Flat per-protein ``gene_name`` list for one genome (parquet only, no embedding)."""
+def _genome_gene_records(sample_id: str, parquet_dir: Path) -> list[dict]:
+    """Flat per-protein records (``gene_name`` + ``protein_name`` …) for one genome (parquet only)."""
     pq = parquet_dir / f"{sample_id}_protein_sequences.parquet"
     if not pq.exists():
         return []
-    return [r["gene_name"] for r in flatten_proteins(pd.read_parquet(pq))]
+    return flatten_proteins(pd.read_parquet(pq))
+
+
+def subsample_balanced(
+    ids: list[str], label_map: dict[str, int], *, max_n: int | None, seed: int
+) -> list[str]:
+    """Random, **class-balanced** subsample of ``ids`` to ~``max_n`` (or all if ``max_n`` is None/larger).
+
+    Per-gene LR fitting over the full ~24k train cohort is I/O-heavy; for expediency we fit on a random
+    subsample (population correction deferred). Balancing keeps both resistance classes represented so a
+    gene's AUROC stays estimable. Returns at most ``max_n`` ids (≈half per class; the smaller class caps
+    its half). ``None`` / a too-large ``max_n`` returns ``ids`` unchanged. Deterministic in ``seed``.
+    """
+    if max_n is None or max_n >= len(ids):
+        return ids
+    rng = np.random.default_rng(seed)
+    pos = [s for s in ids if label_map.get(s) == 1]
+    neg = [s for s in ids if label_map.get(s) == 0]
+    half = max_n // 2
+    n_pos = min(len(pos), half)
+    n_neg = min(len(neg), max_n - n_pos)
+    n_pos = min(len(pos), max_n - n_neg)  # backfill from the larger class if one is short
+    picked = [pos[i] for i in rng.choice(len(pos), size=n_pos, replace=False)] if n_pos else []
+    picked += [neg[i] for i in rng.choice(len(neg), size=n_neg, replace=False)] if n_neg else []
+    rng.shuffle(picked)
+    logger.info("subsampled train: %d of %d (pos=%d neg=%d, seed=%d)", len(picked), len(ids), n_pos, n_neg, seed)
+    return picked
 
 
 def _read_genome(sample_id: str, esm_dir: Path, parquet_dir: Path) -> tuple[list[str | None], np.ndarray] | None:
@@ -143,26 +169,35 @@ def _read_genome(sample_id: str, esm_dir: Path, parquet_dir: Path) -> tuple[list
 
 def discover_core_genes(
     train_ids: list[str], parquet_dir: Path, *, min_prevalence: float
-) -> tuple[list[str], pd.DataFrame]:
-    """Core genes = ``gene_name`` single-copy in > ``min_prevalence`` of the train genomes.
+) -> tuple[list[str], pd.DataFrame, dict[str, str]]:
+    """Candidate genes = ``gene_name`` single-copy in > ``min_prevalence`` of the train genomes.
 
     Restricting to single-copy occurrences both excludes paralog ambiguity and (since
-    per-genome-unique locus-tag fallbacks never recur) keeps only real recurring gene symbols.
+    per-genome-unique locus-tag fallbacks never recur) keeps only real recurring gene symbols. At
+    ``min_prevalence`` 0.95 this is the *core* genome; lower it (e.g. 0.10) to include the *accessory*
+    band, whose presence/absence carries acquired-resistance signal. Also returns a representative
+    ``protein_name`` (product) per gene for the gene×drug table.
     """
     n = len(train_ids)
     single_copy_genomes: Counter[str] = Counter()
+    annotation: dict[str, str] = {}
     for k, sid in enumerate(train_ids, 1):
-        counts = Counter(g for g in _genome_gene_names(sid, parquet_dir) if g)
+        records = _genome_gene_records(sid, parquet_dir)
+        counts = Counter(r["gene_name"] for r in records if r["gene_name"])
         single_copy_genomes.update(g for g, c in counts.items() if c == 1)
+        for r in records:
+            g, product = r["gene_name"], r.get("protein_name")
+            if g and product and g not in annotation:
+                annotation[g] = product
         if k % 200 == 0:
-            logger.info("  core-gene scan: %d/%d genomes", k, n)
+            logger.info("  gene scan: %d/%d genomes", k, n)
 
     rows = [{"gene": g, "n_single_copy": c, "prevalence": c / max(n, 1)} for g, c in single_copy_genomes.items()]
     table = pd.DataFrame(rows).sort_values("prevalence", ascending=False).reset_index(drop=True)
     core = sorted(table.loc[table["prevalence"] > min_prevalence, "gene"])
-    logger.info("Core genes: %d of %d gene symbols single-copy in >%.0f%% of %d train genomes",
+    logger.info("Candidate genes: %d of %d gene symbols single-copy in >%.0f%% of %d train genomes",
                 len(core), len(table), 100 * min_prevalence, n)
-    return core, table
+    return core, table, annotation
 
 
 # ---------------------------------------------------------------------------
@@ -370,6 +405,38 @@ def build_panels(
 # ---------------------------------------------------------------------------
 
 
+def write_gene_drug_table(
+    fitted: dict[str, dict],
+    prevalence_table: pd.DataFrame,
+    annotation: dict[str, str],
+    *,
+    drug: str,
+    filtered_genes: set[str],
+    out_path: Path,
+) -> None:
+    """Write the wide gene×drug ranking table: ``gene_name, annotation, prevalence, lr_auroc_<drug>``.
+
+    One row per fitted gene, ranked by AUROC. The per-drug AUROC column is named ``lr_auroc_<drug>`` so
+    later drugs merge onto ``gene_name`` into one wide table. ``n_train`` / ``n_pos`` / ``kept`` give the
+    fit context. This is the substrate for the top-k causal-gene concat (core **or** accessory).
+    """
+    prev_by_gene = dict(zip(prevalence_table["gene"], prevalence_table["prevalence"], strict=False))
+    rows = [
+        {
+            "gene_name": g,
+            "annotation": annotation.get(g, ""),
+            "prevalence": prev_by_gene.get(g, float("nan")),
+            f"lr_auroc_{drug}": f["auroc"],
+            "n_train": f["n_train"],
+            "n_pos": f["n_pos"],
+            "kept_filtered": g in filtered_genes,
+        }
+        for g, f in sorted(fitted.items(), key=lambda kv: kv[1]["auroc"], reverse=True)
+    ]
+    pd.DataFrame(rows).to_csv(out_path, index=False)
+    logger.info("Wrote wide gene×drug table (%d genes) to %s", len(rows), out_path)
+
+
 def run(
     *,
     split_csv: Path,
@@ -382,36 +449,52 @@ def run(
     n_folds: int,
     seed: int,
     n_jobs: int = 1,
+    max_train_genomes: int | None = None,
+    sample_seed: int = 1,
+    write_panels: bool = False,
 ) -> dict:
-    """Discover core genes, fit per-gene LRs, and write the filtered + unfiltered panel stores."""
+    """Discover genes, fit per-gene LRs on a (sub)sample of train, write the wide gene×drug table.
+
+    ``max_train_genomes`` fits on a random, class-balanced subsample of train (the rest of the cohort
+    is untouched) — expedient for the first pass; ``None`` fits on all train. The panel store (the
+    per-protein npz for the attention-head channel) is heavy and only written when ``write_panels`` —
+    the gene-ranking run skips it.
+    """
     label_map, train_ids, validate_ids, evaluate_ids = load_splits(split_csv, drug)
     all_ids = [*train_ids, *validate_ids, *evaluate_ids]
-    train_set = set(train_ids)
+    fit_train_ids = subsample_balanced(train_ids, label_map, max_n=max_train_genomes, seed=sample_seed)
 
-    core_genes, prevalence_table = discover_core_genes(train_ids, parquet_dir, min_prevalence=min_prevalence)
-    gene_matrices = assemble_gene_matrices(train_ids, core_genes, esm_dir, parquet_dir)
+    core_genes, prevalence_table, annotation = discover_core_genes(
+        fit_train_ids, parquet_dir, min_prevalence=min_prevalence
+    )
+    gene_matrices = assemble_gene_matrices(fit_train_ids, core_genes, esm_dir, parquet_dir)
     fitted = fit_per_gene(gene_matrices, label_map, n_folds=n_folds, seed=seed, n_jobs=n_jobs)
     filtered_genes = {g for g, f in fitted.items() if f["auroc"] > auroc_filter}
     logger.info("Filter (AUROC > %.2f): %d of %d fitted genes kept", auroc_filter, len(filtered_genes), len(fitted))
 
-    filtered_dir = out_dir / "filtered"
-    unfiltered_dir = out_dir / "unfiltered"
-    for d in (filtered_dir, unfiltered_dir):
-        d.mkdir(parents=True, exist_ok=True)
+    n_written = 0
+    if write_panels:
+        filtered_dir = out_dir / "filtered"
+        unfiltered_dir = out_dir / "unfiltered"
+        for d in (filtered_dir, unfiltered_dir):
+            d.mkdir(parents=True, exist_ok=True)
+        n_written = build_panels(
+            all_ids, fitted, filtered_genes, esm_dir, parquet_dir,
+            train_set=set(fit_train_ids), filtered_dir=filtered_dir, unfiltered_dir=unfiltered_dir,
+        )
 
-    n_written = build_panels(
-        all_ids, fitted, filtered_genes, esm_dir, parquet_dir,
-        train_set=train_set, filtered_dir=filtered_dir, unfiltered_dir=unfiltered_dir,
-    )
-
-    # Per-gene AUROC table (the filter evidence + a reporting artefact).
+    # Per-gene AUROC table (the filter evidence) + the wide gene×drug ranking table + prevalence.
     auroc_rows = [
         {"gene": g, "auroc": f["auroc"], "n_train": f["n_train"], "n_pos": f["n_pos"],
          "kept_filtered": g in filtered_genes}
         for g, f in sorted(fitted.items(), key=lambda kv: kv[1]["auroc"], reverse=True)
     ]
     pd.DataFrame(auroc_rows).to_csv(out_dir / "gene_lr_auroc.csv", index=False)
-    prevalence_table.to_csv(out_dir / "core_gene_prevalence.csv", index=False)
+    write_gene_drug_table(
+        fitted, prevalence_table, annotation,
+        drug=drug, filtered_genes=filtered_genes, out_path=out_dir / f"per_gene_lr_{drug}.csv",
+    )
+    prevalence_table.to_csv(out_dir / "gene_prevalence.csv", index=False)
 
     summary = {
         "task": "snp_embeddings",
@@ -419,9 +502,13 @@ def run(
         "drug": drug,
         "split_csv": str(split_csv),
         "n_train": len(train_ids),
+        "n_train_fit": len(fit_train_ids),
+        "max_train_genomes": max_train_genomes,
+        "sample_seed": sample_seed,
         "n_validate": len(validate_ids),
         "n_evaluate": len(evaluate_ids),
         "n_genomes_written": n_written,
+        "wrote_panels": write_panels,
         "min_prevalence": min_prevalence,
         "n_core_genes": len(core_genes),
         "n_fitted_genes": len(fitted),
@@ -454,13 +541,20 @@ def main() -> None:
     parser.add_argument("--out-dir", type=Path, required=True,
                         help="Output base dir; writes filtered/ and unfiltered/ panel stores + tables.")
     parser.add_argument("--min-prevalence", type=float, default=0.95,
-                        help="Core-gene single-copy prevalence threshold over train genomes (default 0.95).")
+                        help="Single-copy prevalence threshold over train (0.95 = core; 0.10 includes the accessory band).")
     parser.add_argument("--auroc-filter", type=float, default=0.8,
                         help="Keep genes with out-of-fold train AUROC above this in the filtered store (default 0.8).")
     parser.add_argument("--n-folds", type=int, default=5, help="Out-of-fold cross-fitting folds within train.")
     parser.add_argument("--seed", type=int, default=1, help="Fold-assignment seed.")
     parser.add_argument("--n-jobs", type=int, default=-1,
                         help="Worker processes for the per-gene fits (default -1 = all cores; set to cpus-per-task).")
+    parser.add_argument("--max-train-genomes", type=int, default=None,
+                        help="Fit on a random, class-balanced subsample of this many train genomes (default: all). "
+                             "Expedient first pass; population correction deferred.")
+    parser.add_argument("--sample-seed", type=int, default=1, help="Seed for the train subsample (default 1).")
+    parser.add_argument("--write-panels", action="store_true",
+                        help="Also write the per-protein filtered/unfiltered panel store (heavy; for the att-head "
+                             "channel). Off by default — the gene-ranking run only needs the wide gene×drug table.")
     args = parser.parse_args()
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -475,6 +569,9 @@ def main() -> None:
         n_folds=args.n_folds,
         seed=args.seed,
         n_jobs=args.n_jobs,
+        max_train_genomes=args.max_train_genomes,
+        sample_seed=args.sample_seed,
+        write_panels=args.write_panels,
     )
 
 
