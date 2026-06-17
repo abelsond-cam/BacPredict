@@ -1,33 +1,36 @@
-"""E1 — Concat probe: does *injecting* the ESM-C rpoB vector bypass the broken head?
+"""Concat probe: ESM-C gene-protein vector ⊕ Bacformer genome-mean → logistic regression.
 
-The head-pool diagnostics showed the prediction head's learned pool never routes to rpoB — it
-either hyper-concentrates on lineage markers (confound) or collapses to a uniform mean (the
-deployable e2e). The rpoB signal is *present* upstream (frozen ESM-C mean-pooled rpoB ~0.971;
-frozen Bacformer genome-mean ~0.788). This probe skips the head entirely and asks the simplest
-deployable question: **concatenate the ESM-C rpoB 960-vector to the frozen Bacformer genome-mean
-960-vector (→ 1,920-d) and fit a plain logistic regression.** If concat ≈ the ESM-rpoB ceiling, a
-"top-K causal gene ⊕ genome mean" feature vector is a viable read-out that needs no attention head.
+The head-pool diagnostics showed the prediction head's learned pool never routes to the causal gene
+(*rpoB* for rifampicin) — it either hyper-concentrates on lineage markers or collapses to a uniform
+mean. The gene signal is *present* upstream (frozen ESM-C mean-pooled rpoB ~0.971; frozen Bacformer
+genome-mean ~0.788). This probe skips the head entirely and asks the simplest deployable question:
+**concatenate one gene's ESM-C 960-vector to the Bacformer genome-mean 960-vector (→ 1,920-d) and fit
+a plain logistic regression.** If concat ≈ the ESM-gene ceiling, a "causal gene ⊕ genome mean" feature
+vector is a viable read-out that needs no attention head.
+
+Two axes, both parameters (default = the rifampicin/rpoB setup that hit 0.975):
+
+- **gene** (``--gene``, default ``rpoB``) — any single-copy gene, located generically via
+  :func:`snp_embeddings.locate_gene.build_gene_presence_table` (no rpoB-specific genotyping).
+- **Bacformer mean variant** — **frozen** base model (default) or **fine-tuned** backbone of a deployed
+  AMR checkpoint (``--bacformer-checkpoint``; the ~0.905 mean-pool model — A.1.i).
 
 Three steps, all scored on the **same canonical evaluate fold** (``binary_ast_with_split.csv`` via
 :func:`snp_embeddings.snp_vs_esm_prediction.resolve_clean_splits`) over the **same sample
 intersection**, so the numbers are directly comparable:
 
-================================  ================================================  ======
-key                               features                                          ~AUROC
-================================  ================================================  ======
-``esm_rpob_only``                 frozen ESM-C mean-pooled rpoB 960-vector          ~0.971
-``bacformer_mean_only``           frozen Bacformer genome-mean 960-vector           ~0.788
-``concat_esm_rpob_plus_mean``     the two concatenated (1,920-d)                     the test
-================================  ================================================  ======
+============================  ===============================================  ======
+key                           features                                         ~AUROC
+============================  ===============================================  ======
+``esm_gene_only``             ESM-C mean-pooled gene 960-vector                ~0.971 (rpoB)
+``bacformer_mean_only``       Bacformer genome-mean 960-vector                 ~0.788 frozen / ~0.905 FT
+``concat_esm_gene_plus_mean`` the two concatenated (1,920-d)                   the test
+============================  ===============================================  ======
 
-The two ablations are the **harness sanity check**: ``esm_rpob_only`` must reproduce ~0.971 and
-``bacformer_mean_only`` ~0.79 (the localization ladder) before the concat number is trusted.
-
-Reuse only — no new science:
-``resolve_clean_splits`` + ``load_pooled_rpob_vectors`` + ``fit_score_step`` (from
-:mod:`snp_embeddings.snp_vs_esm_prediction`), ``build_genotype_table`` (rpoB flat index, single-copy
-QC) and ``compute_bacformer_vectors`` (frozen genome mean). The Bacformer mean is GPU; pass a
-pre-computed ``--bacformer-vectors`` NPZ (``mean_vectors``) to run the whole probe on CPU.
+For rpoB the two ablations are a **harness sanity check** against the localization ladder (esm ~0.971,
+mean ~0.788 frozen / ~0.905 FT); for other genes there is no ladder target, so the absolute sanity is
+skipped. Pass a pre-computed ``--bacformer-vectors`` NPZ (``mean_vectors``) to run the whole probe on
+CPU (and the ``--kfold`` significance pass).
 """
 
 from __future__ import annotations
@@ -42,24 +45,22 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from snp_embeddings.frozen_bacformer_rpob_vectors import (
-    compute_bacformer_vectors,
-    compute_finetuned_bacformer_vectors,
-)
+from snp_embeddings.bacformer_genome_vectors import compute_bacformer_vectors
 from snp_embeddings.kfold_probe import FeatureSpec, run_kfold_probe, summarise_kfold
-from snp_embeddings.rpob_genotype import RIFAMPIN_COLUMN, build_genotype_table, load_reference
+from snp_embeddings.locate_gene import build_gene_presence_table
+from snp_embeddings.rpob_genotype import RIFAMPIN_COLUMN
 from snp_embeddings.snp_vs_esm_prediction import (
     fit_score_step,
     load_bacformer_vectors,
-    load_pooled_rpob_vectors,
+    load_pooled_gene_vectors,
     resolve_clean_splits,
 )
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# The esm-rpoB ablation must reproduce ~0.971 before the concat is believed (full run only); the
-# bacformer_mean_only target depends on the variant (frozen ~0.788, fine-tuned ~0.905) — set per run.
+# rpoB-only ladder targets the ablations must reproduce before the concat is believed (full run only).
+# The esm-gene target (0.971) and the mean target (0.788 frozen / 0.905 FT) are rifampicin/rpoB-specific.
 ESM_RPOB_SANITY_TARGET = 0.971
 
 
@@ -77,37 +78,34 @@ def _slice_splits(
 
 
 def _bacformer_mean_df(
-    genotype: pd.DataFrame,
+    gene_table: pd.DataFrame,
     esm_store_dir: Path,
     *,
     device: str,
     bacformer_vectors: Path | None,
     save_bacformer_vectors: Path | None,
+    mode: str,
     bacformer_checkpoint: Path | None,
 ) -> pd.DataFrame:
     """Bacformer genome-mean per sample — loaded from an NPZ (CPU) or computed on GPU.
 
-    With ``--bacformer-vectors`` the whole probe is CPU-only (the NPZ may hold frozen *or* fine-tuned
-    means — say which with ``--mean-is-finetuned``). Otherwise runs a Bacformer forward over the
-    genotyped genomes: the **fine-tuned** backbone of ``bacformer_checkpoint`` (A.1.i) when given, else
-    the **frozen** base model. Optionally caches ``{sample_ids, rpob_vectors, mean_vectors}`` to
-    ``save_bacformer_vectors`` for reuse (e.g. so the k-fold reruns are CPU-only).
+    With ``--bacformer-vectors`` the whole probe is CPU-only (the NPZ may hold a frozen *or* fine-tuned
+    mean — say which with ``--mean-is-finetuned``). Otherwise runs a Bacformer forward over the genomes:
+    the **fine-tuned** backbone of ``bacformer_checkpoint`` when ``mode == "finetuned"`` (A.1.i), else
+    the **frozen** base model. The genome mean is gene-agnostic. Optionally caches ``{sample_ids,
+    gene_token_vectors, mean_vectors}`` to ``save_bacformer_vectors`` (so the k-fold reruns are CPU-only).
     """
     if bacformer_vectors is not None:
         logger.info("Loading Bacformer genome-mean vectors from %s", bacformer_vectors)
         return load_bacformer_vectors(bacformer_vectors, key="mean_vectors")
-    variant = "fine-tuned" if bacformer_checkpoint else "frozen"
-    logger.info("Computing %s Bacformer genome-mean over %d genomes on %s", variant, len(genotype), device)
-    if bacformer_checkpoint is not None:
-        _rpob_mat, mean_mat, kept = compute_finetuned_bacformer_vectors(
-            genotype, esm_store_dir, checkpoint=bacformer_checkpoint, device=device
-        )
-    else:
-        _rpob_mat, mean_mat, kept = compute_bacformer_vectors(genotype, esm_store_dir, device=device)
+    logger.info("Computing %s Bacformer genome-mean over %d genomes on %s", mode, len(gene_table), device)
+    token_mat, mean_mat, kept = compute_bacformer_vectors(
+        gene_table, esm_store_dir, device=device, mode=mode, checkpoint=bacformer_checkpoint
+    )
     if save_bacformer_vectors is not None:
         save_bacformer_vectors.parent.mkdir(parents=True, exist_ok=True)
-        np.savez(save_bacformer_vectors, sample_ids=np.array(kept), rpob_vectors=_rpob_mat, mean_vectors=mean_mat)
-        logger.info("Cached %d Bacformer rpoB-token + genome-mean vectors to %s", len(kept), save_bacformer_vectors)
+        np.savez(save_bacformer_vectors, sample_ids=np.array(kept), gene_token_vectors=token_mat, mean_vectors=mean_mat)
+        logger.info("Cached %d Bacformer gene-token + genome-mean vectors to %s", len(kept), save_bacformer_vectors)
     return pd.DataFrame(mean_mat, index=pd.Index(kept, name="Sample"))
 
 
@@ -117,6 +115,8 @@ def run_concat_probe(
     esm_store_dir: Path,
     *,
     drug: str,
+    gene: str,
+    gene_aliases: tuple[str, ...],
     device: str,
     bacformer_vectors: Path | None,
     save_bacformer_vectors: Path | None,
@@ -127,14 +127,17 @@ def run_concat_probe(
     max_samples: int | None,
     kfold: dict | None = None,
 ) -> dict:
-    """Run the three steps (ESM-rpoB, Bacformer-mean, concat) on the canonical eval fold.
+    """Run the three steps (ESM-gene, Bacformer-mean, concat) on the canonical eval fold.
 
     When ``kfold`` is given (``{n_folds, seeds, evaluate_seed, evaluate_fraction}``) the same three
     aligned frames are *additionally* routed through the k-fold × m-seed harness (mean ± sd per frame
     + paired AUROC deltas), so one run yields both the canonical-holdout headline and the significance
     of the small top-of-ladder deltas. The k-fold block uses its own fixed holdout, not the canonical one.
     """
-    reference = load_reference()
+    # The mean is fine-tuned (A.1.i) when computed from a checkpoint, or flagged so for a loaded FT NPZ.
+    finetuned = bacformer_checkpoint is not None or mean_is_finetuned
+    mode = "finetuned" if bacformer_checkpoint is not None else "frozen"
+
     label_map, train_ids, validate_ids, evaluate_ids, split_info = resolve_clean_splits(ast_sheet_path, drug)
     if max_samples is not None:
         train_ids, validate_ids, evaluate_ids = _slice_splits(train_ids, validate_ids, evaluate_ids, max_samples)
@@ -142,19 +145,19 @@ def run_concat_probe(
         label_map = {s: v for s, v in label_map.items() if s in keep}
     all_ids = [*train_ids, *validate_ids, *evaluate_ids]
 
-    logger.info("Genotyping %d labelled samples (single-copy rpoB only)", len(all_ids))
-    genotype = build_genotype_table(all_ids, parquet_dir, reference, qc_log_path=qc_log_path)
-    logger.info("Genotyped %d single-copy genomes", len(genotype))
+    logger.info("Locating single-copy %s in %d labelled samples", gene, len(all_ids))
+    gene_table = build_gene_presence_table(all_ids, parquet_dir, gene, aliases=gene_aliases, qc_log_path=qc_log_path)
+    logger.info("Found %d single-copy %s genomes", len(gene_table), gene)
 
-    esm_df = load_pooled_rpob_vectors(genotype, esm_store_dir, pool_workers=pool_workers)
+    esm_df = load_pooled_gene_vectors(gene_table, esm_store_dir, flat_index_col="gene_flat_index", pool_workers=pool_workers)
     if esm_df.empty:
-        raise RuntimeError("No ESM-C rpoB vectors recovered — check esm_store_dir / .pt suffix.")
-    esm_df.columns = [f"esm_rpob_{i}" for i in range(esm_df.shape[1])]
+        raise RuntimeError(f"No ESM-C {gene} vectors recovered — check esm_store_dir / .pt suffix.")
+    esm_df.columns = [f"esm_gene_{i}" for i in range(esm_df.shape[1])]
 
     mean_df = _bacformer_mean_df(
-        genotype, esm_store_dir, device=device,
+        gene_table, esm_store_dir, device=device,
         bacformer_vectors=bacformer_vectors, save_bacformer_vectors=save_bacformer_vectors,
-        bacformer_checkpoint=bacformer_checkpoint,
+        mode=mode, bacformer_checkpoint=bacformer_checkpoint,
     )
     if mean_df.empty:
         raise RuntimeError("No Bacformer genome-mean vectors recovered.")
@@ -163,23 +166,22 @@ def run_concat_probe(
     # One common sample set so the three steps' evaluate subsets are identical → comparable AUROCs.
     common = sorted(set(esm_df.index) & set(mean_df.index))
     if not common:
-        raise RuntimeError("No samples shared between the ESM-rpoB and Bacformer-mean feature frames.")
+        raise RuntimeError("No samples shared between the ESM-gene and Bacformer-mean feature frames.")
     esm_c, mean_c = esm_df.loc[common], mean_df.loc[common]
     concat_c = pd.concat([esm_c, mean_c], axis=1)
     logger.info("Feature frames aligned on %d common samples (concat dim=%d)", len(common), concat_c.shape[1])
 
     features = {
-        "esm_rpob_only": esm_c,
+        "esm_gene_only": esm_c,
         "bacformer_mean_only": mean_c,
-        "concat_esm_rpob_plus_mean": concat_c,
+        "concat_esm_gene_plus_mean": concat_c,
     }
-    # The mean is fine-tuned (A.1.i) when computed from a checkpoint, or flagged so for a loaded FT NPZ.
-    finetuned = bacformer_checkpoint is not None or mean_is_finetuned
     payload: dict = {
-        "schema_version": "1.1",
+        "schema_version": "2.0",
         "task": "snp_embeddings",
-        "analysis": "eval_concat_rpob_mean",
+        "analysis": "concatenate_bacformer_genome_esm_protein_emb",
         "label_column": drug,
+        "gene": gene,
         "sheet_path": str(ast_sheet_path),
         "esm_store_dir": str(esm_store_dir),
         "bacformer_vectors": str(bacformer_vectors) if bacformer_vectors else None,
@@ -187,7 +189,7 @@ def run_concat_probe(
         "mean_variant": "finetuned" if finetuned else "frozen",
         "split": split_info,
         "n_common_samples": len(common),
-        "rpob_copy_qc": {"n_single_copy_genotyped": int(len(genotype)), "qc_log": str(qc_log_path)},
+        "gene_presence_qc": {"n_single_copy": int(len(gene_table)), "qc_log": str(qc_log_path)},
         "steps": {},
     }
     for key, feat_df in features.items():
@@ -203,7 +205,9 @@ def run_concat_probe(
             )
 
     mean_target = 0.905 if finetuned else 0.788
-    payload["headline"] = _build_headline(payload["steps"], smoke=max_samples is not None, mean_target=mean_target)
+    payload["headline"] = _build_headline(
+        payload["steps"], smoke=max_samples is not None, mean_target=mean_target, gene=gene
+    )
 
     if kfold is not None:
         specs = {key: FeatureSpec(feat_df, kind="numeric", standardise=True) for key, feat_df in features.items()}
@@ -221,21 +225,21 @@ def run_concat_probe(
     return payload
 
 
-def _build_headline(steps: dict, *, smoke: bool, mean_target: float) -> dict:
-    """Concat AUROC, the two ablation AUROCs, the lift over mean-only, and the sanity verdict.
+def _build_headline(steps: dict, *, smoke: bool, mean_target: float, gene: str) -> dict:
+    """Concat AUROC, the two ablation AUROCs, the lift over mean-only, and (for rpoB) the sanity verdict.
 
     ``mean_target`` is the expected ``bacformer_mean_only`` AUROC for the run's variant (~0.788 frozen,
-    ~0.905 fine-tuned) — the localization-ladder rung the ablation must reproduce for the harness to be trusted.
+    ~0.905 fine-tuned). The absolute ablation sanity is rifampicin/rpoB-specific, so it is only emitted
+    when ``gene == "rpoB"`` (and never on a smoke — n≈10 AUROC is noise).
     """
     auroc = {k: v["metrics"]["auroc"] for k, v in steps.items() if "metrics" in v}
     headline: dict = {"auroc": auroc}
-    if "concat_esm_rpob_plus_mean" in auroc and "bacformer_mean_only" in auroc:
-        headline["concat_minus_mean"] = float(auroc["concat_esm_rpob_plus_mean"] - auroc["bacformer_mean_only"])
-    if "concat_esm_rpob_plus_mean" in auroc and "esm_rpob_only" in auroc:
-        headline["concat_minus_esm_rpob"] = float(auroc["concat_esm_rpob_plus_mean"] - auroc["esm_rpob_only"])
-    # Sanity: do the ablations reproduce the localization ladder? (Skipped on a smoke — n=10 AUROC is noise.)
-    if not smoke:
-        targets = {"esm_rpob_only": ESM_RPOB_SANITY_TARGET, "bacformer_mean_only": mean_target}
+    if "concat_esm_gene_plus_mean" in auroc and "bacformer_mean_only" in auroc:
+        headline["concat_minus_mean"] = float(auroc["concat_esm_gene_plus_mean"] - auroc["bacformer_mean_only"])
+    if "concat_esm_gene_plus_mean" in auroc and "esm_gene_only" in auroc:
+        headline["concat_minus_esm_gene"] = float(auroc["concat_esm_gene_plus_mean"] - auroc["esm_gene_only"])
+    if not smoke and gene.lower() == "rpob":
+        targets = {"esm_gene_only": ESM_RPOB_SANITY_TARGET, "bacformer_mean_only": mean_target}
         sanity = {
             k: {"observed": auroc[k], "target": t, "abs_diff": abs(auroc[k] - t), "ok": abs(auroc[k] - t) <= 0.02}
             for k, t in targets.items() if k in auroc
@@ -288,20 +292,23 @@ def main() -> None:
     parser.add_argument("--esm-store-dir", type=Path, required=True, help="Dir of *_esm_embeddings.pt.")
     parser.add_argument("--output-json", type=Path, required=True, help="Where to write the results JSON.")
     parser.add_argument("--drug", type=str, default=RIFAMPIN_COLUMN, help="Phenotype column (default rifampin).")
+    parser.add_argument("--gene", type=str, default="rpoB",
+                        help="Gene whose ESM-C vector to concat with the Bacformer mean (default rpoB).")
+    parser.add_argument("--gene-aliases", type=str, nargs="*", default=[], help="Alternative accepted gene symbols.")
     parser.add_argument("--device", type=str, default="cuda:0", help="Torch device for the Bacformer mean (default cuda:0).")
     parser.add_argument("--bacformer-vectors", type=Path, default=None,
                         help="Pre-computed NPZ (mean_vectors) — supply to run the whole probe on CPU.")
     parser.add_argument("--save-bacformer-vectors", type=Path, default=None,
-                        help="If computing on GPU, also cache the {rpob,mean}_vectors NPZ here for reuse.")
+                        help="If computing on GPU, also cache the {gene_token,mean}_vectors NPZ here for reuse.")
     parser.add_argument("--bacformer-checkpoint", type=Path, default=None,
                         help="A.1.i: compute the FT genome-mean from this AMR checkpoint (the 0.905 model) "
                              "instead of the frozen base. GPU; mutually exclusive with --bacformer-vectors.")
     parser.add_argument("--mean-is-finetuned", action="store_true",
                         help="Mark a loaded --bacformer-vectors NPZ as fine-tuned (sanity target 0.905 not 0.788).")
-    parser.add_argument("--qc-log", type=Path, default=Path("rpob_copy_qc.log"),
-                        help="Where to write the rpoB-copy QC log (default: ./rpob_copy_qc.log).")
+    parser.add_argument("--qc-log", type=Path, default=Path("gene_presence_qc.log"),
+                        help="Where to write the gene-presence QC log (default: ./gene_presence_qc.log).")
     parser.add_argument("--pool-workers", type=int, default=1,
-                        help="Parallel workers for the pooled ESM-C rpoB reads (default 1 = sequential).")
+                        help="Parallel workers for the pooled ESM-C gene reads (default 1 = sequential).")
     parser.add_argument("--max-samples", type=int, default=None,
                         help="Cap the samples (quick smoke; default: all). On a smoke the ablation sanity is skipped.")
     parser.add_argument("--kfold", type=int, default=None, metavar="N",
@@ -326,7 +333,7 @@ def main() -> None:
 
     payload = run_concat_probe(
         args.ast_sheet_path, args.parquet_dir, args.esm_store_dir,
-        drug=args.drug, device=args.device,
+        drug=args.drug, gene=args.gene, gene_aliases=tuple(args.gene_aliases), device=args.device,
         bacformer_vectors=args.bacformer_vectors, save_bacformer_vectors=args.save_bacformer_vectors,
         bacformer_checkpoint=args.bacformer_checkpoint, mean_is_finetuned=args.mean_is_finetuned,
         qc_log_path=args.qc_log, pool_workers=args.pool_workers, max_samples=args.max_samples,

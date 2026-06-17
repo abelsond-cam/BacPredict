@@ -48,7 +48,7 @@ OUT_JSON=$OUT_DIR/concat_rpob_mean_${SLURM_JOB_ID}.json
 QC_LOG=$OUT_DIR/rpob_copy_qc_${SLURM_JOB_ID}.log
 SAVE_NPZ=$OUT_DIR/frozen_bacformer_vectors_${SLURM_JOB_ID}.npz   # cache rpoB-token + mean for reuse
 
-# Pre-computed frozen-Bacformer mean-vectors NPZ (from frozen_bacformer_rpob_vectors.py). If set
+# Pre-computed frozen-Bacformer mean-vectors NPZ (from bacformer_genome_vectors.py). If set
 # and present, reuse it (CPU-only — also switch the directives above to icelake) instead of the GPU
 # forward; leave empty to compute + cache to SAVE_NPZ.
 BAC_NPZ=""
@@ -71,7 +71,7 @@ else
     echo "Computing frozen-Bacformer mean on GPU; caching to $SAVE_NPZ"
 fi
 
-uv run python src/snp_embeddings/eval_concat_rpob_mean.py \
+uv run python src/snp_embeddings/concatenate_bacformer_genome_esm_protein_emb.py \
     --ast-sheet-path "$SHEET" \
     --parquet-dir "$PARQUET_DIR" \
     --esm-store-dir "$ESM_STORE_DIR" \

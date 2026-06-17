@@ -66,7 +66,7 @@ echo "FT NPZ cache: $SAVE_NPZ"
 echo "Job ID:      $SLURM_JOB_ID"
 echo "========================================================================"
 
-uv run python src/snp_embeddings/eval_concat_rpob_mean.py \
+uv run python src/snp_embeddings/concatenate_bacformer_genome_esm_protein_emb.py \
     --ast-sheet-path "$SHEET" \
     --parquet-dir "$PARQUET_DIR" \
     --esm-store-dir "$ESM_STORE_DIR" \
@@ -81,7 +81,7 @@ uv run python src/snp_embeddings/eval_concat_rpob_mean.py \
 echo "A.1.i FT-mean concat finished — JSON at $OUT_JSON"
 echo
 echo "Follow-up (CPU, no GPU) — k-fold × m-seed significance reusing the cached FT NPZ:"
-echo "  uv run python src/snp_embeddings/eval_concat_rpob_mean.py \\"
+echo "  uv run python src/snp_embeddings/concatenate_bacformer_genome_esm_protein_emb.py \\"
 echo "      --ast-sheet-path $SHEET --parquet-dir $PARQUET_DIR --esm-store-dir $ESM_STORE_DIR \\"
 echo "      --output-json $OUT_DIR/concat_ft_mean_kfold.json --drug rifampin --device cpu \\"
 echo "      --bacformer-vectors $SAVE_NPZ --mean-is-finetuned --kfold 5 --seeds 1 2 3 \\"

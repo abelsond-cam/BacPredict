@@ -38,7 +38,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from snp_embeddings.frozen_bacformer_rpob_vectors import _forward_inputs
+from snp_embeddings.bacformer_genome_vectors import _forward_inputs
 from snp_embeddings.head_pool_attention_probe import load_attn_pool_checkpoint
 from snp_embeddings.snp_vs_esm_prediction import resolve_clean_splits
 from tl.train.metrics import (

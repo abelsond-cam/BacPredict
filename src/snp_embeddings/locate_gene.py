@@ -166,3 +166,77 @@ def locate_gene(
         if r["gene_name"] is not None and str(r["gene_name"]).lower() in wanted
     ]
     return hits
+
+
+def build_gene_presence_table(
+    sample_ids: list[str],
+    parquet_dir: str | Path,
+    gene: str,
+    *,
+    aliases: tuple[str, ...] = (),
+    parquet_suffix: str = "_protein_sequences.parquet",
+    qc_log_path: str | Path | None = None,
+) -> pd.DataFrame:
+    """Per-genome single-copy flat index of ``gene`` — the generic, any-gene presence table.
+
+    The gene-agnostic analogue of :func:`snp_embeddings.rpob_genotype.build_genotype_table`, without
+    the rpoB-specific RRDR allele calling: for each sample, flatten its proteins and keep the genomes
+    where ``gene`` (case-insensitive, plus ``aliases``) appears **exactly once** (single-copy). Genomes
+    where the gene is absent or multi-copy are skipped and counted (optionally logged to
+    ``qc_log_path``). This is the substrate for any "ESM gene vector ⊕ Bacformer genome mean" concat.
+
+    Parameters
+    ----------
+    sample_ids
+        Sample IDs to scan (``{sample}{parquet_suffix}`` under ``parquet_dir``).
+    parquet_dir, parquet_suffix
+        Location + suffix of the ``*_protein_sequences.parquet`` files.
+    gene, aliases
+        Target gene symbol (matched case-insensitively) and any accepted alternative symbols.
+    qc_log_path
+        If given, append a one-line skip summary (missing / absent / multi-copy counts).
+
+    Returns
+    -------
+    pandas.DataFrame
+        Indexed by ``Sample`` with ``gene_flat_index`` (index into the genome's ESM-C ``PROT_EMB``
+        rows), ``n_proteins`` (flattened protein count — the alignment guard), ``gene_name`` (matched
+        symbol), and ``annotation`` (the matched protein's ``protein_name`` / product). Empty if no
+        single-copy genome is found.
+    """
+    parquet_dir = Path(parquet_dir)
+    wanted = {gene.lower(), *(a.lower() for a in aliases)}
+    rows: list[dict] = []
+    skips = {"missing_parquet": 0, "absent": 0, "multi_copy": 0}
+    for sid in sample_ids:
+        pq = parquet_dir / f"{sid}{parquet_suffix}"
+        if not pq.exists():
+            skips["missing_parquet"] += 1
+            continue
+        records = flatten_proteins(pd.read_parquet(pq))
+        hits = [r for r in records if r["gene_name"] is not None and str(r["gene_name"]).lower() in wanted]
+        if not hits:
+            skips["absent"] += 1
+            continue
+        if len(hits) > 1:
+            skips["multi_copy"] += 1
+            continue
+        hit = hits[0]
+        rows.append({
+            "Sample": str(sid),
+            "gene_flat_index": int(hit["flat_index"]),
+            "n_proteins": len(records),
+            "gene_name": hit["gene_name"],
+            "annotation": hit["protein_name"],
+        })
+
+    n_kept = len(rows)
+    logger.info(
+        "gene presence (%s): %d single-copy of %d samples (skipped %s)", gene, n_kept, len(sample_ids), skips
+    )
+    if qc_log_path is not None:
+        with Path(qc_log_path).open("a") as fh:
+            fh.write(f"gene={gene} single_copy={n_kept} of={len(sample_ids)} skips={skips}\n")
+    if not rows:
+        return pd.DataFrame(columns=["gene_flat_index", "n_proteins", "gene_name", "annotation"]).rename_axis("Sample")
+    return pd.DataFrame(rows).set_index("Sample")

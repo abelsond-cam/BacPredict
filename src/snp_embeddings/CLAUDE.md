@@ -87,10 +87,11 @@ lineage source, not on the critical path.
 
 | File | Role |
 |---|---|
-| `locate_gene.py` | gene ↔ flat embedding index (`flatten_proteins`, `locate_gene`) |
-| `rpob_genotype.py` | RRDR allele from the parquet CDS + rpoB-copy QC + provenance docstring |
-| `snp_vs_esm_prediction.py` | the linear-probe ladder (Steps 1/2/3a/2b) on `resolve_holdouts` |
-| `frozen_bacformer_rpob_vectors.py` | frozen Bacformer *rpoB* token + genome-mean vectors (GPU) |
+| `locate_gene.py` | gene ↔ flat embedding index (`flatten_proteins`, `locate_gene`, `build_gene_presence_table` = generic single-copy gene → flat index + n_proteins + annotation) |
+| `rpob_genotype.py` | RRDR allele from the parquet CDS + rpoB-copy QC + provenance docstring (rpoB-specific) |
+| `snp_vs_esm_prediction.py` | the linear-probe ladder (Steps 1/2/3a/2b) on `resolve_holdouts`; `load_pooled_gene_vectors` (any gene), `load_bacformer_vectors` |
+| `bacformer_genome_vectors.py` | Bacformer gene token + genome-mean vectors, **frozen or fine-tuned** (`compute_bacformer_vectors(mode=)`); GPU |
+| `concatenate_bacformer_genome_esm_protein_emb.py` | concat probe: ESM-C gene vector ⊕ Bacformer genome-mean → LR; `--gene` (default rpoB), frozen/FT mean, optional `--kfold` (GPU/CPU) |
 | `geometry_probe.py` | per-residue WT→mutant geometry (`d_site`/`d_window`/`d_pool` by layer), CPU |
 | `llr_distribution_probe.py` | per-residue + per-protein surprisal (`protein_surprisal_stats`), GPU |
 | `unmasked_surprisal_scan.py` | genome-wide scan: `--mode manifest` (CPU) / `--mode scan` (GPU array) |

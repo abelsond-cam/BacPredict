@@ -43,7 +43,7 @@ panel S450L / H445Y / D435V / S441L.
 |---|---|---|---|
 | One-hot RRDR genotype | [`snp_vs_esm_prediction.py`](../snp_vs_esm_prediction.py) | CPU | the SNP **ceiling** |
 | Frozen pooled ESM-C *rpoB* vector | [`snp_vs_esm_prediction.py`](../snp_vs_esm_prediction.py) | CPU | loss at the residue→protein mean |
-| Frozen Bacformer *rpoB* token | [`frozen_bacformer_rpob_vectors.py`](../frozen_bacformer_rpob_vectors.py) | GPU | signal in the contextualised token |
+| Frozen Bacformer *rpoB* token | [`bacformer_genome_vectors.py`](../bacformer_genome_vectors.py) | GPU | signal in the contextualised token |
 | Frozen Bacformer genome mean | (genome-mean probe) | GPU | loss at the protein→genome mean — **the deployed input** |
 | Masked-marginal / unmasked surprisal | [`llr_distribution_probe.py`](../llr_distribution_probe.py) | GPU | is the residue in ESM-C *at all*, and where |
 

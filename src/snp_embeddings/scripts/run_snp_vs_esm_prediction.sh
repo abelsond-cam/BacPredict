@@ -86,7 +86,7 @@ echo "SNP-vs-ESM probes finished — JSON at $OUT_JSON"
 
 # --- GPU variant (Step 3a masked-marginal LLR + Step 2b Bacformer token) -------
 # Step 3a re-runs ESM-C as a masked LM; Step 2b needs a precomputed Bacformer
-# rpoB-token NPZ (build it first with frozen_bacformer_rpob_vectors.py). Switch
+# rpoB-token NPZ (build it first with bacformer_genome_vectors.py). Switch
 # the directives to:
 #   #SBATCH --partition=ampere
 #   #SBATCH --account=FLOTO-SL2-GPU
@@ -94,7 +94,7 @@ echo "SNP-vs-ESM probes finished — JSON at $OUT_JSON"
 #   #SBATCH --cpus-per-task=8
 #   #SBATCH --mem=128G
 #   #SBATCH --time=08:00:00
-# and run (BAC_NPZ = output of frozen_bacformer_rpob_vectors.py):
+# and run (BAC_NPZ = output of bacformer_genome_vectors.py):
 #
 #   module load cuda/12.4 cudnn/8.9_cuda-12.4
 #   uv run python src/snp_embeddings/snp_vs_esm_prediction.py \

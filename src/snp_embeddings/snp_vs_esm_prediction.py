@@ -205,30 +205,32 @@ def _read_pooled_one(
     return sample_id, prot_emb[raw].float().clone().numpy(), None
 
 
-def load_pooled_rpob_vectors(
-    genotype: pd.DataFrame,
+def load_pooled_gene_vectors(
+    gene_table: pd.DataFrame,
     esm_store_dir: Path,
     *,
+    flat_index_col: str = "gene_flat_index",
     pt_suffix: str = "_esm_embeddings.pt",
     pool_workers: int = 1,
 ) -> pd.DataFrame:
-    """Pull each sample's pooled ESM-C rpoB 960-vector out of the embedding store.
+    """Pull each sample's pooled ESM-C **gene** 960-vector out of the embedding store.
 
-    Lazy by construction — each ``.pt`` is mmap'd and only the single rpoB row is
-    materialised. Returns a DataFrame of the recovered vectors indexed by Sample
-    (samples whose ``.pt`` is missing or whose rpoB index fails the guards are
-    dropped). ``pool_workers > 1`` reads in parallel with a
-    ``multiprocessing.Pool`` (not a DataLoader — that exhausts file descriptors
-    over tens of thousands of single-row reads).
+    Generic over the gene: ``flat_index_col`` names the column holding the gene's flat protein index
+    (``"gene_flat_index"`` from :func:`snp_embeddings.locate_gene.build_gene_presence_table`, or
+    ``"rpob_flat_index"`` from the rpoB genotype table). Lazy by construction — each ``.pt`` is mmap'd
+    and only the single gene row is materialised. Returns a DataFrame of the recovered vectors indexed
+    by Sample (samples whose ``.pt`` is missing or whose index fails the guards are dropped).
+    ``pool_workers > 1`` reads in parallel with a ``multiprocessing.Pool`` (not a DataLoader — that
+    exhausts file descriptors over tens of thousands of single-row reads).
     """
     tasks = [
         (
             str(sample_id),
-            int(row["rpob_flat_index"]),
+            int(row[flat_index_col]),
             int(row["n_proteins"]) if "n_proteins" in row and not pd.isna(row["n_proteins"]) else None,
             esm_store_dir / f"{sample_id}{pt_suffix}",
         )
-        for sample_id, row in genotype.iterrows()
+        for sample_id, row in gene_table.iterrows()
     ]
 
     results: list[tuple[str, np.ndarray | None, str | None]]
@@ -250,7 +252,7 @@ def load_pooled_rpob_vectors(
         vectors.append(vec)
         kept.append(sample_id)
     if skips:
-        logger.warning("pooled rpoB: skipped %s", skips)
+        logger.warning("pooled gene vectors: skipped %s", skips)
     if not vectors:
         return pd.DataFrame()
     return pd.DataFrame(np.vstack(vectors), index=pd.Index(kept, name="Sample"))
@@ -305,19 +307,29 @@ def masked_marginal_features(
     return pd.DataFrame(features, index=pd.Index(kept, name="Sample"), columns=cols)
 
 
-def load_bacformer_vectors(path: str | Path, key: str = "rpob_vectors") -> pd.DataFrame:
-    """Load frozen Bacformer vectors written by the GPU pass.
+# Token-vector NPZ keys, newest first — a gene-token request resolves to whichever the NPZ carries.
+_TOKEN_KEY_ALIASES = ("gene_token_vectors", "rpob_vectors", "vectors")
 
-    Expects an ``.npz`` with ``sample_ids`` (str array) plus ``rpob_vectors`` and
+
+def load_bacformer_vectors(path: str | Path, key: str = "gene_token_vectors") -> pd.DataFrame:
+    """Load Bacformer vectors written by the GPU pass.
+
+    Expects an ``.npz`` with ``sample_ids`` (str array) plus ``gene_token_vectors`` and
     ``mean_vectors`` ([N, 960] each), as produced by
-    :mod:`snp_embeddings.frozen_bacformer_rpob_vectors`. ``key`` selects which
-    (``"rpob_vectors"`` for the contextualised rpoB token, ``"mean_vectors"`` for
-    the frozen genome mean). Falls back to the legacy ``"vectors"`` key.
+    :mod:`snp_embeddings.bacformer_genome_vectors`. ``key`` selects which (``"gene_token_vectors"``
+    for the contextualised gene token, ``"mean_vectors"`` for the genome mean). A token request
+    back-compat-resolves to whichever token alias the NPZ carries (legacy ``"rpob_vectors"`` /
+    ``"vectors"``).
     """
     data = np.load(path, allow_pickle=False)
     ids = [str(s) for s in data["sample_ids"]]
-    if key not in data.files and "vectors" in data.files:
-        key = "vectors"  # legacy NPZ (rpoB token only)
+    if key not in data.files:
+        for alt in _TOKEN_KEY_ALIASES:
+            if alt in data.files:
+                key = alt
+                break
+    if key not in data.files:
+        raise KeyError(f"{key!r} not in {path} (has {list(data.files)})")
     return pd.DataFrame(data[key], index=pd.Index(ids, name="Sample"))
 
 
@@ -549,14 +561,16 @@ def run_probes(
         if key == "onehot_rrdr":
             feat_df = genotype[codon_cols].astype(str)
         elif key == "pooled_esmc_rpob":
-            feat_df = load_pooled_rpob_vectors(genotype, esm_store_dir, pool_workers=pool_workers)
+            feat_df = load_pooled_gene_vectors(
+                genotype, esm_store_dir, flat_index_col="rpob_flat_index", pool_workers=pool_workers
+            )
         elif key == "masked_marginal_llr":
             feat_df = masked_marginal_features(genotype, reference, device=device, codons=masked_marginal_codons)
         elif key == "bacformer_rpob_token":
             if bacformer_vectors is None:
                 logger.warning("Step 2b (bacformer_rpob_token) requested but --bacformer-vectors not given; skipping")
                 continue
-            feat_df = load_bacformer_vectors(bacformer_vectors, key="rpob_vectors")
+            feat_df = load_bacformer_vectors(bacformer_vectors, key="gene_token_vectors")
         elif key == "bacformer_mean":
             if bacformer_vectors is None:
                 logger.warning("Step 2c (bacformer_mean) requested but --bacformer-vectors not given; skipping")
@@ -661,7 +675,7 @@ def main() -> None:
     parser.add_argument("--masked-marginal-codons", type=str, default="panel",
                         help="'panel' (4 canonical codons), 'all' (RRDR window), or a comma list of codon numbers.")
     parser.add_argument("--bacformer-vectors", type=Path, default=None,
-                        help="NPZ of frozen Bacformer rpoB-token vectors (Step 2b; from frozen_bacformer_rpob_vectors.py).")
+                        help="NPZ of Bacformer gene-token vectors (Step 2b; from bacformer_genome_vectors.py).")
     parser.add_argument("--qc-log", type=Path, default=Path("rpob_copy_qc.log"),
                         help="Where to write the rpoB-copy QC log (default: ./rpob_copy_qc.log).")
     parser.add_argument("--pool-workers", type=int, default=1,

@@ -27,7 +27,7 @@ if [[ -z "$CKPT" ]]; then
 fi
 echo "Fine-tuned checkpoint: $CKPT"
 
-uv run python src/snp_embeddings/eval_concat_rpob_mean.py \
+uv run python src/snp_embeddings/concatenate_bacformer_genome_esm_protein_emb.py \
     --ast-sheet-path "$RDS/binary_ast_with_split.csv" \
     --parquet-dir "$RDS/tb_protein_sequences" \
     --esm-store-dir "$RDS/tb_esm_embeddings" \

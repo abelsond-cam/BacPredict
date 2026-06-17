@@ -22,7 +22,7 @@ Read-out:
   content / optimisation), not in the pooling.
 
 Label-blind (uses only the manifest's rpoB flat index), read-only, GPU. Reuses the manifest +
-flat-index machinery of :mod:`snp_embeddings.frozen_bacformer_rpob_vectors` and the ``_rank_stats``
+flat-index machinery of :mod:`snp_embeddings.bacformer_genome_vectors` and the ``_rank_stats``
 ranking of :mod:`snp_embeddings.intrinsic_attention_probe`.
 """
 
@@ -37,7 +37,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from snp_embeddings.frozen_bacformer_rpob_vectors import _forward_inputs
+from snp_embeddings.bacformer_genome_vectors import _forward_inputs
 from snp_embeddings.intrinsic_attention_probe import _rank_stats, _resolve_weight_checkpoint, load_attn_pool_wrapper
 from snp_embeddings.snp_vs_esm_prediction import _real_protein_indices
 

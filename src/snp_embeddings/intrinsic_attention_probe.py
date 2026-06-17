@@ -16,7 +16,7 @@ Read-out:
   panel is essential, and swapping pooling mechanisms won't rescue it.
 
 Label-blind (uses only the manifest's rpoB flat index), read-only, GPU. Modelled on
-:mod:`snp_embeddings.frozen_bacformer_rpob_vectors` — same frozen-forward + flat-index pattern,
+:mod:`snp_embeddings.bacformer_genome_vectors` — same frozen-forward + flat-index pattern,
 reading the existing 1000-genome ``manifest.csv`` (``sample`` / ``role`` / ``rpob_flat_index``).
 
 Two extensions:
@@ -42,7 +42,7 @@ import pandas as pd
 import torch
 from transformers import AutoConfig, AutoModelForSequenceClassification
 
-from snp_embeddings.frozen_bacformer_rpob_vectors import _forward_inputs
+from snp_embeddings.bacformer_genome_vectors import _forward_inputs
 from snp_embeddings.locate_gene import flatten_proteins
 from snp_embeddings.snp_vs_esm_prediction import _real_protein_indices
 from tl.embed.generate_embeddings import BACFORMER_MODEL_ID, bacformer_attention_weights, load_bacformer_model

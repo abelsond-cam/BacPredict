@@ -19,7 +19,7 @@ RDS=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast
 OUT_DIR=$RDS/snp_embeddings/concat_rpob_mean_smoke
 mkdir -p "$OUT_DIR"
 
-uv run python src/snp_embeddings/eval_concat_rpob_mean.py \
+uv run python src/snp_embeddings/concatenate_bacformer_genome_esm_protein_emb.py \
     --ast-sheet-path "$RDS/binary_ast_with_split.csv" \
     --parquet-dir "$RDS/tb_protein_sequences" \
     --esm-store-dir "$RDS/tb_esm_embeddings" \
