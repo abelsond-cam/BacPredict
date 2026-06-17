@@ -126,6 +126,7 @@ def run_concat_probe(
     pool_workers: int,
     max_samples: int | None,
     kfold: dict | None = None,
+    kfold_on_eval_holdout: bool = False,
 ) -> dict:
     """Run the three steps (ESM-gene, Bacformer-mean, concat) on the canonical eval fold.
 
@@ -133,6 +134,12 @@ def run_concat_probe(
     aligned frames are *additionally* routed through the k-fold × m-seed harness (mean ± sd per frame
     + paired AUROC deltas), so one run yields both the canonical-holdout headline and the significance
     of the small top-of-ladder deltas. The k-fold block uses its own fixed holdout, not the canonical one.
+
+    ``kfold_on_eval_holdout`` restricts the k-fold universe to the **canonical ``evaluate`` ids** — the
+    genomes a fine-tuned backbone was *held out from*. On those FT-unseen genomes the fine-tuned mean is
+    once again a label-blind feature, so re-splitting them is an **honest** k-fold (no GPU, no re-tuning):
+    the only valid way to put error bars on the A.1.i FT-mean concat without re-fine-tuning per fold. For
+    the frozen mean this restriction is unnecessary (the base model never saw any label) — leave it off.
     """
     # The mean is fine-tuned (A.1.i) when computed from a checkpoint, or flagged so for a loaded FT NPZ.
     finetuned = bacformer_checkpoint is not None or mean_is_finetuned
@@ -211,24 +218,37 @@ def run_concat_probe(
 
     if kfold is not None:
         specs = {key: FeatureSpec(feat_df, kind="numeric", standardise=True) for key, feat_df in features.items()}
-        if len(common) < kfold["n_folds"] + 1:
-            logger.warning("Skipping k-fold: %d common samples < n_folds+1 (%d)", len(common), kfold["n_folds"] + 1)
+        # Restrict the fold universe to the canonical evaluate holdout (FT-unseen) for an honest FT k-fold;
+        # otherwise the harness builds its own holdout over the full common universe.
+        kfold_universe: list[str] | None = None
+        if kfold_on_eval_holdout:
+            kfold_universe = sorted(set(evaluate_ids) & set(common) & set(label_map))
+            logger.info(
+                "k-fold restricted to the canonical evaluate holdout: %d FT-unseen genomes "
+                "(the fine-tuned mean is label-blind here → honest error bars).", len(kfold_universe),
+            )
+        pool = kfold_universe if kfold_universe is not None else common
+        if len(pool) < kfold["n_folds"] + 1:
+            logger.warning("Skipping k-fold: %d samples < n_folds+1 (%d)", len(pool), kfold["n_folds"] + 1)
         else:
-            if finetuned:
-                # The FT backbone was fine-tuned on the original TRAIN labels, so re-splitting the
-                # whole cohort puts FT-training genomes into the new evaluate fold → representation
-                # leakage (optimistic). Honest FT k-fold needs re-fine-tuning per fold. Run it, but flag it.
+            # Leaky only when k-folding a FINE-TUNED mean over the WHOLE cohort: re-splitting puts
+            # FT-training genomes into the new evaluate fold (representation leakage → optimistic).
+            # Restricting to the canonical evaluate holdout removes that — those genomes were FT-unseen.
+            leaky = finetuned and not kfold_on_eval_holdout
+            if leaky:
                 logger.warning(
-                    "k-fold on a FINE-TUNED mean is LEAKY: the backbone saw most genomes' labels during "
-                    "fine-tuning. Treat these numbers as optimistic, not a valid held-out estimate."
+                    "k-fold on a FINE-TUNED mean over the whole cohort is LEAKY: the backbone saw most "
+                    "genomes' labels during fine-tuning. Treat these numbers as optimistic, not a valid "
+                    "held-out estimate — use --kfold-on-eval-holdout for honest FT error bars."
                 )
             logger.info("Running k-fold × m-seed harness over the three aligned frames")
             payload["kfold"] = run_kfold_probe(
-                specs, label_map,
+                specs, label_map, universe_ids=kfold_universe,
                 n_folds=kfold["n_folds"], seeds=kfold["seeds"],
                 evaluate_seed=kfold["evaluate_seed"], evaluate_fraction=kfold["evaluate_fraction"],
             )
-            payload["kfold"]["finetuned_mean_leakage_warning"] = finetuned
+            payload["kfold"]["finetuned_mean_leakage_warning"] = leaky
+            payload["kfold"]["restricted_to_eval_holdout"] = bool(kfold_on_eval_holdout)
             logger.info("\n%s", summarise_kfold(payload["kfold"]))
 
     return payload
@@ -322,6 +342,9 @@ def main() -> None:
                         help="Cap the samples (quick smoke; default: all). On a smoke the ablation sanity is skipped.")
     parser.add_argument("--kfold", type=int, default=None, metavar="N",
                         help="Also run an N-fold × m-seed harness over the three frames (mean±sd + paired deltas).")
+    parser.add_argument("--kfold-on-eval-holdout", action="store_true",
+                        help="Restrict the k-fold universe to the canonical evaluate holdout (FT-unseen genomes) "
+                             "— the honest way to error-bar a FINE-TUNED mean without re-fine-tuning per fold.")
     parser.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3],
                         help="Seeds for the k-fold harness (default: 1 2 3). Only used with --kfold.")
     parser.add_argument("--evaluate-seed", type=int, default=1,
@@ -332,6 +355,8 @@ def main() -> None:
 
     if args.bacformer_vectors is not None and args.bacformer_checkpoint is not None:
         parser.error("Pass either --bacformer-vectors (load a cached NPZ) or --bacformer-checkpoint (compute FT), not both.")
+    if args.kfold_on_eval_holdout and args.kfold is None:
+        parser.error("--kfold-on-eval-holdout requires --kfold N.")
 
     kfold = None
     if args.kfold is not None:
@@ -346,7 +371,7 @@ def main() -> None:
         bacformer_vectors=args.bacformer_vectors, save_bacformer_vectors=args.save_bacformer_vectors,
         bacformer_checkpoint=args.bacformer_checkpoint, mean_is_finetuned=args.mean_is_finetuned,
         qc_log_path=args.qc_log, pool_workers=args.pool_workers, max_samples=args.max_samples,
-        kfold=kfold,
+        kfold=kfold, kfold_on_eval_holdout=args.kfold_on_eval_holdout,
     )
 
     _write_probs_sidecar(args.output_json, payload)
