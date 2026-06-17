@@ -1,11 +1,13 @@
 #!/bin/bash
-# Stage-A smoke for E1 (concat probe) — n=10, CPU, login node (<15 min, CUDA disabled).
+# Stage-A smoke for the concat probe — CPU, login node (<15 min, CUDA disabled).
 #
-# Proves the pipeline runs end-to-end: genotype 10 rpoB sequences, pull the ESM-C rpoB vector
-# (mmap), compute the frozen Bacformer mean on CPU (dtype="auto" — no manual bf16 cast), assemble
-# the 1,920-d concat, fit + score the three LR steps. AUROC on n≈2 evaluate is meaningless, so the
-# ablation sanity check is auto-skipped on a smoke; we only check it runs and writes the JSON.
+# Proves the pipeline runs end-to-end: genotype rpoB sequences, pull the ESM-C rpoB vector (mmap),
+# compute the frozen Bacformer mean on CPU (dtype="auto" — no manual bf16 cast), assemble the 1,920-d
+# concat, fit + score the three LR steps, AND route the same three frames through the k-fold × m-seed
+# harness. AUROC on a smoke is meaningless, so the ablation sanity check is auto-skipped; we only check
+# it runs end-to-end (incl. the harness) and writes the JSON with a `kfold` block.
 #
+# n bumped to 60 so the 2-fold × 2-seed harness has a usable universe (it is skipped if too small).
 # Usage (on the HPC login node):  bash src/snp_embeddings/scripts/smoke_concat_rpob_mean.sh
 set -euo pipefail
 
@@ -25,6 +27,7 @@ uv run python src/snp_embeddings/eval_concat_rpob_mean.py \
     --qc-log "$OUT_DIR/rpob_copy_qc_smoke.log" \
     --drug rifampin \
     --device cpu \
-    --max-samples 10
+    --max-samples 60 \
+    --kfold 2 --seeds 1 2
 
 echo "Smoke finished — JSON at $OUT_DIR/concat_rpob_mean_smoke.json"

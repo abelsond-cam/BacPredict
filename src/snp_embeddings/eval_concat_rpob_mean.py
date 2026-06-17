@@ -43,6 +43,7 @@ import numpy as np
 import pandas as pd
 
 from snp_embeddings.frozen_bacformer_rpob_vectors import compute_bacformer_vectors
+from snp_embeddings.kfold_probe import FeatureSpec, run_kfold_probe, summarise_kfold
 from snp_embeddings.rpob_genotype import RIFAMPIN_COLUMN, build_genotype_table, load_reference
 from snp_embeddings.snp_vs_esm_prediction import (
     fit_score_step,
@@ -109,8 +110,15 @@ def run_concat_probe(
     qc_log_path: Path,
     pool_workers: int,
     max_samples: int | None,
+    kfold: dict | None = None,
 ) -> dict:
-    """Run the three steps (ESM-rpoB, Bacformer-mean, concat) on the canonical eval fold."""
+    """Run the three steps (ESM-rpoB, Bacformer-mean, concat) on the canonical eval fold.
+
+    When ``kfold`` is given (``{n_folds, seeds, evaluate_seed, evaluate_fraction}``) the same three
+    aligned frames are *additionally* routed through the k-fold × m-seed harness (mean ± sd per frame
+    + paired AUROC deltas), so one run yields both the canonical-holdout headline and the significance
+    of the small top-of-ladder deltas. The k-fold block uses its own fixed holdout, not the canonical one.
+    """
     reference = load_reference()
     label_map, train_ids, validate_ids, evaluate_ids, split_info = resolve_clean_splits(ast_sheet_path, drug)
     if max_samples is not None:
@@ -175,6 +183,20 @@ def run_concat_probe(
             )
 
     payload["headline"] = _build_headline(payload["steps"], smoke=max_samples is not None)
+
+    if kfold is not None:
+        specs = {key: FeatureSpec(feat_df, kind="numeric", standardise=True) for key, feat_df in features.items()}
+        if len(common) < kfold["n_folds"] + 1:
+            logger.warning("Skipping k-fold: %d common samples < n_folds+1 (%d)", len(common), kfold["n_folds"] + 1)
+        else:
+            logger.info("Running k-fold × m-seed harness over the three aligned frames")
+            payload["kfold"] = run_kfold_probe(
+                specs, label_map,
+                n_folds=kfold["n_folds"], seeds=kfold["seeds"],
+                evaluate_seed=kfold["evaluate_seed"], evaluate_fraction=kfold["evaluate_fraction"],
+            )
+            logger.info("\n%s", summarise_kfold(payload["kfold"]))
+
     return payload
 
 
@@ -251,13 +273,29 @@ def main() -> None:
                         help="Parallel workers for the pooled ESM-C rpoB reads (default 1 = sequential).")
     parser.add_argument("--max-samples", type=int, default=None,
                         help="Cap the samples (quick smoke; default: all). On a smoke the ablation sanity is skipped.")
+    parser.add_argument("--kfold", type=int, default=None, metavar="N",
+                        help="Also run an N-fold × m-seed harness over the three frames (mean±sd + paired deltas).")
+    parser.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3],
+                        help="Seeds for the k-fold harness (default: 1 2 3). Only used with --kfold.")
+    parser.add_argument("--evaluate-seed", type=int, default=1,
+                        help="Pins the fixed k-fold evaluate holdout (default 1). Only used with --kfold.")
+    parser.add_argument("--evaluate-fraction", type=float, default=0.20,
+                        help="Fraction of the universe held out as the fixed k-fold evaluate set (default 0.20).")
     args = parser.parse_args()
+
+    kfold = None
+    if args.kfold is not None:
+        kfold = {
+            "n_folds": args.kfold, "seeds": args.seeds,
+            "evaluate_seed": args.evaluate_seed, "evaluate_fraction": args.evaluate_fraction,
+        }
 
     payload = run_concat_probe(
         args.ast_sheet_path, args.parquet_dir, args.esm_store_dir,
         drug=args.drug, device=args.device,
         bacformer_vectors=args.bacformer_vectors, save_bacformer_vectors=args.save_bacformer_vectors,
         qc_log_path=args.qc_log, pool_workers=args.pool_workers, max_samples=args.max_samples,
+        kfold=kfold,
     )
 
     _write_probs_sidecar(args.output_json, payload)
