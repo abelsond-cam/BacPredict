@@ -24,9 +24,11 @@
 # back under `uv run python`. Default K=10 (pyseer-tutorial ballpark); override as $1 and
 # rerun against --load-m if λ says the correction is mis-calibrated.
 #
-# Usage: sbatch [--time=H:MM:SS] src/bac_pyseer/kleb_iso_source/scripts/run_pyseer.sh [K] [output_subdir]
+# Usage: sbatch [--time=H:MM:SS] src/bac_pyseer/kleb_iso_source/scripts/run_pyseer.sh [K] [output_subdir] [min_sl_size]
 #   output_subdir (default "gwas") isolates outputs — pass a fresh name (e.g. gwas_36h) to run a
 #   second, independent GWAS alongside one already in flight without the two clobbering each other.
+#   min_sl_size (default 0 = keep all) collapses Sublineages with fewer samples into 'other', so
+#   --lineage attributes hits only to the big SLs (e.g. 100) instead of ~1300 tiny n=1-5 clusters.
 
 set -euo pipefail
 export PYTHONUNBUFFERED=1
@@ -46,6 +48,7 @@ COHORT=sampled_country_2_1_all
 COHORT_CSV=$DATA/david/processed/train_iso_source/blood_faeces/$COHORT/kpsc_human/binary_blood_vs_faeces_with_split.csv
 IN_DIR=$DATA/david/processed/pyseer_iso_source/blood_faeces/$COHORT
 GWAS_SUBDIR=${2:-gwas}   # 2nd arg = output subdir; use a fresh name to run an isolated GWAS alongside another in flight
+MIN_SL_SIZE=${3:-0}      # 3rd arg = min samples/Sublineage to keep as its own --lineage cluster; smaller SLs collapse to 'other' (0 = keep all)
 GWAS_DIR=$IN_DIR/$GWAS_SUBDIR
 GFF=$DATA/david/raw/related_lr/gff/GCF_000016305.1.gff
 mkdir -p "$GWAS_DIR"
@@ -61,20 +64,28 @@ echo "Job $SLURM_JOB_ID  Node $SLURMD_NODENAME  cohort=$COHORT  K=$K  $(date)"
 
 # 0) sublineage-clusters file (tab-sep: sample <TAB> Sublineage; NaN -> 'unknown'), for
 #    pyseer --lineage (reports the lineage each hit is most associated with). Aligned to
-#    the phenotype's samples.
-uv run python - "$COHORT_CSV" "$PHENO" "$CLUSTERS" <<'PY'
+#    the phenotype's samples. With MIN_SL_SIZE>0, Sublineages smaller than that collapse to
+#    a single 'other' bucket — keeps the big SLs (SL258, SL147, ...) interpretable while
+#    sparing pyseer the per-variant attribution over ~1300 tiny n=1-5 clusters.
+uv run python - "$COHORT_CSV" "$PHENO" "$CLUSTERS" "$MIN_SL_SIZE" <<'PY'
 import sys
 import pandas as pd
 
-cohort_csv, pheno_tsv, out = sys.argv[1:4]
+cohort_csv, pheno_tsv, out, min_sl = sys.argv[1:5]
+min_sl = int(min_sl)
 samples = set(pd.read_csv(pheno_tsv, sep="\t")["samples"].astype(str))
 meta = pd.read_csv(cohort_csv, usecols=["Sample", "Sublineage"], low_memory=False)
 meta["Sample"] = meta["Sample"].astype(str)
 meta = meta.drop_duplicates(subset=["Sample"])
 meta = meta[meta["Sample"].isin(samples)]
 meta["Sublineage"] = meta["Sublineage"].fillna("unknown").astype(str).replace({"": "unknown", "nan": "unknown"})
+if min_sl > 0:
+    counts = meta["Sublineage"].value_counts()
+    big = counts.index[counts >= min_sl]
+    meta["Sublineage"] = meta["Sublineage"].where(meta["Sublineage"].isin(big), "other")
+    print(f"collapsed Sublineages with <{min_sl} samples into 'other'; kept {len(big)} big SLs")
 meta[["Sample", "Sublineage"]].to_csv(out, sep="\t", header=False, index=False)
-print(f"wrote {out}: {len(meta)} samples, {meta['Sublineage'].nunique()} sublineages")
+print(f"wrote {out}: {len(meta)} samples, {meta['Sublineage'].nunique()} clusters")
 PY
 
 # 1) scree plot of the MDS eigenvalues — eyeball the elbow to pick/justify K (output to GWAS_DIR).
