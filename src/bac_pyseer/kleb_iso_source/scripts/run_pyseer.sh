@@ -29,6 +29,8 @@
 #   second, independent GWAS alongside one already in flight without the two clobbering each other.
 #   min_sl_size (default 0 = keep all) collapses Sublineages with fewer samples into 'other', so
 #   --lineage attributes hits only to the big SLs (e.g. 100) instead of ~1300 tiny n=1-5 clusters.
+#   Env overrides: MIN_AF / MAX_AF (default 0.01/0.99) set the allele-freq window; USE_LINEAGE=0
+#   omits --lineage entirely. e.g. USE_LINEAGE=0 MIN_AF=0.05 MAX_AF=0.95 sbatch ... 10 gwas_nolin_af5 0
 
 set -euo pipefail
 export PYTHONUNBUFFERED=1
@@ -49,6 +51,9 @@ COHORT_CSV=$DATA/david/processed/train_iso_source/blood_faeces/$COHORT/kpsc_huma
 IN_DIR=$DATA/david/processed/pyseer_iso_source/blood_faeces/$COHORT
 GWAS_SUBDIR=${2:-gwas}   # 2nd arg = output subdir; use a fresh name to run an isolated GWAS alongside another in flight
 MIN_SL_SIZE=${3:-0}      # 3rd arg = min samples/Sublineage to keep as its own --lineage cluster; smaller SLs collapse to 'other' (0 = keep all)
+MIN_AF=${MIN_AF:-0.01}          # env: allele-frequency window; raise to 0.05/0.95 to drop the rare, separating variants that force slow Firth fits
+MAX_AF=${MAX_AF:-0.99}
+USE_LINEAGE=${USE_LINEAGE:-1}   # env: 0 = omit --lineage entirely (no per-variant SL attribution); 1 = keep it
 GWAS_DIR=$IN_DIR/$GWAS_SUBDIR
 GFF=$DATA/david/raw/related_lr/gff/GCF_000016305.1.gff
 mkdir -p "$GWAS_DIR"
@@ -67,6 +72,7 @@ echo "Job $SLURM_JOB_ID  Node $SLURMD_NODENAME  cohort=$COHORT  K=$K  $(date)"
 #    the phenotype's samples. With MIN_SL_SIZE>0, Sublineages smaller than that collapse to
 #    a single 'other' bucket — keeps the big SLs (SL258, SL147, ...) interpretable while
 #    sparing pyseer the per-variant attribution over ~1300 tiny n=1-5 clusters.
+if [ "$USE_LINEAGE" = "1" ]; then
 uv run python - "$COHORT_CSV" "$PHENO" "$CLUSTERS" "$MIN_SL_SIZE" <<'PY'
 import sys
 import pandas as pd
@@ -87,6 +93,9 @@ if min_sl > 0:
 meta[["Sample", "Sublineage"]].to_csv(out, sep="\t", header=False, index=False)
 print(f"wrote {out}: {len(meta)} samples, {meta['Sublineage'].nunique()} clusters")
 PY
+else
+  echo "USE_LINEAGE=0 -> no --lineage; skipping sublineage-clusters build"
+fi
 
 # 1) scree plot of the MDS eigenvalues — eyeball the elbow to pick/justify K (output to GWAS_DIR).
 #    Non-fatal: it is purely informational (K is validated empirically by lambda below), so a
@@ -95,13 +104,19 @@ PY
     scree_plot_pyseer "$DIST" --max-dimensions 30 ) \
     || echo "WARN: scree_plot_pyseer failed (non-fatal) — continuing to pyseer"
 
-# 2) the GWAS itself (fixed-effects + K MDS covariates).
+# 2) the GWAS itself (fixed-effects + K MDS covariates). --lineage is optional (USE_LINEAGE);
+#    the af window + the SL-collapse threshold are the levers for the speed-vs-rare-variant tradeoff.
+LINEAGE_ARGS=()
+if [ "$USE_LINEAGE" = "1" ]; then
+    LINEAGE_ARGS=(--lineage --lineage-clusters "$CLUSTERS")
+fi
+echo "pyseer config: K=$K  min-af=$MIN_AF  max-af=$MAX_AF  use-lineage=$USE_LINEAGE  min-sl-size=$MIN_SL_SIZE"
 pixi run --manifest-path "$PIXI_MANIFEST" pyseer \
     --pres "$RTAB" \
     --phenotypes "$PHENO" --phenotype-column blood_vs_faeces_label \
     --distances "$DIST" --max-dimensions "$K" \
-    --lineage --lineage-clusters "$CLUSTERS" \
-    --min-af 0.01 --max-af 0.99 \
+    ${LINEAGE_ARGS[@]+"${LINEAGE_ARGS[@]}"} \
+    --min-af "$MIN_AF" --max-af "$MAX_AF" \
     --output-patterns "$PATTERNS" \
     --save-m "$GWAS_DIR/mds_cache" \
     --cpu "$SLURM_CPUS_PER_TASK" \
