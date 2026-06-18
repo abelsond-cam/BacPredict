@@ -8,7 +8,7 @@
 # Used in --fasta mode over the gzipped assemblies (raw/tb/assemblies/{Sample}.fa.gz) to produce, per
 # genome: a per-drug R/S call (native comparator) + the WHO-catalogue resistance variants (one-hot → LR).
 
-[project]
+[workspace]
 name = "tbprofiler"
 version = "0.1.0"
 description = "TB-Profiler WHO-catalogue AST baseline for the snp_embeddings concat comparison"
