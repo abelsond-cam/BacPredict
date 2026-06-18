@@ -168,13 +168,16 @@ An agent will plan the work in detail and start.
   cross-lineage) — a reproducible adhesion+capsule signature. **The iron theme does NOT
   replicate** (blood-specific/weak). Detail:
   [docs/visualise/faeces_resp_lmm_model/](src/bac_pyseer/docs/visualise/faeces_resp_lmm_model/).
-- [ ] **Faeces vs liver/abscess contrast.** The strongest-hvKp invasive niche; third
-  replication. Same parameterised pipeline; check whether capsule/fimbrial recur again.
+- [ ] **Faeces vs liver/abscess contrast** — third niche; **blocked** on recurating the mixed
+  liver/abscess `isolation_source_category` in BacHGT `metadata_curation.py` first. Then the
+  same parameterised pipeline; check whether capsule/fimbrial/btuB recur again.
+- **Collaborator summary:** [src/bac_pyseer/docs/invasion_gwas_collaborator_summary.md](src/bac_pyseer/docs/invasion_gwas_collaborator_summary.md)
+  (both contrasts; reproducible adhesion+capsule+BtuB signature; coherent blood-specific iron-acquisition).
 - [ ] **Hotspot rates by isolation source.** Compare per-source hotspot rates against
   the whole-population background mutation rate at each locus as control → Chi-sq for
   hotspots strongly associated with invasive disease. *Blocked on Aaron uploading
   hotspots to HPC.*
-- [ ] **Pyseer unitig GWAS (KPSC-wide) — the accessory/HGT axis.** Unitigs capture core SNPs
+- [ ] **Pyseer unitig GWAS (KPSC-wide) — the accessory/HGT axis. ← NEXT priority.** Unitigs capture core SNPs
   *and* accessory sequence (the variant GWAS sees core only), so a unitig GWAS is both the
   whole-of-KPSC scan and the **acquired-vs-chromosomal test**: if the invasion signature recurs
   in an accessory-inclusive feature space, that's strong corroboration. From variant calls,
