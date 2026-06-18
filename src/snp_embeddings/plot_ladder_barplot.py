@@ -35,12 +35,30 @@ FAMILY_LABEL = {
     "mix": "concat (Bacformer ⊕ ESM)",
 }
 
+# How each method reads out the genome — drawn as bracketed groups separated by vertical dividers.
+GROUP_LABEL = {
+    "genome_pooled": "genome-pooled embeddings",
+    "single_gene": "single-gene (rpoB) features",
+    "concat": "concatenated",
+}
 
-def _draw_metric_panel(ax, df: pd.DataFrame, metric: str, *, ymin: float, show_xticklabels: bool) -> None:
+
+def _group_boundaries(df: pd.DataFrame) -> list[int]:
+    """Indices where the ``group`` column changes between consecutive (already-sorted) rows."""
+    if "group" not in df.columns:
+        return []
+    g = df["group"].to_numpy()
+    return [i for i in range(1, len(g)) if g[i] != g[i - 1]]
+
+
+def _draw_metric_panel(
+    ax, df: pd.DataFrame, metric: str, *, ymin: float, show_xticklabels: bool, boundaries: list[int]
+) -> None:
     """Render one bar panel of ``metric`` onto ``ax`` (sorted order fixed by the caller).
 
     A ``<metric>_sd`` column (e.g. ``auroc_sd``), if present, is drawn as a black ±sd error bar over
-    each bar — the k-fold × m-seed spread. Rows without a value get 0 (no visible whisker).
+    each bar — the k-fold × m-seed spread. Rows without a value get 0 (no visible whisker). ``boundaries``
+    are bar indices where the read-out group changes; a dashed vertical divider is drawn before each.
     """
     colours = [FAMILY_COLOURS.get(f, "#888888") for f in df["family"]]
     x = range(len(df))
@@ -50,6 +68,8 @@ def _draw_metric_panel(ax, df: pd.DataFrame, metric: str, *, ymin: float, show_x
         x, df[metric], color=colours, edgecolor="black", linewidth=0.7, width=0.72,
         yerr=yerr, error_kw={"ecolor": "black", "elinewidth": 1.0, "capsize": 3.5},
     )
+    for b in boundaries:
+        ax.axvline(b - 0.5, color="0.35", linestyle="--", linewidth=1.1, alpha=0.8)
     for xi, v in zip(x, df[metric], strict=True):
         ax.text(xi, v + 0.003, f"{v:.3f}", ha="center", va="bottom", fontsize=9.5, fontweight="bold")
     ax.set_xticks(list(x))
@@ -63,6 +83,23 @@ def _draw_metric_panel(ax, df: pd.DataFrame, metric: str, *, ymin: float, show_x
     ax.spines[["top", "right"]].set_visible(False)
 
 
+def _annotate_groups(ax, df: pd.DataFrame, boundaries: list[int]) -> None:
+    """Label each contiguous read-out group (genome-pooled / single-gene / concat) above its bars."""
+    if "group" not in df.columns:
+        return
+    starts = [0, *boundaries]
+    ends = [*boundaries, len(df)]
+    # x in data coords, y in axes coords → a header band just above the panel, clear of the value labels.
+    trans = ax.get_xaxis_transform()
+    for s, e in zip(starts, ends, strict=True):
+        key = df["group"].iloc[s]
+        ax.text(
+            (s + e - 1) / 2, 1.03, GROUP_LABEL.get(key, key), transform=trans, ha="center", va="bottom",
+            clip_on=False, fontsize=9.5, fontstyle="italic", color="0.25",
+            bbox={"boxstyle": "round,pad=0.25", "fc": "white", "ec": "0.7", "alpha": 0.85},
+        )
+
+
 def plot_ladder(csv_path: Path, out_path: Path, *, sort_metric: str = "auroc") -> None:
     """Two-panel ladder bar plot — AUROC (top) and AUPRC (bottom), one bar per method, family-coloured.
 
@@ -71,18 +108,22 @@ def plot_ladder(csv_path: Path, out_path: Path, *, sort_metric: str = "auroc") -
     both panels — above fine-tuned Bacformer (blue) and one-hot mutation alone (red).
     """
     df = pd.read_csv(csv_path).sort_values(sort_metric).reset_index(drop=True)
+    boundaries = _group_boundaries(df)
 
     fig, (ax_top, ax_bot) = plt.subplots(2, 1, figsize=(11.5, 9.5), sharex=True)
-    _draw_metric_panel(ax_top, df, "auroc", ymin=0.75, show_xticklabels=False)
-    _draw_metric_panel(ax_bot, df, "auprc", ymin=0.60, show_xticklabels=True)
+    _draw_metric_panel(ax_top, df, "auroc", ymin=0.75, show_xticklabels=False, boundaries=boundaries)
+    _draw_metric_panel(ax_bot, df, "auprc", ymin=0.60, show_xticklabels=True, boundaries=boundaries)
+    _annotate_groups(ax_top, df, boundaries)
 
+    # Family legend on the lower panel's empty upper-left, so the top panel's upper-left is free for the
+    # genome-pooled group label.
     handles = [plt.Rectangle((0, 0), 1, 1, color=c, ec="black", lw=0.7) for c in FAMILY_COLOURS.values()]
-    ax_top.legend(handles, [FAMILY_LABEL[k] for k in FAMILY_COLOURS], loc="upper left", fontsize=9.5, framealpha=0.95)
+    ax_bot.legend(handles, [FAMILY_LABEL[k] for k in FAMILY_COLOURS], loc="upper left", fontsize=9.5, framealpha=0.95)
     fig.suptitle(
         "Comparing Bacformer predictions of Rif Resistance in TB with ESM and concatenated models",
-        fontsize=13, y=0.985,
+        fontsize=13, y=0.995,
     )
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    fig.tight_layout(rect=(0, 0, 1, 0.93))
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
