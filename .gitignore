@@ -14,6 +14,11 @@ __pycache__/
 # pixi tool envs (bac_pyseer bcftools/samtools toolchain); pixi.toml + pixi.lock are committed
 .pixi/
 
+# TB-Profiler intermediate files if ever run from the env dir (the cohort array runs from node scratch)
+src/snp_embeddings/tbprofiler/*.paf
+src/snp_embeddings/tbprofiler/*.vcf.gz
+src/snp_embeddings/tbprofiler/*.vcf.gz.*
+
 # Distribution / packaging
 /dist/
 

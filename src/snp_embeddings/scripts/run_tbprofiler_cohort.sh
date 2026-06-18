@@ -28,7 +28,11 @@
 # CPU-only; ~12 s/genome × ~184 genomes/task ≈ 37 min/task at full 200-way. 6 h budget (over-request).
 
 set -uo pipefail
-cd /home/dca36/workspace/BacPredict/src/snp_embeddings/tbprofiler
+# Run from node-local scratch (NOT the pixi dir): tb-profiler drops intermediate .paf/.vcf files in CWD,
+# which would litter the repo and collide across 200 tasks. Locate the env via --manifest-path instead.
+MANIFEST=/home/dca36/workspace/BacPredict/src/snp_embeddings/tbprofiler/pixi.toml
+WORK=${TMPDIR:-/tmp}/tbp_work_${SLURM_ARRAY_TASK_ID:-0}
+mkdir -p "$WORK" && cd "$WORK"
 
 RDS=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david
 ASM=$RDS/raw/tb/assemblies
@@ -59,7 +63,7 @@ for S in "${SAMPLES[@]}"; do
     if [[ ! -s "$GZ" ]]; then echo "MISSING assembly: $S" >&2; fail_n=$((fail_n+1)); continue; fi
     FA=${TMPDIR:-/tmp}/${S}.fa
     if ! zcat "$GZ" > "$FA"; then echo "DECOMPRESS FAIL: $S" >&2; fail_n=$((fail_n+1)); rm -f "$FA"; continue; fi
-    if pixi run tb-profiler profile --fasta "$FA" --prefix "$S" --dir "$OUT" --threads "$THREADS" --txt >/dev/null 2>&1; then
+    if pixi run --manifest-path "$MANIFEST" tb-profiler profile --fasta "$FA" --prefix "$S" --dir "$OUT" --threads "$THREADS" --txt >/dev/null 2>&1; then
         done_n=$((done_n+1))
     else
         echo "TBPROFILER FAIL: $S" >&2; fail_n=$((fail_n+1))
