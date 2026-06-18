@@ -6,3 +6,4 @@ frozen Bacformer rpoB token,Bacformer,0.9527,0.9105,,,0.8665,0.9597,6931,snp_vs_
 one-hot RRDR rpoB,one-hot,0.9601,0.9322,,,0.9171,0.9816,6947,snp_vs_esm_2b2c_30519412 onehot_rrdr
 frozen ESM-C rpoB,ESM,0.9705,0.9408,0.0006,0.0016,0.9432,0.9771,6931,snp_vs_esm_2b2c_30519412 pooled_esmc_rpob; sd k5x3 30673824
 concat: ESM-rpoB + untuned-Bacformer mean,mix,0.9752,0.9535,0.0005,0.0015,0.9390,0.9790,6931,concat_rpob_mean_30632514; sd k5x3 30673824
+concat: ESM-rpoB + FT-Bacformer mean,mix,0.9769,0.9535,,,0.9409,0.9805,6931,concat_ft_mean_30673823 (A.1.i)
