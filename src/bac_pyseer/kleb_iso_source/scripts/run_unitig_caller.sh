@@ -43,6 +43,7 @@ echo "Job $SLURM_JOB_ID  Node $SLURMD_NODENAME  $(date)"
 echo "=== (1) resolve union Sample -> assembly FASTA ==="
 uv run python src/bac_pyseer/kleb_iso_source/resolve_assembly_paths.py \
     --sample-csv "$BF_CSV" "$RF_CSV" \
+    --check-exists \
     --out-tsv "$REFLIST"
 
 echo "=== (2) unitig-caller: compressed DBG over the union assemblies -> pyseer unitig matrix ==="
