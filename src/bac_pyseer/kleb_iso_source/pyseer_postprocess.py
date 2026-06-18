@@ -143,6 +143,22 @@ def direction_from_beta(beta: float, pos_label: str = "blood (invasion)", neg_la
     return "none"
 
 
+def _hit_label(gene: object, locus_tag: object, product: object, maxlen: int = 30) -> str:
+    """Most informative short label for a hit: gene symbol > product description > locus tag.
+
+    Many genes have no gene *symbol* in the reference GFF (gene == locus_tag); the product
+    description is far more meaningful than the bare ``KPN_RS…`` tag for those.
+    """
+    gene = "" if pd.isna(gene) else str(gene)
+    locus = "" if pd.isna(locus_tag) else str(locus_tag)
+    prod = "" if pd.isna(product) else str(product)
+    if gene and gene != locus:
+        return gene
+    if prod:
+        return prod if len(prod) <= maxlen else prod[: maxlen - 1] + "…"
+    return locus or "?"
+
+
 def significant_hits(
     assoc: pd.DataFrame, threshold: float, pval_col: str = PVAL_COL,
     pos_label: str = "blood (invasion)", neg_label: str = "faeces",
@@ -167,6 +183,7 @@ def significant_hits(
     af = pd.to_numeric(hits["af"], errors="coerce") if "af" in hits.columns else pd.Series(np.nan, index=hits.index)
     beta = pd.to_numeric(hits["beta"], errors="coerce") if "beta" in hits.columns else pd.Series(np.nan, index=hits.index)
     hits["var_explained_pct"] = af * (1 - af) * beta**2 / pheno_var * 100
+    hits["maf"] = np.minimum(af, 1 - af)  # rarer allele; MAF>0.05 = neither allele a tiny sample
 
     # clonal blocks: identical (af, β, p) == one presence/absence pattern (perfect LD)
     pat_key = (af.round(6).astype(str) + "|" + beta.round(6).astype(str) + "|"
@@ -372,13 +389,16 @@ def plot_qq(pvalues: np.ndarray, lam: float, out_path: Path) -> None:
 def plot_manhattan(
     pos: np.ndarray, pvalues: np.ndarray, threshold: float, out_path: Path,
     contig: str = DEFAULT_CONTIG, contig_len: int = DEFAULT_CONTIG_LEN,
-    pair_title: str = "blood vs faeces", top_hits: pd.DataFrame | None = None,
+    pair_title: str = "blood vs faeces", hit_points: pd.DataFrame | None = None,
+    n_label: int = 12, maf_label_min: float = 0.05,
 ) -> None:
-    """−log10(structure-adjusted p) vs position, Bonferroni line; optional top-hit labels.
+    """−log10(structure-adjusted p) vs position, Bonferroni line; significant hits drawn.
 
-    ``top_hits`` (cols ``pos``, ``label``, ``var_explained_pct``, ``beta``, ``_p``) labels
-    the strongest hits **by variance explained** — point size ∝ VE, with a ``↑``/``↓`` glyph
-    for the allele direction (a minor annotation, *not* the ranking axis).
+    ``hit_points`` (cols ``pos``, ``label``, ``var_explained_pct``, ``af``, ``beta``, ``_p``)
+    draws *every* significant hit as a circle **sized by variance explained**, then labels
+    only the top ``n_label`` by VE among those with MAF > ``maf_label_min`` (so rare,
+    tiny-sample/lineage-bound markers aren't labelled). ``↑``/``↓`` glyph = allele direction,
+    a minor annotation — *not* the ranking axis.
     """
     p = pd.to_numeric(pd.Series(pvalues), errors="coerce").to_numpy()
     keep = np.isfinite(p) & (p > 0) & (pos >= 0)
@@ -387,16 +407,23 @@ def plot_manhattan(
     if threshold > 0:
         ax.axhline(-np.log10(threshold), color="crimson", ls="--", lw=1.2,
                    label=f"Bonferroni {threshold:.2e}")
-    if top_hits is not None and len(top_hits):
-        ty = -np.log10(pd.to_numeric(top_hits["_p"], errors="coerce").to_numpy())
-        ve = pd.to_numeric(top_hits["var_explained_pct"], errors="coerce").fillna(0).to_numpy()
-        ax.scatter(top_hits["pos"].to_numpy(), ty, s=ve * 12 + 20, color="#d00000",
-                   edgecolors="black", linewidths=0.5, zorder=5, label="top hits by variance explained")
+    if hit_points is not None and len(hit_points):
+        hp = hit_points.dropna(subset=["pos"]).copy()
+        hp["_y"] = -np.log10(pd.to_numeric(hp["_p"], errors="coerce"))
+        ve = pd.to_numeric(hp["var_explained_pct"], errors="coerce").fillna(0)
+        ax.scatter(hp["pos"], hp["_y"], s=ve * 12 + 15, color="#d00000", alpha=0.8,
+                   edgecolors="black", linewidths=0.4, zorder=5,
+                   label="significant hits (size ∝ variance explained)")
+        hp["_maf"] = pd.to_numeric(hp.get("maf"), errors="coerce")
+        if hp["_maf"].isna().all():  # fall back to computing MAF from af
+            afh = pd.to_numeric(hp.get("af"), errors="coerce")
+            hp["_maf"] = np.minimum(afh, 1 - afh)
+        lab = hp[hp["_maf"] > maf_label_min].sort_values("var_explained_pct", ascending=False).head(n_label)
         texts = []
-        for (_, r), yy in zip(top_hits.iterrows(), ty, strict=False):
+        for _, r in lab.iterrows():
             arrow = "↑" if (pd.notna(r.get("beta")) and float(r["beta"]) > 0) else "↓"
             texts.append(ax.annotate(f'{r["label"]} {arrow} ({float(r["var_explained_pct"]):.1f}%)',
-                         (r["pos"], yy), fontsize=8, color="#7a0000", ha="center", va="bottom", zorder=6))
+                         (r["pos"], r["_y"]), fontsize=8, color="#7a0000", ha="center", va="bottom", zorder=6))
         try:
             from adjustText import adjust_text
             adjust_text(texts, ax=ax, expand=(1.3, 1.7),
@@ -452,7 +479,7 @@ def run(
     mapped = cross_ref_virulence(mapped)
 
     # Assemble the annotated hit table: the pyseer stats + POS + the gene-mapping columns.
-    carry = [c for c in ("variant", "var_explained_pct", "af", "filter-pvalue", pval_col, "beta",
+    carry = [c for c in ("variant", "var_explained_pct", "maf", "af", "filter-pvalue", pval_col, "beta",
                          "beta-std-err", "direction", "lineage", "variant_h2", "pattern_group",
                          "n_in_pattern", "notes") if c in hits.columns]
     annotated = pd.concat(
@@ -494,19 +521,19 @@ def run(
     #     failure here cannot lose data already on disk, and the figures can be regenerated
     #     by simply re-running this script against the saved .assoc.
     pos = variant_positions(assoc["variant"].to_numpy(), contig)
-    top_hits = pd.DataFrame()
+    hit_points = pd.DataFrame()
     if len(annotated) and "var_explained_pct" in annotated.columns:
-        th = annotated.dropna(subset=["pos"]).copy()
-        if "pattern_group" in th.columns:
-            th = th.drop_duplicates("pattern_group")            # one row per clonal pattern
-        th = th.sort_values("var_explained_pct", ascending=False).head(15)
-        th["label"] = th["gene"].where(th["gene"].notna(), th.get("locus_tag"))
-        th["_p"] = pd.to_numeric(th[pval_col], errors="coerce")
-        top_hits = th
+        hp = annotated.dropna(subset=["pos"]).copy()
+        if "pattern_group" in hp.columns:
+            hp = hp.drop_duplicates("pattern_group")            # one circle per clonal pattern
+        hp["label"] = [_hit_label(g, lt, pr) for g, lt, pr in
+                       zip(hp["gene"], hp["locus_tag"], hp["product"], strict=False)]
+        hp["_p"] = pd.to_numeric(hp[pval_col], errors="coerce")
+        hit_points = hp
     for name, draw in (
         ("QQ", lambda: plot_qq(pvals, lam, out_fig_dir / "pyseer_qq.png")),
         ("Manhattan", lambda: plot_manhattan(pos, pvals, threshold, out_fig_dir / "pyseer_manhattan.png",
-                                             contig, contig_len, pair_title, top_hits)),
+                                             contig, contig_len, pair_title, hit_points)),
     ):
         try:
             draw()

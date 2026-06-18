@@ -82,13 +82,14 @@ effects, not a few dominant genes, with the accessory iron/capsule machinery unt
 
 - `qq_lmm_bigsl_af1.png` — QQ of structure-adjusted p (λ=0.562; controlled bulk + tail).
 - `manhattan_lmm_bigsl_af1.png` — Manhattan on NC_009648, Bonferroni line.
-- `manhattan_lmm_bigsl_af1_annotated.png` — Manhattan with the **top hits labelled by
-  variance explained** (point size ∝ VE; `↑`/`↓` = which allele, a minor glyph — *not* the
-  ranking axis).
+- `manhattan_lmm_bigsl_af1_annotated.png` — *every* significant hit drawn as a circle
+  **sized by variance explained**; the top ~12 by VE with **MAF > 5%** (so rare,
+  tiny-sample/lineage-bound markers aren't labelled) labelled by gene symbol → product
+  description → locus tag. `↑`/`↓` = allele direction, a minor glyph — *not* the ranking axis.
 - `blood_vs_faeces_hits_annotated.tsv` — the **110 significant hits**, gene-mapped +
-  virulence cross-ref, now **ranked by `var_explained_pct`** with `pattern_group` /
-  `n_in_pattern` flagging the clonal blocks (`direction` is an attribute, not the sort key).
-  This is the result we keep.
+  virulence cross-ref, **ranked by `var_explained_pct`**; carries `maf` (rarer allele;
+  filter `maf > 0.05` for the robust set) and `pattern_group` / `n_in_pattern` flagging the
+  clonal blocks. `direction` is an attribute, not the sort key. This is the result we keep.
 - `hits_by_direction_then_lineage.tsv` — *superseded* by the variance-explained ranking
   above; kept only as the earlier direction-first view.
 - `blood_vs_faeces_gwas_summary.json` — λ, thresholds, counts.
