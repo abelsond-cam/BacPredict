@@ -146,19 +146,42 @@ def direction_from_beta(beta: float, pos_label: str = "blood (invasion)", neg_la
 def significant_hits(
     assoc: pd.DataFrame, threshold: float, pval_col: str = PVAL_COL,
     pos_label: str = "blood (invasion)", neg_label: str = "faeces",
+    pheno_var: float = 0.249,
 ) -> pd.DataFrame:
-    """Rows with ``pval_col < threshold``, sorted by ascending p; adds a ``direction`` column."""
+    """Rows with ``pval_col < threshold``, annotated with effect size + clonal-block flags.
+
+    Ranked by ``var_explained_pct`` — the direction-agnostic additive variance explained
+    (∝ f(1-f)·β², normalised by the balanced-binary phenotype variance ~0.249) — *not* by
+    direction or raw significance (which foregrounds rare lineage-private markers; note
+    pyseer's own ``variant_h2`` does the same and is deliberately not used here). A
+    presence/absence variant is symmetric, so β sign is kept only as the ``direction``
+    attribute. ``pattern_group`` / ``n_in_pattern`` flag variants sharing one
+    presence/absence pattern (perfect LD = one clonal sub-lineage signal, one row per gene).
+    """
     if pval_col not in assoc.columns:
         raise SystemExit(f".assoc has no '{pval_col}' column (columns: {list(assoc.columns)})")
     p = pd.to_numeric(assoc[pval_col], errors="coerce")
     hits = assoc.loc[p.notna() & (p < threshold)].copy()
     hits[pval_col] = pd.to_numeric(hits[pval_col], errors="coerce")
-    hits = hits.sort_values(pval_col).reset_index(drop=True)
+
+    af = pd.to_numeric(hits["af"], errors="coerce") if "af" in hits.columns else pd.Series(np.nan, index=hits.index)
+    beta = pd.to_numeric(hits["beta"], errors="coerce") if "beta" in hits.columns else pd.Series(np.nan, index=hits.index)
+    hits["var_explained_pct"] = af * (1 - af) * beta**2 / pheno_var * 100
+
+    # clonal blocks: identical (af, β, p) == one presence/absence pattern (perfect LD)
+    pat_key = (af.round(6).astype(str) + "|" + beta.round(6).astype(str) + "|"
+               + hits[pval_col].map(lambda x: f"{x:.3e}"))
+    hits["pattern_group"] = pat_key.map({k: i for i, k in enumerate(pat_key.drop_duplicates())})
+    hits["n_in_pattern"] = hits.groupby("pattern_group")["variant"].transform("size")
+
     if "beta" in hits.columns:
-        hits["direction"] = pd.to_numeric(hits["beta"], errors="coerce").map(
-            lambda b: direction_from_beta(b, pos_label, neg_label)
-        )
-    return hits
+        hits["direction"] = beta.map(lambda b: direction_from_beta(b, pos_label, neg_label))
+
+    if hits["var_explained_pct"].notna().any():
+        hits = hits.sort_values(["var_explained_pct", pval_col], ascending=[False, True])
+    else:
+        hits = hits.sort_values(pval_col, ascending=True)
+    return hits.reset_index(drop=True)
 
 
 # --------------------------------------------------------------------------------------- #
@@ -349,24 +372,43 @@ def plot_qq(pvalues: np.ndarray, lam: float, out_path: Path) -> None:
 def plot_manhattan(
     pos: np.ndarray, pvalues: np.ndarray, threshold: float, out_path: Path,
     contig: str = DEFAULT_CONTIG, contig_len: int = DEFAULT_CONTIG_LEN,
-    pair_title: str = "blood vs faeces",
+    pair_title: str = "blood vs faeces", top_hits: pd.DataFrame | None = None,
 ) -> None:
-    """−log10(structure-adjusted p) against reference position, with the Bonferroni line."""
+    """−log10(structure-adjusted p) vs position, Bonferroni line; optional top-hit labels.
+
+    ``top_hits`` (cols ``pos``, ``label``, ``var_explained_pct``, ``beta``, ``_p``) labels
+    the strongest hits **by variance explained** — point size ∝ VE, with a ``↑``/``↓`` glyph
+    for the allele direction (a minor annotation, *not* the ranking axis).
+    """
     p = pd.to_numeric(pd.Series(pvalues), errors="coerce").to_numpy()
     keep = np.isfinite(p) & (p > 0) & (pos >= 0)
-    x = pos[keep]
-    y = -np.log10(p[keep])
-    fig, ax = plt.subplots(figsize=(13, 4.5))
-    ax.scatter(x, y, s=3, alpha=0.3, color="navy", linewidths=0, rasterized=True)
+    fig, ax = plt.subplots(figsize=(15, 6))
+    ax.scatter(pos[keep], -np.log10(p[keep]), s=3, alpha=0.3, color="navy", linewidths=0, rasterized=True)
     if threshold > 0:
         ax.axhline(-np.log10(threshold), color="crimson", ls="--", lw=1.2,
                    label=f"Bonferroni {threshold:.2e}")
+    if top_hits is not None and len(top_hits):
+        ty = -np.log10(pd.to_numeric(top_hits["_p"], errors="coerce").to_numpy())
+        ve = pd.to_numeric(top_hits["var_explained_pct"], errors="coerce").fillna(0).to_numpy()
+        ax.scatter(top_hits["pos"].to_numpy(), ty, s=ve * 12 + 20, color="#d00000",
+                   edgecolors="black", linewidths=0.5, zorder=5, label="top hits by variance explained")
+        texts = []
+        for (_, r), yy in zip(top_hits.iterrows(), ty, strict=False):
+            arrow = "↑" if (pd.notna(r.get("beta")) and float(r["beta"]) > 0) else "↓"
+            texts.append(ax.annotate(f'{r["label"]} {arrow} ({float(r["var_explained_pct"]):.1f}%)',
+                         (r["pos"], yy), fontsize=8, color="#7a0000", ha="center", va="bottom", zorder=6))
+        try:
+            from adjustText import adjust_text
+            adjust_text(texts, ax=ax, expand=(1.3, 1.7),
+                        arrowprops={"arrowstyle": "-", "color": "grey", "lw": 0.5})
+        except ImportError:
+            pass
     ax.set_xlim(0, contig_len)
     ax.set_ylim(bottom=0)
     ax.set_xlabel(f"position on {contig} (bp)")
     ax.set_ylabel(r"$-\log_{10}(\mathrm{lrt\ p})$")
     ax.set_title(f"Manhattan — {pair_title}, structure-adjusted   ({int(keep.sum()):,} variants)")
-    ax.legend(loc="upper right")
+    ax.legend(loc="upper right", fontsize=8)
     ax.grid(True, alpha=0.25)
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -410,8 +452,9 @@ def run(
     mapped = cross_ref_virulence(mapped)
 
     # Assemble the annotated hit table: the pyseer stats + POS + the gene-mapping columns.
-    carry = [c for c in ("variant", "af", "filter-pvalue", pval_col, "beta", "beta-std-err",
-                         "direction", "lineage", "notes") if c in hits.columns]
+    carry = [c for c in ("variant", "var_explained_pct", "af", "filter-pvalue", pval_col, "beta",
+                         "beta-std-err", "direction", "lineage", "variant_h2", "pattern_group",
+                         "n_in_pattern", "notes") if c in hits.columns]
     annotated = pd.concat(
         [hits[carry].reset_index(drop=True),
          pd.Series(hit_pos, name="pos"),
@@ -451,10 +494,19 @@ def run(
     #     failure here cannot lose data already on disk, and the figures can be regenerated
     #     by simply re-running this script against the saved .assoc.
     pos = variant_positions(assoc["variant"].to_numpy(), contig)
+    top_hits = pd.DataFrame()
+    if len(annotated) and "var_explained_pct" in annotated.columns:
+        th = annotated.dropna(subset=["pos"]).copy()
+        if "pattern_group" in th.columns:
+            th = th.drop_duplicates("pattern_group")            # one row per clonal pattern
+        th = th.sort_values("var_explained_pct", ascending=False).head(15)
+        th["label"] = th["gene"].where(th["gene"].notna(), th.get("locus_tag"))
+        th["_p"] = pd.to_numeric(th[pval_col], errors="coerce")
+        top_hits = th
     for name, draw in (
         ("QQ", lambda: plot_qq(pvals, lam, out_fig_dir / "pyseer_qq.png")),
         ("Manhattan", lambda: plot_manhattan(pos, pvals, threshold, out_fig_dir / "pyseer_manhattan.png",
-                                             contig, contig_len, pair_title)),
+                                             contig, contig_len, pair_title, top_hits)),
     ):
         try:
             draw()

@@ -30,64 +30,67 @@ It replaces the MDS fixed-effects attempt (`../mds_model/`, λ=4.34, abandoned).
 - **110 significant hits** (vs 6,657 under MDS) over 353,051 unique patterns,
   Bonferroni 0.05/patterns = 1.42e-7. 88 fall inside a gene; 2 are virulence-flagged.
 
-## Direction & lineage — the cross-lineage filter
+## Ranking — effect size, not direction or raw significance
 
-Re-sorting the 110 hits by direction → lineage (`hits_by_direction_then_lineage.tsv`)
-sharpens the story. **Only 18 hits are blood/invasion (β>0); 92 are faeces (β<0)** —
-and much of the faeces mass is residual clonal-block leakage (see caveat below). The
-blood side is the small, clean, interesting set, and it splits by lineage attribution:
+**Direction (β sign) is not a meaningful ranking axis.** A presence/absence variant is
+symmetric: a "faeces" hit at af 20% means the *absence* allele (80%) carries the blood
+signal — same information, coded by which allele is the reference. The table is therefore
+ranked by **variance explained ≈ f(1−f)·β²** (`var_explained_pct`), the direction-agnostic
+effect size; `direction` is kept only as an attribute. (pyseer's built-in `variant_h2` is
+*not* used for ranking — it weights the LMM genetic-variance contribution and puts the rare
+lineage-private markers on top, the opposite of what we want.)
 
-| blood class | n | reading |
-|---|---|---|
-| **cross-lineage (blank)** | **8** | no single SL dominates → genuine cross-lineage signal |
-| other-bucket | 5 | ambiguous (collapsed small-SLs *or* background) |
-| single-SL | 5 | likely lineage-restricted markers |
+**Effect sizes are uniformly small.** Median variance explained per pattern ≈ 1.3%, max
+≈ 8%. No single core variant predicts invasion; most invasive isolates carry the reference
+allele at any given hit. Expected: invasiveness is polygenic *and* driven heavily by
+**accessory** determinants — capsule **type**, aerobactin (*iuc*), yersiniabactin (*ybt*),
+all mobile/accessory and **invisible to this core-genome scan**. These hits are individual
+leads on the chromosomal axis, not a classifier.
 
-**No blood gene is significant under two *different* named SLs** — but that's partly a
-pyseer artifact (`--lineage` assigns each variant one "most-associated" lineage). The
-real cross-lineage tell is **blank attribution + allele frequency**: a blood variant at
-af 0.27 (fim-usher), 0.61–0.86 (iolB), or 0.74 (`KPN_RS10380`, *labelled* SL147 but far
-too common to sit in one SL) must span many lineages regardless of the label.
-`manhattan_lmm_bigsl_af1_annotated.png` encodes this: **bold bright-red = cross-lineage,
-muted red (with the SL tag) = single-SL/other.**
+**Clonal blocks.** The 110 significant variants are only **88 unique presence/absence
+patterns**. Two big blocks — **9 genes on one SL258 pattern** and **11 on one 'other'
+pattern** (both rare, af≈1.4–1.7%, faeces-direction) — are each *one* co-inherited
+sub-clade signal reported once per gene. pyseer tests every variant **univariately**, so
+these are neither independent hits nor a combined-stronger signal; they mark a sub-branch
+whose phenotype skew survives the LMM kinship correction. `pattern_group` / `n_in_pattern`
+flag them; within a block you cannot resolve which gene (if any) is causal (perfect LD).
 
-## Biology — what survived a conservative test
+## Strongest signatures (by variance explained; patterns collapsed)
 
-**Blood / invasion (β > 0) — the encouraging, cross-lineage signal.** After proper
-structure correction the canonical *Klebsiella* invasion machinery surfaces among the
-positive-β hits:
+| VE% | gene | dir | lineage | af | β |
+|---|---|---|---|---|---|
+| 8.0 | KPN_RS10755 (riboflavin synthase) | faeces | other | 0.069 | −0.56 |
+| 7.8 | dnaK (chaperone) | invasion | **SL307** | 0.065 | +0.57 |
+| 7.7 | phoA (alkaline phosphatase) | invasion | other | 0.109 | +0.45 |
+| 7.5 | KPN_RS02245 (RcnA Ni/Co efflux) | faeces | **SL307** | 0.074 | −0.52 |
+| 6.6 | KPN_RS10715 (HTH regulator) | invasion | **SL147** | 0.109 | +0.41 |
+| 4.7 | focA (formate transporter) | faeces | other | 0.107 | −0.35 |
+| 3.6 | nfuA (Fe-S biogenesis) | invasion | other | 0.586 | +0.19 |
+| 3.5 | KPN_RS09430 (iron-cofactor redox) | invasion | **cross-lineage** | 0.115 | +0.29 |
+| 3.4 | KPN_RS11350 (siderophore receptor) | invasion | **SL17** | 0.059 | +0.39 |
+| 3.2 | KPN_RS24485 (fimbrial usher) | invasion | **cross-lineage** | 0.274 | +0.20 |
 
-- **Capsule assembly Wzi** (`KPN_RS13515`, pos 2,744,372; β=+0.27; **no SL
-  attribution → cross-lineage**) — capsule is the textbook hypervirulence/invasion
-  determinant; a cross-lineage capsule hit up in blood is exactly the real signal we
-  hoped for. *(virulence-flagged)*
-- **TonB-dependent siderophore receptor** (`KPN_RS11350`, pos 2,307,956; β=+0.39;
-  SL17) — iron piracy is central to invasiveness. *(virulence-flagged)*
-- **btuB TonB-dependent receptor** (`KPN_RS22930`) — appears on both strands of the
-  signal (a blood + variant and a faeces − variant), iron/cobalamin uptake.
-- **fimbria/pilus outer-membrane usher** (`KPN_RS24485`, β=+0.20) — adhesion/invasion.
-- plus dnaK, nadB, phoA, an iron-containing redox enzyme, and others.
-
-**Faeces (β < 0) — read with caution: residual clonal blocks.** Many of the *strongest*
-faeces hits are rare (af ≈ 1.4%) and share **identical lrt-pvalue and identical β across
-genes scattered all over the chromosome**, every one attributed to a single Sublineage
-(blocks for SL258, SL35, SL307). That signature — one clonal frame, many unrelated
-genes, one p-value — is a **lineage-marker artifact**, not gene-level biology. Even the
-LMM leaks a little clonal signal here. So interpret the **cross-lineage** faeces hits
-(no/`other` SL attribution, varied p-values — e.g. the glycoside-hydrolase-19, FocA,
-nitrate-reductase, mutY hits) and treat the identical-stat single-SL blocks as
-lineage tags.
+**Reading:** several of the strongest are **lineage-restricted** (dnaK→SL307, RcnA→SL307,
+HTH→SL147, siderophore→SL17) — confounded even by effect size, so not generalisable
+invasion signals. The strongest **cross-lineage invasion** hits (the generalisable ones)
+are the **iron-cofactor redox enzyme**, the **fimbrial usher**, and **nadB**; capsule
+***wzi*** is real but modest (~1% VE), *not* the headline I first reported. The coherent
+**capsule + fimbrial + core-iron** theme holds — but as a spread of small cross-lineage
+effects, not a few dominant genes, with the accessory iron/capsule machinery untested here.
 
 ## Files
 
 - `qq_lmm_bigsl_af1.png` — QQ of structure-adjusted p (λ=0.562; controlled bulk + tail).
 - `manhattan_lmm_bigsl_af1.png` — Manhattan on NC_009648, Bonferroni line.
-- `manhattan_lmm_bigsl_af1_annotated.png` — same Manhattan with the **18 blood/invasion
-  genes labelled** (bold red = cross-lineage, muted red + SL tag = single-SL/other).
-- `hits_by_direction_then_lineage.tsv` — the 110 hits re-sorted blood-first, then by
-  lineage class (cross-lineage → other → single-SL).
+- `manhattan_lmm_bigsl_af1_annotated.png` — Manhattan with the **top hits labelled by
+  variance explained** (point size ∝ VE; `↑`/`↓` = which allele, a minor glyph — *not* the
+  ranking axis).
 - `blood_vs_faeces_hits_annotated.tsv` — the **110 significant hits**, gene-mapped +
-  virulence cross-ref. The result (unlike the MDS TSV, this one we keep and use).
+  virulence cross-ref, now **ranked by `var_explained_pct`** with `pattern_group` /
+  `n_in_pattern` flagging the clonal blocks (`direction` is an attribute, not the sort key).
+  This is the result we keep.
+- `hits_by_direction_then_lineage.tsv` — *superseded* by the variance-explained ranking
+  above; kept only as the earlier direction-first view.
 - `blood_vs_faeces_gwas_summary.json` — λ, thresholds, counts.
 
 ## Provenance / reproduce
