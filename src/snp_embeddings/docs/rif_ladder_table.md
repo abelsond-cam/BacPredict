@@ -21,13 +21,20 @@ to 0.905 and a learned attention head does *worse* (0.868). Injecting the causal
 concat ESM-rpoB ⊕ Bacformer mean → LR — tops the ladder at **0.975** (frozen mean) / **0.977** (fine-tuned
 mean), edging past one-hot mutation alone (0.960). The read-out, not the embedding, was the bottleneck.
 
-**A.1.i — does fine-tuning the backbone add anything on top of the injected gene?** Swapping the frozen
-genome-mean for the *fine-tuned* 0.905 mean lifts the concat from **0.9752 → 0.9769** (+0.0017 AUROC;
-AUPRC unchanged at 0.954). So fine-tuning contributes only a whisker once ESM-rpoB is concatenated — the
-causal-gene vector already supplies almost all of what the fine-tuned backbone learned. The FT-mean-only
-ablation reproduced **0.9057** (target 0.905), confirming the extracted backbone matches the deployed
-model. This is a k=1/m=1 number; honest error bars over the canonical evaluate holdout (the FT-unseen
-genomes) are the next run (`run_concat_ft_kfold_eval_holdout.sh`, `--kfold-on-eval-holdout`).
+**A.1.i — does fine-tuning the backbone add anything on top of the injected gene?** On the canonical
+single split, swapping the frozen genome-mean for the *fine-tuned* 0.905 mean lifts the concat from
+**0.9752 → 0.9769** (+0.0017 AUROC; AUPRC unchanged at 0.954). The FT-mean-only ablation reproduced
+**0.9057** (target 0.905), confirming the extracted backbone matches the deployed model.
+
+**Honest FT error bars (job 30707469, `--kfold-on-eval-holdout`).** Re-splitting a fine-tuned mean over the
+whole cohort would be leaky (the backbone trained on those labels), so the k-fold is restricted to the
+canonical evaluate holdout — the ~6.9k genomes the FT backbone was held out from, where its mean is once
+again label-blind (`leakage_warning: false`). Over k=5 × m=3 there: FT-mean concat **0.9824 ± 0.0011**,
+ESM-rpoB **0.9759 ± 0.0011**, FT-mean **0.8992 ± 0.0019**; concat beats ESM-rpoB **15/15** (paired
+Δ +0.0065 ± 0.0010) and the FT-mean 15/15. So on the honest holdout the fine-tuned mean adds *more* than
+the frozen one (the concat edge over ESM-alone roughly doubles, +0.0065 vs the frozen +0.0023) — small but
+unambiguous. (Absolute AUROCs differ between the frozen whole-cohort k-fold and this eval-holdout k-fold
+because the two harness holdouts are different sets; the paired within-run deltas are the comparable part.)
 
 **Significance (k-fold × m-seed, frozen frames).** The three frozen-mean frames were rerun through the
 k=5 × m=3 harness (job 30673824, its own fixed 20 % holdout; AUROC ± sd are the small whiskers on the bar
