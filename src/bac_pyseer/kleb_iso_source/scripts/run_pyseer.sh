@@ -49,9 +49,20 @@ cd "$REPO"
 K=${1:-10}
 
 DATA=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw
-COHORT=sampled_country_2_1_all
-COHORT_CSV=$DATA/david/processed/train_iso_source/blood_faeces/$COHORT/kpsc_human/binary_blood_vs_faeces_with_split.csv
-IN_DIR=$DATA/david/processed/pyseer_iso_source/blood_faeces/$COHORT
+# Toggle these (env) to retarget a pair/cohort; defaults = blood/faeces sampled_country_2_1_all.
+# e.g.  PAIR=faeces_respiratory LABEL_COL=respiratory_vs_faeces_label OUT_STEM=respiratory_vs_faeces \
+#       POS_LABEL='respiratory (invasion)' PAIR_TITLE='faeces vs respiratory' \
+#       COHORT_CSV=…/faeces_respiratory/$COHORT/kpsc_human/binary_respiratory_vs_faeces_labels.csv \
+#       USE_LMM=1 sbatch … run_pyseer.sh 10 gwas_lmm 100
+PAIR=${PAIR:-blood_faeces}
+COHORT=${COHORT:-sampled_country_2_1_all}
+LABEL_COL=${LABEL_COL:-blood_vs_faeces_label}
+OUT_STEM=${OUT_STEM:-blood_vs_faeces}            # filename stem for the .assoc / hit table / summary
+POS_LABEL="${POS_LABEL:-blood (invasion)}"       # postprocess direction label for β>0 (phenotype==1)
+NEG_LABEL="${NEG_LABEL:-faeces}"                 # ... and for β<0 (phenotype==0)
+PAIR_TITLE="${PAIR_TITLE:-blood vs faeces}"      # Manhattan title contrast name
+COHORT_CSV=${COHORT_CSV:-$DATA/david/processed/train_iso_source/$PAIR/$COHORT/kpsc_human/binary_blood_vs_faeces_with_split.csv}
+IN_DIR=$DATA/david/processed/pyseer_iso_source/$PAIR/$COHORT
 GWAS_SUBDIR=${2:-gwas}   # 2nd arg = output subdir; use a fresh name to run an isolated GWAS alongside another in flight
 MIN_SL_SIZE=${3:-0}      # 3rd arg = min samples/Sublineage to keep as its own --lineage cluster; smaller SLs collapse to 'other' (0 = keep all)
 MIN_AF=${MIN_AF:-0.01}          # env: allele-frequency window; raise to 0.05/0.95 to drop the rare, separating variants that force slow Firth fits
@@ -69,7 +80,7 @@ SAMPLES=$IN_DIR/samples.txt          # sample-id list (phenotype/Rtab order) —
 SIMILARITY=$IN_DIR/similarity.tsv    # LMM kinship built from the Rtab; built once, shared across LMM runs
 CLUSTERS=$GWAS_DIR/sublineage_clusters.tsv
 PATTERNS=$GWAS_DIR/patterns.txt
-ASSOC=$GWAS_DIR/blood_vs_faeces.assoc
+ASSOC=$GWAS_DIR/${OUT_STEM}.assoc
 
 echo "Job $SLURM_JOB_ID  Node $SLURMD_NODENAME  cohort=$COHORT  K=$K  $(date)"
 
@@ -142,7 +153,7 @@ else
 fi
 pixi run --manifest-path "$PIXI_MANIFEST" pyseer \
     --pres "$RTAB" \
-    --phenotypes "$PHENO" --phenotype-column blood_vs_faeces_label \
+    --phenotypes "$PHENO" --phenotype-column "$LABEL_COL" \
     "${STRUCT_ARGS[@]}" \
     ${LINEAGE_ARGS[@]+"${LINEAGE_ARGS[@]}"} \
     --min-af "$MIN_AF" --max-af "$MAX_AF" \
@@ -157,9 +168,10 @@ echo "pyseer done: $(wc -l < "$ASSOC") assoc lines  $(date)"
 uv run python src/bac_pyseer/kleb_iso_source/pyseer_postprocess.py \
     --assoc "$ASSOC" --patterns "$PATTERNS" --gff "$GFF" \
     --out-fig-dir "$GWAS_DIR" \
-    --out-table "$GWAS_DIR/blood_vs_faeces_hits_annotated.tsv" \
-    --summary-json "$GWAS_DIR/blood_vs_faeces_gwas_summary.json" \
-    --contig NC_009648 --max-dimensions "$K"
+    --out-table "$GWAS_DIR/${OUT_STEM}_hits_annotated.tsv" \
+    --summary-json "$GWAS_DIR/${OUT_STEM}_gwas_summary.json" \
+    --contig NC_009648 --max-dimensions "$K" \
+    --pos-label "$POS_LABEL" --neg-label "$NEG_LABEL" --pair-title "$PAIR_TITLE"
 
 echo "GWAS outputs in $GWAS_DIR"
 ls -lh "$GWAS_DIR"

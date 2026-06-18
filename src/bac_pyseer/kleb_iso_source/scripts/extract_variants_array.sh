@@ -38,7 +38,9 @@ DATA=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw
 PYSEER=$DATA/david/processed/pyseer_iso_source
 REF=$PYSEER/ref/ref.fa
 CACHE_DIR=$PYSEER/locus_cache
-RESOLUTION_TSV=$PYSEER/resolution/blood_faeces_union_resolution.tsv
+# Toggle RESOLUTION_TSV (env) to extract a different pair/cohort; the per-sample cache is shared,
+# so --skip-existing means already-cached samples (e.g. faeces) are reused and only new ones extracted.
+RESOLUTION_TSV=${RESOLUTION_TSV:-$PYSEER/resolution/blood_faeces_union_resolution.tsv}
 
 echo "Job $SLURM_JOB_ID  Array task $SLURM_ARRAY_TASK_ID  Node $SLURMD_NODENAME  $(date)"
 echo "bcftools: $BCFTOOLS  $($BCFTOOLS --version | head -1)"

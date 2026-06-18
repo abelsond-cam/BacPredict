@@ -30,20 +30,26 @@ cd /home/dca36/workspace/BacPredict
 DATA=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw
 PYSEER=$DATA/david/processed/pyseer_iso_source
 CACHE_DIR=$PYSEER/locus_cache
-RESOLUTION_TSV=$PYSEER/resolution/blood_faeces_union_resolution.tsv
 
-COHORT=sampled_country_2_1_all   # first target (pooled country-balanced, ~14.2k)
-COHORT_CSV=$DATA/david/processed/train_iso_source/blood_faeces/$COHORT/kpsc_human/binary_blood_vs_faeces_with_split.csv
-OUT_DIR=$PYSEER/blood_faeces/$COHORT
+# Toggle these (env) to retarget a pair/cohort; defaults = blood/faeces sampled_country_2_1_all.
+# e.g.  PAIR=faeces_respiratory LABEL_COL=respiratory_vs_faeces_label \
+#       COHORT_CSV=…/faeces_respiratory/$COHORT/kpsc_human/binary_respiratory_vs_faeces_labels.csv \
+#       RESOLUTION_TSV=$PYSEER/resolution/faeces_respiratory_resolution.tsv sbatch … build_matrix_and_distances.sh
+PAIR=${PAIR:-blood_faeces}
+COHORT=${COHORT:-sampled_country_2_1_all}   # pooled country-balanced
+LABEL_COL=${LABEL_COL:-blood_vs_faeces_label}
+RESOLUTION_TSV=${RESOLUTION_TSV:-$PYSEER/resolution/blood_faeces_union_resolution.tsv}
+COHORT_CSV=${COHORT_CSV:-$DATA/david/processed/train_iso_source/$PAIR/$COHORT/kpsc_human/binary_blood_vs_faeces_with_split.csv}
+OUT_DIR=$PYSEER/$PAIR/$COHORT
 
-echo "Job $SLURM_JOB_ID  Node $SLURMD_NODENAME  cohort=$COHORT  $(date)"
+echo "Job $SLURM_JOB_ID  Node $SLURMD_NODENAME  pair=$PAIR  cohort=$COHORT  label=$LABEL_COL  $(date)"
 
 uv run python src/bac_pyseer/kleb_iso_source/build_presence_and_distances.py \
     --cohort-csv "$COHORT_CSV" \
     --cache-dir "$CACHE_DIR" \
     --out-dir "$OUT_DIR" \
     --resolution-tsv "$RESOLUTION_TSV" \
-    --label-col blood_vs_faeces_label \
+    --label-col "$LABEL_COL" \
     --min-freq 0.01 \
     --n-jobs -1 \
     --min-qual 100 --min-dp 3

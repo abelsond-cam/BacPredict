@@ -134,16 +134,19 @@ def genomic_inflation(pvalues: np.ndarray) -> float:
     return float(np.median(chisq) / CHI2_1DF_MEDIAN)
 
 
-def direction_from_beta(beta: float) -> str:
-    """Map a pyseer β to the phenotype it favours (blood=1, faeces=0)."""
+def direction_from_beta(beta: float, pos_label: str = "blood (invasion)", neg_label: str = "faeces") -> str:
+    """Map a pyseer β to the phenotype it favours (``pos_label`` = phenotype==1, ``neg_label`` = 0)."""
     if beta > 0:
-        return "blood (invasion)"
+        return pos_label
     if beta < 0:
-        return "faeces"
+        return neg_label
     return "none"
 
 
-def significant_hits(assoc: pd.DataFrame, threshold: float, pval_col: str = PVAL_COL) -> pd.DataFrame:
+def significant_hits(
+    assoc: pd.DataFrame, threshold: float, pval_col: str = PVAL_COL,
+    pos_label: str = "blood (invasion)", neg_label: str = "faeces",
+) -> pd.DataFrame:
     """Rows with ``pval_col < threshold``, sorted by ascending p; adds a ``direction`` column."""
     if pval_col not in assoc.columns:
         raise SystemExit(f".assoc has no '{pval_col}' column (columns: {list(assoc.columns)})")
@@ -152,7 +155,9 @@ def significant_hits(assoc: pd.DataFrame, threshold: float, pval_col: str = PVAL
     hits[pval_col] = pd.to_numeric(hits[pval_col], errors="coerce")
     hits = hits.sort_values(pval_col).reset_index(drop=True)
     if "beta" in hits.columns:
-        hits["direction"] = pd.to_numeric(hits["beta"], errors="coerce").map(direction_from_beta)
+        hits["direction"] = pd.to_numeric(hits["beta"], errors="coerce").map(
+            lambda b: direction_from_beta(b, pos_label, neg_label)
+        )
     return hits
 
 
@@ -344,6 +349,7 @@ def plot_qq(pvalues: np.ndarray, lam: float, out_path: Path) -> None:
 def plot_manhattan(
     pos: np.ndarray, pvalues: np.ndarray, threshold: float, out_path: Path,
     contig: str = DEFAULT_CONTIG, contig_len: int = DEFAULT_CONTIG_LEN,
+    pair_title: str = "blood vs faeces",
 ) -> None:
     """−log10(structure-adjusted p) against reference position, with the Bonferroni line."""
     p = pd.to_numeric(pd.Series(pvalues), errors="coerce").to_numpy()
@@ -359,7 +365,7 @@ def plot_manhattan(
     ax.set_ylim(bottom=0)
     ax.set_xlabel(f"position on {contig} (bp)")
     ax.set_ylabel(r"$-\log_{10}(\mathrm{lrt\ p})$")
-    ax.set_title(f"Manhattan — blood vs faeces, structure-adjusted   ({int(keep.sum()):,} variants)")
+    ax.set_title(f"Manhattan — {pair_title}, structure-adjusted   ({int(keep.sum()):,} variants)")
     ax.legend(loc="upper right")
     ax.grid(True, alpha=0.25)
     fig.tight_layout()
@@ -376,6 +382,8 @@ def run(
     *, assoc_path: Path, patterns_path: Path, gff_path: Path, out_fig_dir: Path,
     out_table: Path, summary_json: Path, contig: str, contig_len: int,
     pval_col: str, alpha: float, k_dimensions: int | None,
+    pos_label: str = "blood (invasion)", neg_label: str = "faeces",
+    pair_title: str = "blood vs faeces",
 ) -> dict[str, object]:
     """Compute the threshold + λ, draw QQ/Manhattan, annotate hits, write the summary."""
     assoc = load_assoc(assoc_path)
@@ -392,7 +400,7 @@ def run(
     #     plotting failure can never cost the run its outputs. The precious raw GWAS data
     #     (the .assoc + patterns) is already written by pyseer upstream; everything below is
     #     cheap to recompute from it, and the plots at the end are regenerable by re-running.
-    hits = significant_hits(assoc, threshold, pval_col)
+    hits = significant_hits(assoc, threshold, pval_col, pos_label, neg_label)
     logging.info("significant hits (%s < %.3e): %d", pval_col, threshold, len(hits))
     hit_pos = variant_positions(hits["variant"].to_numpy(), contig) if len(hits) else np.array([], dtype=np.int64)
 
@@ -446,7 +454,7 @@ def run(
     for name, draw in (
         ("QQ", lambda: plot_qq(pvals, lam, out_fig_dir / "pyseer_qq.png")),
         ("Manhattan", lambda: plot_manhattan(pos, pvals, threshold, out_fig_dir / "pyseer_manhattan.png",
-                                             contig, contig_len)),
+                                             contig, contig_len, pair_title)),
     ):
         try:
             draw()
@@ -475,6 +483,10 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--pval-col", default=PVAL_COL, help="Significance p-value column (structure-adjusted).")
     p.add_argument("--alpha", type=float, default=0.05)
     p.add_argument("--max-dimensions", type=int, default=None, help="K used in the run (recorded in summary).")
+    p.add_argument("--pos-label", default="blood (invasion)",
+                   help="Direction label for β>0 (phenotype==1); e.g. 'respiratory (invasion)'.")
+    p.add_argument("--neg-label", default="faeces", help="Direction label for β<0 (phenotype==0).")
+    p.add_argument("--pair-title", default="blood vs faeces", help="Contrast name for the Manhattan title.")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -483,6 +495,7 @@ def main(argv: list[str] | None = None) -> None:
         out_fig_dir=args.out_fig_dir, out_table=args.out_table, summary_json=args.summary_json,
         contig=args.contig, contig_len=args.contig_len, pval_col=args.pval_col,
         alpha=args.alpha, k_dimensions=args.max_dimensions,
+        pos_label=args.pos_label, neg_label=args.neg_label, pair_title=args.pair_title,
     )
 
 

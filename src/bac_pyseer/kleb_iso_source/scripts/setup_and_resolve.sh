@@ -35,9 +35,13 @@ PYSEER=$DATA/david/processed/pyseer_iso_source
 REF_DIR=$PYSEER/ref
 RESOLUTION_DIR=$PYSEER/resolution
 
-# Tier-1 union = every KPSC-human blood/faeces sample (superset of all cohorts).
-UNION_CSV=$DATA/david/processed/train_iso_source/blood_faeces/all_samples/kpsc_human/binary_blood_vs_faeces_with_split.csv
-RESOLUTION_TSV=$RESOLUTION_DIR/blood_faeces_union_resolution.tsv
+# Default: Tier-1 union = every KPSC-human blood/faeces sample (superset of all cohorts).
+# Toggle SAMPLE_CSV + RESOLUTION_TSV (env) to resolve a different pair/cohort, e.g. faeces vs resp:
+#   SAMPLE_CSV=…/faeces_respiratory/sampled_country_2_1_all/kpsc_human/binary_respiratory_vs_faeces_labels.csv \
+#   RESOLUTION_TSV=$RESOLUTION_DIR/faeces_respiratory_resolution.tsv sbatch … setup_and_resolve.sh
+# (ref staging is idempotent — skipped once ref.fa exists.)
+SAMPLE_CSV=${SAMPLE_CSV:-$DATA/david/processed/train_iso_source/blood_faeces/all_samples/kpsc_human/binary_blood_vs_faeces_with_split.csv}
+RESOLUTION_TSV=${RESOLUTION_TSV:-$RESOLUTION_DIR/blood_faeces_union_resolution.tsv}
 
 echo "=== (1) stage reference FASTA ==="
 mkdir -p "$REF_DIR"
@@ -52,7 +56,7 @@ echo "Reference: $REF_DIR/ref.fa"; head -1 "$REF_DIR/ref.fa.fai"
 
 echo "=== (2) resolve Sample -> raw snippy VCF ==="
 uv run python src/bac_pyseer/kleb_iso_source/resolve_snippy_paths.py \
-    --sample-csv "$UNION_CSV" \
+    --sample-csv "$SAMPLE_CSV" \
     --out-tsv "$RESOLUTION_TSV"
 
 echo "Done. Resolution TSV: $RESOLUTION_TSV"
