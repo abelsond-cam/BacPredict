@@ -134,7 +134,8 @@ def main() -> None:
     here = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--csv", type=Path, default=here / "docs" / "rif_ladder_table.csv")
-    parser.add_argument("--out", type=Path, default=here / "docs" / "visualisations" / "rif_ladder_barplot.png")
+    parser.add_argument("--out", type=Path,
+                        default=here / "docs" / "visualisations" / "tb_rifampicin" / "rif_ladder_barplot.png")
     args = parser.parse_args()
     plot_ladder(args.csv, args.out)
     print(f"Wrote {args.out}")

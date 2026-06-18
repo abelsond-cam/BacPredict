@@ -24,6 +24,14 @@ import pandas as pd
 PICK_COLOUR = "#7e3f9e"   # purple — matches the concat bars on the ladder ("the gene we inject")
 OTHER_COLOUR = "#9aa3ad"  # muted grey — the rest of the ranking
 
+# AST column name (US) → display / directory name (the proper drug name used for tb_<drug>/ dirs).
+DRUG_DISPLAY = {"rifampin": "rifampicin"}
+
+
+def display_name(drug: str) -> str:
+    """The proper drug name used in titles and the per-drug ``tb_<drug>/`` visualisation dir."""
+    return DRUG_DISPLAY.get(drug, drug)
+
 
 def plot_ranking(csv_path: Path, out_path: Path, *, drug: str | None = None, top_n: int = 10) -> None:
     """Top-``top_n`` genes by out-of-fold LR AUROC, descending; the top gene highlighted as our pick."""
@@ -32,7 +40,7 @@ def plot_ranking(csv_path: Path, out_path: Path, *, drug: str | None = None, top
     if not auroc_cols:
         raise ValueError(f"{csv_path} has no lr_auroc_<drug> column — not a per-gene ranking table.")
     auroc_col = f"lr_auroc_{drug}" if drug else auroc_cols[0]
-    drug_name = auroc_col.removeprefix("lr_auroc_")
+    drug_name = display_name(auroc_col.removeprefix("lr_auroc_"))
 
     top = df.sort_values(auroc_col, ascending=False).head(top_n).reset_index(drop=True)
     colours = [PICK_COLOUR if i == 0 else OTHER_COLOUR for i in range(len(top))]
@@ -75,12 +83,15 @@ def main() -> None:
     here = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--csv", type=Path, default=here / "docs" / "per_gene_lr_rifampin.csv")
-    parser.add_argument("--drug", type=str, default=None, help="Drug column to rank by (default: the one present).")
+    parser.add_argument("--drug", type=str, default="rifampin", help="AST drug column to rank by.")
     parser.add_argument("--top-n", type=int, default=10)
-    parser.add_argument("--out", type=Path, default=here / "docs" / "visualisations" / "rif_per_gene_lr_ranking.png")
+    parser.add_argument("--out", type=Path, default=None,
+                        help="Output PNG (default: docs/visualisations/tb_<drug>/<drug>_per_gene_lr_ranking.png).")
     args = parser.parse_args()
-    plot_ranking(args.csv, args.out, drug=args.drug, top_n=args.top_n)
-    print(f"Wrote {args.out}")
+    disp = display_name(args.drug)
+    out = args.out or here / "docs" / "visualisations" / f"tb_{disp}" / f"{disp}_per_gene_lr_ranking.png"
+    plot_ranking(args.csv, out, drug=args.drug, top_n=args.top_n)
+    print(f"Wrote {out}")
 
 
 if __name__ == "__main__":
