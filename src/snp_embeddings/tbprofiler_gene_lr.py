@@ -19,7 +19,6 @@ a sparse binary matrix — light; runs as a short CPU job.
 from __future__ import annotations
 
 import argparse
-import glob
 import json
 import logging
 from pathlib import Path
@@ -68,7 +67,7 @@ def run(variants_parquet: Path, ast_sheet: Path, esm_rank_dir: Path, out_dir: Pa
     for drug in drugs:
         label_map = load_labels(ast_sheet, drug)
         labelled = sorted(label_map)
-        dv = variants[variants["drug_set"].apply(lambda s: drug in s)]
+        dv = variants[variants["drug_set"].apply(lambda s, d=drug: d in s)]
         dv = dv[dv["Sample"].isin(label_map)]
         if dv.empty:
             logger.warning("%s: no WHO variants — skipping", drug)
