@@ -64,6 +64,22 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 ESM_RPOB_SANITY_TARGET = 0.971
 
 
+def _top_gene_from_ranking(ranking_csv: Path) -> str:
+    """The highest out-of-fold-AUROC gene from a per-gene LR ranking CSV (``build_per_gene_lr_store``).
+
+    The ranking table has columns ``gene_name`` and ``lr_auroc_<drug>`` (one auroc column). Returns the
+    ``gene_name`` of the top-AUROC row — the auto-discovered causal-gene candidate for that drug, fed to
+    the concat probe as ``--gene`` (rpoB tops the rifampin ranking; katG/embB/pncA/gyrA/rpsL their drugs).
+    """
+    df = pd.read_csv(ranking_csv)
+    auroc_cols = [c for c in df.columns if c.startswith("lr_auroc_")]
+    if not auroc_cols:
+        raise ValueError(f"{ranking_csv} has no lr_auroc_<drug> column — not a per-gene ranking table.")
+    top = df.sort_values(auroc_cols[0], ascending=False).iloc[0]
+    logger.info("Top-ranked gene from %s: %s (%s=%.4f)", ranking_csv.name, top["gene_name"], auroc_cols[0], top[auroc_cols[0]])
+    return str(top["gene_name"])
+
+
 def _slice_splits(
     train_ids: list[str], validate_ids: list[str], evaluate_ids: list[str], max_samples: int
 ) -> tuple[list[str], list[str], list[str]]:
@@ -323,6 +339,9 @@ def main() -> None:
     parser.add_argument("--drug", type=str, default=RIFAMPIN_COLUMN, help="Phenotype column (default rifampin).")
     parser.add_argument("--gene", type=str, default="rpoB",
                         help="Gene whose ESM-C vector to concat with the Bacformer mean (default rpoB).")
+    parser.add_argument("--gene-from-ranking", type=Path, default=None,
+                        help="Read --gene from this per-gene LR ranking CSV (top out-of-fold-AUROC gene). "
+                             "Auto-discovers the causal gene per drug; overrides --gene.")
     parser.add_argument("--gene-aliases", type=str, nargs="*", default=[], help="Alternative accepted gene symbols.")
     parser.add_argument("--device", type=str, default="cuda:0", help="Torch device for the Bacformer mean (default cuda:0).")
     parser.add_argument("--bacformer-vectors", type=Path, default=None,
@@ -357,6 +376,8 @@ def main() -> None:
         parser.error("Pass either --bacformer-vectors (load a cached NPZ) or --bacformer-checkpoint (compute FT), not both.")
     if args.kfold_on_eval_holdout and args.kfold is None:
         parser.error("--kfold-on-eval-holdout requires --kfold N.")
+    if args.gene_from_ranking is not None:
+        args.gene = _top_gene_from_ranking(args.gene_from_ranking)
 
     kfold = None
     if args.kfold is not None:
