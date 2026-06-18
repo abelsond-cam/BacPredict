@@ -161,10 +161,15 @@ An agent will plan the work in detail and start.
   core, blind to accessory gain/loss). Figures + hit tables in
   [src/bac_pyseer/docs/visualise/lmm_model/](src/bac_pyseer/docs/visualise/lmm_model/);
   detail in the task CLAUDE.md Status.
-- [ ] **Faeces vs respiratory contrast (NEXT).** Re-run the same collation + LMM pipeline on a
-  faeces-vs-respiratory phenotype; do the cross-lineage invasion genes (capsule/fimbrial/iron)
-  recur? Same genes across an independent contrast = strong evidence they're real invasion
-  determinants, not blood-specific or confounded. Then faeces vs liver/abscess.
+- [x] **Faeces vs respiratory contrast (DONE, 2026-06-18).** Same pipeline/LMM, n=9,169,
+  **λ=0.498**, 88 hits. Replication test (both contrasts share faeces as control, so
+  faeces-direction recurrence is trivial): **only capsule *wzi* and the fimbrial usher recur
+  in the *invasion* direction** (β>0 in both blood- and respiratory-vs-faeces, same SNP,
+  cross-lineage) — a reproducible adhesion+capsule signature. **The iron theme does NOT
+  replicate** (blood-specific/weak). Detail:
+  [docs/visualise/faeces_resp_lmm_model/](src/bac_pyseer/docs/visualise/faeces_resp_lmm_model/).
+- [ ] **Faeces vs liver/abscess contrast.** The strongest-hvKp invasive niche; third
+  replication. Same parameterised pipeline; check whether capsule/fimbrial recur again.
 - [ ] **Hotspot rates by isolation source.** Compare per-source hotspot rates against
   the whole-population background mutation rate at each locus as control → Chi-sq for
   hotspots strongly associated with invasive disease. *Blocked on Aaron uploading

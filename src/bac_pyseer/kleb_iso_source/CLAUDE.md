@@ -121,6 +121,21 @@ only ~10-30% dense); (3) writing the dense 13,602² distance TSV. Levers before 
 
 ### Status
 
+- 2026-06-18 — **Replication contrast: faeces vs respiratory.** Same parameterised pipeline
+  (`PAIR=faeces_respiratory`, `LABEL_COL=respiratory_vs_faeces_label`), n=9,169 (faeces 4,737 /
+  respiratory 4,432), **λ=0.498** (same conservative regime), 88 hits. Detail +
+  cross-contrast table: [docs/visualise/faeces_resp_lmm_model/](../docs/visualise/faeces_resp_lmm_model/).
+  - **Both contrasts share faeces as control**, so faeces-direction recurrence is trivial
+    (gut sub-clades over-represented vs any non-gut niche); 31 of 33 shared hits are this.
+  - **Invasion-direction replication (β>0 in both): only capsule *wzi* (KPN_RS13515) and the
+    fimbrial/pilus usher (KPN_RS24485)** — same SNP, same direction, cross-lineage, comparable
+    or larger effect. A reproducible adhesion+capsule invasion signature across two niches.
+  - **The blood-vs-faeces iron theme does NOT replicate** (iron-redox/nadB/phoA/dnaK/siderophore
+    absent; btuB opposite sign) → was blood-specific or weak, not a general invasion determinant.
+  - Methodology note: hits ranked by variance explained, MAF>5% for the robust set; ranking +
+    plotting is direction-agnostic (see the blood/faeces `lmm_model/` README).
+  - Next replication: faeces vs liver/abscess.
+
 - 2026-06-17 — **GWAS RUN — blood vs faeces, the result.** Ran on the four inputs below
   (cohort `sampled_country_2_1_all`, n=13,602, 372,238 variants af 1–99%, big-SL `--lineage`
   with ≥100-sample SLs kept). Two structure-correction methods compared — **LMM is the method

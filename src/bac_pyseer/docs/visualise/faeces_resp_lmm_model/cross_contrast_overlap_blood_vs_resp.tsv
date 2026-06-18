@@ -1,0 +1,34 @@
+locus_tag	label	blood_beta	blood_ve	blood_dir	resp_beta	resp_ve	resp_dir	concordant_invasion
+KPN_RS24485	fimbria/pilus outer membrane usher prote	0.2	3.196	blood (invasion)	0.242	5.0309	respiratory (invasion)	True
+KPN_RS13515	capsule assembly Wzi family protein	0.274	1.066	blood (invasion)	0.249	1.0042	respiratory (invasion)	True
+KPN_RS10755	riboflavin synthase	-0.559	8.051	faeces	-0.533	4.9135	faeces	False
+KPN_RS02245	nickel/cobalt efflux protein RcnA	-0.522	7.48	faeces	-0.429	4.8371	faeces	False
+KPN_RS17820	protein YgfX	-0.492	2.71	faeces	-0.516	4.7313	faeces	False
+KPN_RS11575	NAD-dependent epimerase/dehydratase fami	-0.547	2.47	faeces	-0.52	2.0763	faeces	False
+KPN_RS10495	LysR substrate-binding domain-containing	-0.306	2.134	faeces	-0.324	3.0034	faeces	False
+KPN_RS10315	ABC transporter substrate-binding protei	-0.586	1.984	faeces	-0.55	2.124	faeces	False
+KPN_RS22665	alpha-galactosidase	-0.586	1.984	faeces	-0.55	2.124	faeces	False
+KPN_RS01695	lysophospholipid acyltransferase family 	-0.58	1.957	faeces	-0.55	2.124	faeces	False
+KPN_RS05165	asnS	-0.542	1.915	faeces	-0.519	2.0059	faeces	False
+KPN_RS17645	fimbrial biogenesis usher protein	-0.567	1.807	faeces	-0.536	1.9615	faeces	False
+KPN_RS00380	sugar efflux transporter	-0.561	1.782	faeces	-0.536	1.9615	faeces	False
+KPN_RS06110	rluE	-0.561	1.782	faeces	-0.536	1.9615	faeces	False
+KPN_RS14130	SulP family inorganic anion transporter	-0.561	1.782	faeces	-0.536	1.9615	faeces	False
+KPN_RS18015	aspartate dehydrogenase	-0.561	1.782	faeces	-0.536	1.9615	faeces	False
+KPN_RS18040	NAD(P)/FAD-dependent oxidoreductase	-0.561	1.782	faeces	-0.536	1.9615	faeces	False
+KPN_RS18055	SDR family oxidoreductase	-0.561	1.782	faeces	-0.536	1.9615	faeces	False
+KPN_RS18070	Rieske (2Fe-2S) protein	-0.561	1.782	faeces	-0.536	1.9615	faeces	False
+KPN_RS18075	MFS transporter	-0.561	1.782	faeces	-0.536	1.9615	faeces	False
+KPN_RS22085	MFS transporter	-0.561	1.782	faeces	-0.536	1.9615	faeces	False
+KPN_RS32210	pqqF	-0.546	1.722	faeces	-0.524	1.9066	faeces	False
+KPN_RS04215	MerR family transcriptional regulator	-0.551	1.719	faeces	-0.519	1.8495	faeces	False
+KPN_RS09755	pqqB	-0.549	1.718	faeces	-0.536	1.9615	faeces	False
+KPN_RS12315	LysR substrate-binding domain-containing	-0.537	1.689	faeces	-0.482	1.6672	faeces	False
+KPN_RS09785	mrdA	-0.534	1.681	faeces	-0.517	1.8664	faeces	False
+KPN_RS01560	ecpR	-0.53	1.579	faeces	-0.563	2.0904	faeces	False
+KPN_RS02990	nfsB	-0.41	1.141	faeces	0.461	0.9285	respiratory (invasion)	False
+KPN_RS21895	carbohydrate porin	-0.118	1.073	faeces	0.114	0.5787	respiratory (invasion)	False
+KPN_RS07540	glycoside hydrolase family 19 protein	-0.364	0.966	faeces	-0.463	1.6543	faeces	False
+KPN_RS25250	tRNA-Leu	0.376	0.695	blood (invasion)	-0.186	1.3926	faeces	False
+KPN_RS25200	sugar phosphate isomerase/epimerase fami	-0.27	0.596	faeces	-0.433	1.6632	faeces	False
+KPN_RS22930	btuB	-0.0798	0.564	faeces	0.1	0.4864	respiratory (invasion)	False
