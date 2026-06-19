@@ -20,6 +20,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
+from matplotlib.colors import to_rgba
 
 PICK_COLOUR = "#7e3f9e"   # purple — ESM single-gene (the family colour, consistent across plots)
 OTHER_COLOUR = "#9aa3ad"  # muted grey — the rest of the ranking
@@ -49,7 +50,8 @@ def plot_ranking(csv_path: Path, out_path: Path, *, drug: str | None = None, top
     drug_name = display_name(auroc_col.removeprefix("lr_auroc_"))
 
     top = df.sort_values(auroc_col, ascending=False).head(top_n).reset_index(drop=True)
-    colours = [PICK_COLOUR if i == 0 else OTHER_COLOUR for i in range(len(top))]
+    # All bars purple (ESM family): the pick solid, the rest the same purple at alpha 0.5.
+    colours = [PICK_COLOUR if i == 0 else to_rgba(PICK_COLOUR, 0.5) for i in range(len(top))]
 
     fig, ax = plt.subplots(figsize=(10.5, 5.6))
     x = range(len(top))
@@ -61,8 +63,9 @@ def plot_ranking(csv_path: Path, out_path: Path, *, drug: str | None = None, top
     ax.text(len(top) - 0.5, 0.505, "chance", ha="right", va="bottom", fontsize=8, color="0.5")
     if who_onehot_auroc is not None:
         ax.axhline(who_onehot_auroc, color=WHO_LINE_COLOUR, linestyle="--", linewidth=1.4)
-        ax.text(0.0, who_onehot_auroc + 0.006, f"all WHO mutations = {who_onehot_auroc:.3f}",
-                ha="left", va="bottom", fontsize=8.5, color=WHO_LINE_COLOUR)
+        ax.text((len(top) - 1) / 2, who_onehot_auroc + 0.006,
+                f"Comparison prediction from all WHO mutations = {who_onehot_auroc:.3f}",
+                ha="center", va="bottom", fontsize=7.5, color=WHO_LINE_COLOUR)
 
     ax.set_xticks(list(x))
     ax.set_xticklabels(top["gene_name"], rotation=30, ha="right", fontsize=10, fontstyle="italic")
@@ -77,10 +80,11 @@ def plot_ranking(csv_path: Path, out_path: Path, *, drug: str | None = None, top
         plt.Rectangle((0, 0), 1, 1, color=OTHER_COLOUR, ec="black", lw=0.7),
         plt.Line2D([0], [0], color=WHO_LINE_COLOUR, linestyle="--", linewidth=1.4),
     ]
-    ax.legend(handles, [f"our pick: {pick} (injected gene)", "other ranked genes", "all WHO mutations (one-hot)"],
-              loc="upper right", fontsize=9.5, framealpha=0.95)
+    ax.legend(handles, [f"our pick: {pick} — top ESM prediction, injected gene", "other ranked genes",
+                        "all WHO mutations (one-hot)"], loc="upper right", bbox_to_anchor=(0.99, 0.82),
+              fontsize=9.0, framealpha=0.95)
     ax.set_title(
-        f"Per-gene LR ranking ({drug_name}): which single gene's ESM-C vector predicts resistance?",
+        f"{drug_name}: ESM mean embedding predictions by LR, for each gene by Prokka annotation",
         fontsize=12.5,
     )
     fig.tight_layout()

@@ -27,15 +27,16 @@ import pandas as pd
 FAMILY_COLOURS = {
     "Bacformer": "#1f77b4",  # blue — genome-pooled Bacformer alone
     "ESM": "#7e3f9e",        # purple — ESM single-gene
-    "one-hot": "#d62728",    # red — WHO one-hot mutation
-    "mix": "#4f46c8",        # royal-blue/indigo — concat (ESM ⊕ Bacformer)
+    "one-hot": "#c0392b",    # royal red — WHO one-hot mutation
+    "mix": "#6a4fb3",        # purple-blue blend — concat (ESM purple ⊕ Bacformer blue)
 }
 FAMILY_LABEL = {
     "Bacformer": "Bacformer embedding",
     "ESM": "ESM-C embedding",
-    "one-hot": "one-hot mutation",
+    "one-hot": "WHO top gene",
     "mix": "concat (Bacformer ⊕ ESM)",
 }
+WHO_CEILING_COLOUR = "#c0392b"  # faint red line = full WHO one-hot ceiling (combined prediction)
 
 # How each method reads out the genome — drawn as bracketed groups separated by vertical dividers.
 GROUP_LABEL = {
@@ -54,18 +55,24 @@ def _group_boundaries(df: pd.DataFrame) -> list[int]:
 
 
 def _draw_metric_panel(
-    ax, df: pd.DataFrame, metric: str, *, ymin: float, show_xticklabels: bool, boundaries: list[int]
+    ax, df: pd.DataFrame, metric: str, *, ymin: float, show_xticklabels: bool, boundaries: list[int],
+    who_ceiling: float | None = None,
 ) -> None:
     """Render one bar panel of ``metric`` onto ``ax`` (sorted order fixed by the caller).
 
     A ``<metric>_sd`` column (e.g. ``auroc_sd``), if present, is drawn as a black ±sd error bar over
     each bar — the k-fold × m-seed spread. Rows without a value get 0 (no visible whisker). ``boundaries``
     are bar indices where the read-out group changes; a dashed vertical divider is drawn before each.
+    ``who_ceiling`` (the full WHO one-hot value for this metric) is a faint red reference line.
     """
     colours = [FAMILY_COLOURS.get(f, "#888888") for f in df["family"]]
     x = range(len(df))
     sd_col = f"{metric}_sd"
     yerr = df[sd_col].fillna(0.0).to_numpy() if sd_col in df.columns else None
+    if who_ceiling is not None:
+        ax.axhline(who_ceiling, color=WHO_CEILING_COLOUR, linewidth=8, alpha=0.2)
+        ax.text(len(df) - 0.5, who_ceiling, f"  WHO one-hot ceiling = {who_ceiling:.3f}",
+                ha="right", va="bottom", fontsize=7.5, color=WHO_CEILING_COLOUR, alpha=0.9)
     ax.bar(
         x, df[metric], color=colours, edgecolor="black", linewidth=0.7, width=0.72,
         yerr=yerr, error_kw={"ecolor": "black", "elinewidth": 1.0, "capsize": 3.5},
@@ -102,19 +109,38 @@ def _annotate_groups(ax, df: pd.DataFrame, boundaries: list[int]) -> None:
         )
 
 
-def plot_ladder(csv_path: Path, out_path: Path, *, sort_metric: str = "auroc") -> None:
+def _who_ceiling(who_csv: Path) -> dict[str, float]:
+    """Read the full WHO one-hot (auroc, auprc) from a ``tbprofiler_gene_lr_<drug>.csv`` __ALL_WHO row."""
+    if not who_csv.exists():
+        return {}
+    wdf = pd.read_csv(who_csv)
+    row = wdf[wdf["gene_name"] == "__ALL_WHO_one_hot__"]
+    if row.empty:
+        return {}
+    out = {"auroc": float(row["mut_auroc"].iloc[0])}
+    if "mut_auprc" in row.columns:
+        out["auprc"] = float(row["mut_auprc"].iloc[0])
+    return out
+
+
+def plot_ladder(csv_path: Path, out_path: Path, *, sort_metric: str = "auroc",
+                who_ceiling: dict[str, float] | None = None) -> None:
     """Two-panel ladder bar plot — AUROC (top) and AUPRC (bottom), one bar per method, family-coloured.
 
     Both panels share the same method ordering (ascending by ``sort_metric``) so the bars line up. The
-    headline read: the **concat** of the ESM-C rpoB vector with the Bacformer genome-mean (purple) tops
-    both panels — above fine-tuned Bacformer (blue) and one-hot mutation alone (red).
+    headline read: the **concat** of the ESM-C rpoB vector with the Bacformer genome-mean (purple-blue)
+    tops both panels — above fine-tuned Bacformer (blue) and the WHO top gene (red). ``who_ceiling``
+    (``{auroc, auprc}`` from the full WHO one-hot) is drawn as a faint red reference band on each panel.
     """
     df = pd.read_csv(csv_path).sort_values(sort_metric).reset_index(drop=True)
     boundaries = _group_boundaries(df)
+    who_ceiling = who_ceiling or {}
 
     fig, (ax_top, ax_bot) = plt.subplots(2, 1, figsize=(11.5, 9.5), sharex=True)
-    _draw_metric_panel(ax_top, df, "auroc", ymin=0.75, show_xticklabels=False, boundaries=boundaries)
-    _draw_metric_panel(ax_bot, df, "auprc", ymin=0.60, show_xticklabels=True, boundaries=boundaries)
+    _draw_metric_panel(ax_top, df, "auroc", ymin=0.75, show_xticklabels=False, boundaries=boundaries,
+                       who_ceiling=who_ceiling.get("auroc"))
+    _draw_metric_panel(ax_bot, df, "auprc", ymin=0.60, show_xticklabels=True, boundaries=boundaries,
+                       who_ceiling=who_ceiling.get("auprc"))
     _annotate_groups(ax_top, df, boundaries)
 
     # Family legend on the lower panel's empty upper-left, so the top panel's upper-left is free for the
@@ -138,8 +164,10 @@ def main() -> None:
     parser.add_argument("--csv", type=Path, default=here / "docs" / "rif_ladder_table.csv")
     parser.add_argument("--out", type=Path,
                         default=here / "docs" / "visualisations" / "tb_rifampicin" / "rif_ladder_barplot.png")
+    parser.add_argument("--who-csv", type=Path, default=here / "docs" / "tbprofiler_gene_lr_rifampin.csv",
+                        help="tbprofiler_gene_lr_<drug>.csv — its __ALL_WHO_one_hot__ row sets the ceiling band.")
     args = parser.parse_args()
-    plot_ladder(args.csv, args.out)
+    plot_ladder(args.csv, args.out, who_ceiling=_who_ceiling(args.who_csv))
     print(f"Wrote {args.out}")
 
 

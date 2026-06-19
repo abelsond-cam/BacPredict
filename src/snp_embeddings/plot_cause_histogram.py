@@ -28,9 +28,10 @@ import pandas as pd
 
 # WHO one-hot is the red family (consistent across plots). The top embeddable gene is the "pick" we
 # could inject; rRNA / un-embeddable causes are the same red but hatched (real cause, can't be embedded).
-PICK_COLOUR = "#d62728"     # red — top embeddable WHO cause (the injectable pick)
+ROYAL_RED = "#c0392b"       # duller "royal" red — the WHO one-hot family colour
+PICK_COLOUR = ROYAL_RED     # top embeddable WHO cause (the injectable pick)
 EMBED_COLOUR = "#9aa3ad"    # grey — other embeddable (protein) genes
-RRNA_COLOUR = "#d62728"     # red, hatched — rRNA / un-embeddable causes
+RRNA_COLOUR = ROYAL_RED     # hatched — rRNA / un-embeddable causes
 ALL_KEY = "__ALL_WHO_one_hot__"
 DRUG_DISPLAY = {"rifampin": "rifampicin"}
 
@@ -74,7 +75,9 @@ def plot_cause(csv_path: Path, out_path: Path, *, drug: str, top_n: int = 12) ->
     if not full.empty:
         fa = float(full["mut_auroc"].iloc[0])
         ax.axhline(fa, color="black", linestyle="--", linewidth=1.2)
-        ax.text(len(genes) - 0.5, fa + 0.004, f"all WHO mutations = {fa:.3f}", ha="right", va="bottom", fontsize=8.5)
+        ax.text((len(genes) - 1) / 2, fa + 0.004,
+                f"Prediction using all WHO mutations by one hot embedding = {fa:.3f}",
+                ha="center", va="bottom", fontsize=7.5)
     ax.axhline(0.5, color="0.6", linestyle=":", linewidth=1.0)
 
     ax.set_xticks(list(x))
@@ -89,11 +92,11 @@ def plot_cause(csv_path: Path, out_path: Path, *, drug: str, top_n: int = 12) ->
         plt.Rectangle((0, 0), 1, 1, color=EMBED_COLOUR, ec="black", lw=0.7),
         plt.Rectangle((0, 0), 1, 1, color=RRNA_COLOUR, ec="black", lw=0.7, hatch="//"),
     ]
-    labels = ["our pick (top embeddable — the injected gene)", "other embeddable (protein) gene",
+    labels = ["our pick - top ESM prediction, injected gene", "other embeddable (protein) gene",
               "rRNA / un-embeddable cause"]
-    ax.legend(handles, labels, loc="lower left", fontsize=9, framealpha=0.95)
+    ax.legend(handles, labels, loc="upper right", bbox_to_anchor=(0.99, 0.72), fontsize=9, framealpha=0.95)
     ax.set_title(
-        f"Per-gene WHO-mutation cause ranking ({display_name(drug)}): which gene's mutations predict resistance?",
+        f"{display_name(drug)}: WHO mutation prediction from single genes / rna regions, by one hot embedding",
         fontsize=12.5,
     )
     fig.tight_layout()
@@ -113,7 +116,7 @@ def main() -> None:
                         help="Default: docs/visualisations/tb_<drug>/<drug>_cause_histogram.png.")
     args = parser.parse_args()
     disp = display_name(args.drug)
-    out = args.out or here / "docs" / "visualisations" / f"tb_{disp}" / f"{disp}_who_one_hot_histogram.png"
+    out = args.out or here / "docs" / "visualisations" / f"tb_{disp}" / f"{disp}_WHO_one_hot_histogram.png"
     plot_cause(args.csv, out, drug=args.drug, top_n=args.top_n)
     print(f"Wrote {out}")
 
