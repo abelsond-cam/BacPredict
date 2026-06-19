@@ -37,6 +37,12 @@ FAMILY_LABEL = {
     "mix": "concat (Bacformer ⊕ ESM)",
 }
 WHO_CEILING_COLOUR = "#c0392b"  # faint red line = full WHO one-hot ceiling (combined prediction)
+DRUG_DISPLAY = {"rifampin": "rifampicin"}
+
+
+def display_name(drug: str) -> str:
+    """Proper drug name for titles / the ``tb_<drug>/`` dir."""
+    return DRUG_DISPLAY.get(drug, drug)
 
 # How each method reads out the genome — drawn as bracketed groups separated by vertical dividers.
 GROUP_LABEL = {
@@ -125,7 +131,7 @@ def _who_ceiling(who_csv: Path) -> dict[str, float]:
 
 
 def plot_ladder(csv_path: Path, out_path: Path, *, sort_metric: str = "auroc",
-                who_ceiling: dict[str, float] | None = None) -> None:
+                who_ceiling: dict[str, float] | None = None, title: str | None = None) -> None:
     """Two-panel ladder bar plot — AUROC (top) and AUPRC (bottom), one bar per method, family-coloured.
 
     Both panels share the same method ordering (ascending by ``sort_metric``) so the bars line up. The
@@ -149,7 +155,7 @@ def plot_ladder(csv_path: Path, out_path: Path, *, sort_metric: str = "auroc",
     handles = [plt.Rectangle((0, 0), 1, 1, color=c, ec="black", lw=0.7) for c in FAMILY_COLOURS.values()]
     ax_bot.legend(handles, [FAMILY_LABEL[k] for k in FAMILY_COLOURS], loc="upper left", fontsize=9.5, framealpha=0.95)
     fig.suptitle(
-        "Comparing Bacformer predictions of Rif Resistance in TB with ESM and concatenated models",
+        title or "Comparing Bacformer predictions of Rif Resistance in TB with ESM and concatenated models",
         fontsize=13, y=0.995,
     )
     fig.tight_layout(rect=(0, 0, 1, 0.93))
@@ -162,14 +168,24 @@ def main() -> None:
     """CLI entry point."""
     here = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--csv", type=Path, default=here / "docs" / "rif_ladder_table.csv")
-    parser.add_argument("--out", type=Path,
-                        default=here / "docs" / "visualisations" / "tb_rifampicin" / "rif_ladder_barplot.png")
-    parser.add_argument("--who-csv", type=Path, default=here / "docs" / "tbprofiler_gene_lr_rifampin.csv",
+    parser.add_argument("--drug", type=str, default="rifampin", help="AST drug column (for title / paths).")
+    parser.add_argument("--csv", type=Path, default=None,
+                        help="Ladder table (default: rif_ladder_table.csv for rifampin, else <drug>_ladder_table.csv).")
+    parser.add_argument("--out", type=Path, default=None)
+    parser.add_argument("--who-csv", type=Path, default=None,
                         help="tbprofiler_gene_lr_<drug>.csv — its __ALL_WHO_one_hot__ row sets the ceiling band.")
+    parser.add_argument("--title", type=str, default=None)
     args = parser.parse_args()
-    plot_ladder(args.csv, args.out, who_ceiling=_who_ceiling(args.who_csv))
-    print(f"Wrote {args.out}")
+    disp = display_name(args.drug)
+    # rifampin keeps its rich hand-built deep-dive table; other drugs use the auto-assembled one.
+    default_csv = "rif_ladder_table.csv" if args.drug == "rifampin" else f"{args.drug}_ladder_table.csv"
+    csv = args.csv or here / "docs" / default_csv
+    who_csv = args.who_csv or here / "docs" / f"tbprofiler_gene_lr_{args.drug}.csv"
+    out = args.out or here / "docs" / "visualisations" / f"tb_{disp}" / f"{disp}_ladder_barplot.png"
+    title = args.title or (f"{disp}: TB AST predictions — genome-pooled (Bacformer) vs "
+                           f"single-gene (ESM / WHO) vs concatenated")
+    plot_ladder(csv, out, who_ceiling=_who_ceiling(who_csv), title=title)
+    print(f"Wrote {out}")
 
 
 if __name__ == "__main__":
