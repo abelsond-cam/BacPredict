@@ -16,6 +16,39 @@ Predict susceptibility for clinically relevant antibiotics in *Klebsiella pneumo
 
 Bacformer should excel where resistance is driven by **HGT / gene acquisition** (carbapenemases like KPC/NDM/OXA-48, ESBLs, aminoglycoside-modifying enzymes, *mcr*) and add much less where resistance is driven by **chromosomal point mutations** (e.g. FQ via *gyrA*/*parC* QRDR, *ramR/ramA*-driven efflux, *ompK35*/*K36* porin loss, *pmrAB*/*phoPQ* colistin). Kp is the **strong** test — both classes are well-represented. Every AMR result MUST be **stratified by resistance mechanism**.
 
+## Kleborate determinant "ceiling" — the catalogue baseline (snp_embeddings port)
+
+The TB diagnostic (Task 7, `src/snp_embeddings/`) measures every drug's Bacformer read-out against a
+**catalogue ceiling** — the AUROC a one-hot of all known resistance determinants reaches through the
+same k-fold LR. For TB that catalogue is the WHO/TB-Profiler variant set. **For Kp the catalogue is
+Kleborate**, whose per-isolate determinant calls are already in `metadata_v2` (no re-run needed).
+
+- **Module:** [`kleborate_determinant_lr.py`](kleborate_determinant_lr.py) — the Kp analogue of
+  `snp_embeddings/tbprofiler_gene_lr.py`. Per drug it builds a determinant one-hot from the relevant
+  Kleborate columns and scores it through `snp_embeddings.kfold_probe.run_kfold_probe`, emitting one
+  **bar per Kleborate column** (tagged `acquired_hgt` / `chromosomal_coding` / `chromosomal_mutation` /
+  `porin_truncation` / `truncation_lof` — the HGT-vs-chromosomal axis) plus the combined
+  `__ALL_Kleborate__` **ceiling** row, to `docs/visualisations/kp_<drug>/kleborate_determinant_lr_<drug>.csv`.
+  Light CPU (login node / small sbatch, no GPU). Inputs: `final/metadata_v2_all_samples_and_columns.tsv`
+  + `processed/train_kleb_ast/binary_ast_with_split.csv`, joined on `Sample`. The `bac_kleborate.parsing`
+  cell semantics are **vendored** (that package is in the sibling BacHGT repo, not a dependency here).
+- **Why Kleborate alone — resolved 2026-06-19 (memory `kleborate-ceiling-vs-amr-tools`).** For the KpSC
+  module Kleborate v3 (v3.2.4 = what built metadata_v2) is **CARD-derived** (CARD v3.2.9), *not*
+  AMRFinderPlus (that engine drives Kleborate's *Escherichia* module). A 2025 benchmark of 8 tools
+  (Sci Rep s41598-025-24333-9) found Kleborate detects the most ARGs and that **integrating other tools
+  does not improve Kp determinant-based prediction** ("fewer, well-curated features outperform quantity").
+  The weak β-lactam/tetracycline drugs are **literature-wide catalogue knowledge gaps** — *no* tool
+  predicts them well — so a low Kleborate ceiling there is faithful, not an artefact. **The asymmetry that
+  matters:** true catalogue ceiling ≥ Kleborate ceiling, so incompleteness only changes a conclusion where
+  concat *beats* the ceiling (the Kp analogue of TB pyrazinamide) — there, double-check; where concat is
+  *below* it, the conclusion is safe. Decision: Kleborate alone, coverage-annotated per drug; no
+  AMRFinder/RGI/ResFinder re-run.
+- **REVIEW POINT — the drug→Kleborate-column map** (`DRUG_COLUMNS` in the module) is a clinical-pharmacology
+  judgment. β-lactams map *inclusively* to all `Bla_*` + `Omp_mutations` (a ceiling should use every
+  plausible determinant and let the LR weight them). Residual deep-research item, off the critical path:
+  ResFinder/PointFinder vs Kleborate point-mutation coverage for **colistin / azithromycin** (neither was
+  in the 2025 study).
+
 ## Three sub-steps (in order)
 
 1. **Evaluate current Kp models** and save the results as the benchmark we are trying to beat. No retraining yet — just produce the report.
@@ -120,7 +153,10 @@ Kleb-specific metadata / embedding curation
 - `scripts/flatten_klebsiella_gff3.py` — Kleb-side GFF flattening helper.
 - `scripts/add_paths_gff_fna_to_metadata.sh` — wrapper.
 
-Imports from [`../tl/train/`](../tl/train/) (split_utils, datasets) and [`../tl/embed/`](../tl/embed/) and [`../tl/genome_download/`](../tl/genome_download/) for shared infrastructure.
+Determinant ceiling / mechanism stratification
+- `kleborate_determinant_lr.py` — per-drug Kleborate determinant one-hot LR → the catalogue **ceiling** + per-mechanism bars (HGT vs chromosomal). The Kp analogue of `snp_embeddings/tbprofiler_gene_lr.py`. See the section above.
+
+Imports from [`../tl/train/`](../tl/train/) (split_utils, datasets) and [`../tl/embed/`](../tl/embed/) and [`../tl/genome_download/`](../tl/genome_download/) for shared infrastructure, and from [`../snp_embeddings/`](../snp_embeddings/) (`kfold_probe`, and `locate_gene` for the Kp gene→embedding-index port).
 
 ## Downstream / parked experiments (all on hold)
 
