@@ -50,11 +50,13 @@ def plot_cause(csv_path: Path, out_path: Path, *, drug: str, top_n: int = 12) ->
     colours, hatches = [], []
     for i, r in genes.iterrows():
         if r["is_rrna"] or not r["embeddable"]:
-            colours.append(RRNA_COLOUR); hatches.append("//")
+            colour, hatch = RRNA_COLOUR, "//"
         elif i == pick:
-            colours.append(PICK_COLOUR); hatches.append("")
+            colour, hatch = PICK_COLOUR, ""
         else:
-            colours.append(EMBED_COLOUR); hatches.append("")
+            colour, hatch = EMBED_COLOUR, ""
+        colours.append(colour)
+        hatches.append(hatch)
 
     fig, ax = plt.subplots(figsize=(11.5, 5.8))
     x = range(len(genes))
