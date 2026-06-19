@@ -31,20 +31,26 @@ cd "$REPO"
 DATA=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw
 TRAIN=$DATA/david/processed/train_iso_source
 PYSEER=$DATA/david/processed/pyseer_iso_source
-OUT_DIR=$PYSEER/unitigs/blood_faeces_resp_union
+BF_CSV=$TRAIN/blood_faeces/sampled_country_2_1_all/kpsc_human/binary_blood_vs_faeces_with_split.csv
+RF_CSV=$TRAIN/faeces_respiratory/sampled_country_2_1_all/kpsc_human/binary_respiratory_vs_faeces_labels.csv
+# Default = union of both invasion cohorts. Bifrost OOMs at the ~18k union on a 502 GB himem node,
+# so for a lower-memory PER-COHORT build override OUT_NAME + COHORT_CSVS, e.g.:
+#   OUT_NAME=faeces_respiratory COHORT_CSVS="$RF_CSV" sbatch … run_unitig_caller.sh
+#   OUT_NAME=blood_faeces        COHORT_CSVS="$BF_CSV" sbatch … run_unitig_caller.sh
+# (compare hits across per-cohort builds by unitig SEQUENCE — identical sequence = same unitig.)
+OUT_NAME=${OUT_NAME:-blood_faeces_resp_union}
+COHORT_CSVS=${COHORT_CSVS:-$BF_CSV $RF_CSV}
+OUT_DIR=$PYSEER/unitigs/$OUT_NAME
 REFLIST=$OUT_DIR/assembly_refs.txt        # 2-col record: Sample<TAB>assembly_path
 PATHS=$OUT_DIR/assembly_paths.txt         # 1-col: just the paths (what unitig-caller --refs wants)
 mkdir -p "$OUT_DIR"
 rm -f "$OUT_DIR/unitigs.pyseer" "$OUT_DIR/unitigs_raw.pyseer" "$OUT_DIR/unitigs.pyseer.gz"  # clear stale
 
-BF_CSV=$TRAIN/blood_faeces/sampled_country_2_1_all/kpsc_human/binary_blood_vs_faeces_with_split.csv
-RF_CSV=$TRAIN/faeces_respiratory/sampled_country_2_1_all/kpsc_human/binary_respiratory_vs_faeces_labels.csv
-
 echo "Job $SLURM_JOB_ID  Node $SLURMD_NODENAME  $(date)"
 
 echo "=== (1) resolve union Sample -> assembly FASTA ==="
 uv run python src/bac_pyseer/kleb_iso_source/resolve_assembly_paths.py \
-    --sample-csv "$BF_CSV" "$RF_CSV" \
+    --sample-csv $COHORT_CSVS \
     --check-exists \
     --out-tsv "$REFLIST"
 
