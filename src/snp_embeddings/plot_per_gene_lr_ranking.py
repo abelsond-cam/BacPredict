@@ -97,24 +97,27 @@ def main() -> None:
     """CLI entry point."""
     here = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--csv", type=Path, default=here / "docs" / "per_gene_lr_rifampin.csv")
     parser.add_argument("--drug", type=str, default="rifampin", help="AST drug column to rank by.")
+    parser.add_argument("--csv", type=Path, default=None,
+                        help="per_gene_lr_<drug>.csv (default: docs/visualisations/tb_<drug>/per_gene_lr_<drug>.csv).")
     parser.add_argument("--top-n", type=int, default=10)
     parser.add_argument("--out", type=Path, default=None,
                         help="Output PNG (default: docs/visualisations/tb_<drug>/<drug>_esm_lr_screen_histogram.png).")
     parser.add_argument("--who-onehot-csv", type=Path, default=None,
                         help="tbprofiler_gene_lr_<drug>.csv — draws its __ALL_WHO_one_hot__ AUROC as a red "
-                             "reference line (default: docs/tbprofiler_gene_lr_<drug>.csv if present).")
+                             "reference line (default: in the same per-drug folder).")
     args = parser.parse_args()
     disp = display_name(args.drug)
-    out = args.out or here / "docs" / "visualisations" / f"tb_{disp}" / f"{disp}_esm_lr_screen_histogram.png"
-    who_csv = args.who_onehot_csv or here / "docs" / f"tbprofiler_gene_lr_{args.drug}.csv"
+    drug_dir = here / "docs" / "visualisations" / f"tb_{disp}"  # each drug's data + figures live together
+    csv = args.csv or drug_dir / f"per_gene_lr_{args.drug}.csv"
+    out = args.out or drug_dir / f"{disp}_esm_lr_screen_histogram.png"
+    who_csv = args.who_onehot_csv or drug_dir / f"tbprofiler_gene_lr_{args.drug}.csv"
     who_auroc = None
     if who_csv.exists():
         wdf = pd.read_csv(who_csv)
         row = wdf[wdf["gene_name"] == "__ALL_WHO_one_hot__"]
         who_auroc = float(row["mut_auroc"].iloc[0]) if not row.empty else None
-    plot_ranking(args.csv, out, drug=args.drug, top_n=args.top_n, who_onehot_auroc=who_auroc)
+    plot_ranking(csv, out, drug=args.drug, top_n=args.top_n, who_onehot_auroc=who_auroc)
     print(f"Wrote {out}")
 
 

@@ -203,11 +203,12 @@ def main() -> None:
     parser.add_argument("--title", type=str, default=None)
     args = parser.parse_args()
     disp = display_name(args.drug)
+    drug_dir = here / "docs" / "visualisations" / f"tb_{disp}"  # each drug's data + figures live together
     # rifampin keeps its rich hand-built deep-dive table; other drugs use the auto-assembled one.
     default_csv = "rif_ladder_table.csv" if args.drug == "rifampin" else f"{args.drug}_ladder_table.csv"
-    csv = args.csv or here / "docs" / default_csv
-    who_csv = args.who_csv or here / "docs" / f"tbprofiler_gene_lr_{args.drug}.csv"
-    out = args.out or here / "docs" / "visualisations" / f"tb_{disp}" / f"{disp}_ladder_barplot.png"
+    csv = args.csv or drug_dir / default_csv
+    who_csv = args.who_csv or drug_dir / f"tbprofiler_gene_lr_{args.drug}.csv"
+    out = args.out or drug_dir / f"{disp}_ladder_barplot.png"
     title = args.title or (f"{disp}: TB AST predictions — genome-pooled (Bacformer) vs "
                            f"single-gene (ESM / WHO) vs concatenated")
     plot_ladder(csv, out, who_ceiling=_who_ceiling(who_csv), title=title)
