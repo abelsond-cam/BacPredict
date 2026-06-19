@@ -41,9 +41,11 @@ def display_name(drug: str) -> str:
     return DRUG_DISPLAY.get(drug, drug)
 
 
-def plot_cause(csv_path: Path, out_path: Path, *, drug: str, top_n: int = 12) -> None:
-    """Top-``top_n`` genes by WHO-mutation LR AUROC; rRNA hatched, top embeddable highlighted."""
+def plot_cause(csv_path: Path, out_path: Path, *, drug: str, top_n: int = 20) -> None:
+    """Top-``top_n`` WHO sites (gene × coding/promoter) by mutation LR AUROC; un-embeddable hatched."""
     df = pd.read_csv(csv_path)
+    if "site" not in df.columns:        # back-compat with pre-split CSVs
+        df["site"] = df["gene_name"]
     full = df[df["gene_name"] == ALL_KEY]
     genes = (df[df["gene_name"] != ALL_KEY].sort_values("mut_auroc", ascending=False)
              .head(top_n).reset_index(drop=True))
@@ -81,7 +83,7 @@ def plot_cause(csv_path: Path, out_path: Path, *, drug: str, top_n: int = 12) ->
     ax.axhline(0.5, color="0.6", linestyle=":", linewidth=1.0)
 
     ax.set_xticks(list(x))
-    ax.set_xticklabels(genes["gene_name"], rotation=30, ha="right", fontsize=10, fontstyle="italic")
+    ax.set_xticklabels(genes["site"], rotation=30, ha="right", fontsize=9.5, fontstyle="italic")
     ax.set_ylabel("WHO-mutation LR AUROC (k-fold)", fontsize=12)
     ax.set_ylim(0.45, 1.0)
     ax.grid(axis="y", alpha=0.3)
@@ -93,7 +95,7 @@ def plot_cause(csv_path: Path, out_path: Path, *, drug: str, top_n: int = 12) ->
         plt.Rectangle((0, 0), 1, 1, color=RRNA_COLOUR, ec="black", lw=0.7, hatch="//"),
     ]
     labels = ["our pick - top ESM prediction, injected gene", "other embeddable (protein) gene",
-              "rRNA / un-embeddable cause"]
+              "rRNA / promoter — un-embeddable cause"]
     ax.legend(handles, labels, loc="upper right", bbox_to_anchor=(0.99, 0.72), fontsize=9, framealpha=0.95)
     ax.set_title(
         f"{display_name(drug)}: WHO mutation prediction from single genes / rna regions, by one hot embedding",

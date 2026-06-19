@@ -32,7 +32,15 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 # rRNA / non-coding causes that can never be ESM-embedded — flagged so the plot can hatch them.
 RRNA_GENES = {"rrs", "rrl", "rrf"}
-MIN_VARIANT_GENOMES = 10  # a gene needs ≥ this many genomes carrying a variant to be worth scoring
+MIN_VARIANT_GENOMES = 10  # a (gene, region) needs ≥ this many genomes carrying a variant to be scored
+# Variant types that do NOT change the protein sequence → un-embeddable like rRNA (e.g. the inhA promoter).
+NONCODING_TOKENS = ("upstream", "downstream", "utr", "non_coding", "intergenic", "intragenic")
+
+
+def _region(variant_type: str) -> str:
+    """``"non-coding"`` for promoter/UTR/intergenic variants (protein stays WT), else ``"coding"``."""
+    t = str(variant_type).lower()
+    return "non-coding" if any(tok in t for tok in NONCODING_TOKENS) else "coding"
 
 
 def load_labels(ast_sheet: Path, drug: str) -> dict[str, int]:
@@ -77,35 +85,43 @@ def run(variants_parquet: Path, ast_sheet: Path, esm_rank_dir: Path, out_dir: Pa
         rank_csv = esm_rank_dir / drug / f"per_gene_lr_{drug}.csv"
         embeddable = set(pd.read_csv(rank_csv)["gene_name"]) if rank_csv.exists() else set()
 
+        # Split each gene into coding vs non-coding (promoter) sites, so the promoter shows as its own bar
+        # (and is flagged un-embeddable — a non-coding change leaves the protein WT, so ESM can't see it).
+        dv = dv.assign(region=dv["type"].map(_region))
         rows = []
-        for gene, g in dv.groupby("gene_name"):
+        for (gene, region), g in dv.groupby(["gene_name", "region"]):
             n_genomes = g["Sample"].nunique()
             if n_genomes < MIN_VARIANT_GENOMES:
                 continue
             agg = _score(_gene_onehot(g, labelled), label_map, seeds)
             if agg is None:
                 continue
+            noncoding = region == "non-coding"
             rows.append({
-                "gene_name": gene, "mut_auroc": agg["auroc"]["mean"], "mut_auroc_sd": agg["auroc"]["sd"],
+                "gene_name": gene, "region": region,
+                "site": f"{gene} (promoter)" if noncoding else gene,
+                "mut_auroc": agg["auroc"]["mean"], "mut_auroc_sd": agg["auroc"]["sd"],
                 "mut_auprc": agg["auprc"]["mean"], "mut_auprc_sd": agg["auprc"]["sd"],
                 "n_variants": int(g["variant_id"].nunique()), "n_genomes_with_variant": int(n_genomes),
-                "embeddable": gene in embeddable, "is_rrna": gene in RRNA_GENES,
+                "embeddable": (gene in embeddable) and not noncoding,
+                "is_rrna": gene in RRNA_GENES, "is_noncoding": noncoding,
             })
 
         full = _score(_gene_onehot(dv, labelled), label_map, seeds)
         if full is not None:
-            rows.append({"gene_name": "__ALL_WHO_one_hot__",
+            rows.append({"gene_name": "__ALL_WHO_one_hot__", "region": "all", "site": "__ALL_WHO_one_hot__",
                          "mut_auroc": full["auroc"]["mean"], "mut_auroc_sd": full["auroc"]["sd"],
                          "mut_auprc": full["auprc"]["mean"], "mut_auprc_sd": full["auprc"]["sd"],
                          "n_variants": int(dv["variant_id"].nunique()),
                          "n_genomes_with_variant": int(dv["Sample"].nunique()),
-                         "embeddable": False, "is_rrna": False})
+                         "embeddable": False, "is_rrna": False, "is_noncoding": False})
 
         df = pd.DataFrame(rows).sort_values("mut_auroc", ascending=False)
         df.to_csv(out_dir / f"tbprofiler_gene_lr_{drug}.csv", index=False)
         top = df[df.gene_name != "__ALL_WHO_one_hot__"].head(3)
-        logger.info("%s: %d genes scored | top: %s | full one-hot %.3f", drug, len(df) - 1,
-                    ", ".join(f"{r.gene_name}{'*' if r.is_rrna else ''}={r.mut_auroc:.3f}" for r in top.itertuples()),
+        logger.info("%s: %d sites scored | top: %s | full one-hot %.3f", drug, len(df) - 1,
+                    ", ".join(f"{r.site}{'*' if (r.is_rrna or r.is_noncoding) else ''}={r.mut_auroc:.3f}"
+                              for r in top.itertuples()),
                     full["auroc"]["mean"] if full else float("nan"))
 
     # tiny manifest so the plot step knows what's there
