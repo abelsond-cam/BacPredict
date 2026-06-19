@@ -1,11 +1,4 @@
-# TB-AST read-out — progress report
-
-*The full arc of Task 7 (`snp_embeddings`): why Bacformer's mean-embedding AMR prediction underperforms in
-TB, how we recovered it, how far that gets us against the WHO catalogue, and the one barrier that remains.
-The detailed diagnostic phase (the routing experiments, the surprisal sub-studies, every sub-figure) is in
-[`docs/PROGRESS_REPORT.md`](docs/PROGRESS_REPORT.md); operational detail is in [`CLAUDE.md`](CLAUDE.md);
-the forward plan is `~/.claude/plans/i-d-like-to-start-crystalline-allen.md`. Per-drug figures live under
-[`docs/visualisations/tb_<drug>/`](docs/visualisations/).*
+# Why TB-AST prediction with Bacformer underperforms, and how to fix it
 
 ## The question
 
@@ -50,9 +43,14 @@ mean-pool.** Two conclusions follow:
 
 The crucial corollary of (1): **the causal-gene ESM-C embedding is, on its own, a sufficient feature for
 the task** (0.971, matching the catalogue). The defect is not in the embedding; it is that the genome
-mean-pool **buries** that one vector among ~4,000 proteins before the classifier ever sees it. So the whole
-problem reduces to: *how do we surface the causal gene's ESM-C vector to the classification head?* Two
-strategies:
+mean-pool **buries** that one vector among ~4,000 proteins before the classifier ever sees it. A per-gene
+ESM-LR *screen* makes the point directly — across every gene in the genome, *rpoB*'s own ESM-C vector is by
+far the strongest single predictor of rifampicin resistance:
+
+![rifampicin ESM-LR screen](docs/visualisations/tb_rifampicin/rifampicin_esm_lr_screen_histogram.png)
+
+So the whole problem reduces to: *how do we surface the causal gene's ESM-C vector to the classification
+head?* Two strategies:
 
 - **(A) Replace the pool with a learned attention head** that concentrates on the causal gene.
 - **(B) Bypass the pool** and hand the causal-gene vector to the classifier directly (concatenation).
@@ -76,17 +74,11 @@ the head never concentrated on *rpoB*. Three label-blind routing diagnostics (de
   markers** (the phylogenetic shortcut), still suppressing *rpoB*. From the resistance label alone the head
   cannot find the one SNP-bearing protein among ~4,000.
 
-The fixes we considered all **depend on the attention head** — they feed it an explicit per-protein
-*pointer* to the anomalous protein, but are bottlenecked by the same routing failure:
-
-- a **per-protein ESM-C surprisal panel** (the mutated protein flags into the high tail; the cheap unmasked
-  proxy is faithful to the masked gold standard, Pearson **0.948**, and the SNP is a razor single-residue
-  spike — masked surprisal 8.14 at the site vs 0.50 background, #1 anomaly in 72% of isolates);
-- a **per-gene logistic-regression probability channel** (each core gene's own ESM-C LR resistance
-  probability, train-only cross-fitted to stay leakage-free).
-
-Both are *pointers into the head*. Useful, built, and recorded — but since the head itself won't route,
-they inherit its ceiling. This motivated abandoning Strategy A.
+Augmentations that hand the head an explicit per-protein *pointer* to the anomalous protein — a surprisal
+panel, a per-gene logistic-regression channel — were prototyped, but they **depend on the same head** that
+won't route, so they inherit its ceiling. Attention-pool read-outs are a weak, difficult literature and a
+rabbit hole; we deprioritised Strategy A (the methods, with their numbers and the rationale, are in the
+[Appendix](#8-appendix)) in favour of the simpler path that already works.
 
 ---
 
@@ -126,6 +118,8 @@ with how much headroom the single gene leaves:
 We then benchmarked against the **WHO catalogue itself**: TB-Profiler (WHO v2) over all **36,684 genomes**,
 a per-drug one-hot of its catalogued mutations → LR, ceiling = *all WHO mutations combined*. The embedding
 concat **mostly recovers close to, or surpasses, the one-hot of all WHO mutations**:
+
+![rifampicin WHO one-hot](docs/visualisations/tb_rifampicin/rifampicin_WHO_one_hot_histogram.png)
 
 - **Embedding BEATS the catalogue — pyrazinamide: concat 0.928 ≫ WHO one-hot 0.854 (+0.074).** pncA
   resistance is *hundreds of diverse loss-of-function mutations*; the one-hot can only encode catalogued
@@ -179,3 +173,40 @@ ceiling — a literal map of the protein-embedding blind spot.
   weak, chromosomal/efflux/regulatory drugs (**colistin 0.807, azithromycin 0.827**, …) that mirror TB. Using
   **Kleborate** (CARD-derived, already run) as the determinant ceiling, we run the same screen / concat /
   ladder / gap-map across all 22 Kp drugs, weakest first. See the plan file.
+
+
+----
+
+## 8. Appendix
+
+*The full arc of Task 7 (`snp_embeddings`): why Bacformer's mean-embedding AMR prediction underperforms in
+TB, how we recovered it, how far that gets us against the WHO catalogue, and the one barrier that remains.
+The detailed diagnostic phase (the routing experiments, the surprisal sub-studies, every sub-figure) is in
+[`docs/PROGRESS_REPORT.md`](docs/PROGRESS_REPORT.md); operational detail is in [`CLAUDE.md`](CLAUDE.md);
+the forward plan is `~/.claude/plans/i-d-like-to-start-crystalline-allen.md`. Per-drug figures live under
+[`docs/visualisations/tb_<drug>/`](docs/visualisations/).*
+
+### Possible methods to append to an attention head
+
+If the read-out *were* a learned attention pool (Strategy A, §3), it would need an explicit per-protein
+pointer to the anomalous protein. Two were prototyped:
+
+- **Surprisal panel** — a per-protein ESM-C surprisal (−log P) vector handed to the gate. The mutated
+  *rpoB* flags into the high tail; the cheap unmasked single-forward proxy is faithful to the expensive
+  masked gold standard (Pearson **0.948**), and the resistance residue is a razor single-residue spike
+  (masked surprisal 8.14 at the site vs 0.50 background; the #1 anomaly in 72% of isolates).
+- **Per-gene logistic-regression channel** — each core gene's *own* ESM-C LR resistance probability, keyed
+  by Prokka/Bakta annotation (or, later, by Bacformer protein-family clusters), fed to the head as a
+  supervised pointer; train-only cross-fitted to stay leakage-free.
+
+The limitation of all these is that they depend on the attention head, and the literature around attention
+heads is weak — it is a difficult area and a rabbit hole to pursue. We have thus **deprioritised it in
+favour of exploring other large contributing factors** *while* surfacing a single embedding seems to work
+very well in many cases. This can be reviewed.
+
+### Figure placeholders (to add)
+
+- per-drug ladders for the rest of the panel as the figure set fills out;
+- the HGT-vs-chromosomal mechanism stratification once Kleborate/WHO mechanism labels are wired in;
+- the *Klebsiella* screen / ladder / gap-map set.
+
