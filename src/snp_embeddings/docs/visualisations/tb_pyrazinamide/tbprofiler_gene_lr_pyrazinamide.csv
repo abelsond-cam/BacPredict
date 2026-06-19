@@ -1,3 +1,4 @@
-gene_name,mut_auroc,mut_auroc_sd,mut_auprc,mut_auprc_sd,n_variants,n_genomes_with_variant,embeddable,is_rrna
-__ALL_WHO_one_hot__,0.854428236195633,0.008382369162603688,0.7290923435793117,0.007167449689564426,466,2432,False,False
-pncA,0.8543243960144884,0.008388719599524244,0.7290803335138025,0.007116295326053527,464,2423,True,False
+gene_name,region,site,mut_auroc,mut_auroc_sd,mut_auprc,mut_auprc_sd,n_variants,n_genomes_with_variant,embeddable,is_rrna,is_noncoding
+__ALL_WHO_one_hot__,all,__ALL_WHO_one_hot__,0.854428236195633,0.008382369162603688,0.7290923435793117,0.007167449689564426,466,2432,False,False,False
+pncA,coding,pncA,0.8224725447272461,0.008462643426012814,0.6811588214192746,0.007288085725920836,456,2269,True,False,False
+pncA,non-coding,pncA (promoter),0.5315867501250046,0.0002626946453520851,0.20188559418848312,0.0003954377808536178,8,154,False,False,True

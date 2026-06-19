@@ -31,7 +31,15 @@ import pandas as pd
 ROYAL_RED = "#c0392b"       # duller "royal" red — the WHO one-hot family colour
 PICK_COLOUR = ROYAL_RED     # top embeddable WHO cause (the injectable pick)
 EMBED_COLOUR = "#9aa3ad"    # grey — other embeddable (protein) genes
-RRNA_COLOUR = ROYAL_RED     # hatched — rRNA / un-embeddable causes
+RRNA_COLOUR = ROYAL_RED     # hatched — un-embeddable causes (all red, distinguished by hatch)
+# Distinct hatch per un-embeddable mechanism category, so the categories read clearly on the chart.
+# (The new Bacformer encodes these non-coding regions, so they are the targets to fold in next.)
+CATEGORY_HATCH = {"promoter": "xx", "rRNA": "//", "other": ".."}
+CATEGORY_LABEL = {
+    "promoter": "promoter / non-coding — un-embeddable",
+    "rRNA": "rRNA — un-embeddable",
+    "other": "coding, not in our embeddings",
+}
 ALL_KEY = "__ALL_WHO_one_hot__"
 DRUG_DISPLAY = {"rifampin": "rifampicin"}
 
@@ -39,6 +47,25 @@ DRUG_DISPLAY = {"rifampin": "rifampicin"}
 def display_name(drug: str) -> str:
     """Proper drug name for titles / the ``tb_<drug>/`` dir."""
     return DRUG_DISPLAY.get(drug, drug)
+
+
+def _category(row) -> str:
+    """Un-embeddable mechanism category of a site: rRNA / promoter / other-coding, else 'embeddable'."""
+    if row["is_rrna"]:
+        return "rRNA"
+    if row.get("is_noncoding", False):
+        return "promoter"
+    if not row["embeddable"]:
+        return "other"
+    return "embeddable"
+
+
+def _site_label(row) -> str:
+    """X-axis label: rRNA is the gene itself (not a promoter); non-coding protein genes get '(promoter)'."""
+    gene = str(row["gene_name"])
+    if not row["is_rrna"] and row.get("is_noncoding", False):
+        return f"{gene} (promoter)"
+    return gene
 
 
 def plot_cause(csv_path: Path, out_path: Path, *, drug: str, top_n: int = 20) -> None:
@@ -49,17 +76,15 @@ def plot_cause(csv_path: Path, out_path: Path, *, drug: str, top_n: int = 20) ->
     full = df[df["gene_name"] == ALL_KEY]
     genes = (df[df["gene_name"] != ALL_KEY].sort_values("mut_auroc", ascending=False)
              .head(top_n).reset_index(drop=True))
-    pick_positions = [i for i, r in genes.iterrows() if r["embeddable"] and not r["is_rrna"]]
-    pick = pick_positions[0] if pick_positions else -1
+    cats = [_category(r) for _, r in genes.iterrows()]
+    pick = next((i for i, c in enumerate(cats) if c == "embeddable"), -1)
 
     colours, hatches = [], []
-    for i, r in genes.iterrows():
-        if r["is_rrna"] or not r["embeddable"]:
-            colour, hatch = RRNA_COLOUR, "//"
-        elif i == pick:
-            colour, hatch = PICK_COLOUR, ""
+    for i, cat in enumerate(cats):
+        if cat == "embeddable":
+            colour, hatch = (PICK_COLOUR if i == pick else EMBED_COLOUR), ""
         else:
-            colour, hatch = EMBED_COLOUR, ""
+            colour, hatch = RRNA_COLOUR, CATEGORY_HATCH[cat]
         colours.append(colour)
         hatches.append(hatch)
 
@@ -83,19 +108,21 @@ def plot_cause(csv_path: Path, out_path: Path, *, drug: str, top_n: int = 20) ->
     ax.axhline(0.5, color="0.6", linestyle=":", linewidth=1.0)
 
     ax.set_xticks(list(x))
-    ax.set_xticklabels(genes["site"], rotation=30, ha="right", fontsize=9.5, fontstyle="italic")
+    ax.set_xticklabels([_site_label(r) for _, r in genes.iterrows()], rotation=30, ha="right",
+                       fontsize=9.5, fontstyle="italic")
     ax.set_ylabel("WHO-mutation LR AUROC (k-fold)", fontsize=12)
     ax.set_ylim(0.45, 1.0)
     ax.grid(axis="y", alpha=0.3)
     ax.spines[["top", "right"]].set_visible(False)
 
-    handles = [
-        plt.Rectangle((0, 0), 1, 1, color=PICK_COLOUR, ec="black", lw=0.7),
-        plt.Rectangle((0, 0), 1, 1, color=EMBED_COLOUR, ec="black", lw=0.7),
-        plt.Rectangle((0, 0), 1, 1, color=RRNA_COLOUR, ec="black", lw=0.7, hatch="//"),
-    ]
-    labels = ["our pick - top ESM prediction, injected gene", "other embeddable (protein) gene",
-              "rRNA / promoter — un-embeddable cause"]
+    handles = [plt.Rectangle((0, 0), 1, 1, color=PICK_COLOUR, ec="black", lw=0.7),
+               plt.Rectangle((0, 0), 1, 1, color=EMBED_COLOUR, ec="black", lw=0.7)]
+    labels = ["our pick - top ESM prediction, injected gene", "other embeddable (protein) gene"]
+    for cat in ("promoter", "rRNA", "other"):   # only the un-embeddable categories actually present
+        if cat in cats:
+            handles.append(plt.Rectangle((0, 0), 1, 1, color=RRNA_COLOUR, ec="black", lw=0.7,
+                                         hatch=CATEGORY_HATCH[cat]))
+            labels.append(CATEGORY_LABEL[cat])
     ax.legend(handles, labels, loc="upper right", bbox_to_anchor=(0.99, 0.72), fontsize=9, framealpha=0.95)
     ax.set_title(
         f"{display_name(drug)}: WHO mutation prediction from single genes / rna regions, by one hot embedding",

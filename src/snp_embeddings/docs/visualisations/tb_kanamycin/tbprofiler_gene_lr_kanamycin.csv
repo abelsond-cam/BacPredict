@@ -1,4 +1,4 @@
-gene_name,mut_auroc,mut_auroc_sd,mut_auprc,mut_auprc_sd,n_variants,n_genomes_with_variant,embeddable,is_rrna
-__ALL_WHO_one_hot__,0.8985241596874007,0.0005178342306069336,0.7735772454889674,0.0008395814705577189,13,2169,False,False
-rrs,0.7781978780641181,1.1491900087240784e-16,0.5853298447442274,0.0,4,1374,False,True
-eis,0.6203861536937209,0.0004850787636934916,0.27710849777313007,0.00039054981350077615,9,816,True,False
+gene_name,region,site,mut_auroc,mut_auroc_sd,mut_auprc,mut_auprc_sd,n_variants,n_genomes_with_variant,embeddable,is_rrna,is_noncoding
+__ALL_WHO_one_hot__,all,__ALL_WHO_one_hot__,0.8985241596874007,0.0005178342306069336,0.7735772454889674,0.0008395814705577189,13,2169,False,False,False
+rrs,non-coding,rrs (promoter),0.7781978780641181,1.1491900087240784e-16,0.5853298447442274,0.0,4,1374,False,True,True
+eis,non-coding,eis (promoter),0.6203861536937209,0.0004850787636934916,0.27710849777313007,0.00039054981350077615,9,816,False,False,True

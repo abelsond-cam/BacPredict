@@ -97,9 +97,11 @@ def run(variants_parquet: Path, ast_sheet: Path, esm_rank_dir: Path, out_dir: Pa
             if agg is None:
                 continue
             noncoding = region == "non-coding"
+            # rRNA variants live in the rRNA itself (not a promoter), so don't tag them '(promoter)'.
+            site = f"{gene} (promoter)" if (noncoding and gene not in RRNA_GENES) else gene
             rows.append({
                 "gene_name": gene, "region": region,
-                "site": f"{gene} (promoter)" if noncoding else gene,
+                "site": site,
                 "mut_auroc": agg["auroc"]["mean"], "mut_auroc_sd": agg["auroc"]["sd"],
                 "mut_auprc": agg["auprc"]["mean"], "mut_auprc_sd": agg["auprc"]["sd"],
                 "n_variants": int(g["variant_id"].nunique()), "n_genomes_with_variant": int(n_genomes),
