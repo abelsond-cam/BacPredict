@@ -54,7 +54,7 @@ def _score(frame: pd.DataFrame, label_map: dict[str, int], seeds: tuple[int, ...
         return None
     kf = run_kfold_probe({"f": FeatureSpec(frame, kind="numeric", standardise=False)},
                          label_map, n_folds=5, seeds=seeds, evaluate_seed=1, evaluate_fraction=0.20)
-    return kf["frames"]["f"]["aggregate"]["auroc"]
+    return kf["frames"]["f"]["aggregate"]  # full aggregate (auroc + auprc + ...)
 
 
 def run(variants_parquet: Path, ast_sheet: Path, esm_rank_dir: Path, out_dir: Path,
@@ -82,19 +82,22 @@ def run(variants_parquet: Path, ast_sheet: Path, esm_rank_dir: Path, out_dir: Pa
             n_genomes = g["Sample"].nunique()
             if n_genomes < MIN_VARIANT_GENOMES:
                 continue
-            auroc = _score(_gene_onehot(g, labelled), label_map, seeds)
-            if auroc is None:
+            agg = _score(_gene_onehot(g, labelled), label_map, seeds)
+            if agg is None:
                 continue
             rows.append({
-                "gene_name": gene, "mut_auroc": auroc["mean"], "mut_auroc_sd": auroc["sd"],
+                "gene_name": gene, "mut_auroc": agg["auroc"]["mean"], "mut_auroc_sd": agg["auroc"]["sd"],
+                "mut_auprc": agg["auprc"]["mean"], "mut_auprc_sd": agg["auprc"]["sd"],
                 "n_variants": int(g["variant_id"].nunique()), "n_genomes_with_variant": int(n_genomes),
                 "embeddable": gene in embeddable, "is_rrna": gene in RRNA_GENES,
             })
 
         full = _score(_gene_onehot(dv, labelled), label_map, seeds)
         if full is not None:
-            rows.append({"gene_name": "__ALL_WHO_one_hot__", "mut_auroc": full["mean"],
-                         "mut_auroc_sd": full["sd"], "n_variants": int(dv["variant_id"].nunique()),
+            rows.append({"gene_name": "__ALL_WHO_one_hot__",
+                         "mut_auroc": full["auroc"]["mean"], "mut_auroc_sd": full["auroc"]["sd"],
+                         "mut_auprc": full["auprc"]["mean"], "mut_auprc_sd": full["auprc"]["sd"],
+                         "n_variants": int(dv["variant_id"].nunique()),
                          "n_genomes_with_variant": int(dv["Sample"].nunique()),
                          "embeddable": False, "is_rrna": False})
 
@@ -103,7 +106,7 @@ def run(variants_parquet: Path, ast_sheet: Path, esm_rank_dir: Path, out_dir: Pa
         top = df[df.gene_name != "__ALL_WHO_one_hot__"].head(3)
         logger.info("%s: %d genes scored | top: %s | full one-hot %.3f", drug, len(df) - 1,
                     ", ".join(f"{r.gene_name}{'*' if r.is_rrna else ''}={r.mut_auroc:.3f}" for r in top.itertuples()),
-                    full["mean"] if full else float("nan"))
+                    full["auroc"]["mean"] if full else float("nan"))
 
     # tiny manifest so the plot step knows what's there
     done = sorted(p.name for p in out_dir.glob("tbprofiler_gene_lr_*.csv"))
