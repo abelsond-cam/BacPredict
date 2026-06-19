@@ -1,0 +1,4 @@
+gene_name,mut_auroc,mut_auroc_sd,n_variants,n_genomes_with_variant,embeddable,is_rrna
+__ALL_WHO_one_hot__,0.9257379453403183,0.0009072175217114642,36,3013,False,False
+gyrA,0.9104451696581733,0.0008932374866488312,14,2825,True,False
+gyrB,0.5218589180369022,0.002008111881355575,22,245,True,False

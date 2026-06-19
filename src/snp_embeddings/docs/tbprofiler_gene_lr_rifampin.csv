@@ -1,0 +1,4 @@
+gene_name,mut_auroc,mut_auroc_sd,n_variants,n_genomes_with_variant,embeddable,is_rrna
+rpoB,0.9666619685657774,0.00026499022242783754,141,11293,True,False
+__ALL_WHO_one_hot__,0.966581111296031,0.0002551922152802917,149,11293,False,False
+rpoC,0.5225245316681536,1.1491900087240784e-16,8,526,False,False
