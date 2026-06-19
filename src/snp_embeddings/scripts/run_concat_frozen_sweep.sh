@@ -21,13 +21,15 @@
 #SBATCH --partition=icelake-himem
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
-#SBATCH --mem=128G
-#SBATCH --time=24:00:00
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH --time=3:00:00
 #SBATCH --account=FLOTO-SL2-CPU
 #SBATCH --open-mode=append
 # CPU-only (cached frozen mean): per drug = genotype the top gene over ~38k parquets + mmap ESM reads +
-# 3 frames × (1 single-split + 15 k-fold) LR fits. icelake-himem, 24 h budget (never under-call walltime).
+# 3 frames × (1 single-split + 15 k-fold) LR fits. Observed runtime 30-70 min and I/O-bound (the parquet
+# crawl dominates, so CPUs barely help). Modest 8-CPU/3-h request keeps the per-task CPU-minute reservation
+# small (~1,440 vs 46,080) so it schedules under the account's AssocGrpCPUMinutes cap.
 
 cd /home/dca36/workspace/BacPredict
 
