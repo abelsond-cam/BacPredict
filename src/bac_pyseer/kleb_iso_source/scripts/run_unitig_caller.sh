@@ -32,8 +32,10 @@ DATA=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw
 TRAIN=$DATA/david/processed/train_iso_source
 PYSEER=$DATA/david/processed/pyseer_iso_source
 OUT_DIR=$PYSEER/unitigs/blood_faeces_resp_union
-REFLIST=$OUT_DIR/assembly_refs.txt
+REFLIST=$OUT_DIR/assembly_refs.txt        # 2-col record: Sample<TAB>assembly_path
+PATHS=$OUT_DIR/assembly_paths.txt         # 1-col: just the paths (what unitig-caller --refs wants)
 mkdir -p "$OUT_DIR"
+rm -f "$OUT_DIR/unitigs.pyseer" "$OUT_DIR/unitigs_raw.pyseer" "$OUT_DIR/unitigs.pyseer.gz"  # clear stale
 
 BF_CSV=$TRAIN/blood_faeces/sampled_country_2_1_all/kpsc_human/binary_blood_vs_faeces_with_split.csv
 RF_CSV=$TRAIN/faeces_respiratory/sampled_country_2_1_all/kpsc_human/binary_respiratory_vs_faeces_labels.csv
@@ -46,11 +48,27 @@ uv run python src/bac_pyseer/kleb_iso_source/resolve_assembly_paths.py \
     --check-exists \
     --out-tsv "$REFLIST"
 
+# unitig-caller --refs wants ONE fasta path per line (the 2-col name<TAB>path form silently
+# builds an EMPTY graph — verified). Derive the 1-col paths from the resolution record.
+cut -f2 "$REFLIST" > "$PATHS"
+echo "unitig-caller refs: $(wc -l < "$PATHS") fasta paths"
+
 echo "=== (2) unitig-caller: compressed DBG over the union assemblies -> pyseer unitig matrix ==="
 pixi run --manifest-path "$PIXI_MANIFEST" unitig-caller \
-    --call --refs "$REFLIST" \
-    --pyseer --out "$OUT_DIR/unitigs" \
+    --call --refs "$PATHS" \
+    --pyseer --out "$OUT_DIR/unitigs_raw" \
     --threads "$SLURM_CPUS_PER_TASK"
+
+# fail loudly on an empty matrix — unitig-caller can exit 0 having built nothing
+[ -s "$OUT_DIR/unitigs_raw.pyseer" ] || { echo "ERROR: unitig-caller produced an empty matrix"; exit 1; }
+
+echo "=== (3) normalise column names to cohort Sample IDs (strip .fa/.fna/.fasta) + gzip ==="
+# unitig-caller names columns by the fasta basename (e.g. SAMN0….fa); strip the extension so they
+# equal the metadata_v2 Sample IDs the pyseer phenotype is keyed on, then gzip for pyseer --kmers.
+sed -E 's/\.(fa|fna|fasta):/:/g' "$OUT_DIR/unitigs_raw.pyseer" | gzip > "$OUT_DIR/unitigs.pyseer.gz"
+rm -f "$OUT_DIR/unitigs_raw.pyseer"
 
 echo "Done  $(date)"
 ls -lh "$OUT_DIR"
+echo "unitigs: $(zcat "$OUT_DIR/unitigs.pyseer.gz" | wc -l) lines; first-line sample names:"
+zcat "$OUT_DIR/unitigs.pyseer.gz" | head -1 | sed 's/^.*| //' | tr ' ' '\n' | head -3
