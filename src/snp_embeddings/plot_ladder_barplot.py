@@ -71,8 +71,9 @@ def _draw_metric_panel(
     yerr = df[sd_col].fillna(0.0).to_numpy() if sd_col in df.columns else None
     if who_ceiling is not None:
         ax.axhline(who_ceiling, color=WHO_CEILING_COLOUR, linewidth=8, alpha=0.2)
-        ax.text(len(df) - 0.5, who_ceiling, f"  WHO one-hot ceiling = {who_ceiling:.3f}",
-                ha="right", va="bottom", fontsize=7.5, color=WHO_CEILING_COLOUR, alpha=0.9)
+        # ~0.33 from the left: bars are tallest on the right (sorted ascending), so keep the label clear.
+        ax.text(0.33 * (len(df) - 1), who_ceiling, f"Ceiling combining all WHO mutations = {who_ceiling:.3f}",
+                ha="center", va="bottom", fontsize=7.5, color=WHO_CEILING_COLOUR, alpha=0.9)
     ax.bar(
         x, df[metric], color=colours, edgecolor="black", linewidth=0.7, width=0.72,
         yerr=yerr, error_kw={"ecolor": "black", "elinewidth": 1.0, "capsize": 3.5},

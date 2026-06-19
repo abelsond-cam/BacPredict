@@ -64,7 +64,7 @@ def plot_ranking(csv_path: Path, out_path: Path, *, drug: str | None = None, top
     if who_onehot_auroc is not None:
         ax.axhline(who_onehot_auroc, color=WHO_LINE_COLOUR, linestyle="--", linewidth=1.4)
         ax.text((len(top) - 1) / 2, who_onehot_auroc + 0.006,
-                f"Comparison prediction from all WHO mutations = {who_onehot_auroc:.3f}",
+                f"Ceiling combining all WHO mutations = {who_onehot_auroc:.3f}",
                 ha="center", va="bottom", fontsize=7.5, color=WHO_LINE_COLOUR)
 
     ax.set_xticks(list(x))

@@ -76,7 +76,7 @@ def plot_cause(csv_path: Path, out_path: Path, *, drug: str, top_n: int = 12) ->
         fa = float(full["mut_auroc"].iloc[0])
         ax.axhline(fa, color="black", linestyle="--", linewidth=1.2)
         ax.text((len(genes) - 1) / 2, fa + 0.004,
-                f"Prediction using all WHO mutations by one hot embedding = {fa:.3f}",
+                f"Ceiling combining all WHO mutations = {fa:.3f}",
                 ha="center", va="bottom", fontsize=7.5)
     ax.axhline(0.5, color="0.6", linestyle=":", linewidth=1.0)
 
