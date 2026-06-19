@@ -21,8 +21,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
-PICK_COLOUR = "#7e3f9e"   # purple — matches the concat bars on the ladder ("the gene we inject")
+PICK_COLOUR = "#7e3f9e"   # purple — ESM single-gene (the family colour, consistent across plots)
 OTHER_COLOUR = "#9aa3ad"  # muted grey — the rest of the ranking
+WHO_LINE_COLOUR = "#d62728"  # red — the WHO one-hot family (the reference line)
 
 # AST column name (US) → display / directory name (the proper drug name used for tb_<drug>/ dirs).
 DRUG_DISPLAY = {"rifampin": "rifampicin"}
@@ -33,8 +34,13 @@ def display_name(drug: str) -> str:
     return DRUG_DISPLAY.get(drug, drug)
 
 
-def plot_ranking(csv_path: Path, out_path: Path, *, drug: str | None = None, top_n: int = 10) -> None:
-    """Top-``top_n`` genes by out-of-fold LR AUROC, descending; the top gene highlighted as our pick."""
+def plot_ranking(csv_path: Path, out_path: Path, *, drug: str | None = None, top_n: int = 10,
+                 who_onehot_auroc: float | None = None) -> None:
+    """Top-``top_n`` genes by out-of-fold LR AUROC, descending; the top gene highlighted as our pick.
+
+    ``who_onehot_auroc`` (the full WHO one-hot ceiling for this drug) is drawn as a red reference line,
+    so the best single ESM gene can be read against "all WHO mutations combined".
+    """
     df = pd.read_csv(csv_path)
     auroc_cols = [c for c in df.columns if c.startswith("lr_auroc_")]
     if not auroc_cols:
@@ -53,6 +59,10 @@ def plot_ranking(csv_path: Path, out_path: Path, *, drug: str | None = None, top
 
     ax.axhline(0.5, color="0.6", linestyle=":", linewidth=1.0)  # chance
     ax.text(len(top) - 0.5, 0.505, "chance", ha="right", va="bottom", fontsize=8, color="0.5")
+    if who_onehot_auroc is not None:
+        ax.axhline(who_onehot_auroc, color=WHO_LINE_COLOUR, linestyle="--", linewidth=1.4)
+        ax.text(0.0, who_onehot_auroc + 0.006, f"all WHO mutations = {who_onehot_auroc:.3f}",
+                ha="left", va="bottom", fontsize=8.5, color=WHO_LINE_COLOUR)
 
     ax.set_xticks(list(x))
     ax.set_xticklabels(top["gene_name"], rotation=30, ha="right", fontsize=10, fontstyle="italic")
@@ -65,8 +75,9 @@ def plot_ranking(csv_path: Path, out_path: Path, *, drug: str | None = None, top
     handles = [
         plt.Rectangle((0, 0), 1, 1, color=PICK_COLOUR, ec="black", lw=0.7),
         plt.Rectangle((0, 0), 1, 1, color=OTHER_COLOUR, ec="black", lw=0.7),
+        plt.Line2D([0], [0], color=WHO_LINE_COLOUR, linestyle="--", linewidth=1.4),
     ]
-    ax.legend(handles, [f"our pick: {pick} (injected gene)", "other ranked genes"],
+    ax.legend(handles, [f"our pick: {pick} (injected gene)", "other ranked genes", "all WHO mutations (one-hot)"],
               loc="upper right", fontsize=9.5, framealpha=0.95)
     ax.set_title(
         f"Per-gene LR ranking ({drug_name}): which single gene's ESM-C vector predicts resistance?",
@@ -86,11 +97,20 @@ def main() -> None:
     parser.add_argument("--drug", type=str, default="rifampin", help="AST drug column to rank by.")
     parser.add_argument("--top-n", type=int, default=10)
     parser.add_argument("--out", type=Path, default=None,
-                        help="Output PNG (default: docs/visualisations/tb_<drug>/<drug>_per_gene_lr_ranking.png).")
+                        help="Output PNG (default: docs/visualisations/tb_<drug>/<drug>_esm_lr_screen_histogram.png).")
+    parser.add_argument("--who-onehot-csv", type=Path, default=None,
+                        help="tbprofiler_gene_lr_<drug>.csv — draws its __ALL_WHO_one_hot__ AUROC as a red "
+                             "reference line (default: docs/tbprofiler_gene_lr_<drug>.csv if present).")
     args = parser.parse_args()
     disp = display_name(args.drug)
     out = args.out or here / "docs" / "visualisations" / f"tb_{disp}" / f"{disp}_esm_lr_screen_histogram.png"
-    plot_ranking(args.csv, out, drug=args.drug, top_n=args.top_n)
+    who_csv = args.who_onehot_csv or here / "docs" / f"tbprofiler_gene_lr_{args.drug}.csv"
+    who_auroc = None
+    if who_csv.exists():
+        wdf = pd.read_csv(who_csv)
+        row = wdf[wdf["gene_name"] == "__ALL_WHO_one_hot__"]
+        who_auroc = float(row["mut_auroc"].iloc[0]) if not row.empty else None
+    plot_ranking(args.csv, out, drug=args.drug, top_n=args.top_n, who_onehot_auroc=who_auroc)
     print(f"Wrote {out}")
 
 

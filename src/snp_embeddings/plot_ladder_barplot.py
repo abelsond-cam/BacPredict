@@ -22,11 +22,13 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 # Family → colour (the user's scheme).
+# Family palette encodes the one-hot → single-gene → combined progression:
+#   WHO one-hot = red, ESM single-gene = purple, combined = royal-blue (purple+blue blend), Bacformer = blue.
 FAMILY_COLOURS = {
-    "Bacformer": "#1f77b4",  # blue
-    "ESM": "#800000",        # maroon
-    "one-hot": "#d62728",    # red
-    "mix": "#7e3f9e",        # purple (Bacformer ⊕ ESM)
+    "Bacformer": "#1f77b4",  # blue — genome-pooled Bacformer alone
+    "ESM": "#7e3f9e",        # purple — ESM single-gene
+    "one-hot": "#d62728",    # red — WHO one-hot mutation
+    "mix": "#4f46c8",        # royal-blue/indigo — concat (ESM ⊕ Bacformer)
 }
 FAMILY_LABEL = {
     "Bacformer": "Bacformer embedding",

@@ -26,9 +26,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
-PICK_COLOUR = "#7e3f9e"     # purple — top embeddable ("our pick", the injected gene)
+# WHO one-hot is the red family (consistent across plots). The top embeddable gene is the "pick" we
+# could inject; rRNA / un-embeddable causes are the same red but hatched (real cause, can't be embedded).
+PICK_COLOUR = "#d62728"     # red — top embeddable WHO cause (the injectable pick)
 EMBED_COLOUR = "#9aa3ad"    # grey — other embeddable (protein) genes
-RRNA_COLOUR = "#d9822b"     # orange — rRNA / un-embeddable causes (hatched)
+RRNA_COLOUR = "#d62728"     # red, hatched — rRNA / un-embeddable causes
 ALL_KEY = "__ALL_WHO_one_hot__"
 DRUG_DISPLAY = {"rifampin": "rifampicin"}
 
