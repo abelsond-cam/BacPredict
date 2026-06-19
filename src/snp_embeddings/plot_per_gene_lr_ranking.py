@@ -89,7 +89,7 @@ def main() -> None:
                         help="Output PNG (default: docs/visualisations/tb_<drug>/<drug>_per_gene_lr_ranking.png).")
     args = parser.parse_args()
     disp = display_name(args.drug)
-    out = args.out or here / "docs" / "visualisations" / f"tb_{disp}" / f"{disp}_per_gene_lr_ranking.png"
+    out = args.out or here / "docs" / "visualisations" / f"tb_{disp}" / f"{disp}_esm_lr_screen_histogram.png"
     plot_ranking(args.csv, out, drug=args.drug, top_n=args.top_n)
     print(f"Wrote {out}")
 

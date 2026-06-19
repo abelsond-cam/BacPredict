@@ -111,7 +111,7 @@ def main() -> None:
                         help="Default: docs/visualisations/tb_<drug>/<drug>_cause_histogram.png.")
     args = parser.parse_args()
     disp = display_name(args.drug)
-    out = args.out or here / "docs" / "visualisations" / f"tb_{disp}" / f"{disp}_cause_histogram.png"
+    out = args.out or here / "docs" / "visualisations" / f"tb_{disp}" / f"{disp}_who_one_hot_histogram.png"
     plot_cause(args.csv, out, drug=args.drug, top_n=args.top_n)
     print(f"Wrote {out}")
 
