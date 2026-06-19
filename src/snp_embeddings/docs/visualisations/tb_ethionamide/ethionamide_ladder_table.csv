@@ -1,0 +1,6 @@
+method,family,group,auroc,auprc,auroc_sd,auprc_sd,source
+frozen Bacformer mean,Bacformer,genome_pooled,0.7202232851772696,0.34486350937129473,0.00644892565658827,0.01004454020632574,concat sweep bacformer_mean_only
+fine-tuned Bacformer mean-pool,Bacformer,genome_pooled,0.7742005732872186,0.4741596654951059,,,stage_c eval_results (mycobacterium_tuberculosis_ethionamide_stage_c_29824383)
+WHO top gene (inhA),one-hot,single_gene,0.8256901151644346,0.6264207400866924,0.0002581114184815,0.0034492532699753,tbprofiler_gene_lr inhA
+ESM rpoB,ESM,single_gene,0.7428411673766496,0.36849642982344416,0.0034594175030584827,0.00428313304516804,concat sweep esm_gene_only
+concat: frozen mean + ESM rpoB,mix,concat,0.7722828009673215,0.44020123892354873,0.004777442256482235,0.013295971109398782,concat sweep concat_esm_gene_plus_mean
