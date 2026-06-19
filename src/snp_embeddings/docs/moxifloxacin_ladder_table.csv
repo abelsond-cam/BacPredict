@@ -1,0 +1,6 @@
+method,family,group,auroc,auprc,auroc_sd,auprc_sd,source
+frozen Bacformer mean,Bacformer,genome_pooled,0.7599699875558159,0.4008186936083724,0.0050812835149110416,0.00644902978587622,concat sweep bacformer_mean_only
+fine-tuned Bacformer mean-pool,Bacformer,genome_pooled,0.791577306707796,0.4740753923963926,,,stage_c eval_results (mycobacterium_tuberculosis_moxifloxacin_stage_c_29824381)
+WHO top gene (gyrA),one-hot,single_gene,0.9104451696581732,0.74778907285211,0.0008932374866488,0.0026248815084198,tbprofiler_gene_lr gyrA
+ESM gyrA,ESM,single_gene,0.920798331015299,0.7615666284167856,0.002978061736557008,0.009477234909286925,concat sweep esm_gene_only
+concat: frozen mean + ESM gyrA,mix,concat,0.9204480882317057,0.7679171907874954,0.003022939917437973,0.008092586519557413,concat sweep concat_esm_gene_plus_mean

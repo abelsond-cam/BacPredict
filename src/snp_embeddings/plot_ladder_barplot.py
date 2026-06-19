@@ -47,7 +47,7 @@ def display_name(drug: str) -> str:
 # How each method reads out the genome — drawn as bracketed groups separated by vertical dividers.
 GROUP_LABEL = {
     "genome_pooled": "genome-pooled embeddings",
-    "single_gene": "single-gene (rpoB) features",
+    "single_gene": "single-gene features",
     "concat": "concatenated",
 }
 
@@ -58,6 +58,21 @@ def _group_boundaries(df: pd.DataFrame) -> list[int]:
         return []
     g = df["group"].to_numpy()
     return [i for i in range(1, len(g)) if g[i] != g[i - 1]]
+
+
+def _groups_contiguous(df: pd.DataFrame) -> bool:
+    """True iff each ``group`` value appears as a single contiguous run (so dividers/labels are clean)."""
+    if "group" not in df.columns:
+        return False
+    seen: set = set()
+    prev = None
+    for g in df["group"]:
+        if g != prev:
+            if g in seen:
+                return False
+            seen.add(g)
+            prev = g
+    return True
 
 
 def _draw_metric_panel(
@@ -76,10 +91,10 @@ def _draw_metric_panel(
     sd_col = f"{metric}_sd"
     yerr = df[sd_col].fillna(0.0).to_numpy() if sd_col in df.columns else None
     if who_ceiling is not None:
-        ax.axhline(who_ceiling, color=WHO_CEILING_COLOUR, linewidth=8, alpha=0.2)
+        ax.axhline(who_ceiling, color=WHO_CEILING_COLOUR, linestyle=":", linewidth=1.6)
         # ~0.33 from the left: bars are tallest on the right (sorted ascending), so keep the label clear.
-        ax.text(0.33 * (len(df) - 1), who_ceiling, f"Ceiling combining all WHO mutations = {who_ceiling:.3f}",
-                ha="center", va="bottom", fontsize=7.5, color=WHO_CEILING_COLOUR, alpha=0.9)
+        ax.text(0.33 * (len(df) - 1), who_ceiling + 0.004, f"Ceiling combining all WHO mutations = {who_ceiling:.3f}",
+                ha="center", va="bottom", fontsize=7.5, color=WHO_CEILING_COLOUR)
     ax.bar(
         x, df[metric], color=colours, edgecolor="black", linewidth=0.7, width=0.72,
         yerr=yerr, error_kw={"ecolor": "black", "elinewidth": 1.0, "capsize": 3.5},
@@ -94,7 +109,12 @@ def _draw_metric_panel(
     else:
         ax.set_xticklabels([])
     ax.set_ylabel(metric.upper(), fontsize=12)
-    ax.set_ylim(ymin, 1.0)
+    # Lower the floor if any bar (or the ceiling) sits below the default ymin — else it vanishes off-axis
+    # (e.g. pyrazinamide's frozen-mean AUPRC 0.42). Never raise above the default.
+    lo = df[metric].min()
+    if who_ceiling is not None:
+        lo = min(lo, who_ceiling)
+    ax.set_ylim(min(ymin, max(0.0, lo - 0.04)), 1.0)
     ax.grid(axis="y", alpha=0.3)
     ax.spines[["top", "right"]].set_visible(False)
 
@@ -139,8 +159,13 @@ def plot_ladder(csv_path: Path, out_path: Path, *, sort_metric: str = "auroc",
     tops both panels — above fine-tuned Bacformer (blue) and the WHO top gene (red). ``who_ceiling``
     (``{auroc, auprc}`` from the full WHO one-hot) is drawn as a faint red reference band on each panel.
     """
+    # Always order bars by ascending score (consistent across every drug's ladder). The group
+    # dividers/labels are drawn only when each group is a contiguous run (most drugs); if a drug
+    # interleaves them (e.g. pyrazinamide's FT mean-pool above its WHO single gene) the ascending order is
+    # kept and the group annotation is simply omitted — the family colours still convey the groups.
     df = pd.read_csv(csv_path).sort_values(sort_metric).reset_index(drop=True)
-    boundaries = _group_boundaries(df)
+    contiguous = _groups_contiguous(df)
+    boundaries = _group_boundaries(df) if contiguous else []
     who_ceiling = who_ceiling or {}
 
     fig, (ax_top, ax_bot) = plt.subplots(2, 1, figsize=(11.5, 9.5), sharex=True)
@@ -148,7 +173,8 @@ def plot_ladder(csv_path: Path, out_path: Path, *, sort_metric: str = "auroc",
                        who_ceiling=who_ceiling.get("auroc"))
     _draw_metric_panel(ax_bot, df, "auprc", ymin=0.60, show_xticklabels=True, boundaries=boundaries,
                        who_ceiling=who_ceiling.get("auprc"))
-    _annotate_groups(ax_top, df, boundaries)
+    if contiguous:
+        _annotate_groups(ax_top, df, boundaries)
 
     # Family legend on the lower panel's empty upper-left, so the top panel's upper-left is free for the
     # genome-pooled group label.
