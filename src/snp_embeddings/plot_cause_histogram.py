@@ -74,10 +74,11 @@ def plot_cause(csv_path: Path, out_path: Path, *, drug: str, top_n: int = 20) ->
     if "site" not in df.columns:        # back-compat with pre-split CSVs
         df["site"] = df["gene_name"]
     full = df[df["gene_name"] == ALL_KEY]
-    genes = (df[df["gene_name"] != ALL_KEY].sort_values("mut_auroc", ascending=False)
-             .head(top_n).reset_index(drop=True))
+    # Ascending order (smallest left, largest right) to match the ladder; the pick (top embeddable) is rightmost.
+    genes = (df[df["gene_name"] != ALL_KEY].sort_values("mut_auroc", ascending=False).head(top_n)
+             .sort_values("mut_auroc", ascending=True).reset_index(drop=True))
     cats = [_category(r) for _, r in genes.iterrows()]
-    pick = next((i for i, c in enumerate(cats) if c == "embeddable"), -1)
+    pick = next((i for i in range(len(cats) - 1, -1, -1) if cats[i] == "embeddable"), -1)
 
     colours, hatches = [], []
     for i, cat in enumerate(cats):
@@ -123,7 +124,7 @@ def plot_cause(csv_path: Path, out_path: Path, *, drug: str, top_n: int = 20) ->
             handles.append(plt.Rectangle((0, 0), 1, 1, color=RRNA_COLOUR, ec="black", lw=0.7,
                                          hatch=CATEGORY_HATCH[cat]))
             labels.append(CATEGORY_LABEL[cat])
-    ax.legend(handles, labels, loc="upper right", bbox_to_anchor=(0.99, 0.72), fontsize=9, framealpha=0.95)
+    ax.legend(handles, labels, loc="upper left", bbox_to_anchor=(0.01, 0.72), fontsize=9, framealpha=0.95)
     ax.set_title(
         f"{display_name(drug)}: WHO mutation prediction from single genes / rna regions, by one hot embedding",
         fontsize=12.5,

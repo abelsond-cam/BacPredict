@@ -1,7 +1,7 @@
 """Bar-plot the per-gene logistic-regression ranking — which single gene's ESM-C vector predicts AST.
 
 Reads a per-gene LR ranking table (``per_gene_lr_<drug>.csv`` from ``build_per_gene_lr_store``) and
-renders the top-N genes by out-of-fold train AUROC, descending (highest on the left). This is the
+renders the top-N genes by out-of-fold train AUROC, ascending (highest on the right, to match the ladder). This is the
 auto-discovery step that picks the causal-gene candidate we concat onto the Bacformer mean: for
 rifampin the top gene is **rpoB** — highlighted as "our pick" — and the genes right behind it are the
 *other* drugs' canonical resistance genes (embB, katG, pncA, gyrA, rpsL), which surface here through
@@ -37,7 +37,7 @@ def display_name(drug: str) -> str:
 
 def plot_ranking(csv_path: Path, out_path: Path, *, drug: str | None = None, top_n: int = 10,
                  who_onehot_auroc: float | None = None) -> None:
-    """Top-``top_n`` genes by out-of-fold LR AUROC, descending; the top gene highlighted as our pick.
+    """Top-``top_n`` genes by out-of-fold LR AUROC, ascending (highest on the right); top gene = our pick.
 
     ``who_onehot_auroc`` (the full WHO one-hot ceiling for this drug) is drawn as a red reference line,
     so the best single ESM gene can be read against "all WHO mutations combined".
@@ -49,9 +49,12 @@ def plot_ranking(csv_path: Path, out_path: Path, *, drug: str | None = None, top
     auroc_col = f"lr_auroc_{drug}" if drug else auroc_cols[0]
     drug_name = display_name(auroc_col.removeprefix("lr_auroc_"))
 
-    top = df.sort_values(auroc_col, ascending=False).head(top_n).reset_index(drop=True)
+    # Ascending order (smallest left, largest right) to match the ladder; the pick (largest) is rightmost.
+    top = (df.sort_values(auroc_col, ascending=False).head(top_n)
+           .sort_values(auroc_col, ascending=True).reset_index(drop=True))
+    pick_idx = len(top) - 1
     # All bars purple (ESM family): the pick solid, the rest the same purple at alpha 0.5.
-    colours = [PICK_COLOUR if i == 0 else to_rgba(PICK_COLOUR, 0.5) for i in range(len(top))]
+    colours = [PICK_COLOUR if i == pick_idx else to_rgba(PICK_COLOUR, 0.5) for i in range(len(top))]
 
     fig, ax = plt.subplots(figsize=(10.5, 5.6))
     x = range(len(top))
@@ -60,7 +63,7 @@ def plot_ranking(csv_path: Path, out_path: Path, *, drug: str | None = None, top
         ax.text(xi, v + 0.005, f"{v:.3f}", ha="center", va="bottom", fontsize=9.5, fontweight="bold")
 
     ax.axhline(0.5, color="0.6", linestyle=":", linewidth=1.0)  # chance
-    ax.text(len(top) - 0.5, 0.505, "chance", ha="right", va="bottom", fontsize=8, color="0.5")
+    ax.text(-0.4, 0.505, "chance", ha="left", va="bottom", fontsize=8, color="0.5")
     if who_onehot_auroc is not None:
         ax.axhline(who_onehot_auroc, color=WHO_LINE_COLOUR, linestyle="--", linewidth=1.4)
         ax.text((len(top) - 1) / 2, who_onehot_auroc + 0.006,
@@ -74,14 +77,14 @@ def plot_ranking(csv_path: Path, out_path: Path, *, drug: str | None = None, top
     ax.grid(axis="y", alpha=0.3)
     ax.spines[["top", "right"]].set_visible(False)
 
-    pick = top["gene_name"].iloc[0]
+    pick = top["gene_name"].iloc[pick_idx]
     handles = [
         plt.Rectangle((0, 0), 1, 1, color=PICK_COLOUR, ec="black", lw=0.7),
-        plt.Rectangle((0, 0), 1, 1, color=OTHER_COLOUR, ec="black", lw=0.7),
+        plt.Rectangle((0, 0), 1, 1, color=to_rgba(PICK_COLOUR, 0.5), ec="black", lw=0.7),
         plt.Line2D([0], [0], color=WHO_LINE_COLOUR, linestyle="--", linewidth=1.4),
     ]
     ax.legend(handles, [f"our pick: {pick} — top ESM prediction, injected gene", "other ranked genes",
-                        "all WHO mutations (one-hot)"], loc="upper right", bbox_to_anchor=(0.99, 0.82),
+                        "all WHO mutations (one-hot)"], loc="upper left", bbox_to_anchor=(0.01, 0.82),
               fontsize=9.0, framealpha=0.95)
     ax.set_title(
         f"{drug_name}: ESM mean embedding predictions by LR, for each gene by Prokka annotation",
