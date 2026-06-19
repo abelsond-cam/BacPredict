@@ -1,0 +1,4 @@
+gene_name,site,category,mut_auroc,mut_auroc_sd,mut_auprc,mut_auprc_sd,n_determinants,n_genomes_with_determinant,embeddable,is_rrna,is_noncoding
+__ALL_Kleborate__,__ALL_Kleborate__,all,0.9770574083291855,0.0006868265675863173,0.9907942468413041,0.00023291704020957725,27,1922,False,False,False
+Flq_mutations,Flq (mutations),chromosomal_mutation,0.9643655632984902,0.0009426945083344282,0.9828990306475257,0.00046746610708267903,11,1590,False,False,True
+Flq_acquired,Flq (acquired),acquired_hgt,0.639989837398374,0.010517731687989092,0.8284867427091882,0.005385043655389759,16,754,True,False,False

@@ -1,0 +1,9 @@
+gene_name,site,category,mut_auroc,mut_auroc_sd,mut_auprc,mut_auprc_sd,n_determinants,n_genomes_with_determinant,embeddable,is_rrna,is_noncoding
+__ALL_Kleborate__,__ALL_Kleborate__,all,0.9756275503025187,0.0011390991271122066,0.9918657065678184,0.0005479190872373846,270,2594,False,False,False
+Bla_ESBL_acquired,Bla ESBL (acquired),acquired_hgt,0.8712009286618829,2.298380017448157e-16,0.9430524657806791,5.77969036528e-08,20,1632,True,False,False
+Omp_mutations,Omp (mutations),porin_truncation,0.8151794005909668,0.0006335528251232395,0.9192521877211735,0.0002602191837874519,87,1395,False,False,True
+Bla_chr,Bla chr,chromosomal_coding,0.7948149711551991,0.007446168228215492,0.9183764869241214,0.002726078689694457,88,2063,True,False,False
+Bla_Carb_acquired,Bla Carb (acquired),acquired_hgt,0.6913585197692416,2.7013105674217532e-05,0.8663307645589747,2.0842563785402476e-05,20,776,True,False,False
+Bla_acquired,Bla (acquired),acquired_hgt,0.6794990854087518,0.002155586415589363,0.8604527717635378,0.0008514667762741898,23,804,True,False,False
+SHV_mutations,SHV (mutations),chromosomal_mutation,0.6287266075700014,0.009734857286274993,0.8409717927075308,0.00204322812508393,24,1096,False,False,True
+Bla_inhR_acquired,Bla inhR (acquired),acquired_hgt,0.5289468130012666,1.1491900087240784e-16,0.793766465245666,1.1491900087240784e-16,8,69,True,False,False

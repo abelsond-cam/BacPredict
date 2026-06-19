@@ -1,0 +1,26 @@
+{
+  "files": [
+    "kp_amikacin/kleborate_determinant_lr_amikacin.csv",
+    "kp_ampicillin-sulbactam/kleborate_determinant_lr_ampicillin-sulbactam.csv",
+    "kp_azithromycin/kleborate_determinant_lr_azithromycin.csv",
+    "kp_aztreonam/kleborate_determinant_lr_aztreonam.csv",
+    "kp_cefazolin/kleborate_determinant_lr_cefazolin.csv",
+    "kp_cefepime/kleborate_determinant_lr_cefepime.csv",
+    "kp_cefotaxime/kleborate_determinant_lr_cefotaxime.csv",
+    "kp_cefoxitin/kleborate_determinant_lr_cefoxitin.csv",
+    "kp_ceftazidime/kleborate_determinant_lr_ceftazidime.csv",
+    "kp_ceftriaxone/kleborate_determinant_lr_ceftriaxone.csv",
+    "kp_cefuroxime/kleborate_determinant_lr_cefuroxime.csv",
+    "kp_ciprofloxacin/kleborate_determinant_lr_ciprofloxacin.csv",
+    "kp_colistin/kleborate_determinant_lr_colistin.csv",
+    "kp_ertapenem/kleborate_determinant_lr_ertapenem.csv",
+    "kp_gentamicin/kleborate_determinant_lr_gentamicin.csv",
+    "kp_imipenem/kleborate_determinant_lr_imipenem.csv",
+    "kp_levofloxacin/kleborate_determinant_lr_levofloxacin.csv",
+    "kp_meropenem/kleborate_determinant_lr_meropenem.csv",
+    "kp_piperacillin-tazobactam/kleborate_determinant_lr_piperacillin-tazobactam.csv",
+    "kp_tetracycline/kleborate_determinant_lr_tetracycline.csv",
+    "kp_tobramycin/kleborate_determinant_lr_tobramycin.csv",
+    "kp_trimethoprim-sulfamethoxazole/kleborate_determinant_lr_trimethoprim-sulfamethoxazole.csv"
+  ]
+}
