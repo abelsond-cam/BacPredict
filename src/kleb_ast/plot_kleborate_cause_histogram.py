@@ -76,8 +76,8 @@ def plot_cause(csv_path: Path, out_path: Path, *, drug: str, bacformer_auroc: fl
     if not full.empty:
         fa = float(full["mut_auroc"].iloc[0])
         ax.axhline(fa, color="black", linestyle="--", linewidth=1.2)
-        ax.text(0.01, fa + 0.005, f"Ceiling (all Kleborate determinants) = {fa:.3f}",
-                transform=blend, ha="left", va="bottom", fontsize=7.5, bbox=label_bbox)
+        ax.text(0.5, fa + 0.005, f"Ceiling (all Kleborate determinants) = {fa:.3f}",
+                transform=blend, ha="center", va="bottom", fontsize=7.5, bbox=label_bbox)
     if bacformer_auroc is not None:
         ax.axhline(bacformer_auroc, color=BACFORMER_COLOUR, linestyle="-.", linewidth=1.5)
         ax.text(0.99, bacformer_auroc + 0.005, f"Finetuned Bacformer mean = {bacformer_auroc:.3f}",
