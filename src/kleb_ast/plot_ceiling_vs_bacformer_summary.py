@@ -67,7 +67,8 @@ def plot_summary(table: pd.DataFrame, out_path: Path) -> None:
         line_colour = BEATS_COLOUR if row.gap > GAP_THRESHOLD else TIE_COLOUR
         ax.plot([row.ceiling, row.bacformer], [yi, yi], color=line_colour, linewidth=2.2, zorder=1)
     ax.scatter(table["ceiling"], list(y), color=CEILING_COLOUR, s=70, zorder=2, label="Kleborate ceiling", marker="o")
-    ax.scatter(table["bacformer"], list(y), color=BACFORMER_COLOUR, s=70, zorder=2, label="deployed Bacformer", marker="D")
+    ax.scatter(table["bacformer"], list(y), color=BACFORMER_COLOUR, s=70, zorder=2,
+               label="Finetuned Bacformer mean", marker="D")
 
     for yi, row in zip(y, table.itertuples(), strict=True):
         if abs(row.gap) > GAP_THRESHOLD:
@@ -82,7 +83,7 @@ def plot_summary(table: pd.DataFrame, out_path: Path) -> None:
     ax.grid(axis="x", alpha=0.3)
     ax.spines[["top", "right"]].set_visible(False)
     ax.legend(loc="lower left", fontsize=10, framealpha=0.95)
-    ax.set_title("Kp AST: Kleborate determinant ceiling vs deployed Bacformer\n"
+    ax.set_title("Kp AST: Kleborate determinant ceiling vs finetuned Bacformer mean\n"
                  "teal = Bacformer exceeds the catalogue (the drugs Kleborate is blind to)",
                  fontsize=12.5)
     fig.tight_layout()

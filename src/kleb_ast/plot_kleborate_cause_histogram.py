@@ -64,24 +64,30 @@ def plot_cause(csv_path: Path, out_path: Path, *, drug: str, bacformer_auroc: fl
     for b, h in zip(rendered, hatches, strict=True):
         if h:
             b.set_hatch(h)
-    for i, (v, sd) in enumerate(zip(bars["mut_auroc"], bars["mut_auroc_sd"], strict=True)):
-        ax.text(i, v + sd + 0.006, f"{v:.3f}", ha="center", va="bottom", fontsize=8.5, fontweight="bold")
+    # Value label *inside* the top of each bar (white) — keeps it clear of the ceiling/Bacformer lines
+    # even when a single tall bar reaches them.
+    for i, v in enumerate(bars["mut_auroc"]):
+        ax.text(i, v - 0.012, f"{v:.3f}", ha="center", va="top", fontsize=8.5, fontweight="bold", color="white")
 
+    # Line labels at opposite ends (ceiling far-left, Bacformer far-right) so they never overlap each
+    # other, via a blended transform (x = axes fraction, y = data).
+    blend = ax.get_yaxis_transform()
+    label_bbox = {"facecolor": "white", "edgecolor": "none", "alpha": 0.75, "pad": 0.5}
     if not full.empty:
         fa = float(full["mut_auroc"].iloc[0])
         ax.axhline(fa, color="black", linestyle="--", linewidth=1.2)
-        ax.text((len(bars) - 1) / 2, fa + 0.004, f"Ceiling combining all Kleborate determinants = {fa:.3f}",
-                ha="center", va="bottom", fontsize=7.5)
+        ax.text(0.01, fa + 0.005, f"Ceiling (all Kleborate determinants) = {fa:.3f}",
+                transform=blend, ha="left", va="bottom", fontsize=7.5, bbox=label_bbox)
     if bacformer_auroc is not None:
         ax.axhline(bacformer_auroc, color=BACFORMER_COLOUR, linestyle="-.", linewidth=1.5)
-        ax.text((len(bars) - 1) / 2, bacformer_auroc + 0.004, f"deployed Bacformer = {bacformer_auroc:.3f}",
-                ha="center", va="bottom", fontsize=7.5, color=BACFORMER_COLOUR)
+        ax.text(0.99, bacformer_auroc + 0.005, f"Finetuned Bacformer mean = {bacformer_auroc:.3f}",
+                transform=blend, ha="right", va="bottom", fontsize=7.5, color=BACFORMER_COLOUR, bbox=label_bbox)
     ax.axhline(0.5, color="0.6", linestyle=":", linewidth=1.0)
 
     ax.set_xticks(list(x))
     ax.set_xticklabels(bars["site"], rotation=30, ha="right", fontsize=9.5)
     ax.set_ylabel("Kleborate-determinant LR AUROC (k-fold)", fontsize=12)
-    ax.set_ylim(0.45, 1.0)
+    ax.set_ylim(0.45, 1.03)
     ax.grid(axis="y", alpha=0.3)
     ax.spines[["top", "right"]].set_visible(False)
 
@@ -95,7 +101,7 @@ def plot_cause(csv_path: Path, out_path: Path, *, drug: str, bacformer_auroc: fl
         labels.append(label)
     if bacformer_auroc is not None:
         handles.append(plt.Line2D([0], [0], color=BACFORMER_COLOUR, linestyle="-.", linewidth=1.5))
-        labels.append("deployed Bacformer AUROC")
+        labels.append("Finetuned Bacformer mean")
     ax.legend(handles, labels, loc="upper left", bbox_to_anchor=(0.01, 0.99), fontsize=9, framealpha=0.95)
     ax.set_title(f"{drug}: Kp resistance from Kleborate determinants by class (HGT vs chromosomal)", fontsize=12.5)
     fig.tight_layout()
