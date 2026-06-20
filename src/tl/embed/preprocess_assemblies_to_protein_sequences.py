@@ -70,7 +70,8 @@ def save_to_parquet(data_dict: dict, output_path: Path) -> None:
     df.to_parquet(output_path, engine="pyarrow", compression="snappy")
 
 
-def _extract_genome_info(sample_id: str, sr_assembly_file: str, sr_gff_file: str) -> dict:
+def _extract_genome_info(sample_id: str, sr_assembly_file: str, sr_gff_file: str,
+                         *, keep_internal_stop: bool = False) -> dict:
     """Dispatch to the correct extractor based on the `sr_gff_file` extension."""
     if sr_gff_file and is_gff_path(sr_gff_file):
         if not sr_assembly_file:
@@ -78,7 +79,9 @@ def _extract_genome_info(sample_id: str, sr_assembly_file: str, sr_gff_file: str
                 f"{sample_id}: sr_gff_file is set but sr_assembly_file is empty; "
                 "GFF+FNA extractor needs both."
             )
-        return extract_proteins_from_gff_fna(sr_gff_file, sr_assembly_file)
+        return extract_proteins_from_gff_fna(
+            sr_gff_file, sr_assembly_file, keep_internal_stop=keep_internal_stop
+        )
     if sr_gff_file and is_gbff_path(sr_gff_file):
         return preprocess_genome_assembly(filepath=str(sr_gff_file))
     if sr_assembly_file and is_gbff_path(sr_assembly_file):
@@ -97,14 +100,16 @@ def process_single_genome(args_tuple: tuple) -> tuple[str, bool, str, float]:
     tuple
         ``(sample_id, success, error_message, processing_time)``.
     """
-    sample_id, sr_assembly_file, sr_gff_file, output_dir, skip_existing = args_tuple
+    sample_id, sr_assembly_file, sr_gff_file, output_dir, skip_existing, keep_internal_stop = args_tuple
     start_time = time.time()
 
     try:
         if skip_existing and check_output_exists(sample_id, output_dir):
             return sample_id, True, "Already exists (skipped)", 0.0
 
-        genome_info = _extract_genome_info(sample_id, sr_assembly_file, sr_gff_file)
+        genome_info = _extract_genome_info(
+            sample_id, sr_assembly_file, sr_gff_file, keep_internal_stop=keep_internal_stop
+        )
 
         # Strip metadata-only keys that the downstream embedding step does not consume.
         for k in ("strain_name", "accession_name", "protein_name", "accession_id"):
@@ -149,6 +154,12 @@ def main():
         help="Skip samples whose parquet already exists",
     )
     parser.add_argument("--workers", type=int, default=76, help="Number of parallel workers")
+    parser.add_argument(
+        "--keep-internal-stop",
+        action="store_true",
+        help="Keep CDS with an internal stop codon (retains the '*'), to reproduce a historical "
+        "protein order — e.g. regenerating Kp parquets that must align with pre-existing embeddings.",
+    )
 
     args = parser.parse_args()
 
@@ -206,6 +217,7 @@ def main():
             str(row["sr_gff_file"]) if pd.notna(row["sr_gff_file"]) else "",
             output_dir,
             args.skip_existing,
+            args.keep_internal_stop,
         )
         for _, row in df.iterrows()
     ]

@@ -40,17 +40,23 @@ samples = set(ast[scol].astype(str))
 meta = pd.read_csv(base / "final/metadata_v2_all_samples_and_columns.tsv", sep="\t",
                    usecols=["Sample", "sr_assembly_file", "sr_gff_file"], low_memory=False)
 meta["Sample"] = meta["Sample"].astype(str)
-sub = meta[meta["Sample"].isin(samples)].dropna(subset=["sr_assembly_file", "sr_gff_file"])
+sub = meta[meta["Sample"].isin(samples)].dropna(subset=["sr_assembly_file", "sr_gff_file"]).copy()
 sub = sub[(sub["sr_assembly_file"].astype(str).str.strip() != "")
           & (sub["sr_gff_file"].astype(str).str.strip() != "")]
+# metadata stores paths relative to the RDS root (david/raw/...) — resolve to absolute.
+rds = base.parent
+sub["sr_assembly_file"] = sub["sr_assembly_file"].apply(lambda p: str(rds / str(p)))
+sub["sr_gff_file"] = sub["sr_gff_file"].apply(lambda p: str(rds / str(p)))
 out = base / "processed/protein_parquet_regen_input.csv"
 sub.to_csv(out, index=False)
 print(f"wrote {out} with {len(sub)} samples (of {len(samples)} AST samples)")
 PY
 
-# 2) Regenerate the parquets (resumable via --skip-existing).
+# 2) Regenerate the parquets. --keep-internal-stop reproduces the original protein order (the embeddings
+#    were made before the internal-stop skip was added; without this the parquet is off by ~3 proteins
+#    and the n_proteins guard would skip every genome). --skip-existing makes it resumable.
 uv run python src/tl/embed/preprocess_assemblies_to_protein_sequences.py \
     --input-csv "$D/processed/protein_parquet_regen_input.csv" \
     --output-dir "$D/processed/klebsiella_protein_sequences" \
-    --skip-existing --workers 38
+    --keep-internal-stop --skip-existing --workers 38
 echo "PROTEIN_PARQUET_REGEN_DONE"

@@ -71,6 +71,7 @@ def extract_proteins_from_gff_fna(
     fna_path: str | Path,
     *,
     translation_table: int = 11,
+    keep_internal_stop: bool = False,
 ) -> dict[str, Any]:
     """Extract protein sequences for one genome from a GFF + FASTA pair.
 
@@ -84,6 +85,12 @@ def extract_proteins_from_gff_fna(
         GFF `seqid` column.
     translation_table : int, default 11
         NCBI translation table (11 = bacterial/archaeal/plant plastid).
+    keep_internal_stop : bool, default False
+        Keep CDS whose translation has an internal stop (the ``*`` is retained in
+        the sequence) instead of dropping them. Off by default. Set this only to
+        reproduce a *historical* protein order — e.g. regenerating the Kp
+        protein-sequence parquets so their flat index still aligns 1:1 with
+        embeddings generated before the internal-stop skip was added.
 
     Returns
     -------
@@ -164,7 +171,7 @@ def extract_proteins_from_gff_fna(
             protein = str(nt.translate(table=translation_table, to_stop=False))
             if protein.endswith("*"):
                 protein = protein[:-1]
-            if "*" in protein:
+            if "*" in protein and not keep_internal_stop:
                 n_skipped_internal_stop += 1
                 continue
             if not protein:
