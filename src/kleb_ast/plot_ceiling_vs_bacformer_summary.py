@@ -99,41 +99,42 @@ def plot_summary(table: pd.DataFrame, out_path: Path) -> None:
 
 
 def plot_grouped_bars(table: pd.DataFrame, out_path: Path) -> None:
-    """Grouped horizontal bars per drug: Kleborate ceiling (purple) vs finetuned Bacformer mean (blue-purple).
+    """Grouped vertical columns per drug: Kleborate ceiling (purple) vs finetuned Bacformer mean (blue-purple).
 
-    Sorted by the gap (Bacformer − ceiling) so the two bars sit level at the top (well-catalogued,
-    HGT-driven drugs) and the Bacformer bar pulls clear of the ceiling toward the bottom (the
-    chromosomal/intrinsic drugs the catalogue is blind to).
+    Sorted **ascending by the Kleborate ceiling** so the catalogue line climbs monotonically left→right and
+    the eye reads how tightly Bacformer tracks it: the two columns are near-level across the well-catalogued
+    HGT-driven majority on the right, and Bacformer towers over the short ceiling columns on the left (the
+    chromosomal/intrinsic drugs the catalogue is blind to — azithromycin, colistin, tetracycline).
     """
-    t = table.sort_values("gap", ascending=False).reset_index(drop=True)
-    y = np.arange(len(t))
-    h = 0.38  # half-height of each bar; the two bars in a group are offset by ±h/2
+    t = table.sort_values("ceiling", ascending=True).reset_index(drop=True)
+    x = np.arange(len(t))
+    w = 0.4  # column width; the two columns in a group are offset by ±w/2
 
-    fig, ax = plt.subplots(figsize=(11.5, max(7.0, 0.46 * len(t) + 1.6)))
-    b_ceiling = ax.barh(y + h / 2, t["ceiling"], height=h, color=BAR_CEILING_COLOUR,
-                        edgecolor="black", linewidth=0.5, label="Kleborate determinant ceiling", zorder=3)
-    b_bac = ax.barh(y - h / 2, t["bacformer"], height=h, color=BAR_BACFORMER_COLOUR,
-                    edgecolor="black", linewidth=0.5, label="Finetuned Bacformer mean", zorder=3)
+    fig, ax = plt.subplots(figsize=(15.5, 7.4))
+    c_ceiling = ax.bar(x - w / 2, t["ceiling"], width=w, color=BAR_CEILING_COLOUR,
+                       edgecolor="black", linewidth=0.5, label="Kleborate determinant ceiling", zorder=3)
+    c_bac = ax.bar(x + w / 2, t["bacformer"], width=w, color=BAR_BACFORMER_COLOUR,
+                   edgecolor="black", linewidth=0.5, label="Finetuned Bacformer mean", zorder=3)
 
-    # Value label at the end of each bar (kept just clear of the bar tip).
-    for rect in list(b_ceiling) + list(b_bac):
-        w = rect.get_width()
-        ax.text(w + 0.004, rect.get_y() + rect.get_height() / 2, f"{w:.3f}",
-                va="center", ha="left", fontsize=7.5)
+    # Value label above each column, rotated vertical so 44 of them don't collide.
+    for rect in list(c_ceiling) + list(c_bac):
+        hgt = rect.get_height()
+        ax.text(rect.get_x() + rect.get_width() / 2, hgt + 0.006, f"{hgt:.3f}",
+                rotation=90, ha="center", va="bottom", fontsize=6.5)
 
-    ax.axvline(0.5, color="0.6", linestyle=":", linewidth=1.0, zorder=1)  # chance
-    ax.text(0.5, len(t) - 0.4, "chance", color="0.5", fontsize=7.5, ha="center", va="bottom")
+    ax.axhline(0.5, color="0.6", linestyle=":", linewidth=1.0, zorder=1)  # chance
+    ax.text(len(t) - 0.5, 0.5, " chance", color="0.5", fontsize=7.5, ha="right", va="bottom")
 
-    ax.set_yticks(y)
-    ax.set_yticklabels(t["drug"], fontsize=10)
-    ax.invert_yaxis()  # biggest Bacformer-over-ceiling gap at the top
-    ax.set_xlabel("held-out AUROC", fontsize=12)
-    ax.set_xlim(0.5, 1.06)
-    ax.grid(axis="x", alpha=0.3)
+    ax.set_xticks(x)
+    ax.set_xticklabels(t["drug"], rotation=45, ha="right", fontsize=9.5)
+    ax.set_ylabel("held-out AUROC", fontsize=12)
+    ax.set_ylim(0.5, 1.085)
+    ax.grid(axis="y", alpha=0.3)
     ax.spines[["top", "right"]].set_visible(False)
-    ax.legend(loc="lower right", fontsize=10, framealpha=0.95)
+    ax.legend(loc="upper left", fontsize=10, framealpha=0.95)
     ax.set_title("Kp AST panel: Kleborate determinant ceiling vs finetuned Bacformer mean\n"
-                 "two bars per drug — sorted by Bacformer − ceiling gap (largest at top)", fontsize=12.5)
+                 "drugs ordered by ascending Kleborate ceiling — Bacformer tracks the catalogue closely, "
+                 "then breaks away where the catalogue is blind (left)", fontsize=12.5)
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=150)
