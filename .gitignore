@@ -47,6 +47,7 @@ src/snp_embeddings/tbprofiler/*.vcf.gz.*
 !src/tb_ast/docs/figures/*.png
 !src/snp_embeddings/docs/figures/*.png
 !src/snp_embeddings/docs/visualisations/**/*.png
+!src/kleb_ast/docs/visualisations/**/*.png
 !src/bac_pyseer/kleb_iso_source/docs/figures/*.png
 !src/bac_pyseer/docs/visualise/*/*.png
 
