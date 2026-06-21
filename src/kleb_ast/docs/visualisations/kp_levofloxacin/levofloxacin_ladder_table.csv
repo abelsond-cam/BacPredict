@@ -4,4 +4,4 @@ fine-tuned Bacformer mean,Bacformer,genome_pooled,0.9489,0.9843,,,eval_summary.c
 Kleborate: Flq (mutations),one-hot,single_gene,0.9643655632984902,0.9828990306475256,0.0009426945083344,0.0004674661070826,kleborate_determinant_lr Flq (mutations),1.0
 ESM gyrA (prev 0.95),ESM,single_gene,0.9395250416882295,0.9753524823968749,0.006016514532541035,0.0026225620149311814,concat JSON esm_gene_only,0.9684684684684683
 concat: frozen mean + ESM gyrA,mix,concat,0.9417100799263987,0.9801988460189995,0.006790848043268438,0.003336582489708633,concat JSON concat_esm_gene_plus_mean,0.9684684684684683
-concat: FT mean + ESM gyrA,mix_ft,concat,0.9698134224450012,0.9916892103977646,0.008536422603776846,0.002059279913673617,concat_ft JSON concat_esm_gene_plus_mean (eval-holdout),0.9684684684684683
+concat: FT mean + ESM gyrA,mix_ft,concat,0.9703146755778335,0.9918287307625567,0.00889112896106734,0.0020809081367460856,concat_ft JSON concat_esm_gene_plus_mean (eval-holdout),0.9684684684684683

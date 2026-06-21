@@ -1,0 +1,7 @@
+method,family,group,auroc,auprc,auroc_sd,auprc_sd,source,alpha
+frozen Bacformer mean,Bacformer,genome_pooled,0.9740542511877303,0.991483003926955,0.00225203563512315,0.0009191837484914653,concat JSON bacformer_mean_only,1.0
+fine-tuned Bacformer mean,Bacformer,genome_pooled,0.9824,0.9923,,,eval_summary.csv,1.0
+Kleborate: Bla ESBL (acquired),one-hot,single_gene,0.8950142450142449,0.951651297046034,0.0006342060253254,0.0002920685642946,kleborate_determinant_lr Bla ESBL (acquired),1.0
+ESM gatC (prev 0.95),ESM,single_gene,0.8979231967196957,0.9630429949485664,0.004662163516428369,0.0032858494301059265,concat JSON esm_gene_only,0.9618499999999999
+concat: frozen mean + ESM gatC,mix,concat,0.9730173280501508,0.9911701501787709,0.0017888746468239817,0.0010205658795006212,concat JSON concat_esm_gene_plus_mean,0.9618499999999999
+concat: FT mean + ESM gatC,mix_ft,concat,0.994379276637341,0.9980116186814375,0.0021314500573055032,0.000766761962672035,concat_ft JSON concat_esm_gene_plus_mean (eval-holdout),0.9618499999999999
