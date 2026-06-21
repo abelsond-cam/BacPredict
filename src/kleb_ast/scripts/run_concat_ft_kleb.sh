@@ -13,7 +13,7 @@
 #SBATCH --job-name=kleb_concat_ft
 #SBATCH --output=kleb_concat_ft_%A_%a.out
 #SBATCH --error=kleb_concat_ft_%A_%a.err
-#SBATCH --array=0-6
+#SBATCH --array=0-21
 #SBATCH --partition=icelake-himem
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -29,7 +29,9 @@ cd /home/dca36/workspace/BacPredict
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 
-DRUGS=(ciprofloxacin levofloxacin colistin tetracycline azithromycin meropenem gentamicin)
+DRUGS=(cefotaxime ertapenem ampicillin-sulbactam ceftriaxone cefuroxime ciprofloxacin ceftazidime \
+       gentamicin cefazolin imipenem meropenem trimethoprim-sulfamethoxazole tobramycin amikacin \
+       levofloxacin piperacillin-tazobactam cefoxitin tetracycline aztreonam cefepime azithromycin colistin)
 DRUG=${DRUGS[$SLURM_ARRAY_TASK_ID]}
 if [[ -z "$DRUG" ]]; then echo "ERROR: no drug for array index $SLURM_ARRAY_TASK_ID" >&2; exit 1; fi
 

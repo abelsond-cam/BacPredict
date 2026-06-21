@@ -15,7 +15,7 @@
 #SBATCH --job-name=kleb_concat
 #SBATCH --output=kleb_concat_%A_%a.out
 #SBATCH --error=kleb_concat_%A_%a.err
-#SBATCH --array=0-6
+#SBATCH --array=0-21
 #SBATCH --partition=icelake-himem
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -40,7 +40,9 @@ export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 # be low (e.g. a lineage marker present in a minority); the ladder fades the ESM-gene bar by prevalence to
 # flag it. Source ranking = the zero-imputed ranking (the corrected read-out). Next step: inject the top-k
 # genes (e.g. all with AUROC > 0.6), not just one.
-DRUGS=(ciprofloxacin levofloxacin colistin tetracycline azithromycin meropenem gentamicin)
+DRUGS=(cefotaxime ertapenem ampicillin-sulbactam ceftriaxone cefuroxime ciprofloxacin ceftazidime \
+       gentamicin cefazolin imipenem meropenem trimethoprim-sulfamethoxazole tobramycin amikacin \
+       levofloxacin piperacillin-tazobactam cefoxitin tetracycline aztreonam cefepime azithromycin colistin)
 DRUG=${DRUGS[$SLURM_ARRAY_TASK_ID]}
 if [[ -z "$DRUG" ]]; then
     echo "ERROR: no drug for array index $SLURM_ARRAY_TASK_ID" >&2
