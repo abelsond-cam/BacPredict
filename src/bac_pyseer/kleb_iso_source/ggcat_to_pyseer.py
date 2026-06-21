@@ -5,24 +5,30 @@ GGCAT (memory-capped, disk-based) replaces unitig-caller's Bifrost backend, whic
 assemblies emits three artifacts this script joins into the line-oriented matrix pyseer reads
 with ``--kmers``:
 
-1. **unitig FASTA** (``ggcat build -c -o ….fa.gz``) — each record header is
-   ``>{id} LN:i:{len} C:{subset_id}:{n_kmers}``; ``subset_id`` identifies the *colour subset*
-   (the set of samples whose genomes contain that unitig), ``n_kmers`` = ``len - k + 1`` (ignored).
+1. **unitig FASTA** (``ggcat build -c -o ….fa.gz``) — each record header carries one or more
+   ``C:{subset_id_HEX}:{n_kmers_DEC}`` segments, e.g. ``>4 LN:i:36 C:22f:2 C:333:3 C:22f:1``.
+   ``subset_id`` (hexadecimal) identifies a *colour subset* (the set of samples sharing those
+   k-mers); ``n_kmers`` (decimal) is that segment's k-mer count. GGCAT unitigs are *sequence*-
+   maximal, so the colour can change along one unitig (~23% of ours have >1 segment). Each segment
+   is therefore emitted as its own monochromatic feature — the contiguous sub-sequence
+   ``seq[kmer_off : kmer_off + n_kmers + k - 1]`` present in exactly that subset's samples — which
+   is the colour-consistent unitig definition the pyseer/DBGWAS workflow expects.
 2. **colour names** (``ggcat dump-colors ….colors.dat names.jsonl``) — one JSON object per line,
    ``{"color_index": i, "color_name": "<SampleID>"}``. Because we build with
    ``-d`` (colored-input-lists, ``Sample<TAB>path``), the colour *name is the Sample ID directly*.
 3. **colormap** (``ggcat dump-colormap --format ranges-csv ….colors.dat colormap.csv <ids…>``) —
-   ``{subset_id},{tok},{tok},…`` where each token is a single colour index ``a`` or an inclusive
-   range ``a-b``. Maps a subset id to its set of colour indices.
+   ``{subset_id_DEC},{tok},{tok},…`` where each token is a single colour index ``a`` or an inclusive
+   range ``a-b``. Maps a (decimal) subset id to its set of colour indices. NB the FASTA writes
+   subset ids in hex but the colormap keys them in decimal — they reconcile as the same integer.
 
 The pyseer ``--kmers`` line format (matching unitig-caller ``--pyseer``) is::
 
     <unitig_sequence> | <SampleA>:1 <SampleB>:1 …
 
-so the join is: FASTA unitig → its ``subset_id`` → colour indices → Sample IDs → emit one line.
+so the join is: FASTA unitig segment → its ``subset_id`` → colour indices → Sample IDs → one line.
 Pure stdlib (``gzip``/``json``) and fully streaming over the FASTA, so the only resident state is
 the colour-name table (~18k entries) and a ``subset_id -> " ".join(SampleID:1)`` cache (one entry
-per *distinct* subset, reused across every unitig sharing it). Output is gzipped for ``--kmers``.
+per *distinct* subset, reused across every segment sharing it). Output is gzipped for ``--kmers``.
 """
 
 from __future__ import annotations
@@ -139,18 +145,33 @@ def _iter_fasta(path: Path):
             yield header, "".join(seq_parts)
 
 
-def _subset_id_from_header(header: str) -> int:
-    """Parse the ``C:<subset_id>:<n_kmers>`` field out of a GGCAT unitig header."""
+def _parse_color_segments(header: str) -> list[tuple[int, int]]:
+    """Parse all ``C:<subset_hex>:<n_kmers_dec>`` segments from a GGCAT unitig header.
+
+    GGCAT writes subset ids in hexadecimal and k-mer counts in decimal, and a single
+    sequence-maximal unitig may carry several colour segments. Returns ``[(subset_int, n_kmers), …]``
+    in 5'->3' order.
+    """
+    segs: list[tuple[int, int]] = []
     for tok in header.split():
         if tok.startswith("C:"):
-            return int(tok.split(":")[1])
-    raise ValueError(f"no C:<subset>:<n> field in GGCAT header: {header!r}")
+            _, subset_hex, n_kmers = tok.split(":")
+            segs.append((int(subset_hex, 16), int(n_kmers)))
+    if not segs:
+        raise ValueError(f"no C:<subset>:<n_kmers> segment in GGCAT header: {header!r}")
+    return segs
 
 
 def convert(
-    fasta: Path, color_names: Path, colormap: Path, out: Path, min_samples: int = 0,
-) -> tuple[int, int]:
+    fasta: Path, color_names: Path, colormap: Path, out: Path, kmer_length: int = 31,
+    min_samples: int = 0,
+) -> tuple[int, int, int]:
     """Join the three GGCAT artifacts into a gzipped pyseer ``--kmers`` matrix.
+
+    Each colour segment of each unitig becomes one matrix line: the monochromatic sub-sequence
+    ``seq[kmer_off : kmer_off + n_kmers + k - 1]`` and the samples of that segment's colour subset
+    (segments after the first overlap the previous by ``k-1`` bases — standard for colour-split
+    de Bruijn unitigs).
 
     Parameters
     ----------
@@ -158,36 +179,44 @@ def convert(
         The three GGCAT build outputs (see module docstring).
     out
         Output path; gzipped if it ends with ``.gz`` (pyseer reads gzipped ``--kmers``).
+    kmer_length
+        k used for the GGCAT build (segment lengths are ``n_kmers + k - 1`` bases).
     min_samples
-        Optional pre-filter — drop unitigs present in fewer than this many samples. Default 0
-        (emit everything; let pyseer's ``--min-af`` do the frequency filtering).
+        Optional pre-filter — drop segments whose colour subset spans fewer than this many samples.
+        Default 0 (emit everything; let pyseer's ``--min-af`` do the frequency filtering).
 
     Returns
     -------
-    (n_written, n_unitigs)
-        Unitigs written and unitigs seen (differ only when ``min_samples`` drops some).
+    (n_written, n_unitigs, n_segments)
+        Lines written, unitigs seen, and total colour segments (``n_written`` < ``n_segments`` only
+        when ``min_samples`` drops some).
     """
     names = load_color_names(color_names)
     cmap = load_colormap(colormap, names)
-    print(f"  colours: {len(names)} samples; colour subsets: {len(cmap)}", file=sys.stderr)
+    k = kmer_length
+    print(f"  colours: {len(names)} samples; colour subsets: {len(cmap)}; k={k}", file=sys.stderr)
 
-    # precompute per-subset sample counts only if we are filtering (count of ':' presence tokens)
+    # per-subset sample counts (number of ":1" presence tokens) — only needed when filtering
     counts = {sid: (s.count(":1") if s else 0) for sid, s in cmap.items()} if min_samples else {}
 
-    n_written = n_unitigs = 0
+    n_written = n_unitigs = n_segments = 0
     opener = gzip.open(out, "wt") if str(out).endswith(".gz") else open(out, "w")
     with opener as ofh:
         for header, seq in _iter_fasta(fasta):
             n_unitigs += 1
-            sid = _subset_id_from_header(header)
-            if min_samples and counts.get(sid, 0) < min_samples:
-                continue
-            presence = cmap.get(sid)
-            if not presence:  # subset id missing from colormap → cannot place; skip loudly later
-                raise KeyError(f"unitig {header!r} references subset {sid} absent from {colormap}")
-            ofh.write(f"{seq} | {presence}\n")
-            n_written += 1
-    return n_written, n_unitigs
+            kmer_off = 0
+            for subset_id, n_kmers in _parse_color_segments(header):
+                n_segments += 1
+                subseq = seq[kmer_off:kmer_off + n_kmers + k - 1]
+                kmer_off += n_kmers
+                if min_samples and counts.get(subset_id, 0) < min_samples:
+                    continue
+                presence = cmap.get(subset_id)
+                if presence is None:  # subset id missing from colormap → fail loudly, do not drop
+                    raise KeyError(f"unitig {header!r} segment subset {subset_id} absent from {colormap}")
+                ofh.write(f"{subseq} | {presence}\n")
+                n_written += 1
+    return n_written, n_unitigs, n_segments
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -199,13 +228,15 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--color-names", type=Path, required=True, help="ggcat dump-colors JSONL.")
     p.add_argument("--colormap", type=Path, required=True, help="ggcat dump-colormap ranges-csv.")
     p.add_argument("--out", type=Path, required=True, help="Output pyseer --kmers matrix (.gz).")
+    p.add_argument("--kmer-length", type=int, default=31, help="k used for the GGCAT build (default 31).")
     p.add_argument("--min-samples", type=int, default=0,
-                   help="Drop unitigs in fewer than N samples (default 0 — let pyseer --min-af filter).")
+                   help="Drop segments in fewer than N samples (default 0 — let pyseer --min-af filter).")
     args = p.parse_args(argv)
-    n_written, n_unitigs = convert(
-        args.fasta, args.color_names, args.colormap, args.out, min_samples=args.min_samples,
+    n_written, n_unitigs, n_segments = convert(
+        args.fasta, args.color_names, args.colormap, args.out,
+        kmer_length=args.kmer_length, min_samples=args.min_samples,
     )
-    print(f"wrote {n_written}/{n_unitigs} unitigs -> {args.out}")
+    print(f"wrote {n_written} features from {n_unitigs} unitigs ({n_segments} colour segments) -> {args.out}")
 
 
 if __name__ == "__main__":
