@@ -18,7 +18,7 @@
 #SBATCH --job-name=kleb_per_gene_lr
 #SBATCH --output=kleb_per_gene_lr_%A_%a.out
 #SBATCH --error=kleb_per_gene_lr_%A_%a.err
-#SBATCH --array=0-3
+#SBATCH --array=0-21
 #SBATCH --partition=icelake-himem
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -39,7 +39,12 @@ export PYTHONUNBUFFERED=1
 # Pin BLAS to 1 thread/process so the joblib per-gene-LR workers don't oversubscribe.
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 
-DRUGS=(azithromycin colistin tetracycline ciprofloxacin)
+# Full 22-drug panel (the same set as eval_summary.csv). The per-gene ESM-LR ranking is computed for
+# every drug so the causal-gene scorecard (where each one-hot determinant gene lands in the ESM ranking,
+# and what it scores) can be drawn across the whole panel — the HGT-vs-chromosomal contrast.
+DRUGS=(cefotaxime ertapenem ampicillin-sulbactam ceftriaxone cefuroxime ciprofloxacin ceftazidime \
+       gentamicin cefazolin imipenem meropenem trimethoprim-sulfamethoxazole tobramycin amikacin \
+       levofloxacin piperacillin-tazobactam cefoxitin tetracycline aztreonam cefepime azithromycin colistin)
 DRUG=${DRUGS[$SLURM_ARRAY_TASK_ID]}
 if [[ -z "$DRUG" ]]; then
     echo "ERROR: no drug for array index $SLURM_ARRAY_TASK_ID" >&2
@@ -60,6 +65,12 @@ echo "Sheet:   $SHEET"
 echo "Out dir: $OUT  (subsample 2000 train, min-prevalence 0.10, no panels)"
 echo "Job ID:  ${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 echo "========================================================================"
+# Idempotent: skip drugs whose ranking already exists (lets the full 0-21 array backfill the panel
+# without recomputing the four already done).
+if [[ -f "$OUT/per_gene_lr_${DRUG}.csv" ]]; then
+    echo "Ranking already exists for $DRUG — skipping."
+    exit 0
+fi
 mkdir -p "$OUT"
 
 uv run python src/snp_embeddings/build_per_gene_lr_store.py \
