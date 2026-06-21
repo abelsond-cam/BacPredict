@@ -56,6 +56,31 @@ def test_fit_per_gene_drops_single_class() -> None:
     assert bplr.fit_per_gene({"g": (ids, x)}, label_map, n_folds=5, seed=1) == {}
 
 
+def test_fit_per_gene_impute_absent_recovers_presence_signal() -> None:
+    """Zero-imputing absent genomes lets the LR use the presence/absence signal the drop-absent fit can't.
+
+    The acquired-gene case: the gene is present *only* in the resistant genomes (presence == resistance).
+    Drop-absent fits on present genomes only — all one class — so it is dropped (no contrast). Zero-impute
+    over the full universe makes the absent (susceptible) genomes 0-vectors and the present (resistant)
+    ones real, which is perfectly separable → high AUROC. This is the acquired-gene fix.
+    """
+    ids, label_map = _label_map(10, 10)
+    present_ids = [s for s in ids if label_map[s] == 1]  # gene carried only by the resistant genomes
+    # Real ESM embeddings sit well away from the origin, so a 0-vector is far from any real one — offset
+    # the synthetic present vectors to reflect that (an origin-centred cloud would swallow the 0 rows).
+    x_present = np.random.default_rng(0).normal(loc=5.0, size=(len(present_ids), DIM))
+    gene_matrices = {"acq": (present_ids, x_present)}
+
+    assert bplr.fit_per_gene(gene_matrices, label_map, n_folds=5, seed=1) == {}  # drop-absent: single-class
+
+    fitted = bplr.fit_per_gene(
+        gene_matrices, label_map, n_folds=5, seed=1, all_ids=ids, impute_absent_zero=True
+    )
+    assert "acq" in fitted
+    assert fitted["acq"]["auroc"] > 0.9  # presence/absence now recovered
+    assert fitted["acq"]["n_train"] == len(ids)  # fit over the full read universe, not just present
+
+
 def test_prob_for_routes_train_to_oof_unseen_to_full_fit() -> None:
     """``_prob_for`` returns the stored OOF value for a fit train id, else a full-fit prediction."""
     ids, label_map = _label_map(10, 10)

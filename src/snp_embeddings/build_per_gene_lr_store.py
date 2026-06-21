@@ -207,20 +207,26 @@ def discover_core_genes(
 
 def assemble_gene_matrices(
     train_ids: list[str], core_genes: list[str], esm_dir: Path, parquet_dir: Path
-) -> dict[str, tuple[list[str], np.ndarray]]:
+) -> tuple[dict[str, tuple[list[str], np.ndarray]], list[str]]:
     """Collect each core gene's single-copy 960-vector across the train genomes.
 
-    Returns ``{gene: (sample_ids, X[m, dim])}`` — the train design matrices for the per-gene LRs.
+    Returns ``({gene: (sample_ids, X[m, dim])}, read_ids)`` — the per-gene train design matrices (only
+    the genomes where the gene is single-copy *present*) plus the list of genomes that were successfully
+    read (some are skipped for missing/misaligned files). ``read_ids`` is the universe for the
+    zero-impute fit (a *read* genome that lacks a gene is genuinely gene-absent → a 0-vector; a *skipped*
+    genome has no data and must not be imputed as absent).
     """
     core_set = set(core_genes)
     ids_by_gene: dict[str, list[str]] = {g: [] for g in core_genes}
     vecs_by_gene: dict[str, list[np.ndarray]] = {g: [] for g in core_genes}
+    read_ids: list[str] = []
     n_skipped = 0
     for k, sid in enumerate(train_ids, 1):
         read = _read_genome(sid, esm_dir, parquet_dir)
         if read is None:
             n_skipped += 1
             continue
+        read_ids.append(sid)
         gene_names, emb = read
         counts = Counter(g for g in gene_names if g in core_set)
         for i, g in enumerate(gene_names):
@@ -232,7 +238,8 @@ def assemble_gene_matrices(
     if n_skipped:
         logger.warning("gene-matrix assembly: skipped %d train genomes (missing/misaligned files)", n_skipped)
 
-    return {g: (ids_by_gene[g], np.vstack(vecs_by_gene[g])) for g in core_genes if vecs_by_gene[g]}
+    matrices = {g: (ids_by_gene[g], np.vstack(vecs_by_gene[g])) for g in core_genes if vecs_by_gene[g]}
+    return matrices, read_ids
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +273,25 @@ def _fit_one_gene(ids: list[str], x: np.ndarray, y: np.ndarray, *, n_folds: int,
     }
 
 
+def _fit_one_gene_imputed(
+    present_ids: list[str], x_present: np.ndarray, all_ids: list[str], y_all: np.ndarray, dim: int,
+    *, n_folds: int, seed: int,
+) -> dict | None:
+    """Fit one gene over the **full** read universe, zero-imputing genomes where the gene is absent.
+
+    Builds the ``[len(all_ids), dim]`` design matrix — the gene's real embedding for genomes that carry
+    it single-copy, a 0-vector for the rest — so the LR sees the **presence/absence** signal (absent
+    genomes are no longer dropped). For a universal gene (gyrA) this is ~identical to the drop-absent fit;
+    for an accessory/acquired gene it lets the LR key on the absence pattern the one-hot uses.
+    """
+    pos = {s: i for i, s in enumerate(all_ids)}
+    x = np.zeros((len(all_ids), dim), dtype=np.float32)
+    rows = [pos[s] for s in present_ids if s in pos]
+    if rows:
+        x[rows] = x_present[: len(rows)]
+    return _fit_one_gene(list(all_ids), x, y_all, n_folds=n_folds, seed=seed)
+
+
 def fit_per_gene(
     gene_matrices: dict[str, tuple[list[str], np.ndarray]],
     label_map: dict[str, int],
@@ -273,22 +299,40 @@ def fit_per_gene(
     n_folds: int,
     seed: int,
     n_jobs: int = 1,
+    all_ids: list[str] | None = None,
+    impute_absent_zero: bool = False,
 ) -> dict[str, dict]:
     """Fit one LR per core gene (out-of-fold train probs + full-train fit), genes in parallel.
 
     Each gene is independent, so the ~3,500 per-gene fits fan out over ``n_jobs`` worker
     processes (joblib). Returns ``{gene: {auroc, oof_prob: {sample: p}, scaler, clf, n_train,
     n_pos}}``; genes whose train labels are single-class (no AUROC defined) are dropped.
+
+    With ``impute_absent_zero`` the fit universe is ``all_ids`` (the full read set) and genomes lacking
+    the gene get a 0-vector instead of being dropped — so the AUROC reflects presence/absence + the
+    embedding, directly comparable to the determinant one-hot. Default off keeps the drop-absent
+    (present-only) fit, conditioned on the gene being present.
     """
     genes = list(gene_matrices)
-    ys = {g: np.array([label_map[s] for s in gene_matrices[g][0]], dtype=int) for g in genes}
-    results = Parallel(n_jobs=n_jobs)(
-        delayed(_fit_one_gene)(gene_matrices[g][0], gene_matrices[g][1], ys[g], n_folds=n_folds, seed=seed)
-        for g in genes
-    )
+    if impute_absent_zero:
+        if all_ids is None:
+            raise ValueError("impute_absent_zero requires all_ids (the full read-genome id list).")
+        y_all = np.array([label_map[s] for s in all_ids], dtype=int)
+        dim = next(iter(gene_matrices.values()))[1].shape[1]
+        results = Parallel(n_jobs=n_jobs)(
+            delayed(_fit_one_gene_imputed)(
+                gene_matrices[g][0], gene_matrices[g][1], all_ids, y_all, dim, n_folds=n_folds, seed=seed)
+            for g in genes
+        )
+    else:
+        ys = {g: np.array([label_map[s] for s in gene_matrices[g][0]], dtype=int) for g in genes}
+        results = Parallel(n_jobs=n_jobs)(
+            delayed(_fit_one_gene)(gene_matrices[g][0], gene_matrices[g][1], ys[g], n_folds=n_folds, seed=seed)
+            for g in genes
+        )
     fitted = {g: r for g, r in zip(genes, results, strict=True) if r is not None}
-    logger.info("Fitted per-gene LRs for %d genes (of %d with a matrix, n_jobs=%d)",
-                len(fitted), len(gene_matrices), n_jobs)
+    logger.info("Fitted per-gene LRs for %d genes (of %d with a matrix, n_jobs=%d, impute_absent_zero=%s)",
+                len(fitted), len(gene_matrices), n_jobs, impute_absent_zero)
     return fitted
 
 
@@ -452,6 +496,7 @@ def run(
     max_train_genomes: int | None = None,
     sample_seed: int = 1,
     write_panels: bool = False,
+    impute_absent_zero: bool = False,
 ) -> dict:
     """Discover genes, fit per-gene LRs on a (sub)sample of train, write the wide gene×drug table.
 
@@ -467,8 +512,9 @@ def run(
     core_genes, prevalence_table, annotation = discover_core_genes(
         fit_train_ids, parquet_dir, min_prevalence=min_prevalence
     )
-    gene_matrices = assemble_gene_matrices(fit_train_ids, core_genes, esm_dir, parquet_dir)
-    fitted = fit_per_gene(gene_matrices, label_map, n_folds=n_folds, seed=seed, n_jobs=n_jobs)
+    gene_matrices, read_ids = assemble_gene_matrices(fit_train_ids, core_genes, esm_dir, parquet_dir)
+    fitted = fit_per_gene(gene_matrices, label_map, n_folds=n_folds, seed=seed, n_jobs=n_jobs,
+                          all_ids=read_ids, impute_absent_zero=impute_absent_zero)
     filtered_genes = {g for g, f in fitted.items() if f["auroc"] > auroc_filter}
     logger.info("Filter (AUROC > %.2f): %d of %d fitted genes kept", auroc_filter, len(filtered_genes), len(fitted))
 
@@ -516,6 +562,7 @@ def run(
         "n_filtered_genes": len(filtered_genes),
         "n_folds": n_folds,
         "seed": seed,
+        "impute_absent_zero": impute_absent_zero,
         "panel_columns": PANEL_COLUMNS,
     }
     # rpoB is the canonical RIF gene — surface its leakage-free out-of-fold AUROC if present.
@@ -555,6 +602,10 @@ def main() -> None:
     parser.add_argument("--write-panels", action="store_true",
                         help="Also write the per-protein filtered/unfiltered panel store (heavy; for the att-head "
                              "channel). Off by default — the gene-ranking run only needs the wide gene×drug table.")
+    parser.add_argument("--impute-absent-zero", action="store_true",
+                        help="Fit each gene over ALL read genomes, zero-imputing (0×dim) the ones that lack it, "
+                             "instead of dropping absent genomes. Lets the LR use the presence/absence signal "
+                             "(so acquired genes are no longer invisible); ~no change for universal genes.")
     args = parser.parse_args()
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -572,6 +623,7 @@ def main() -> None:
         max_train_genomes=args.max_train_genomes,
         sample_seed=args.sample_seed,
         write_panels=args.write_panels,
+        impute_absent_zero=args.impute_absent_zero,
     )
 
 
