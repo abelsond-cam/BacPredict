@@ -22,14 +22,16 @@
 #SBATCH --partition=icelake-himem
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
+#SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
-#SBATCH --time=24:00:00
-#SBATCH --account=FLOTO-SL2-CPU
+#SBATCH --time=06:00:00
+#SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
 #SBATCH --open-mode=append
 # CPU-only (sklearn LRs over precomputed ESM-C vectors). At the 2000-genome subsample the in-memory
-# footprint is ~30 GB, so one 128 GB task fits all genes — no gene-sharding needed. icelake-himem, 24 h
-# budget (never under-call walltime). 4 tasks run in parallel -> ~12 min wall.
+# footprint is ~20 GB, so one 128 GB task fits all genes — no gene-sharding needed. The wall-time is
+# I/O-bound (~20 min of sequential per-genome reads) + a fast parallel fit phase, so ~30 min/task; 16
+# cores is ample (the fits are trivial, the reads are sequential). 6 h is a generous ceiling. Uses the
+# project_k SL2-CPU account (personal FLOTO-SL2-CPU is nearly exhausted; project_k has ample budget).
 
 cd /home/dca36/workspace/BacPredict
 

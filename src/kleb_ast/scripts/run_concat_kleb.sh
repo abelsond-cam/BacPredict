@@ -20,13 +20,14 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
-#SBATCH --mem=128G
-#SBATCH --time=12:00:00
-#SBATCH --account=FLOTO-SL2-CPU
+#SBATCH --mem=96G
+#SBATCH --time=04:00:00
+#SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
 #SBATCH --open-mode=append
 # CPU-only (LR over precomputed vectors; the Bacformer mean is loaded from the NPZ, not recomputed). The
-# only real I/O is the pooled ESM-C gene reads over the cohort (--pool-workers). 16 cores / 128 GB is
-# ample; 12 h budget is generous for a sub-hour job.
+# only real I/O is the pooled ESM-C gene reads over the cohort (--pool-workers) — a sub-hour job. 16 cores
+# / 96 GB is ample; 4 h is a generous ceiling. Uses the project_k SL2-CPU account (personal FLOTO-SL2-CPU
+# is nearly exhausted; project_k has ample budget).
 
 cd /home/dca36/workspace/BacPredict
 export PYTHONUNBUFFERED=1
