@@ -1,75 +1,58 @@
-# Hotspot / dN-dS annotation of the invasion-GWAS hits
+# Hotspot / dN-dS annotation of the invasion-GWAS hits — a documented NULL
 
-Annotates the LMM variant-GWAS hits with a **combined whole-population per-gene dN/dS +
-variant-density hotspot table**, and tests whether invasion-associated genes are under stronger
-positive selection / more often mutational hotspots than the genome background.
+**Bottom line: annotating the invasion-GWAS hits against the _whole-population_ per-gene hotspot +
+dN/dS table tells us almost nothing about invasion.** It is retained here only as a record of what
+was run (so it isn't redone expecting signal). The question actually worth answering —
+*does the invasion niche accrue variants in a gene faster than the population background?* — is
+**niche-specific** and needs the per-isolation-source hotspot-rate **Chi-sq** (planned, §last),
+computed directly from the per-sample variant→loci collation rather than read out of a
+whole-population ratio.
 
-Built by [`annotate_hits_with_hotspots.py`](../../../kleb_iso_source/annotate_hits_with_hotspots.py).
+## What was run
 
-## Inputs
+[`annotate_hits_with_hotspots.py`](../../../kleb_iso_source/annotate_hits_with_hotspots.py) merges
+the combined per-gene table ([`combined_poisson_test_variant_hotspots.txt`](../../../data/combined_poisson_test_variant_hotspots.txt);
+5,422 genes, 768 flagged `is_sig`, on the MGH 78578 / `KPN_RS` annotation) onto the two LMM hit
+tables by `locus_tag`, and tests enrichment — Fisher on hotspot `is_sig`, Mann–Whitney on `dn_ds` —
+for all hit genes and invasion-direction (β>0) hit genes vs the tested-gene background. Outputs:
+`*_hits_with_hotspots.tsv` + `hotspot_enrichment_summary.{json,md}`.
 
-- **Hotspot table** — `src/bac_pyseer/data/combined_poisson_test_variant_hotspots.txt` (Aaron's
-  combined Poisson test): one row per gene on the **MGH 78578 / `KPN_RS`** annotation shared with
-  the variant GWAS. 5,422 genes; **768 flagged `is_sig`** (carries more variants than the Poisson
-  background expects). `dn_ds = n.y/n.x` = non-synonymous / synonymous variant count (a crude dN/dS
-  proxy); `padj` = BH-adjusted hotspot p.
-- **GWAS hit tables** — the two LMM contrasts: `lmm_model/blood_vs_faeces_hits_annotated.tsv`
-  (110 hits) and `faeces_resp_lmm_model/respiratory_vs_faeces_hits_annotated.tsv` (88 hits).
+## Why it is uninformative (why we discount it)
 
-## Method
+1. **A "hotspot" is just a gene with an excess *variant count* — a whole-population "this gene is
+   variable" property.** GWAS-hit genes are by construction variable genes, so a hit↔hotspot
+   association is **partly mechanical** (the background is itself the variant-bearing gene set). The
+   one nominally significant result (blood/faeces hit genes 27% `is_sig` vs 14% background, Fisher
+   p≈4e-4) is largely that artifact: it does **not** localise to the invasion direction (invasion-only
+   subset p=0.15) and is **absent** in faeces/respiratory (p=0.21).
+2. **`dn_ds` here is a raw non-synonymous:synonymous _count_ ratio, not a site-normalized dN/dS.**
+   ~¾ of random point mutations are non-synonymous, so the neutral expectation is not 1 — empirically
+   the genome-wide median of this ratio is ~1.7. The invasion hits sit at 2.2–3.2 (only marginally
+   above; Mann–Whitney p=0.07) and are **missense-dominated, 1–8% loss-of-function** — i.e. neither
+   clearly selected nor degraded. The genuinely high ratios (regulators, 12–38) are whole-population
+   hotspots, **not** invasion hits. So there is **no positive-selection / "arms-race" signal** here
+   (an earlier draft of this README over-claimed one; that is retracted).
+3. **No control for population structure or homoplasy.** The hotspot test is whole-population and
+   cannot tell recurrent independent mutation (a true hotspot) from a single ancestral change spread
+   by clonal expansion. **Ancestral reconstruction + phylogeny control are prerequisites** for any
+   "this gene mutates fast" statement and are not done here.
+4. **The table's metrics are unconfirmed.** It is a dataframe merge (`n.x`/`n.y` suffixes); `n.x`=
+   synonymous / `n.y`=non-synonymous and `dn_ds = n.y/n.x` held for the genes spot-checked but
+   **not for all 5,422 rows**, so `n.x`/`n.y`/`r`/`d.x_mod` and the Poisson test need confirming with
+   the data's author before anything is built on them.
 
-Merge each hit onto the hotspot table by `locus_tag` → hotspot columns prefixed `hot_`
-(`hot_dn_ds`, `hot_is_sig`, `hot_padj`, `hot_unique_variants`, syn/non-syn counts). Enrichment over
-the set of **distinct hit genes** vs the **tested-gene background** (the 5,422 genes the hotspot
-pipeline saw): Fisher 2×2 on `is_sig` + Mann–Whitney on `dn_ds`, run for **all hit genes** and for
-**invasion-direction** (β>0) hit genes. `dn_ds = inf` (syn = 0) dropped from the MWU.
+## The question worth pursuing: per-isolation-source hotspot-rate Chi-sq
 
-> **Confound (documented).** Hit genes are by definition *variable* genes, and `is_sig` also keys on
-> variant count — so some hit↔hotspot association is mechanical. Using the tested-gene set as
-> background (already conditioned on being polymorphic) partially controls this; the dN/dS shift is
-> the less-confounded signal. The **per-isolation-source hotspot-rate Chi-sq** (planned next) is the
-> clean, invasion-specific test.
+Does a gene accrue variants **faster within the invasion niche (blood / respiratory) than in the
+whole-population background?** That is niche-specific and answerable from our per-sample
+`<Sample>.loci.tsv.gz` cache (the same data feeding the variant GWAS): per gene, the variant rate in
+the source group vs the background rate → Chi-sq, with the structure/homoplasy caveats above
+addressed as far as the data allow. **To be planned (plan mode).**
 
-## Result — two distinct selective regimes among the blood-invasion hits
-
-**blood/faeces hit genes are enriched for hotspots overall** — 27.3% `is_sig` vs 13.9% background
-(OR 2.3, **Fisher p = 4.3e-4**); dN/dS marginally higher (1.86 vs 1.69, MWU p = 0.07). **But this is
-*not* specifically an invasion signal:** restricted to invasion-direction (β>0) genes it is
-underpowered/null (15 genes, p = 0.15; dN/dS *not* elevated, median 1.39). The aggregate enrichment
-is largely carried by **faeces-direction (gut sub-clade) markers** — 26 of them are hotspot-`sig`
-(e.g. RcnA Ni/Co efflux, a MerR regulator at dN/dS 4.6, a fimbrial usher, peptidases).
-
-Within the invasion-direction hits the signal **splits by function**:
-
-- **Iron-acquisition surface receptors ARE positively-selected hotspots** — a host-iron-restriction
-  arms-race signature that refines the original blood iron story:
-  | gene | product | β | dN/dS | hotspot padj |
-  |---|---|--:|--:|--:|
-  | KPN_RS09430 | iron-containing redox enzyme | +0.29 | **3.20** | 5.3e-4 |
-  | KPN_RS11350 | TonB-dependent siderophore receptor | +0.39 | **2.23** | 0.014 |
-  | KPN_RS11695 | hypothetical protein | +0.10 | 2.52 | 2e-6 |
-  | hpxZ | oxalurate catabolism (purine) | +0.16 | 2.50 | 7e-3 |
-
-- **Capsule / adhesion / chaperone invasion genes are NOT hotspots and are ~conserved** — their
-  invasion-associated SNPs are *specific functional alleles in conserved genes*, not diversifying
-  hotspots: `wzi` (capsule, padj 1.0), fimbrial usher KPN_RS24485 (dN/dS 1.23), `dnaK` (0.93,
-  purifying), `phoA` (1.13), `nfuA` (1.0).
-
-**faeces/respiratory: no hotspot enrichment** (all hits 18% vs 14%, p = 0.21; invasion-direction 16%
-vs 14%, p = 0.45). dN/dS for all hits is marginally elevated (1.75 vs 1.69, MWU p = 0.046) but the
-invasion-direction subset is not (p = 0.22).
-
-**Takeaway.** The blood-invasion hits carry *two* selective regimes — iron-uptake surface receptors
-under positive/diversifying selection (mutational hotspots), versus capsule/adhesion alleles sitting
-in conserved genes. The genome-wide "hit genes are hotspots" enrichment is real but is mostly a
-gut-clade (faeces-direction) phenomenon, **not** a general "invasion genes are hotspots" result. To
-test invasion-specificity directly — per-source hotspot rate vs the whole-population background — see
-the planned per-isolation-source Chi-sq (uses our per-sample variant→loci collation).
-
-## Files
+## Files (kept as a documented null — not a finding)
 
 | File | What |
 |---|---|
-| `blood_faeces_hits_with_hotspots.tsv` | 110 blood/faeces hits + `hot_*` columns, sorted by variance explained |
+| `blood_faeces_hits_with_hotspots.tsv` | 110 blood/faeces hits + `hot_*` columns |
 | `faeces_respiratory_hits_with_hotspots.tsv` | 88 faeces/resp hits + `hot_*` columns |
-| `hotspot_enrichment_summary.json` / `.md` | Fisher + Mann–Whitney, all-genes and invasion-direction, per contrast |
+| `hotspot_enrichment_summary.json` / `.md` | Fisher + Mann–Whitney, all-genes & invasion-direction |
