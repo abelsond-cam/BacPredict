@@ -33,6 +33,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
+from matplotlib.colors import to_rgba
 
 ALL_KEY = "__ALL_Kleborate__"
 
@@ -63,14 +64,34 @@ def _agg(frame: dict, metric: str) -> tuple[float | None, float | None]:
     return (a["mean"], a["sd"]) if a else (None, None)
 
 
-def build_table(drug: str, concat_dir: Path, eval_summary: Path, kleborate_csv: Path) -> pd.DataFrame:
-    """Assemble the ladder rows for ``drug`` from the concat JSON + eval summary + Kleborate ceiling CSV."""
+def _gene_prevalence(ranking_dir: Path | None, drug: str, gene: str) -> float | None:
+    """Look up the injected gene's prevalence from the per-gene ranking CSV (or None)."""
+    if ranking_dir is None:
+        return None
+    csv = ranking_dir / drug / f"per_gene_lr_{drug}.csv"
+    if not csv.exists():
+        return None
+    df = pd.read_csv(csv)
+    row = df[df["gene_name"].astype(str) == gene]
+    return float(row["prevalence"].iloc[0]) if not row.empty else None
+
+
+def build_table(drug: str, concat_dir: Path, eval_summary: Path, kleborate_csv: Path,
+                ranking_dir: Path | None = None) -> tuple[pd.DataFrame, dict]:
+    """Assemble the ladder rows + meta for ``drug`` from concat JSON + eval summary + Kleborate ceiling.
+
+    The injected (unsupervised top-AUROC) gene may be low-prevalence, in which case the concat probe
+    restricts *every* rung to that gene's carriers (n_common) — so the meta carries the gene, its
+    prevalence and n_common, and the ESM-gene bar is later faded by prevalence to flag it.
+    """
     hits = sorted(glob.glob(str(concat_dir / f"concat_frozen_{drug}_*.json")))
     if not hits:
         raise FileNotFoundError(f"No concat_frozen_{drug}_*.json in {concat_dir}")
     sweep = json.loads(Path(hits[-1]).read_text())
     frames = sweep["kfold"]["frames"]
     gene = sweep["gene"]
+    n_common = sweep.get("n_common_samples")
+    prevalence = _gene_prevalence(ranking_dir, drug, gene)
     rows = []
 
     fm_au, fm_au_sd = _agg(frames["bacformer_mean_only"], "auroc")
@@ -99,7 +120,8 @@ def build_table(drug: str, concat_dir: Path, eval_summary: Path, kleborate_csv: 
 
     eg_au, eg_au_sd = _agg(frames["esm_gene_only"], "auroc")
     eg_ap, eg_ap_sd = _agg(frames["esm_gene_only"], "auprc")
-    rows.append({"method": f"ESM {gene}", "family": "ESM", "group": "single_gene",
+    eg_label = f"ESM {gene}" + (f" (prev {prevalence:.2f})" if prevalence is not None else "")
+    rows.append({"method": eg_label, "family": "ESM", "group": "single_gene",
                  "auroc": eg_au, "auprc": eg_ap, "auroc_sd": eg_au_sd, "auprc_sd": eg_ap_sd,
                  "source": "concat JSON esm_gene_only"})
 
@@ -108,7 +130,14 @@ def build_table(drug: str, concat_dir: Path, eval_summary: Path, kleborate_csv: 
     rows.append({"method": f"concat: frozen mean + ESM {gene}", "family": "mix", "group": "concat",
                  "auroc": cc_au, "auprc": cc_ap, "auroc_sd": cc_au_sd, "auprc_sd": cc_ap_sd,
                  "source": "concat JSON concat_esm_gene_plus_mean"})
-    return pd.DataFrame(rows)
+
+    df = pd.DataFrame(rows)
+    # Fade the ESM-gene bar by the injected gene's prevalence (low-prevalence = unreliable, carrier-only).
+    df["alpha"] = 1.0
+    esm_alpha = 1.0 if prevalence is None else max(0.3, min(1.0, 0.3 + 0.7 * prevalence))
+    df.loc[df["family"] == "ESM", "alpha"] = esm_alpha
+    info = {"gene": gene, "prevalence": prevalence, "n_common": n_common}
+    return df, info
 
 
 def _ceiling(kleborate_csv: Path) -> dict[str, float]:
@@ -126,7 +155,8 @@ def _ceiling(kleborate_csv: Path) -> dict[str, float]:
 def _draw_panel(ax, df: pd.DataFrame, metric: str, *, ymin: float, show_xticklabels: bool,
                 ceiling: float | None) -> None:
     """One bar panel of ``metric`` (sorted ascending), family-coloured, with the Kleborate ceiling line."""
-    colours = [FAMILY_COLOURS.get(f, "#888888") for f in df["family"]]
+    alphas = df["alpha"].tolist() if "alpha" in df.columns else [1.0] * len(df)
+    colours = [to_rgba(FAMILY_COLOURS.get(f, "#888888"), a) for f, a in zip(df["family"], alphas, strict=True)]
     x = range(len(df))
     sd_col = f"{metric}_sd"
     yerr = df[sd_col].fillna(0.0).to_numpy() if sd_col in df.columns else None
@@ -150,18 +180,34 @@ def _draw_panel(ax, df: pd.DataFrame, metric: str, *, ymin: float, show_xticklab
     ax.spines[["top", "right"]].set_visible(False)
 
 
-def plot_ladder(df: pd.DataFrame, out_path: Path, *, drug: str, ceiling: dict[str, float]) -> None:
-    """Two-panel (AUROC top, AUPRC bottom) family-coloured ladder, bars ascending by AUROC."""
+def plot_ladder(df: pd.DataFrame, out_path: Path, *, drug: str, ceiling: dict[str, float],
+                info: dict | None = None) -> None:
+    """Two-panel (AUROC top, AUPRC bottom) family-coloured ladder, bars ascending by AUROC.
+
+    ``info`` (gene/prevalence/n_common) annotates the unsupervised injected gene; when its prevalence is
+    low the whole ladder is carrier-only — a red caveat flags it (and the ESM-gene bar is already faded).
+    """
     df = df.sort_values("auroc").reset_index(drop=True)
     fig, (ax_top, ax_bot) = plt.subplots(2, 1, figsize=(11.0, 9.3), sharex=True)
-    _draw_panel(ax_top, df, "auroc", ymin=0.55, show_xticklabels=False, ceiling=ceiling.get("auroc"))
-    _draw_panel(ax_bot, df, "auprc", ymin=0.45, show_xticklabels=True, ceiling=ceiling.get("auprc"))
+    _draw_panel(ax_top, df, "auroc", ymin=0.30, show_xticklabels=False, ceiling=ceiling.get("auroc"))
+    _draw_panel(ax_bot, df, "auprc", ymin=0.30, show_xticklabels=True, ceiling=ceiling.get("auprc"))
     handles = [plt.Rectangle((0, 0), 1, 1, color=c, ec="black", lw=0.7) for c in FAMILY_COLOURS.values()]
     ax_bot.legend(handles, [FAMILY_LABEL[k] for k in FAMILY_COLOURS], loc="upper left",
                   fontsize=9.5, framealpha=0.95)
     fig.suptitle(f"{drug}: Kp AST read-out ladder — genome-pooled (Bacformer) vs single-gene "
                  f"(ESM / Kleborate) vs concatenated", fontsize=12.5, y=0.995)
-    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    if info is not None:
+        prev, ncom = info.get("prevalence"), info.get("n_common")
+        prev_txt = f"prevalence {prev:.2f}" if prev is not None else "prevalence n/a"
+        note = (f"unsupervised top-AUROC gene injected: {info.get('gene')} ({prev_txt}, "
+                f"n_carriers={ncom}) — frozen-mean/ESM/concat rungs are on these carriers; "
+                f"FT mean + Kleborate are full-cohort")
+        low = prev is not None and prev < 0.6
+        if low:
+            note += " ⚠ low prevalence: those three rungs are carrier-restricted — treat with caution"
+        fig.text(0.5, 0.945, note, ha="center", va="top", fontsize=8.5,
+                 color="#c0392b" if low else "0.35")
+    fig.tight_layout(rect=(0, 0, 1, 0.93))
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
@@ -178,6 +224,8 @@ def main() -> None:
     parser.add_argument("--eval-summary", type=Path, default=vis / "eval" / "eval_summary.csv")
     parser.add_argument("--kleborate-csv", type=Path, default=None,
                         help="Default: kp_<drug>/kleborate_determinant_lr_<drug>.csv.")
+    parser.add_argument("--ranking-dir", type=Path, default=None,
+                        help="Imputed per-gene ranking dir — to read the injected gene's prevalence (alpha).")
     parser.add_argument("--out-csv", type=Path, default=None)
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
@@ -187,11 +235,12 @@ def main() -> None:
     out_csv = args.out_csv or drug_dir / f"{args.drug}_ladder_table.csv"
     out = args.out or drug_dir / f"{args.drug}_kleb_ladder_barplot.png"
 
-    table = build_table(args.drug, args.concat_dir, args.eval_summary, kleborate_csv)
+    table, info = build_table(args.drug, args.concat_dir, args.eval_summary, kleborate_csv,
+                              ranking_dir=args.ranking_dir)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     table.to_csv(out_csv, index=False)
-    plot_ladder(table, out, drug=args.drug, ceiling=_ceiling(kleborate_csv))
-    print(f"Wrote {out_csv} and {out}")
+    plot_ladder(table, out, drug=args.drug, ceiling=_ceiling(kleborate_csv), info=info)
+    print(f"Wrote {out_csv} and {out}  (gene={info['gene']}, prev={info['prevalence']}, n={info['n_common']})")
 
 
 if __name__ == "__main__":

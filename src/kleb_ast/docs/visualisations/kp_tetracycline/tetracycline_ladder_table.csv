@@ -1,0 +1,6 @@
+method,family,group,auroc,auprc,auroc_sd,auprc_sd,source,alpha
+frozen Bacformer mean,Bacformer,genome_pooled,0.31466666666666665,0.9571099025788155,0.08156991353220128,0.007810777053258212,concat JSON bacformer_mean_only,1.0
+fine-tuned Bacformer mean,Bacformer,genome_pooled,0.9139,0.9438,,,eval_summary.csv,1.0
+Kleborate: Tet (acquired),one-hot,single_gene,0.8284698025551687,0.8395818906142941,2.2983800174481573e-16,0.0,kleborate_determinant_lr Tet (acquired),1.0
+ESM tetR(A) (prev 0.27),ESM,single_gene,0.5199999999999998,0.9720388349514566,2.298380017448157e-16,2.298380017448157e-16,concat JSON esm_gene_only,0.48945427728613566
+concat: frozen mean + ESM tetR(A),mix,concat,0.31111111111111106,0.9574189499409141,0.07670461448699083,0.008006488781180422,concat JSON concat_esm_gene_plus_mean,1.0
