@@ -70,12 +70,18 @@ def run(
     device: str,
     pt_suffix: str = "_esm_embeddings.pt",
     max_samples: int | None = None,
+    eval_only: bool = False,
 ) -> None:
-    """Forward each labelled genome through the FT backbone; save the genome-mean + top-gene tokens."""
+    """Forward each labelled genome through the FT backbone; save the genome-mean + top-gene tokens.
+
+    ``eval_only`` restricts the forward to the canonical evaluate split — the FT-unseen genomes, which is
+    the honest scope for an FT (train-leaky) backbone and ~5x cheaper than all labelled.
+    """
     _lm, train_ids, validate_ids, evaluate_ids, _info = resolve_clean_splits(ast_sheet, drug)
-    all_ids = [*train_ids, *validate_ids, *evaluate_ids]
+    all_ids = list(evaluate_ids) if eval_only else [*train_ids, *validate_ids, *evaluate_ids]
     if max_samples is not None:
         all_ids = all_ids[:max_samples]
+    logger.info("Forwarding %d genomes for %s (eval_only=%s)", len(all_ids), drug, eval_only)
 
     top = select_top_genes(ranking_csv, drug, threshold=threshold, top_n=top_n)
     top_set = set(top["gene_name"].astype(str))
@@ -172,13 +178,15 @@ def main() -> None:
     parser.add_argument("--auroc-threshold", type=float, default=0.6, help="Floor for top-gene selection.")
     parser.add_argument("--top-n", type=int, default=50, help="Cap on the number of top genes cached.")
     parser.add_argument("--device", type=str, default="cuda:0")
+    parser.add_argument("--eval-only", action="store_true",
+                        help="Forward only the canonical evaluate split (FT-unseen; honest scope, ~5x cheaper).")
     parser.add_argument("--max-samples", type=int, default=None, help="Cap genomes (smoke).")
     args = parser.parse_args()
     run(
         ast_sheet=args.ast_sheet_path, drug=args.drug, parquet_dir=args.parquet_dir,
         esm_store_dir=args.esm_store_dir, checkpoint=args.bacformer_checkpoint, ranking_csv=args.ranking_csv,
         out_dir=args.out_dir, threshold=args.auroc_threshold, top_n=args.top_n, device=args.device,
-        max_samples=args.max_samples,
+        max_samples=args.max_samples, eval_only=args.eval_only,
     )
 
 
