@@ -153,19 +153,22 @@ def build_scorecard(
     if not kdf.empty:
         crow = kdf[kdf["gene_name"] == ALL_KEY]
         ceiling = float(crow["mut_auroc"].iloc[0]) if not crow.empty else None
-    # The best ESM-LR causal gene and its own-mechanism gap (the headline per drug).
-    best = scorecard.iloc[0] if not scorecard.empty else None
-    # Best imputed causal gene (may differ from best drop-absent — an acquired gene can leap on imputation).
-    best_imp_auroc = None
-    if not scorecard.empty and scorecard["imputed_esm_lr_auroc"].notna().any():
-        best_imp_auroc = float(scorecard["imputed_esm_lr_auroc"].max())
+    # Headline gene per drug = the one with the highest read-out the per-gene method achieves. Use the
+    # imputed AUROC to pick it when available (an acquired gene can leap past the chromosomal ones on
+    # imputation — gentamicin aac(3), meropenem blaKPC), else the drop-absent AUROC. Report that single
+    # gene's drop / imputed / own-mechanism one-hot so the three panel markers are the SAME gene.
+    best = None
+    if not scorecard.empty:
+        pick_col = "imputed_esm_lr_auroc" if scorecard["imputed_esm_lr_auroc"].notna().any() else "esm_lr_auroc"
+        best = scorecard.loc[scorecard[pick_col].idxmax()]
     context = {
         "drug": drug, "total_genes": total, "combined_ceiling": ceiling,
         "top_gene": str(top["gene_name"]), "top_gene_auroc": float(top[auroc_col]),
         "best_causal_gene": None if best is None else best["gene_name"],
         "best_causal_mechanism": None if best is None else best["mechanism"],
         "best_causal_esm": None if best is None else float(best["esm_lr_auroc"]),
-        "best_causal_imputed": best_imp_auroc,
+        "best_causal_imputed": None if best is None or pd.isna(best["imputed_esm_lr_auroc"])
+                               else float(best["imputed_esm_lr_auroc"]),
         "best_causal_onehot": None if best is None else best["onehot_auroc"],
     }
     return scorecard, context
@@ -259,8 +262,8 @@ def plot_panel_summary(contexts: list[dict], out_path: Path) -> None:
     ax.grid(axis="x", alpha=0.3)
     ax.spines[["top", "right"]].set_visible(False)
     ax.legend(loc="lower right", fontsize=10, framealpha=0.95)
-    sub = ("acquired-gene drugs — zero-imputing (teal ●) lifts the ESM-LR onto the one-hot; "
-           "chromosomal-mutation drugs already coincide" if has_imp
+    sub = ("zero-imputing (teal ●) lifts the per-gene ESM-LR sharply toward the one-hot — a single gene "
+           "still trails the combined determinant; chromosomal-mutation drugs (gyrA) already coincide" if has_imp
            else "chromosomal drugs coincide (mean-pool = one-hot); acquired drugs — ESM falls short")
     ax.set_title(f"Kp panel: best causal gene's ESM-LR vs the one-hot for its own mechanism\n{sub}", fontsize=11.5)
     fig.tight_layout()
