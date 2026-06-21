@@ -42,13 +42,15 @@ FAMILY_COLOURS = {
     "Bacformer": "#1f77b4",  # blue — genome-pooled Bacformer
     "ESM": "#7e3f9e",        # purple — ESM single-gene
     "one-hot": "#c0392b",    # red — Kleborate determinant one-hot
-    "mix": "#6a4fb3",        # purple-blue — concat (ESM ⊕ Bacformer)
+    "mix": "#6a4fb3",        # purple-blue — concat (ESM ⊕ frozen Bacformer)
+    "mix_ft": "#2e2a7a",     # deep indigo — concat (ESM ⊕ fine-tuned Bacformer) = the deployable read-out
 }
 FAMILY_LABEL = {
     "Bacformer": "Bacformer embedding",
     "ESM": "ESM-C embedding",
     "one-hot": "Kleborate top determinant",
-    "mix": "concat (Bacformer ⊕ ESM)",
+    "mix": "concat (frozen Bacformer ⊕ ESM)",
+    "mix_ft": "concat (FT Bacformer ⊕ ESM)",
 }
 GROUP_LABEL = {
     "genome_pooled": "genome-pooled embeddings",
@@ -77,7 +79,7 @@ def _gene_prevalence(ranking_dir: Path | None, drug: str, gene: str) -> float | 
 
 
 def build_table(drug: str, concat_dir: Path, eval_summary: Path, kleborate_csv: Path,
-                ranking_dir: Path | None = None) -> tuple[pd.DataFrame, dict]:
+                ranking_dir: Path | None = None, ft_concat_dir: Path | None = None) -> tuple[pd.DataFrame, dict]:
     """Assemble the ladder rows + meta for ``drug`` from concat JSON + eval summary + Kleborate ceiling.
 
     The injected (unsupervised top-AUROC) gene may be low-prevalence, in which case the concat probe
@@ -131,11 +133,25 @@ def build_table(drug: str, concat_dir: Path, eval_summary: Path, kleborate_csv: 
                  "auroc": cc_au, "auprc": cc_ap, "auroc_sd": cc_au_sd, "auprc_sd": cc_ap_sd,
                  "source": "concat JSON concat_esm_gene_plus_mean"})
 
+    # The deployable rung: FT Bacformer mean ⊕ ESM gene, from the GPU FT-concat run (honest eval-holdout
+    # k-fold, since the FT backbone saw the train labels). Optional — only if that run is available.
+    if ft_concat_dir is not None:
+        ft_hits = sorted(glob.glob(str(ft_concat_dir / f"concat_ft_{drug}_*.json")))
+        if ft_hits:
+            ftfr = json.loads(Path(ft_hits[-1]).read_text())["kfold"]["frames"]
+            fc_au, fc_au_sd = _agg(ftfr["concat_esm_gene_plus_mean"], "auroc")
+            fc_ap, fc_ap_sd = _agg(ftfr["concat_esm_gene_plus_mean"], "auprc")
+            rows.append({"method": f"concat: FT mean + ESM {gene}", "family": "mix_ft", "group": "concat",
+                         "auroc": fc_au, "auprc": fc_ap, "auroc_sd": fc_au_sd, "auprc_sd": fc_ap_sd,
+                         "source": "concat_ft JSON concat_esm_gene_plus_mean (eval-holdout)"})
+
     df = pd.DataFrame(rows)
     # Fade the ESM-gene bar by the injected gene's prevalence (low-prevalence = unreliable, carrier-only).
     df["alpha"] = 1.0
     esm_alpha = 1.0 if prevalence is None else max(0.3, min(1.0, 0.3 + 0.7 * prevalence))
-    df.loc[df["family"] == "ESM", "alpha"] = esm_alpha
+    # Fade the rungs that ride on the carrier-restricted ESM gene (ESM + both concats); the genome-mean
+    # and one-hot rungs stay solid.
+    df.loc[df["family"].isin(["ESM", "mix", "mix_ft"]), "alpha"] = esm_alpha
     info = {"gene": gene, "prevalence": prevalence, "n_common": n_common}
     return df, info
 
@@ -226,6 +242,8 @@ def main() -> None:
                         help="Default: kp_<drug>/kleborate_determinant_lr_<drug>.csv.")
     parser.add_argument("--ranking-dir", type=Path, default=None,
                         help="Imputed per-gene ranking dir — to read the injected gene's prevalence (alpha).")
+    parser.add_argument("--ft-concat-dir", type=Path, default=None,
+                        help="Dir of concat_ft_<drug>_*.json (FT-mean ⊕ ESM concat) — adds the deployable rung.")
     parser.add_argument("--out-csv", type=Path, default=None)
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
@@ -236,7 +254,7 @@ def main() -> None:
     out = args.out or drug_dir / f"{args.drug}_kleb_ladder_barplot.png"
 
     table, info = build_table(args.drug, args.concat_dir, args.eval_summary, kleborate_csv,
-                              ranking_dir=args.ranking_dir)
+                              ranking_dir=args.ranking_dir, ft_concat_dir=args.ft_concat_dir)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     table.to_csv(out_csv, index=False)
     plot_ladder(table, out, drug=args.drug, ceiling=_ceiling(kleborate_csv), info=info)
