@@ -3,4 +3,5 @@ frozen Bacformer mean,Bacformer,genome_pooled,0.9482606751620836,0.9213747131385
 fine-tuned Bacformer mean,Bacformer,genome_pooled,0.9687,0.9452,,,eval_summary.csv,1.0
 Kleborate: Bla Carb (acquired),one-hot,single_gene,0.968362325474937,0.949954167328834,0.001326805474539,0.0015526438699462,kleborate_determinant_lr Bla Carb (acquired),1.0
 ESM comEC (prev 0.92),ESM,single_gene,0.8311189358372456,0.6771709063702923,0.002570635938864639,0.004618004772642019,concat JSON esm_gene_only,0.9468000000000001
-concat: frozen mean + ESM comEC,mix,concat,0.9468468589313659,0.9163014423092358,0.0038408102401371338,0.008338764480152076,concat JSON concat_esm_gene_plus_mean,1.0
+concat: frozen mean + ESM comEC,mix,concat,0.9468468589313659,0.9163014423092358,0.0038408102401371338,0.008338764480152076,concat JSON concat_esm_gene_plus_mean,0.9468000000000001
+concat: FT mean + ESM comEC,mix_ft,concat,0.9886578886578886,0.9372496677722171,0.001748351745491913,0.01274470722238593,concat_ft JSON concat_esm_gene_plus_mean (eval-holdout),0.9468000000000001
