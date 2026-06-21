@@ -72,7 +72,7 @@ COLORS_DAT=${OUT_FASTA%.gz}.colors.dat     # GGCAT writes <output-sans-.gz>.colo
 NAMES_JSONL=$OUT_DIR/color_names.jsonl
 COLORMAP_CSV=$OUT_DIR/colormap_ranges.csv
 MATRIX=$OUT_DIR/unitigs.pyseer.gz
-rm -f "$COLORMAP_CSV" "$MATRIX"   # always regenerate; build + colour-names are reused if present
+rm -f "$MATRIX"   # regenerate the matrix; build, colour-names AND colormap are reused if present
 
 echo "Job $SLURM_JOB_ID  Node $SLURMD_NODENAME  $(date)"
 echo "OUT_NAME=$OUT_NAME  k=$K  s=$SVAL  -m ${MEMGB}G  threads=$THREADS  tmp=$TMP"
@@ -85,6 +85,11 @@ else
         --sample-csv $COHORT_CSVS --check-exists --out-tsv "$REFLIST"
 fi
 echo "GGCAT -d colours (samples): $(wc -l < "$REFLIST")"
+# pyseer drops unitigs below ~1% MAF, so pre-filter the converter at 1% of the cohort: untestable
+# rarer unitigs are skipped before any expansion (bounds output size; the disk sort-merge bounds RAM).
+NSAMP=$(wc -l < "$REFLIST")
+MIN_SAMP=$(awk -v n="$NSAMP" 'BEGIN{m=n*0.01; c=int(m); if(c<m)c++; if(c<1)c=1; print c}')
+echo "converter --min-samples (1% MAF floor): $MIN_SAMP of $NSAMP"
 
 echo "=== (2) ggcat build: coloured compacted DBG over the cohort assemblies (reuse if present) ==="
 if [ -s "$OUT_FASTA" ] && [ -s "$COLORS_DAT" ]; then
@@ -104,29 +109,33 @@ if [ ! -s "$NAMES_JSONL" ]; then
 fi
 [ -s "$NAMES_JSONL" ] || { echo "ERROR: dump-colors produced no colour names"; exit 1; }
 
-echo "=== (4) dump-colormap (ranges-csv): subset-id -> colour ids, chunked over distinct subsets ==="
-# dump-colormap expands only the subset ids it is given, so enumerate the distinct ids that appear
-# in the FASTA and feed them in ARG_MAX-safe chunks. NB the FASTA writes subset ids in HEX and a
-# unitig may carry several C: segments — extract all of them and convert hex->decimal (gawk
-# strtonum), since dump-colormap takes/emits DECIMAL subset ids.
-SUBSETS=$TMP/subset_ids.txt
-zcat "$OUT_FASTA" | awk '/^>/ { for (i=1;i<=NF;i++) if ($i ~ /^C:/) { split($i,p,":"); print strtonum("0x" p[2]) } }' \
-    | sort -un > "$SUBSETS"
-echo "distinct colour subsets: $(wc -l < "$SUBSETS")"
-: > "$COLORMAP_CSV"
-split -l 100000 -d "$SUBSETS" "$TMP/subchunk_"
-for c in "$TMP"/subchunk_*; do
-    pixi run --manifest-path "$PIXI_MANIFEST" ggcat dump-colormap \
-        -k "$K" --format ranges-csv "$COLORS_DAT" "$TMP/cm_part.csv" $(cat "$c")
-    cat "$TMP/cm_part.csv" >> "$COLORMAP_CSV"
-done
-[ -s "$COLORMAP_CSV" ] || { echo "ERROR: dump-colormap produced no colormap rows"; exit 1; }
-echo "colormap rows: $(wc -l < "$COLORMAP_CSV")"
+echo "=== (4) dump-colormap (ranges-csv): subset-id -> colour ids (reuse if present) ==="
+if [ -s "$COLORMAP_CSV" ]; then
+    echo "reusing existing colormap: $COLORMAP_CSV ($(wc -l < "$COLORMAP_CSV") rows; delete to regenerate)"
+else
+    # dump-colormap expands only the subset ids it is given, so enumerate the distinct ids that
+    # appear in the FASTA and feed them in ARG_MAX-safe chunks. NB the FASTA writes subset ids in HEX
+    # and a unitig may carry several C: segments — extract all of them and convert hex->decimal (gawk
+    # strtonum), since dump-colormap takes/emits DECIMAL subset ids.
+    SUBSETS=$TMP/subset_ids.txt
+    zcat "$OUT_FASTA" | awk '/^>/ { for (i=1;i<=NF;i++) if ($i ~ /^C:/) { split($i,p,":"); print strtonum("0x" p[2]) } }' \
+        | sort -un > "$SUBSETS"
+    echo "distinct colour subsets: $(wc -l < "$SUBSETS")"
+    : > "$COLORMAP_CSV"
+    split -l 100000 -d "$SUBSETS" "$TMP/subchunk_"
+    for c in "$TMP"/subchunk_*; do
+        pixi run --manifest-path "$PIXI_MANIFEST" ggcat dump-colormap \
+            -k "$K" --format ranges-csv "$COLORS_DAT" "$TMP/cm_part.csv" $(cat "$c")
+        cat "$TMP/cm_part.csv" >> "$COLORMAP_CSV"
+    done
+    [ -s "$COLORMAP_CSV" ] || { echo "ERROR: dump-colormap produced no colormap rows"; exit 1; }
+    echo "colormap rows: $(wc -l < "$COLORMAP_CSV")"
+fi
 
-echo "=== (5) join -> pyseer --kmers matrix (<seq> | <Sample>:1 …) ==="
+echo "=== (5) disk sort-merge join -> pyseer --kmers matrix (<seq> | <Sample>:1 …) ==="
 uv run python src/bac_pyseer/kleb_iso_source/ggcat_to_pyseer.py \
     --fasta "$OUT_FASTA" --color-names "$NAMES_JSONL" --colormap "$COLORMAP_CSV" \
-    --kmer-length "$K" --out "$MATRIX"
+    --kmer-length "$K" --min-samples "$MIN_SAMP" --tmp-dir "$TMP" --out "$MATRIX"
 [ -s "$MATRIX" ] || { echo "ERROR: empty pyseer matrix"; exit 1; }
 
 echo "=== done  $(date) ==="

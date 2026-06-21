@@ -26,9 +26,14 @@ The pyseer ``--kmers`` line format (matching unitig-caller ``--pyseer``) is::
     <unitig_sequence> | <SampleA>:1 <SampleB>:1 …
 
 so the join is: FASTA unitig segment → its ``subset_id`` → colour indices → Sample IDs → one line.
-Pure stdlib (``gzip``/``json``) and fully streaming over the FASTA, so the only resident state is
-the colour-name table (~18k entries) and a ``subset_id -> " ".join(SampleID:1)`` cache (one entry
-per *distinct* subset, reused across every segment sharing it). Output is gzipped for ``--kmers``.
+
+A real cohort has millions of distinct colour subsets, many spanning thousands of samples, so
+expanding them all into resident strings OOMs (a near-core subset is ~10 chars compact but hundreds
+of KB expanded). Instead the join is done **disk-based, expanding a small amount at a time**: stream
+the FASTA to a ``subset_id<TAB>subseq`` temp file, external-sort it by ``subset_id`` (GNU ``sort``,
+spills to scratch), then merge against the subset-id-ordered colormap — each subset's ranges expand
+to Sample IDs exactly once and only the *current* subset's presence string is ever resident, so RAM
+stays ~constant (sort buffer + one subset) regardless of cohort size. Output is gzipped for ``--kmers``.
 """
 
 from __future__ import annotations
@@ -36,6 +41,8 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -95,37 +102,18 @@ def _expand_range_tokens(tokens: list[str]) -> list[int]:
     return out
 
 
-def load_colormap(path: Path, names: list[str]) -> dict[int, str]:
-    """Read ranges-csv colormap into ``subset_id -> "SampleA:1 SampleB:1 …"`` (pre-joined).
-
-    Pre-joining once per *distinct* subset (rather than per unitig) keeps the hot loop a single
-    dict lookup + f-string. The resident cost is one short string per subset.
-
-    Parameters
-    ----------
-    path
-        ``colormap_ranges.csv`` from ``ggcat dump-colormap --format ranges-csv``.
-    names
-        ``color_index -> Sample ID`` table from :func:`load_color_names`.
-
-    Returns
-    -------
-    dict
-        ``subset_id -> "<SampleID>:1 …"`` — the pyseer sample-presence field for that subset.
-    """
-    cmap: dict[int, str] = {}
-    with _open_text(path) as fh:
-        for line in fh:
-            line = line.rstrip("\n")
-            if not line:
-                continue
-            fields = line.split(",")
-            subset_id = int(fields[0])
-            color_ids = _expand_range_tokens(fields[1:])
-            cmap[subset_id] = " ".join(f"{names[c]}:1" for c in color_ids)
-    if not cmap:
-        raise ValueError(f"no subsets parsed from {path}")
-    return cmap
+def _count_range_tokens(tokens: list[str]) -> int:
+    """Count colours encoded by ranges-csv tokens (``a`` or ``a-b``) without materialising them."""
+    n = 0
+    for tok in tokens:
+        if not tok:
+            continue
+        if "-" in tok:
+            lo, hi = tok.split("-", 1)
+            n += int(hi) - int(lo) + 1
+        else:
+            n += 1
+    return n
 
 
 def _iter_fasta(path: Path):
@@ -162,16 +150,39 @@ def _parse_color_segments(header: str) -> list[tuple[int, int]]:
     return segs
 
 
+def _fasta_to_segment_file(fasta: Path, seg_path: Path, k: int) -> tuple[int, int]:
+    """Stream the FASTA → ``subset_id<TAB>subseq`` lines (one per colour segment) for sorting.
+
+    Each colour segment of a unitig is the monochromatic sub-sequence
+    ``seq[kmer_off : kmer_off + n_kmers + k - 1]`` (segments after the first overlap the previous by
+    ``k-1`` bases — standard for colour-split de Bruijn unitigs). Returns ``(n_unitigs, n_segments)``.
+    """
+    n_unitigs = n_segments = 0
+    with open(seg_path, "w") as sf:
+        for header, seq in _iter_fasta(fasta):
+            n_unitigs += 1
+            kmer_off = 0
+            for subset_id, n_kmers in _parse_color_segments(header):
+                n_segments += 1
+                sf.write(f"{subset_id}\t{seq[kmer_off:kmer_off + n_kmers + k - 1]}\n")
+                kmer_off += n_kmers
+    return n_unitigs, n_segments
+
+
 def convert(
     fasta: Path, color_names: Path, colormap: Path, out: Path, kmer_length: int = 31,
-    min_samples: int = 0,
+    min_samples: int = 0, tmp_dir: Path | None = None, sort_buffer: str = "2G",
 ) -> tuple[int, int, int]:
-    """Join the three GGCAT artifacts into a gzipped pyseer ``--kmers`` matrix.
+    """Disk-based sort-merge join of the GGCAT artifacts → a gzipped pyseer ``--kmers`` matrix.
 
-    Each colour segment of each unitig becomes one matrix line: the monochromatic sub-sequence
-    ``seq[kmer_off : kmer_off + n_kmers + k - 1]`` and the samples of that segment's colour subset
-    (segments after the first overlap the previous by ``k-1`` bases — standard for colour-split
-    de Bruijn unitigs).
+    RAM stays ~constant (sort buffer + one subset's expanded sample list) regardless of cohort size
+    — the bulk lives on disk (see module docstring):
+
+    1. stream the FASTA to a ``subset_id<TAB>subseq`` temp file (one line per colour segment);
+    2. external-sort it by ``subset_id`` (GNU ``sort``, spills to ``tmp_dir``);
+    3. merge the sorted segments against the subset-id-ordered colormap, expanding each subset's
+       ranges to Sample IDs exactly once (consecutive segments share it) and filtering by
+       ``min_samples`` (subsets below the MAF floor are skipped, never expanded).
 
     Parameters
     ----------
@@ -182,40 +193,75 @@ def convert(
     kmer_length
         k used for the GGCAT build (segment lengths are ``n_kmers + k - 1`` bases).
     min_samples
-        Optional pre-filter — drop segments whose colour subset spans fewer than this many samples.
-        Default 0 (emit everything; let pyseer's ``--min-af`` do the frequency filtering).
+        Drop segments whose colour subset spans fewer than this many samples (untestable below the
+        pyseer MAF floor). Default 0 (emit everything; let pyseer's ``--min-af`` filter).
+    tmp_dir
+        Directory for the temp segment file + external-sort spill (default: ``out``'s parent).
+    sort_buffer
+        GNU ``sort -S`` memory buffer (the dominant resident cost). Default ``2G``.
 
     Returns
     -------
     (n_written, n_unitigs, n_segments)
-        Lines written, unitigs seen, and total colour segments (``n_written`` < ``n_segments`` only
-        when ``min_samples`` drops some).
+        Lines written, unitigs seen, and total colour segments (``n_written`` < ``n_segments`` when
+        ``min_samples`` drops some).
     """
     names = load_color_names(color_names)
-    cmap = load_colormap(colormap, names)
     k = kmer_length
-    print(f"  colours: {len(names)} samples; colour subsets: {len(cmap)}; k={k}", file=sys.stderr)
+    tmp = Path(tmp_dir) if tmp_dir is not None else out.parent
+    tmp.mkdir(parents=True, exist_ok=True)
+    seg_path = tmp / f"{out.name}.segments.tsv"
+    sorted_path = tmp / f"{out.name}.segments.sorted.tsv"
 
-    # per-subset sample counts (number of ":1" presence tokens) — only needed when filtering
-    counts = {sid: (s.count(":1") if s else 0) for sid, s in cmap.items()} if min_samples else {}
+    n_unitigs, n_segments = _fasta_to_segment_file(fasta, seg_path, k)
+    print(f"  colours: {len(names)} samples; k={k}; {n_unitigs} unitigs, {n_segments} segments "
+          f"-> external sort by subset", file=sys.stderr)
+    subprocess.run(
+        ["sort", "-t", "\t", "-k1,1n", "-S", sort_buffer, "-T", str(tmp), "-o", str(sorted_path), str(seg_path)],
+        check=True, env={**os.environ, "LC_ALL": "C"},
+    )
+    seg_path.unlink()
 
-    n_written = n_unitigs = n_segments = 0
-    opener = gzip.open(out, "wt") if str(out).endswith(".gz") else open(out, "w")
-    with opener as ofh:
-        for header, seq in _iter_fasta(fasta):
-            n_unitigs += 1
-            kmer_off = 0
-            for subset_id, n_kmers in _parse_color_segments(header):
-                n_segments += 1
-                subseq = seq[kmer_off:kmer_off + n_kmers + k - 1]
-                kmer_off += n_kmers
-                if min_samples and counts.get(subset_id, 0) < min_samples:
+    # merge the sorted segments (ascending subset_id) with the subset-id-ordered colormap; expand
+    # each subset's ranges to Sample IDs once and reuse for its consecutive segments.
+    n_written = 0
+    out_open = gzip.open(out, "wt") if str(out).endswith(".gz") else open(out, "w")
+    with open(sorted_path) as segs, _open_text(colormap) as cm, out_open as ofh:
+        cm_id = -1
+
+        def _advance(target: int) -> str | None:
+            """Read the colormap forward to ``target``; return its ranges string (or None if absent)."""
+            nonlocal cm_id
+            for line in cm:
+                line = line.rstrip("\n")
+                if not line:
                     continue
-                presence = cmap.get(subset_id)
-                if presence is None:  # subset id missing from colormap → fail loudly, do not drop
-                    raise KeyError(f"unitig {header!r} segment subset {subset_id} absent from {colormap}")
-                ofh.write(f"{subseq} | {presence}\n")
-                n_written += 1
+                cid, _, ranges = line.partition(",")
+                cm_id = int(cid)
+                if cm_id >= target:
+                    return ranges if cm_id == target else None
+            return None
+
+        cur_sub: int | None = None
+        cur_presence: str | None = None
+        for segline in segs:
+            sub_s, _, subseq = segline.rstrip("\n").partition("\t")
+            sub = int(sub_s)
+            if sub != cur_sub:
+                cur_sub = sub
+                if cm_id > sub:  # both ascending & segments ⊆ colormap → must not overshoot
+                    raise KeyError(f"colormap overshot subset {sub} (now at {cm_id}); ordering broken")
+                ranges = _advance(sub)
+                if ranges is None:
+                    raise KeyError(f"subset {sub} absent from colormap {colormap}")
+                toks = ranges.split(",")
+                cur_presence = (None if (min_samples and _count_range_tokens(toks) < min_samples)
+                                else " ".join(f"{names[c]}:1" for c in _expand_range_tokens(toks)))
+            if cur_presence is None:
+                continue
+            ofh.write(f"{subseq} | {cur_presence}\n")
+            n_written += 1
+    sorted_path.unlink()
     return n_written, n_unitigs, n_segments
 
 
@@ -231,10 +277,14 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--kmer-length", type=int, default=31, help="k used for the GGCAT build (default 31).")
     p.add_argument("--min-samples", type=int, default=0,
                    help="Drop segments in fewer than N samples (default 0 — let pyseer --min-af filter).")
+    p.add_argument("--tmp-dir", type=Path, default=None,
+                   help="Dir for the temp segment file + external-sort spill (default: --out's parent).")
+    p.add_argument("--sort-buffer", default="2G", help="GNU sort -S memory buffer (default 2G).")
     args = p.parse_args(argv)
     n_written, n_unitigs, n_segments = convert(
         args.fasta, args.color_names, args.colormap, args.out,
         kmer_length=args.kmer_length, min_samples=args.min_samples,
+        tmp_dir=args.tmp_dir, sort_buffer=args.sort_buffer,
     )
     print(f"wrote {n_written} features from {n_unitigs} unitigs ({n_segments} colour segments) -> {args.out}")
 
