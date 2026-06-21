@@ -15,7 +15,7 @@
 #SBATCH --job-name=kleb_concat
 #SBATCH --output=kleb_concat_%A_%a.out
 #SBATCH --error=kleb_concat_%A_%a.err
-#SBATCH --array=0-3
+#SBATCH --array=0-6
 #SBATCH --partition=icelake-himem
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -33,7 +33,14 @@ cd /home/dca36/workspace/BacPredict
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 
-DRUGS=(azithromycin colistin tetracycline ciprofloxacin)
+# UNSUPERVISED gene selection: --gene-from-ranking picks the single highest-out-of-fold-AUROC gene from
+# the per-gene ranking (whatever it is — a lineage marker, a chromosomal SNP gene, or an acquired gene).
+# We do NOT pre-choose the canonical gene: the ESM/hotspot plots test whether the unsupervised top gene
+# IS canonical, and the ladder tests using that top gene's embedding. The injected gene's prevalence may
+# be low (e.g. a lineage marker present in a minority); the ladder fades the ESM-gene bar by prevalence to
+# flag it. Source ranking = the zero-imputed ranking (the corrected read-out). Next step: inject the top-k
+# genes (e.g. all with AUROC > 0.6), not just one.
+DRUGS=(ciprofloxacin levofloxacin colistin tetracycline azithromycin meropenem gentamicin)
 DRUG=${DRUGS[$SLURM_ARRAY_TASK_ID]}
 if [[ -z "$DRUG" ]]; then
     echo "ERROR: no drug for array index $SLURM_ARRAY_TASK_ID" >&2
@@ -45,7 +52,7 @@ SHEET=$D/train_kleb_ast/binary_ast_with_split.csv
 PARQUET=$D/klebsiella_protein_sequences
 EMB=$D/klebsiella_esm_embeddings
 NPZ=$D/train_kleb_ast/bacformer_frozen_genome_mean.npz
-RANK=$D/train_kleb_ast/snp_embeddings/per_gene_lr_ranking/$DRUG/per_gene_lr_${DRUG}.csv
+RANK=$D/train_kleb_ast/snp_embeddings/per_gene_lr_ranking_imputed/$DRUG/per_gene_lr_${DRUG}.csv
 OUT=$D/train_kleb_ast/snp_embeddings/concat/$DRUG
 mkdir -p "$OUT"
 
