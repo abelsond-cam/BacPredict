@@ -40,10 +40,15 @@ bcftools = ">=1.18"
 samtools = ">=1.18"
 htslib = ">=1.18"
 
-# The GWAS engine + unitig caller — HPC-only (see header). console scripts: `pyseer`,
-# `scree_plot_pyseer`, `unitig-caller`. unitig-caller builds a compressed de Bruijn graph
-# across the cohort assemblies and emits a unitig presence/absence matrix (the accessory/HGT
-# feature space the variant-call GWAS can't see); it pulls in its own ggcat/bifrost backend.
+# The GWAS engine + unitig builders — HPC-only (see header). console scripts: `pyseer`,
+# `scree_plot_pyseer`, `ggcat`, `unitig-caller`. These build a compacted de Bruijn graph across
+# the cohort assemblies → a unitig presence/absence matrix (the accessory/HGT feature space the
+# reference-anchored variant GWAS can't see).
+#   * ggcat — the builder of record. Disk-based and memory-capped (`-m`), so it does NOT OOM on
+#     the ~18k-genome union (built coloured with `-d Sample<TAB>path`; see ggcat_to_pyseer.py).
+#   * unitig-caller (Bifrost backend) — kept for reference, but OOMs (>503 GB) at the union scale
+#     on a 502 GB himem node, which is why ggcat replaced it.
 [target.linux-64.dependencies]
 pyseer = ">=1.3.11"
+ggcat = ">=2.2.0"
 unitig-caller = ">=1.3.0"
