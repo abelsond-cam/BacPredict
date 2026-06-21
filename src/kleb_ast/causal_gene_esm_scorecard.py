@@ -36,7 +36,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 ALL_KEY = "__ALL_Kleborate__"
-ESM_COLOUR = "#7e3f9e"        # purple — the per-gene ESM-LR bar
+ESM_COLOUR = "#7e3f9e"        # purple — the drop-absent per-gene ESM-LR bar
+IMPUTED_COLOUR = "#2a9d8f"    # teal — the zero-imputed ESM-LR (presence/absence recovered)
 ONEHOT_COLOUR = "#c0392b"     # red — the matching-mechanism Kleborate one-hot marker
 LINEAGE_COLOUR = "#9aa3ad"    # grey — the top-ranked (lineage) gene, for contrast
 
@@ -97,8 +98,23 @@ def _mechanism_onehot(kdf: pd.DataFrame, mechanism: str) -> tuple[float | None, 
     return float(best["mut_auroc"]), str(best["site"])
 
 
-def build_scorecard(drug: str, ranking_csv: Path, kleborate_csv: Path) -> tuple[pd.DataFrame, dict]:
-    """Locate ``drug``'s causal genes in the ESM-LR ranking and pair each with its own-mechanism one-hot."""
+def _ranking_lookup(csv: Path) -> dict[str, tuple[float, int]]:
+    """Map gene_name -> (auroc, rank) from a per-gene ranking CSV (rank = row position, sorted desc)."""
+    df = pd.read_csv(csv)
+    col = next(c for c in df.columns if c.startswith("lr_auroc_"))
+    df = df.sort_values(col, ascending=False).reset_index(drop=True)
+    return {str(g): (float(a), i + 1) for i, (g, a) in enumerate(zip(df["gene_name"], df[col], strict=True))}
+
+
+def build_scorecard(
+    drug: str, ranking_csv: Path, kleborate_csv: Path, imputed_ranking_csv: Path | None = None
+) -> tuple[pd.DataFrame, dict]:
+    """Locate ``drug``'s causal genes and pair each with its own-mechanism one-hot (and imputed ESM-LR).
+
+    Locates the genes in the drop-absent ESM-LR ranking; if ``imputed_ranking_csv`` is given, also attaches
+    each gene's zero-imputed ESM-LR (so each shows drop-absent vs imputed vs one-hot — the acquired-gene
+    recovery test).
+    """
     patterns = DRUG_CAUSAL.get(drug)
     if patterns is None:
         raise ValueError(f"No causal-gene patterns defined for {drug!r}")
@@ -110,6 +126,8 @@ def build_scorecard(drug: str, ranking_csv: Path, kleborate_csv: Path) -> tuple[
 
     kdf = pd.read_csv(kleborate_csv) if kleborate_csv.exists() else pd.DataFrame()
     onehot_cache = {m: _mechanism_onehot(kdf, m) for m in ("mutation", "acquired")} if not kdf.empty else {}
+    imp = _ranking_lookup(imputed_ranking_csv) if imputed_ranking_csv and imputed_ranking_csv.exists() else {}
+    imp_total = len(imp) if imp else None
 
     rows = []
     for _, r in rank_df.iterrows():
@@ -117,12 +135,15 @@ def build_scorecard(drug: str, ranking_csv: Path, kleborate_csv: Path) -> tuple[
         if mech is None:
             continue
         oh_auroc, oh_name = onehot_cache.get(mech, (None, None))
+        imp_auroc, imp_rank = imp.get(str(r["gene_name"]), (None, None))
         rows.append({
             "drug": drug, "gene_name": r["gene_name"], "mechanism": mech,
             "esm_lr_auroc": float(r[auroc_col]), "rank": int(r["rank"]), "total_genes": total,
             "percentile": 100.0 * (1 - (r["rank"] - 1) / total),
+            "imputed_esm_lr_auroc": imp_auroc, "imputed_rank": imp_rank, "imputed_total_genes": imp_total,
             "onehot_determinant": oh_name, "onehot_auroc": oh_auroc,
             "esm_minus_onehot": (float(r[auroc_col]) - oh_auroc) if oh_auroc is not None else None,
+            "imputed_minus_onehot": (imp_auroc - oh_auroc) if (imp_auroc is not None and oh_auroc is not None) else None,
             "prevalence": float(r["prevalence"]), "n_pos": int(r["n_pos"]),
         })
     scorecard = pd.DataFrame(rows).sort_values("esm_lr_auroc", ascending=False).reset_index(drop=True)
@@ -134,48 +155,73 @@ def build_scorecard(drug: str, ranking_csv: Path, kleborate_csv: Path) -> tuple[
         ceiling = float(crow["mut_auroc"].iloc[0]) if not crow.empty else None
     # The best ESM-LR causal gene and its own-mechanism gap (the headline per drug).
     best = scorecard.iloc[0] if not scorecard.empty else None
+    # Best imputed causal gene (may differ from best drop-absent — an acquired gene can leap on imputation).
+    best_imp_auroc = None
+    if not scorecard.empty and scorecard["imputed_esm_lr_auroc"].notna().any():
+        best_imp_auroc = float(scorecard["imputed_esm_lr_auroc"].max())
     context = {
         "drug": drug, "total_genes": total, "combined_ceiling": ceiling,
         "top_gene": str(top["gene_name"]), "top_gene_auroc": float(top[auroc_col]),
         "best_causal_gene": None if best is None else best["gene_name"],
         "best_causal_mechanism": None if best is None else best["mechanism"],
         "best_causal_esm": None if best is None else float(best["esm_lr_auroc"]),
+        "best_causal_imputed": best_imp_auroc,
         "best_causal_onehot": None if best is None else best["onehot_auroc"],
     }
     return scorecard, context
 
 
 def plot_scorecard(scorecard: pd.DataFrame, context: dict, out_path: Path) -> None:
-    """Per-drug: each causal gene's ESM-LR bar + a marker at the one-hot for *its own mechanism*."""
+    """Per-drug chart: drop-absent ESM-LR bar, zero-imputed ESM-LR (●), and own-mechanism one-hot (◆).
+
+    For acquired genes the teal ● leaps from the bar toward the red ◆ — the presence/absence recovery.
+    """
     drug = context["drug"]
     sc = scorecard.sort_values("esm_lr_auroc", ascending=True).reset_index(drop=True)
-    fig, ax = plt.subplots(figsize=(11.0, max(4.2, 0.52 * len(sc) + 2.2)))
+    has_imputed = sc["imputed_esm_lr_auroc"].notna().any()
+    fig, ax = plt.subplots(figsize=(11.5, max(4.2, 0.52 * len(sc) + 2.2)))
     y = list(range(len(sc)))
-    ax.barh(y, sc["esm_lr_auroc"], color=ESM_COLOUR, edgecolor="black", linewidth=0.6, height=0.62,
-            zorder=2, label="per-gene ESM-LR")
-    # Matching-mechanism one-hot marker per gene + a thin connector showing the gap.
+    ax.barh(y, sc["esm_lr_auroc"], color=ESM_COLOUR, edgecolor="black", linewidth=0.6, height=0.6,
+            zorder=2, label="drop-absent ESM-LR")
     for yi, r in zip(y, sc.itertuples(), strict=True):
+        pts = [r.esm_lr_auroc]
+        if has_imputed and r.imputed_esm_lr_auroc is not None and not pd.isna(r.imputed_esm_lr_auroc):
+            pts.append(r.imputed_esm_lr_auroc)
         if r.onehot_auroc is not None:
-            ax.plot([r.esm_lr_auroc, r.onehot_auroc], [yi, yi], color="0.6", lw=1.0, zorder=1)
-            ax.plot(r.onehot_auroc, yi, "D", color=ONEHOT_COLOUR, markersize=8, zorder=3)
+            pts.append(r.onehot_auroc)
+        ax.plot([min(pts), max(pts)], [yi, yi], color="0.65", lw=1.0, zorder=1)  # connector
+        if has_imputed and r.imputed_esm_lr_auroc is not None and not pd.isna(r.imputed_esm_lr_auroc):
+            ax.plot(r.imputed_esm_lr_auroc, yi, "o", color=IMPUTED_COLOUR, markersize=8.5, zorder=3,
+                    markeredgecolor="black", markeredgewidth=0.5)
+        if r.onehot_auroc is not None:
+            ax.plot(r.onehot_auroc, yi, "D", color=ONEHOT_COLOUR, markersize=8, zorder=4)
         tag = "chr" if r.mechanism == "mutation" else "acq"
         ax.text(0.405, yi, f"({tag})", va="center", ha="left", fontsize=7.5, color="0.45")
-        ax.text(max(r.esm_lr_auroc, r.onehot_auroc or 0) + 0.008, yi,
-                f"ESM {r.esm_lr_auroc:.3f} · rank {r.rank}/{r.total_genes}", va="center", ha="left", fontsize=8)
+        lab = f"drop {r.esm_lr_auroc:.3f}"
+        if has_imputed and r.imputed_esm_lr_auroc is not None and not pd.isna(r.imputed_esm_lr_auroc):
+            lab += f" → imp {r.imputed_esm_lr_auroc:.3f}"
+        ax.text(max(pts) + 0.008, yi, lab, va="center", ha="left", fontsize=8)
 
     ax.axvline(0.5, color="0.6", linestyle=":", linewidth=1.0, zorder=0)
     ax.text(0.5, len(sc) - 0.4, "chance", color="0.5", fontsize=8, ha="center", va="bottom")
     ax.set_yticks(y)
     ax.set_yticklabels(sc["gene_name"], fontsize=10, fontstyle="italic")
-    ax.set_xlabel("AUROC — per-gene ESM-LR (bar) vs its own-mechanism Kleborate one-hot (◆)", fontsize=11)
-    ax.set_xlim(0.4, 1.04)
+    ax.set_xlabel("AUROC — drop-absent ESM-LR (bar) · zero-imputed ESM-LR (●) · own-mechanism one-hot (◆)",
+                  fontsize=10.5)
+    ax.set_xlim(0.4, 1.10)
     ax.grid(axis="x", alpha=0.3)
     ax.spines[["top", "right"]].set_visible(False)
     handles = [plt.Rectangle((0, 0), 1, 1, color=ESM_COLOUR, ec="black", lw=0.6),
+               plt.Line2D([0], [0], marker="o", color="w", markerfacecolor=IMPUTED_COLOUR, markersize=9,
+                          markeredgecolor="black"),
                plt.Line2D([0], [0], marker="D", color="w", markerfacecolor=ONEHOT_COLOUR, markersize=9)]
-    ax.legend(handles, ["per-gene ESM-LR (mean-pooled embedding)", "one-hot for the same mechanism"],
-              loc="lower right", fontsize=9, framealpha=0.95)
-    ax.set_title(f"{drug}: does the mean-pooled ESM-LR of each causal gene match its one-hot?", fontsize=12)
+    labels = ["drop-absent ESM-LR", "zero-imputed ESM-LR", "one-hot (same mechanism)"]
+    if not has_imputed:
+        handles, labels = [handles[0], handles[2]], [labels[0], labels[2]]
+    ax.legend(handles, labels, loc="lower right", fontsize=9, framealpha=0.95)
+    title = (f"{drug}: drop-absent vs zero-imputed ESM-LR vs the one-hot (per causal gene)"
+             if has_imputed else f"{drug}: does the ESM-LR of each causal gene match its one-hot?")
+    ax.set_title(title, fontsize=12)
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=150)
@@ -183,20 +229,27 @@ def plot_scorecard(scorecard: pd.DataFrame, context: dict, out_path: Path) -> No
 
 
 def plot_panel_summary(contexts: list[dict], out_path: Path) -> None:
-    """Across drugs: the best causal gene's ESM-LR vs its own-mechanism one-hot (do they match?)."""
+    """Across drugs: best causal gene's drop-absent ESM-LR (○), zero-imputed ESM-LR (●), own-mechanism one-hot (◆).
+
+    The headline: imputation moves the ESM point onto the one-hot for the acquired-gene drugs.
+    """
     rows = [c for c in contexts if c.get("best_causal_esm") is not None and c.get("best_causal_onehot") is not None]
     df = pd.DataFrame(rows).sort_values("best_causal_onehot", ascending=True).reset_index(drop=True)
+    has_imp = "best_causal_imputed" in df.columns and df["best_causal_imputed"].notna().any()
     y = list(range(len(df)))
-    fig, ax = plt.subplots(figsize=(13.5, 7.6))
+    fig, ax = plt.subplots(figsize=(13.5, 7.8))
     for yi, r in zip(y, df.itertuples(), strict=True):
-        ax.plot([r.best_causal_esm, r.best_causal_onehot], [yi, yi], color="0.8", lw=1.4, zorder=0)
+        xs = [r.best_causal_esm, r.best_causal_onehot]
+        if has_imp and not pd.isna(getattr(r, "best_causal_imputed", float("nan"))):
+            xs.append(r.best_causal_imputed)
+        ax.plot([min(xs), max(xs)], [yi, yi], color="0.8", lw=1.4, zorder=0)
     ax.plot(df["best_causal_onehot"], y, "D", color=ONEHOT_COLOUR, markersize=9, zorder=3,
             label="own-mechanism one-hot")
-    ax.plot(df["best_causal_esm"], y, "o", color=ESM_COLOUR, markersize=9, zorder=3,
-            label="best causal-gene ESM-LR")
-    for yi, r in zip(y, df.itertuples(), strict=True):
-        ax.text(min(r.best_causal_esm, r.best_causal_onehot) - 0.01, yi,
-                f"{r.best_causal_gene}", va="center", ha="right", fontsize=8, fontstyle="italic", color="0.3")
+    ax.plot(df["best_causal_esm"], y, "o", color="w", markeredgecolor=ESM_COLOUR, markeredgewidth=1.6,
+            markersize=9, zorder=3, label="drop-absent ESM-LR")
+    if has_imp:
+        ax.plot(df["best_causal_imputed"], y, "o", color=IMPUTED_COLOUR, markersize=9, zorder=4,
+                markeredgecolor="black", markeredgewidth=0.5, label="zero-imputed ESM-LR")
 
     ax.axvline(0.5, color="0.6", linestyle=":", linewidth=1.0)
     ax.set_yticks(y)
@@ -206,9 +259,10 @@ def plot_panel_summary(contexts: list[dict], out_path: Path) -> None:
     ax.grid(axis="x", alpha=0.3)
     ax.spines[["top", "right"]].set_visible(False)
     ax.legend(loc="lower right", fontsize=10, framealpha=0.95)
-    ax.set_title("Kp panel: the best causal gene's mean-pooled ESM-LR vs the one-hot for its own mechanism\n"
-                 "chromosomal-mutation drugs — the two coincide (mean-pool = one-hot); acquired-gene drugs — "
-                 "ESM falls short (the per-gene LR is blind to presence/absence)", fontsize=11.5)
+    sub = ("acquired-gene drugs — zero-imputing (teal ●) lifts the ESM-LR onto the one-hot; "
+           "chromosomal-mutation drugs already coincide" if has_imp
+           else "chromosomal drugs coincide (mean-pool = one-hot); acquired drugs — ESM falls short")
+    ax.set_title(f"Kp panel: best causal gene's ESM-LR vs the one-hot for its own mechanism\n{sub}", fontsize=11.5)
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=150)
@@ -221,7 +275,10 @@ def main() -> None:
     vis = here / "docs" / "visualisations"
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--ranking-dir", type=Path, required=True,
-                        help="Dir of per_gene_lr_ranking/<drug>/per_gene_lr_<drug>.csv (fetched from RDS).")
+                        help="Dir of per_gene_lr_ranking/<drug>/per_gene_lr_<drug>.csv (drop-absent; fetched from RDS).")
+    parser.add_argument("--imputed-ranking-dir", type=Path, default=None,
+                        help="Optional dir of the zero-imputed rankings (per_gene_lr_ranking_imputed/<drug>/...); "
+                             "when given, each gene also shows its imputed ESM-LR (the acquired-gene recovery).")
     parser.add_argument("--drugs", type=str, nargs="*", default=None,
                         help="Drugs to score (default: every drug with both a ranking CSV and causal patterns).")
     parser.add_argument("--out-dir", type=Path, default=vis / "causal_gene_scorecard")
@@ -236,8 +293,10 @@ def main() -> None:
         if not ranking_csv.exists():
             print(f"skip {drug}: no ranking CSV")
             continue
+        imputed_csv = (args.imputed_ranking_dir / drug / f"per_gene_lr_{drug}.csv"
+                       if args.imputed_ranking_dir else None)
         kleborate_csv = vis / f"kp_{drug}" / f"kleborate_determinant_lr_{drug}.csv"
-        scorecard, context = build_scorecard(drug, ranking_csv, kleborate_csv)
+        scorecard, context = build_scorecard(drug, ranking_csv, kleborate_csv, imputed_ranking_csv=imputed_csv)
         if scorecard.empty:
             print(f"skip {drug}: no causal genes matched in the ranking")
             continue
