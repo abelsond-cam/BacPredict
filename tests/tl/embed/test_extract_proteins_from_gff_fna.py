@@ -240,12 +240,18 @@ def test_assign_hits_to_cds_overlap_and_orphans() -> None:
          "amr_source": "acquired", "amr_pct_id": 99.0, "amr_pct_cov": 100.0,
          "amr_gene_family": "KPC", "amr_class": "Bla_Carb", "amr_drug_classes": "carbapenem",
          "amr_flags": "acquired", "_score": 0.99},
+        # a near-identical CARD variant at the SAME orphan locus -> culled (allele multiplicity)
+        {"tname": "contig_1", "tstart": 2010, "tend": 2110, "amr_allele": "KPC-3",
+         "amr_source": "acquired", "amr_pct_id": 96.0, "amr_pct_cov": 100.0,
+         "amr_gene_family": "KPC", "amr_class": "Bla_Carb", "amr_drug_classes": "carbapenem",
+         "amr_flags": "acquired", "_score": 0.80},
     ]
     calls = _assign_hits_to_cds(hits, flat_cds)
     on_cds = [c for c in calls if c["flat_index"] == 0]
     assert len(on_cds) == 1 and on_cds[0]["amr_allele"] == "aac(2')-Ia"  # stronger hit kept
     assert all("_score" not in c for c in calls)                          # internal key stripped
     orphans = [c for c in calls if c["flat_index"] == -1]
+    # both KPC variants hit the same locus -> culled to one, the higher-scoring KPC-2
     assert len(orphans) == 1 and orphans[0]["amr_allele"] == "KPC-2"
 
 

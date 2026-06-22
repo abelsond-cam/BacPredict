@@ -333,31 +333,53 @@ def _assign_hits_to_cds(
         cds_by_contig.setdefault(rec["seqid"], []).append(rec)
 
     best_for_flat: dict[int, dict[str, Any]] = {}      # flat_index -> best call
-    orphans: list[dict[str, Any]] = []                 # acquired hits with no overlapping CDS
+    orphan_hits: list[dict[str, Any]] = []             # acquired hits with no overlapping CDS
     for h in hits:
         best_rec, best_ov = None, 0
         for rec in cds_by_contig.get(h["tname"], ()):
             ov = min(int(rec["end"]), h["tend"]) - max(int(rec["start"]) - 1, h["tstart"])
             if ov > best_ov:
                 best_rec, best_ov = rec, ov
-        call = {k: v for k, v in h.items() if k != "_score"}
-        call["seqid"] = h["tname"]
         if best_rec is None:
             if h["amr_source"] == "acquired":
-                call["flat_index"] = -1
-                orphans.append(call)
+                orphan_hits.append(h)
             continue
         fi = int(best_rec["flat_index"])
+        call = {k: v for k, v in h.items() if k != "_score"}
+        call["seqid"] = h["tname"]
         call["flat_index"] = fi
         if fi not in best_for_flat or h["_score"] > best_for_flat[fi]["_score"]:
             best_for_flat[fi] = {**call, "_score": h["_score"]}
 
+    orphans = _cull_redundant_orphans(orphan_hits)
     calls = [{k: v for k, v in c.items() if k != "_score"} for c in best_for_flat.values()]
     calls.extend(orphans)
     calls.sort(key=lambda c: (c["flat_index"] < 0, c["flat_index"]))
     if orphans:
-        logger.info("AMR annotation: %d acquired call(s) had no overlapping CDS (Bakta miss)", len(orphans))
+        logger.info("AMR annotation: %d acquired locus/loci with no overlapping CDS (Bakta miss)", len(orphans))
     return calls
+
+
+def _cull_redundant_orphans(orphan_hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One orphan call per genomic locus: greedily keep the best-scoring hit, drop overlapping variants.
+
+    CARD lists many near-identical alleles per gene family, so a single Bakta-missed locus is hit by
+    dozens of overlapping ref alleles. Without this cull the orphan count (and the Bakta-miss metric)
+    is inflated by allele multiplicity. Mirrors Kleborate's ``cull_redundant_hits``: sort by
+    identity×coverage, accept a hit only if it does not overlap an already-accepted (better) one on the
+    same contig. ``flat_index = -1`` marks the kept orphans.
+    """
+    kept: list[dict[str, Any]] = []
+    accepted: list[tuple[str, int, int]] = []  # (contig, tstart, tend) of accepted orphans
+    for h in sorted(orphan_hits, key=lambda x: x["_score"], reverse=True):
+        if any(h["tname"] == t and h["tstart"] < e and s < h["tend"] for t, s, e in accepted):
+            continue
+        accepted.append((h["tname"], h["tstart"], h["tend"]))
+        call = {k: v for k, v in h.items() if k != "_score"}
+        call["seqid"] = h["tname"]
+        call["flat_index"] = -1
+        kept.append(call)
+    return kept
 
 
 def extract_proteins_from_gff_fna(
