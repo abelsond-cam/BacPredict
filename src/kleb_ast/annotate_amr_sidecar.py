@@ -42,6 +42,9 @@ from snp_embeddings.locate_gene import flatten_proteins
 from tl.embed.extract_proteins_from_gff_fna import extract_proteins_from_gff_fna
 
 RDS_ROOT = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw")
+# metadata_v2 stores sr_assembly_file / sr_gff_file *relative to the project_k root* (e.g.
+# "seb/assemblies_2/.../X.fa.gz", "david/raw/.../X.bakta.gff3.gz"); resolve them against this.
+PROJECT_K_ROOT = RDS_ROOT
 DEFAULT_AST_SHEET = RDS_ROOT / "david" / "processed" / "train_kleb_ast" / "binary_ast_with_split.csv"
 DEFAULT_METADATA = RDS_ROOT / "david" / "final" / "metadata_v2_all_samples_and_columns.tsv"
 DEFAULT_PROTEIN_DIR = RDS_ROOT / "david" / "processed" / "klebsiella_protein_sequences"
@@ -61,14 +64,20 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
+def _resolve(path: str, root: Path) -> str:
+    """Absolute path: leave absolute paths as-is, resolve relative ones against ``root``."""
+    return path if Path(path).is_absolute() else str(root / path)
+
+
 def build_worklist(
-    ast_sheet: Path, metadata: Path, protein_dir: Path
+    ast_sheet: Path, metadata: Path, protein_dir: Path, path_root: Path
 ) -> pd.DataFrame:
     """The AST-cohort samples joined to their ``sr_assembly_file`` / ``sr_gff_file`` paths.
 
     Keeps only samples that (a) appear in the AST sheet, (b) have both assembly + GFF paths in
     ``metadata_v2``, and (c) already have a protein parquet (so the flat-order guard can run and
-    an embedding exists). Returns ``Sample, sr_assembly_file, sr_gff_file``.
+    an embedding exists). Relative assembly/GFF paths are resolved against ``path_root`` (the
+    project_k root). Returns ``Sample, sr_assembly_file, sr_gff_file`` with absolute paths.
     """
     ast = pd.read_csv(ast_sheet, usecols=["Sample"])
     ast["Sample"] = ast["Sample"].astype(str)
@@ -79,6 +88,8 @@ def build_worklist(
     meta["Sample"] = meta["Sample"].astype(str)
     meta = meta[meta["Sample"].isin(samples)].dropna(subset=["sr_assembly_file", "sr_gff_file"])
     meta = meta.drop_duplicates(subset=["Sample"], keep="first").reset_index(drop=True)
+    for col in ("sr_assembly_file", "sr_gff_file"):
+        meta[col] = meta[col].astype(str).apply(lambda p: _resolve(p, path_root))
 
     has_parquet = meta["Sample"].apply(
         lambda s: (protein_dir / f"{s}_protein_sequences.parquet").exists()
@@ -183,10 +194,11 @@ def run(
     start: int,
     count: int | None,
     samples: list[str] | None,
+    path_root: Path = PROJECT_K_ROOT,
     dry_run: bool = False,
 ) -> None:
     """Build the worklist, annotate each genome in parallel, write per-sample sidecars."""
-    work = build_worklist(ast_sheet, metadata, protein_dir)
+    work = build_worklist(ast_sheet, metadata, protein_dir, path_root)
     if dry_run:
         logger.info("dry-run: worklist size = %d (chunk it with --start/--count for the array)", len(work))
         return
@@ -230,6 +242,8 @@ def main() -> None:
     p.add_argument("--protein-dir", type=Path, default=DEFAULT_PROTEIN_DIR)
     p.add_argument("--amr-ref-dir", type=Path, default=DEFAULT_AMR_REF_DIR)
     p.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
+    p.add_argument("--path-root", type=Path, default=PROJECT_K_ROOT,
+                   help="Root for resolving relative sr_assembly_file/sr_gff_file (project_k root).")
     p.add_argument("--minimap2-bin", type=str, default="minimap2")
     p.add_argument("--threads", type=int, default=4, help="minimap2 threads per genome.")
     p.add_argument("--workers", type=int, default=16, help="parallel genome workers.")
@@ -245,7 +259,8 @@ def main() -> None:
         ast_sheet=args.ast_sheet, metadata=args.metadata, protein_dir=args.protein_dir,
         amr_ref_dir=args.amr_ref_dir, out_dir=args.out_dir, minimap2_bin=args.minimap2_bin,
         threads=args.threads, workers=args.workers, skip_existing=args.skip_existing,
-        start=args.start, count=args.count, samples=args.samples, dry_run=args.dry_run,
+        start=args.start, count=args.count, samples=args.samples, path_root=args.path_root,
+        dry_run=args.dry_run,
     )
 
 
