@@ -40,8 +40,10 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -169,9 +171,36 @@ def _fasta_to_segment_file(fasta: Path, seg_path: Path, k: int) -> tuple[int, in
     return n_unitigs, n_segments
 
 
+def _open_matrix_writer(out: Path, threads: int):
+    """Open a text writer for the matrix; close via the returned ``close_fn``.
+
+    For ``.gz`` output, compress with multicore ``pigz`` (the matrix is large and single-thread
+    gzip is the convert bottleneck), falling back to fast-level gzip if pigz is unavailable.
+    """
+    if str(out).endswith(".gz") and shutil.which("pigz"):
+        raw = open(out, "wb")
+        pz = subprocess.Popen(["pigz", "-p", str(threads), "-c"], stdin=subprocess.PIPE, stdout=raw)
+        tw = io.TextIOWrapper(pz.stdin, encoding="utf-8")
+
+        def _close() -> None:
+            tw.flush()
+            tw.close()  # closes pigz stdin → pigz drains and exits
+            rc = pz.wait()
+            raw.close()
+            if rc:
+                raise RuntimeError(f"pigz exited with code {rc}")
+
+        return tw, _close
+    if str(out).endswith(".gz"):
+        fh = gzip.open(out, "wt", compresslevel=6)
+        return fh, fh.close
+    fh = open(out, "w")
+    return fh, fh.close
+
+
 def convert(
     fasta: Path, color_names: Path, colormap: Path, out: Path, kmer_length: int = 31,
-    min_samples: int = 0, tmp_dir: Path | None = None, sort_buffer: str = "2G",
+    min_samples: int = 0, tmp_dir: Path | None = None, sort_buffer: str = "2G", threads: int = 4,
 ) -> tuple[int, int, int]:
     """Disk-based sort-merge join of the GGCAT artifacts → a gzipped pyseer ``--kmers`` matrix.
 
@@ -225,8 +254,8 @@ def convert(
     # merge the sorted segments (ascending subset_id) with the subset-id-ordered colormap; expand
     # each subset's ranges to Sample IDs once and reuse for its consecutive segments.
     n_written = 0
-    out_open = gzip.open(out, "wt") if str(out).endswith(".gz") else open(out, "w")
-    with open(sorted_path) as segs, _open_text(colormap) as cm, out_open as ofh:
+    ofh, close_out = _open_matrix_writer(out, threads)
+    with open(sorted_path) as segs, _open_text(colormap) as cm:
         cm_id = -1
 
         def _advance(target: int) -> str | None:
@@ -261,6 +290,7 @@ def convert(
                 continue
             ofh.write(f"{subseq} | {cur_presence}\n")
             n_written += 1
+    close_out()
     sorted_path.unlink()
     return n_written, n_unitigs, n_segments
 
@@ -280,11 +310,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--tmp-dir", type=Path, default=None,
                    help="Dir for the temp segment file + external-sort spill (default: --out's parent).")
     p.add_argument("--sort-buffer", default="2G", help="GNU sort -S memory buffer (default 2G).")
+    p.add_argument("--threads", type=int, default=4, help="pigz compression threads for .gz output (default 4).")
     args = p.parse_args(argv)
     n_written, n_unitigs, n_segments = convert(
         args.fasta, args.color_names, args.colormap, args.out,
         kmer_length=args.kmer_length, min_samples=args.min_samples,
-        tmp_dir=args.tmp_dir, sort_buffer=args.sort_buffer,
+        tmp_dir=args.tmp_dir, sort_buffer=args.sort_buffer, threads=args.threads,
     )
     print(f"wrote {n_written} features from {n_unitigs} unitigs ({n_segments} colour segments) -> {args.out}")
 

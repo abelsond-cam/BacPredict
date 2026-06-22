@@ -135,7 +135,7 @@ fi
 echo "=== (5) disk sort-merge join -> pyseer --kmers matrix (<seq> | <Sample>:1 …) ==="
 uv run python src/bac_pyseer/kleb_iso_source/ggcat_to_pyseer.py \
     --fasta "$OUT_FASTA" --color-names "$NAMES_JSONL" --colormap "$COLORMAP_CSV" \
-    --kmer-length "$K" --min-samples "$MIN_SAMP" --tmp-dir "$TMP" --out "$MATRIX"
+    --kmer-length "$K" --min-samples "$MIN_SAMP" --tmp-dir "$TMP" --threads "$THREADS" --out "$MATRIX"
 [ -s "$MATRIX" ] || { echo "ERROR: empty pyseer matrix"; exit 1; }
 
 echo "=== done  $(date) ==="
