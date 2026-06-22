@@ -14,6 +14,13 @@ everywhere — most drugs AUROC > 0.95 — and the floor sits at **colistin 0.80
 (both chromosomal / efflux). TB rifampicin's deployed ~0.905 — *below a one-hot of a single SNP codon* — is
 the anomaly we explain.
 
+![TB AMR panel — fine-tuned held-out AUROC](docs/visualisations/tb_amr_panel_auroc.png)
+
+*The anomaly, plotted — the deployed fine-tuned Bacformer across the nine-drug TB panel. Even the best
+drug (rifampicin 0.905) sits below its single-SNP catalogue ceiling, and performance falls to
+**moxifloxacin 0.792 / ethionamide 0.774** — the chromosomal / rRNA / promoter drugs. Contrast the
+Klebsiella panel below, where the same model is strong almost everywhere.*
+
 ![Kp AMR panel — held-out AUROC](docs/visualisations/kp_amr_panel_auroc.png)
 
 *Klebsiella AMR is mostly HGT-driven — Bacformer's strong regime — and it predicts the whole panel well
@@ -125,6 +132,14 @@ holds across the whole TB panel. Scoring every drug's concat against the **WHO c
 TB-Profiler (WHO v2) over all **36,684 genomes**, a one-hot of *all* that drug's catalogued mutations → LR —
 sorts the nine drugs into three clean regimes:
 
+![TB summary panel — ceiling vs FT vs concat](docs/visualisations/tb_amr_summary_panel.png)
+
+*The whole §5 result at a glance (AUROC top, AUPRC bottom): per drug, the **WHO / TB-Profiler one-hot
+ceiling** (red), the **deployed fine-tuned Bacformer** (indigo), and **Bacformer FT + concat best
+embedding** (green). Concat ties or beats the catalogue on the coding-driven drugs (left) and slips below it
+only where the mechanism is rRNA / promoter (kanamycin, ethionamide; right — note the collapsed FT/concat
+AUPRC). The per-drug table and the three regimes follow.*
+
 | regime | drug (ESM gene) | ESM gene | concat | WHO ceiling | concat − WHO |
 |---|---|---:|---:|---:|---:|
 | **beats WHO** | pyrazinamide (pncA) | 0.916 | **0.928** | 0.854 | **+0.074** |
@@ -229,16 +244,67 @@ promoter is the hatched stub beside the dominant *katG* coding bar):
   when a coding co-driver happens to carry it (isoniazid's *katG* yes; ethionamide, the same promoter without
   *katG*, no). This is precisely what **Bacformer 2** (nucleotide / genome-aware) is built to encode — the
   per-drug gap-map already marks the targets and the recoverable headroom.
-- **Next: *Klebsiella*.** Before pursuing further prediction-method improvements, we compare and contrast in
-  a **different substrate** — Kp AMR is mostly **HGT-driven** (Bacformer's strong regime), with a handful of
-  weak, chromosomal/efflux/regulatory drugs (**colistin 0.807, azithromycin 0.827**, …) that mirror TB. Using
-  **Kleborate** (CARD-derived, already run) as the determinant ceiling, we run the same screen / concat /
-  ladder / gap-map across all 22 Kp drugs, weakest first. See the plan file.
+- **The *Klebsiella* contrast (§8).** The opposite substrate — Kp AMR is mostly **HGT-driven**, Bacformer's
+  strong regime — is where the thesis predicts (and finds) the reverse picture: fine-tuning is near-perfect
+  across the panel and **beats the Kleborate/CARD catalogue ceiling exactly on the hard chromosomal drugs**
+  (azithromycin +0.25, colistin +0.16). §8 has the panel, the cohort-scale evidence that Bakta misses ~29 %
+  of acquired AMR genes, and the reliable-label plan that follows.
 
 
 ----
 
-## 8. Appendix
+## 8. *Klebsiella* — the HGT contrast, and reliable AMR labels
+
+Run the same lens on the **opposite substrate**. Kp AMR is largely **HGT / gene-acquisition** —
+Bacformer's strong regime — and the deployed fine-tuned model is **near-perfect across most of the 22-drug
+panel** (AUROC > 0.95 on 14 drugs, topping out at cefotaxime 0.990 / ertapenem 0.987). The point that
+matters for the thesis: it **beats the Kleborate/CARD determinant ceiling exactly where the catalogue is
+weakest** — the chromosomal / efflux / regulatory drugs. azithromycin **0.827 vs 0.578 (+0.25)**, colistin
+**0.807 vs 0.649 (+0.16)**, tetracycline **0.914 vs 0.828 (+0.09)**: the mirror image of TB's pyrazinamide,
+where the embedding *exceeds* the catalogue because it reads a functional consequence the one-hot cannot
+enumerate. On the well-catalogued β-lactams and fluoroquinolones the Kleborate one-hot still edges fine-tuning
+by ~0.005–0.03 — the gap the **FT + concat** read-out is built to close (the same recipe that tops the TB
+ladder in §4–§5).
+
+![Kp summary panel — ceiling vs FT](docs/visualisations/kp_amr_summary_panel.png)
+
+*Kp panel (AUROC top, AUPRC bottom), sorted by fine-tuned AUROC: **Kleborate / CARD one-hot ceiling** (red)
+vs **deployed fine-tuned Bacformer** (indigo). Fine-tuning matches the ceiling across the HGT-driven majority
+and clears it on the hard chromosomal drugs at the right (azithromycin, colistin). The **FT + concat
+best-embedding** series is held back here pending the reliable-label recompute below — the current concat
+used Bakta-labelled gene picks and is unreliable.*
+
+### Reliable AMR gene labels — why, and the plan
+
+The Kp **FT + concat** series — and the per-gene ESM-vs-FT analysis behind it — is keyed on **Bakta**
+`gene_name` to decide which protein is which AMR gene. Bakta under-annotates acquired AMR genes for several
+classes, so those carrier sets are unreliable; that is precisely why the current Kp concat is degenerate for
+some drugs and is **not** plotted above. We therefore re-identified AMR genes the way Kleborate does —
+**`minimap2` of the CARD acquired + chromosomal (QRDR / OmpK / MgrB) references against every genome
+assembly**, Kleborate's thresholds (acquired ≥ 90 % identity / ≥ 80 % coverage), authoritative
+**allele-level** labels attached to the embedded CDS by coordinate overlap — across all **6,418** AST-cohort
+genomes (**52,602 acquired + 31,870 chromosomal** calls; no re-embedding).
+
+Validated against Kleborate's own metadata_v2 calls: **carrier recall 0.90** (the residual is within-family
+allele naming + classes outside the AST panel). And the motivating bias, quantified at cohort scale —
+**Bakta gives no CDS at all for 5.3 % of acquired AMR genes, no CDS or no gene name for 8.5 %, and a name
+matching the CARD gene family for only 70.6 %**: i.e. **~29 % of acquired AMR genes are missed or
+mislabelled by Bakta**, the bias that makes Bakta-keyed carrier sets unsafe.
+
+With reliable labels in hand, the plan:
+
+1. **Per-gene ESM-LR on the merged-label universe** (CARD allele where called, else Bakta) — does correct
+   gene identity change the acquired-gene story (the contested "does the fine-tuned token *learn the gene*"
+   question)? Scored head-to-head against the Bakta-only per-gene numbers.
+2. **FT tokens at the reliable AMR flat-indices** → recompute the Kp **FT + concat** series and add it as the
+   third bar above; the expectation is concat closing the β-lactam / FQ gaps and **clearing the Kleborate
+   ceiling across the board**, the Kp analogue of §5.
+3. **Bakta-vs-Kleborate comparison** — carrier-count recovery and Bakta miss-rate per class, as a standalone
+   result on annotation completeness.
+
+----
+
+## 9. Appendix
 
 *The full arc of Task 7 (`snp_embeddings`): why Bacformer's mean-embedding AMR prediction underperforms in
 TB, how we recovered it, how far that gets us against the WHO catalogue, and the one barrier that remains.
@@ -268,5 +334,7 @@ very well in many cases. This can be reviewed.
 ### Figure placeholders (to add)
 
 - the HGT-vs-chromosomal mechanism stratification, once Kleborate / WHO mechanism labels are wired in;
-- the *Klebsiella* screen / ladder / gap-map set, as the Kp counterpart to §§4–6 above.
+- the *Klebsiella* **reliable-label** FT + concat panel (the third bar in §8) and the per-drug screen /
+  ladder / gap-map set, once Phase 2 (§8) recomputes them on the CARD/Kleborate labels — the Kp counterpart
+  to §§4–6 above. (The ceiling-vs-FT panel itself is now in §8.)
 

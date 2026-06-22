@@ -1,0 +1,35 @@
+{
+  "n_samples_with_sidecar": 6418,
+  "n_calls_total": 84472,
+  "n_acquired_calls": 52602,
+  "n_chromosomal_calls": 31870,
+  "chromosomal_genes_located": [
+    "GyrA",
+    "OmpK35",
+    "OmpK36",
+    "ParC",
+    "PmrB"
+  ],
+  "carrier_agreement_vs_kleborate": {
+    "n_genomes_compared": 6412,
+    "n_genomes_only_ours": 0,
+    "n_genomes_only_kleborate": 0,
+    "pairs_tp": 40795,
+    "pairs_fp_ours_only": 11807,
+    "pairs_fn_kleborate_only": 4444,
+    "allele_precision_vs_kleborate": 0.7755,
+    "allele_recall_vs_kleborate": 0.9018,
+    "genome_exact_match_rate": 0.1868
+  },
+  "bakta_miss": {
+    "n_acquired_calls": 52602,
+    "n_orphan_no_cds": 2807,
+    "n_on_cds": 49795,
+    "n_on_cds_bakta_unnamed": 1656,
+    "n_on_cds_bakta_named": 48139,
+    "n_on_cds_bakta_named_matches_family": 37131,
+    "hard_miss_rate_no_cds": 0.0534,
+    "miss_rate_no_cds_or_unnamed": 0.0848,
+    "family_match_rate_among_calls": 0.7059
+  }
+}
