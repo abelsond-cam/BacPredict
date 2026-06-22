@@ -1,0 +1,30 @@
+# Standalone pixi environment for the Kp AST AMR-annotation toolchain.
+#
+# Provides ONLY the minimap2 binary — the aligner Kleborate uses to call acquired AMR genes
+# (CARD refs) + locate the chromosomal QRDR/OmpK/MgrB references. Everything else (biopython,
+# pandas, pyarrow, the bacpredict package) lives in the repo's uv env, so the AMR-annotation
+# Python runs under `uv run python` and shells out to this env's minimap2 via an absolute path.
+#
+# Kept separate from the uv env on purpose: per the `csd3-spack-module-breaks-uv` rule we never
+# `module load` tool binaries on CSD3 (the spack module leaks a python-3.9 site-packages dir onto
+# PYTHONPATH and breaks uv's numpy). conda binaries find their deps via RPATH, so no
+# LD_LIBRARY_PATH/module is needed.
+#
+# Run pixi commands from this directory:
+#
+#   cd src/kleb_ast && pixi install
+#   pixi run minimap2 --version
+#   pixi run -- which minimap2     # -> .pixi/envs/default/bin/minimap2 (the path the SLURM job passes)
+#
+# The installed binary lives at:
+#   src/kleb_ast/.pixi/envs/default/bin/minimap2
+
+[workspace]
+name = "kleb-ast-amr-tools"
+channels = ["conda-forge", "bioconda"]
+platforms = ["linux-64", "osx-arm64"]
+
+[dependencies]
+# 2.30 is the version pinned in the lab's bac_isescan env; leave loose but floor at a recent
+# release (PAF `-c`/cigar + asm10 behaviour we rely on is stable across 2.2x–2.3x).
+minimap2 = ">=2.26"

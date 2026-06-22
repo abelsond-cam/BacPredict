@@ -8,6 +8,9 @@ from pathlib import Path
 import pytest
 
 from tl.embed.extract_proteins_from_gff_fna import (
+    _assign_hits_to_cds,
+    _parse_amr_paf,
+    _resolve_card_label,
     extract_proteins_from_gff_fna,
     is_gbff_path,
     is_gff_path,
@@ -162,6 +165,88 @@ def test_extract_proteins_non_multiple_of_three_trimmed(tmp_path: Path) -> None:
     fna.write_text(">c1\nATGAAATAAGG\n")
     out = extract_proteins_from_gff_fna(gff, fna)
     assert out["protein_sequence"] == [["MK"]]
+
+
+CARD_LABELS = {
+    "1": {"class": "AGly", "gene": "AAC(2')", "allele": "aac(2')-Ia",
+          "bla_class": "", "CARD_class": "aminoglycoside antibiotic"},
+    "300": {"class": "Bla", "gene": "KPC", "allele": "KPC-2",
+            "bla_class": "Bla_Carb", "CARD_class": "carbapenem"},
+}
+
+
+def test_resolve_card_label_uses_seqid_table() -> None:
+    """CARD header → authoritative label from the seqID table; Bla refined by bla_class."""
+    lab = _resolve_card_label("300__KPC_Bla__KPC-2__300", CARD_LABELS)
+    assert lab["amr_allele"] == "KPC-2"
+    assert lab["amr_gene_family"] == "KPC"
+    assert lab["amr_class"] == "Bla_Carb"  # refined from Bla via bla_class
+    assert lab["amr_drug_classes"] == "carbapenem"
+
+
+def test_resolve_card_label_header_fallback() -> None:
+    """An unknown seqID falls back to parsing the header itself."""
+    lab = _resolve_card_label("99__SUL_Sul__sul2__99999", {})
+    assert lab["amr_allele"] == "sul2"
+    assert lab["amr_gene_family"] == "SUL"
+    assert lab["amr_class"] == "Sul"
+
+
+def _paf_line(qname, qlen, qstart, qend, tname, tstart, tend, nmatch, alnlen) -> str:
+    """Build one tab-separated PAF row (cols beyond mapq are irrelevant here)."""
+    return "\t".join(str(x) for x in (
+        qname, qlen, qstart, qend, "+", tname, 10_000, tstart, tend, nmatch, alnlen, 60))
+
+
+def test_parse_amr_paf_thresholds(tmp_path: Path) -> None:
+    """Acquired hits need 90/80; chromosomal 80/80; sub-threshold hits are dropped."""
+    paf = tmp_path / "amr.paf"
+    paf.write_text("\n".join([
+        # acquired, ident 0.98 / cov 1.0 -> kept
+        _paf_line("ACQ|1__AAC(2')_AGly__aac(2')-Ia__1", 100, 0, 100, "contig_1", 50, 150, 98, 100),
+        # acquired, ident 0.85 -> dropped (below 0.90)
+        _paf_line("ACQ|300__KPC_Bla__KPC-2__300", 100, 0, 100, "contig_1", 200, 300, 85, 100),
+        # chromosomal GyrA, ident 0.85 / cov 1.0 -> kept (permissive identity floor)
+        _paf_line("CHR|GyrA", 100, 0, 100, "contig_2", 10, 110, 85, 100),
+        # chromosomal, cov 0.5 -> dropped (below 0.80)
+        _paf_line("CHR|ParC", 100, 0, 50, "contig_2", 500, 550, 50, 50),
+    ]) + "\n")
+    hits = _parse_amr_paf(paf, CARD_LABELS)
+    by_allele = {h["amr_allele"]: h for h in hits}
+    assert set(by_allele) == {"aac(2')-Ia", "GyrA"}
+    assert by_allele["aac(2')-Ia"]["amr_source"] == "acquired"
+    assert by_allele["GyrA"]["amr_source"] == "chromosomal"
+    assert by_allele["GyrA"]["amr_class"] == "Flq"
+
+
+def test_assign_hits_to_cds_overlap_and_orphans() -> None:
+    """Hits land on the overlapping CDS; best-per-CDS wins; acquired misses become flat_index=-1."""
+    flat_cds = [
+        {"flat_index": 0, "seqid": "contig_1", "start": 40, "end": 160},   # overlaps the 50..150 hit
+        {"flat_index": 1, "seqid": "contig_1", "start": 400, "end": 500},  # nothing overlaps
+    ]
+    hits = [
+        {"tname": "contig_1", "tstart": 50, "tend": 150, "amr_allele": "aac(2')-Ia",
+         "amr_source": "acquired", "amr_pct_id": 98.0, "amr_pct_cov": 100.0,
+         "amr_gene_family": "AAC(2')", "amr_class": "AGly", "amr_drug_classes": "x",
+         "amr_flags": "acquired", "_score": 0.80},
+        # a second, weaker hit over the same CDS — should be culled
+        {"tname": "contig_1", "tstart": 55, "tend": 145, "amr_allele": "aac(2')-Ib",
+         "amr_source": "acquired", "amr_pct_id": 91.0, "amr_pct_cov": 90.0,
+         "amr_gene_family": "AAC(2')", "amr_class": "AGly", "amr_drug_classes": "x",
+         "amr_flags": "acquired", "_score": 0.50},
+        # acquired hit with no overlapping CDS -> orphan (Bakta miss), flat_index = -1
+        {"tname": "contig_1", "tstart": 2000, "tend": 2100, "amr_allele": "KPC-2",
+         "amr_source": "acquired", "amr_pct_id": 99.0, "amr_pct_cov": 100.0,
+         "amr_gene_family": "KPC", "amr_class": "Bla_Carb", "amr_drug_classes": "carbapenem",
+         "amr_flags": "acquired", "_score": 0.99},
+    ]
+    calls = _assign_hits_to_cds(hits, flat_cds)
+    on_cds = [c for c in calls if c["flat_index"] == 0]
+    assert len(on_cds) == 1 and on_cds[0]["amr_allele"] == "aac(2')-Ia"  # stronger hit kept
+    assert all("_score" not in c for c in calls)                          # internal key stripped
+    orphans = [c for c in calls if c["flat_index"] == -1]
+    assert len(orphans) == 1 and orphans[0]["amr_allele"] == "KPC-2"
 
 
 def test_path_extension_helpers() -> None:
