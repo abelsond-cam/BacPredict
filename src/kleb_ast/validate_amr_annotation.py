@@ -36,8 +36,13 @@ RDS_ROOT = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw")
 DEFAULT_SIDECAR_DIR = RDS_ROOT / "david" / "processed" / "train_kleb_ast" / "amr_annotation"
 DEFAULT_METADATA = RDS_ROOT / "david" / "final" / "metadata_v2_all_samples_and_columns.tsv"
 
-# Kleborate columns that carry acquired-gene allele tokens (the grain our CARD calls match).
-ACQUIRED_COLUMNS = [c for c, (cat, _emb) in COLUMN_SCHEMA.items() if cat == "acquired_hgt"]
+# Kleborate columns that carry *gene/allele* tokens — the grain our CARD calls match. This is the
+# acquired-HGT columns PLUS Bla_chr: intrinsic SHV/OKP/LEN comes from the CARD ref (so we tag it
+# amr_source="acquired"), but Kleborate files it in the chromosomal-coding Bla_chr column, so it must
+# be in the comparison set or those genuine calls read as false positives. The *_mutations columns
+# (codon strings) are a different grain and are reported separately, not compared here.
+ACQUIRED_COLUMNS = [c for c, (cat, _emb) in COLUMN_SCHEMA.items()
+                    if cat in ("acquired_hgt", "chromosomal_coding")]
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
