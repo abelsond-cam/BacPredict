@@ -63,8 +63,8 @@ uv run python src/bac_pyseer/kleb_iso_source/annotate_locus_consequence.py parse
     --ann-vcf "$ANN" --out-tsv "$MAP"
 [ -s "$MAP" ] || { echo "ERROR: empty effect map"; exit 1; }
 
+echo "rm the uncompressed VCF (keep the .gz annotated + map)"; rm -f "$VCF"
 echo "=== done  $(date) ==="
 ls -lh "$OUT"
 echo "effect-class distribution:"
-zcat "$MAP" | tail -n +2 | cut -f6 | sort | uniq -c | sort -rn
-echo "rm the uncompressed VCF (keep the .gz annotated + map)"; rm -f "$VCF"
+{ zcat "$MAP" | tail -n +2 | cut -f6 | sort | uniq -c | sort -rn; } || true

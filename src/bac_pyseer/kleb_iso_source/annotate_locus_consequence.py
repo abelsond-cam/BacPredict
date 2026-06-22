@@ -77,9 +77,10 @@ def _primary_ann(info: str) -> tuple[str, str, str]:
 def parse_ann(ann_vcf: Path, out_tsv: Path, contig: str = DEFAULT_CONTIG) -> int:
     """Parse the SnpEff-annotated VCF into a ``(POS,REF,ALT) -> effect/impact/class/gene`` TSV."""
     opener = gzip.open(ann_vcf, "rt") if str(ann_vcf).endswith(".gz") else open(ann_vcf)
+    out_open = gzip.open(out_tsv, "wt") if str(out_tsv).endswith(".gz") else open(out_tsv, "w")
     n = 0
     out_tsv.parent.mkdir(parents=True, exist_ok=True)
-    with opener as fh, open(out_tsv, "w") as out:
+    with opener as fh, out_open as out:
         out.write("pos\tref\talt\teffect\timpact\tclass\tlocus_tag\n")
         for line in fh:
             if line.startswith("#"):
