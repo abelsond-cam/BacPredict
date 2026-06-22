@@ -42,8 +42,9 @@ export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 CHUNK=${CHUNK:-200}
 START=$(( SLURM_ARRAY_TASK_ID * CHUNK ))
 
-# minimap2 from the kleb_ast pixi env (absolute path; no PATH/module fiddling).
-MM2=$(cd src/kleb_ast && pixi run -- which minimap2)
+# minimap2 from the kleb_ast pixi env (absolute path; no PATH/module fiddling). Prefer a
+# pre-resolved $MM2 (passed via --export) so array tasks don't each invoke pixi on a compute node.
+MM2=${MM2:-$(cd src/kleb_ast && pixi run -- which minimap2)}
 echo "=== Kp AMR annotate — array task $SLURM_ARRAY_TASK_ID, chunk [$START:$((START+CHUNK))], minimap2=$MM2 ==="
 
 # 32 cores: 8 genome workers × 4 minimap2 threads each.
