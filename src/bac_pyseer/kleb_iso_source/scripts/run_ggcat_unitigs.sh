@@ -140,5 +140,9 @@ uv run python src/bac_pyseer/kleb_iso_source/ggcat_to_pyseer.py \
 
 echo "=== done  $(date) ==="
 ls -lh "$OUT_DIR"
-echo "unitigs (matrix lines): $(zcat "$MATRIX" | wc -l)"
-echo "first-line sample tokens:"; zcat "$MATRIX" | head -1 | sed 's/^.*| //' | tr ' ' '\n' | head -3
+# verification only — must not fail the job (zcat|head trips SIGPIPE under pipefail; the matrix is
+# already validated by the converter's "wrote N features" + the [ -s ] guard above). gzip -t confirms
+# the stream is complete without a full decompress-count of a tens-of-GB matrix.
+gzip -t "$MATRIX" && echo "matrix gzip OK" || echo "WARN: matrix gzip check failed"
+echo "first-line sample tokens:"
+{ zcat "$MATRIX" 2>/dev/null | head -1 | sed 's/^.*| //' | tr ' ' '\n' | head -3; } || true
