@@ -1,0 +1,141 @@
+{
+  "n_loci": 2169158,
+  "n_genes": 5191,
+  "cached_per_source": {
+    "blood": 7176,
+    "faeces": 6978,
+    "respiratory": 4327
+  },
+  "contrasts": {
+    "blood_vs_faeces": {
+      "focal": "blood",
+      "comparators": [
+        "faeces"
+      ],
+      "subsets": {
+        "synonymous": {
+          "R_focal": 878001,
+          "R_comparator": 844134,
+          "n_genes_tested": 5029,
+          "n_sig_padj05": 0
+        },
+        "non_syn": {
+          "R_focal": 566111,
+          "R_comparator": 511396,
+          "n_genes_tested": 5071,
+          "n_sig_padj05": 1
+        },
+        "LoF": {
+          "R_focal": 29389,
+          "R_comparator": 24432,
+          "n_genes_tested": 4028,
+          "n_sig_padj05": 0
+        },
+        "all_coding": {
+          "R_focal": 1444112,
+          "R_comparator": 1355530,
+          "n_genes_tested": 5078,
+          "n_sig_padj05": 0
+        }
+      }
+    },
+    "respiratory_vs_faeces": {
+      "focal": "respiratory",
+      "comparators": [
+        "faeces"
+      ],
+      "subsets": {
+        "synonymous": {
+          "R_focal": 601422,
+          "R_comparator": 844134,
+          "n_genes_tested": 5025,
+          "n_sig_padj05": 1
+        },
+        "non_syn": {
+          "R_focal": 306429,
+          "R_comparator": 511396,
+          "n_genes_tested": 5048,
+          "n_sig_padj05": 5
+        },
+        "LoF": {
+          "R_focal": 15284,
+          "R_comparator": 24432,
+          "n_genes_tested": 3710,
+          "n_sig_padj05": 1
+        },
+        "all_coding": {
+          "R_focal": 907851,
+          "R_comparator": 1355530,
+          "n_genes_tested": 5057,
+          "n_sig_padj05": 2
+        }
+      }
+    },
+    "blood_vs_rest": {
+      "focal": "blood",
+      "comparators": [
+        "faeces",
+        "respiratory"
+      ],
+      "subsets": {
+        "synonymous": {
+          "R_focal": 878001,
+          "R_comparator": 895825,
+          "n_genes_tested": 5029,
+          "n_sig_padj05": 0
+        },
+        "non_syn": {
+          "R_focal": 566111,
+          "R_comparator": 606939,
+          "n_genes_tested": 5083,
+          "n_sig_padj05": 0
+        },
+        "LoF": {
+          "R_focal": 29389,
+          "R_comparator": 32753,
+          "n_genes_tested": 4172,
+          "n_sig_padj05": 0
+        },
+        "all_coding": {
+          "R_focal": 1444112,
+          "R_comparator": 1502764,
+          "n_genes_tested": 5089,
+          "n_sig_padj05": 0
+        }
+      }
+    },
+    "resp_vs_rest": {
+      "focal": "respiratory",
+      "comparators": [
+        "faeces",
+        "blood"
+      ],
+      "subsets": {
+        "synonymous": {
+          "R_focal": 601422,
+          "R_comparator": 1023626,
+          "n_genes_tested": 5028,
+          "n_sig_padj05": 7
+        },
+        "non_syn": {
+          "R_focal": 306429,
+          "R_comparator": 777463,
+          "n_genes_tested": 5072,
+          "n_sig_padj05": 9
+        },
+        "LoF": {
+          "R_focal": 15284,
+          "R_comparator": 43649,
+          "n_genes_tested": 4138,
+          "n_sig_padj05": 4
+        },
+        "all_coding": {
+          "R_focal": 907851,
+          "R_comparator": 1801089,
+          "n_genes_tested": 5079,
+          "n_sig_padj05": 12
+        }
+      }
+    }
+  }
+}

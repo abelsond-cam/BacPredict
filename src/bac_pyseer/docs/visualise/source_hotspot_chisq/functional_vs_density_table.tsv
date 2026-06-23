@@ -1,0 +1,33 @@
+contrast	locus_tag	name	is_gwas_hit	gwas_direction	SR_syn	SR_nonsyn	SR_LoF	SR_allcoding	NS_over_syn	padj_syn	padj_nonsyn	padj_LoF	padj_allcoding	verdict
+resp_vs_rest	KPN_RS05140	ompK35	True	respiratory (invasion)	0.92	1.26	1.62	1.02	1.38	0.9665	0.7362	0.042	0.9978	LoF-specific
+resp_vs_rest	KPN_RS00215	carA	False		0.9	0.89	inf	0.93	0.98	0.9665	1.0	0.042	0.9978	LoF-specific
+resp_vs_rest	KPN_RS00220	carB	False		1.05	1.08	25.7	1.16	1.03	0.9665	1.0	0.042	0.5366	LoF-specific
+resp_vs_rest	KPN_RS22665	alpha-galactosidase	True	faeces	0.98	1.05	9.28	1.01	1.07	0.9665	1.0	0.0	0.9978	LoF-specific
+respiratory_vs_faeces	KPN_RS22665	alpha-galactosidase	True	faeces	0.96	1.0	10.39	0.97	1.05	0.914	0.975	0.0003	0.9339	LoF-specific
+resp_vs_rest	KPN_RS05155	type I restriction endonuclease subunit R	False		1.46	1.71		1.61	1.17	0.0345	0.3911		0.0	density/clade
+resp_vs_rest	KPN_RS13465	gndA	False		1.41	1.41	0.71	1.54	1.0	0.0	0.7003	1.0	0.0	density/clade
+resp_vs_rest	KPN_RS13515	capsule assembly Wzi family protein	True	blood (invasion);respiratory (invasion)	1.39	1.26	1.18	1.43	0.91	0.0	0.9547	1.0	0.0	density/clade
+resp_vs_rest	KPN_RS07715	Y-family DNA polymerase	False		1.32	1.15	1.52	1.29	0.87	0.0079	1.0	1.0	0.0005	density/clade
+resp_vs_rest	KPN_RS13440	ugd	False		1.31	1.13		1.39	0.86	0.0186	1.0		0.0	density/clade
+resp_vs_rest	KPN_RS13510	polysaccharide export protein	False		1.42	1.35	3.81	1.58	0.96	0.0003	1.0	1.0	0.0	density/clade
+blood_vs_faeces	KPN_RS11535	sufB	False		0.94	1.51	1.82	1.19	1.6	0.8456	0.0018	1.0	0.8802	functional(non-syn)
+resp_vs_rest	KPN_RS10500	membrane-bound PQQ-dependent dehydrogenase, glucose/quinate/shikimate family	False		0.7	1.31	1.49	0.99	1.86	1.0	0.0021	1.0	0.9978	functional(non-syn)
+resp_vs_rest	KPN_RS13865	bglF	False		0.78	1.35	1.73	1.03	1.73	0.9928	0.0024	1.0	0.9978	functional(non-syn)
+resp_vs_rest	KPN_RS06070	phoQ	False		1.01	1.56	2.86	1.19	1.56	0.9665	0.0053	1.0	0.5701	functional(non-syn)
+resp_vs_rest	KPN_RS18430	qseC	False		0.94	1.44	1.68	1.12	1.53	0.9665	0.0053	1.0	0.9978	functional(non-syn)
+resp_vs_rest	KPN_RS15845	Gfo/Idh/MocA family protein	False		1.0	1.7	1.61	1.26	1.69	0.9665	0.016	1.0	0.8669	functional(non-syn)
+resp_vs_rest	KPN_RS32210	pqqF	True	faeces	0.96	1.27	0.69	1.05	1.33	0.9665	0.0173	1.0	0.9978	functional(non-syn)
+resp_vs_rest	KPN_RS06690	SDR family NAD(P)-dependent oxidoreductase	False		0.83	1.55	1.48	1.14	1.86	0.969	0.0209	1.0	0.9978	functional(non-syn)
+respiratory_vs_faeces	KPN_RS06070	phoQ	False		1.0	1.77	2.13	1.24	1.77	0.914	0.0014	1.0	0.7995	functional(non-syn)
+respiratory_vs_faeces	KPN_RS11535	sufB	False		1.01	1.51	1.3	1.19	1.5	0.914	0.0241	1.0	0.9339	functional(non-syn)
+respiratory_vs_faeces	KPN_RS29045	mgrB	False		0.75	2.09	2.11	1.64	2.79	0.9152	0.0356	1.0	0.8425	functional(non-syn)
+respiratory_vs_faeces	KPN_RS03010	RamA family antibiotic efflux transcriptional regulator	False		1.07	1.8	0.89	1.44	1.68	0.914	0.0403	1.0	0.8425	functional(non-syn)
+resp_vs_rest	KPN_RS22205	hypothetical protein	False		7.15	inf		13.49	inf	0.0079	0.0004		0.0	mixed/weak
+resp_vs_rest	KPN_RS07405	RecE family exodeoxyribonuclease	True	respiratory (invasion)	1.13	1.26	0.95	1.13	1.12	0.9665	0.0021	1.0	0.0786	mixed/weak
+resp_vs_rest	KPN_RS18795	replication endonuclease	False		1.21	1.26	0.48	1.26	1.05	0.3886	0.6731	1.0	0.0009	mixed/weak
+resp_vs_rest	KPN_RS18770	phage portal protein	False		1.24	1.34	1.9	1.32	1.08	0.9665	0.759	1.0	0.0049	mixed/weak
+resp_vs_rest	KPN_RS07485	DNA cytosine methyltransferase	True	faeces	1.16	1.37	1.32	1.29	1.17	0.9665	0.9547	1.0	0.0111	mixed/weak
+resp_vs_rest	KPN_RS18670	phage tail sheath protein	False		1.22	1.1	0.0	1.27	0.9	0.9665	1.0	1.0	0.0397	mixed/weak
+resp_vs_rest	KPN_RS24465	peptidase domain-containing ABC transporter	False		1.3	1.0	1.82	1.29	0.77	0.2493	1.0	1.0	0.0386	mixed/weak
+respiratory_vs_faeces	KPN_RS22205	hypothetical protein	False		14.74	inf		25.38	inf	0.0046	0.0072		0.0	mixed/weak
+respiratory_vs_faeces	KPN_RS13465	gndA	False		1.24	1.17	0.8	1.28	0.95	0.233	0.975	1.0	0.0056	mixed/weak
