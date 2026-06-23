@@ -1,15 +1,29 @@
 {
   "assoc": "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/pyseer_iso_source/faeces_respiratory/sampled_country_2_1_all/gwas_lmm/respiratory_vs_faeces.assoc",
+  "feature_mode": "variants",
   "n_variants": 326146,
   "n_unique_patterns": 284368,
   "alpha": 0.05,
   "bonferroni_threshold": 1.7582850391042593e-07,
   "pval_col": "lrt-pvalue",
   "genomic_inflation_lambda": 0.4982573201495785,
-  "max_dimensions_k": 10,
+  "max_dimensions_k": null,
   "n_significant": 88,
   "n_significant_in_gene": 63,
   "n_significant_virulence": 2,
+  "consequence_by_direction": {
+    "faeces": {
+      "missense": 22,
+      "synonymous": 16,
+      "noncoding": 10
+    },
+    "respiratory (invasion)": {
+      "synonymous": 15,
+      "noncoding": 15,
+      "missense": 7,
+      "LoF": 3
+    }
+  },
   "n_genes_on_contig": 5164,
   "outputs": {
     "hits_annotated_tsv": "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/pyseer_iso_source/faeces_respiratory/sampled_country_2_1_all/gwas_lmm/respiratory_vs_faeces_hits_annotated.tsv",

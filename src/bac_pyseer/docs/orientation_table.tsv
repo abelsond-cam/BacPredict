@@ -1,0 +1,3 @@
+contrast	method	n_samples	lambda	n_variants_tested	n_hits	n_invasion_direction
+blood/faeces	LMM (FaST-LMM, core-SNP kinship)	13602	0.562	372238	110	18
+resp/faeces	LMM (FaST-LMM, core-SNP kinship)	9169	0.498	326146	88	40
