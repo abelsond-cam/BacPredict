@@ -332,6 +332,21 @@ def map_positions_to_genes(positions: np.ndarray, gene_df: pd.DataFrame) -> pd.D
     return pd.DataFrame.from_records(records)
 
 
+def _empty_mapped(n: int, location: str = "unmapped(deferred)") -> pd.DataFrame:
+    """``n`` rows of the no-gene-mapping record — used for unitig hits before bwa alignment.
+
+    Unitig "variant" ids are DNA sequences, not ``<contig>_<pos>_…``, so a position (hence a gene)
+    is only known after aligning the hit sequences to the reference (``annotate_hits_pyseer``,
+    a deferred step). Until then every hit carries empty gene columns with this ``location``.
+    """
+    empty = {
+        "location": location, "gene": "", "locus_tag": "", "product": "", "strand": "",
+        "gene_start": -1, "gene_end": -1, "dist_bp": -1,
+        "upstream_gene": "", "upstream_dist": -1, "downstream_gene": "", "downstream_dist": -1,
+    }
+    return pd.DataFrame([dict(empty) for _ in range(n)])
+
+
 def _virulence_match(gene: str, product: str) -> str:
     """Return the matched invasion-locus token for a gene/product, or ``""`` if none."""
     g = str(gene).strip().lower()
@@ -452,9 +467,16 @@ def run(
     out_table: Path, summary_json: Path, contig: str, contig_len: int,
     pval_col: str, alpha: float, k_dimensions: int | None,
     pos_label: str = "blood (invasion)", neg_label: str = "faeces",
-    pair_title: str = "blood vs faeces",
+    pair_title: str = "blood vs faeces", feature_mode: str = "variants",
 ) -> dict[str, object]:
-    """Compute the threshold + λ, draw QQ/Manhattan, annotate hits, write the summary."""
+    """Compute the threshold + λ, draw QQ/Manhattan, annotate hits, write the summary.
+
+    ``feature_mode="variants"`` (default) parses a reference POS from each variant id and
+    interval-joins it to the GFF. ``feature_mode="unitigs"`` skips that — unitig ids are DNA
+    sequences whose gene mapping needs a bwa alignment (deferred ``annotate_hits_pyseer`` step) —
+    so it still computes the threshold/λ/QQ and the VE-ranked hit table (with sequences + stats),
+    but leaves the gene columns empty and skips the position-based Manhattan.
+    """
     assoc = load_assoc(assoc_path)
     n_variants = len(assoc)
     pvals = pd.to_numeric(assoc[pval_col], errors="coerce").to_numpy()
@@ -471,12 +493,18 @@ def run(
     #     cheap to recompute from it, and the plots at the end are regenerable by re-running.
     hits = significant_hits(assoc, threshold, pval_col, pos_label, neg_label)
     logging.info("significant hits (%s < %.3e): %d", pval_col, threshold, len(hits))
-    hit_pos = variant_positions(hits["variant"].to_numpy(), contig) if len(hits) else np.array([], dtype=np.int64)
 
-    gene_df = parse_gff_genes(gff_path, contig)
-    logging.info("parsed %d gene intervals from %s on %s", len(gene_df), gff_path.name, contig)
-    mapped = map_positions_to_genes(hit_pos, gene_df)
-    mapped = cross_ref_virulence(mapped)
+    if feature_mode == "unitigs":
+        # unitig ids are DNA sequences → gene mapping is the deferred bwa-alignment step.
+        hit_pos = np.full(len(hits), -1, dtype=np.int64)
+        gene_df = pd.DataFrame(columns=["locus_tag", "gene", "start", "end", "strand", "product"])
+        mapped = cross_ref_virulence(_empty_mapped(len(hits)))
+        logging.info("feature-mode=unitigs: gene mapping deferred (bwa align hit sequences separately)")
+    else:
+        hit_pos = variant_positions(hits["variant"].to_numpy(), contig) if len(hits) else np.array([], dtype=np.int64)
+        gene_df = parse_gff_genes(gff_path, contig)
+        logging.info("parsed %d gene intervals from %s on %s", len(gene_df), gff_path.name, contig)
+        mapped = cross_ref_virulence(map_positions_to_genes(hit_pos, gene_df))
 
     # Assemble the annotated hit table: the pyseer stats + POS + the gene-mapping columns.
     carry = [c for c in ("variant", "var_explained_pct", "maf", "af", "filter-pvalue", pval_col, "beta",
@@ -495,6 +523,7 @@ def run(
     n_virulence = int(annotated["virulence_flag"].sum()) if len(annotated) else 0
     summary = {
         "assoc": str(assoc_path),
+        "feature_mode": feature_mode,
         "n_variants": int(n_variants),
         "n_unique_patterns": int(n_patterns),
         "alpha": alpha,
@@ -520,21 +549,21 @@ def run(
     # --- Plots last + non-fatal: derived purely from the .assoc + the tables above, so a
     #     failure here cannot lose data already on disk, and the figures can be regenerated
     #     by simply re-running this script against the saved .assoc.
-    pos = variant_positions(assoc["variant"].to_numpy(), contig)
-    hit_points = pd.DataFrame()
-    if len(annotated) and "var_explained_pct" in annotated.columns:
-        hp = annotated.dropna(subset=["pos"]).copy()
-        if "pattern_group" in hp.columns:
-            hp = hp.drop_duplicates("pattern_group")            # one circle per clonal pattern
-        hp["label"] = [_hit_label(g, lt, pr) for g, lt, pr in
-                       zip(hp["gene"], hp["locus_tag"], hp["product"], strict=False)]
-        hp["_p"] = pd.to_numeric(hp[pval_col], errors="coerce")
-        hit_points = hp
-    for name, draw in (
-        ("QQ", lambda: plot_qq(pvals, lam, out_fig_dir / "pyseer_qq.png")),
-        ("Manhattan", lambda: plot_manhattan(pos, pvals, threshold, out_fig_dir / "pyseer_manhattan.png",
-                                             contig, contig_len, pair_title, hit_points)),
-    ):
+    draws = [("QQ", lambda: plot_qq(pvals, lam, out_fig_dir / "pyseer_qq.png"))]
+    if feature_mode != "unitigs":  # Manhattan needs reference positions; deferred for unitigs
+        pos = variant_positions(assoc["variant"].to_numpy(), contig)
+        hit_points = pd.DataFrame()
+        if len(annotated) and "var_explained_pct" in annotated.columns:
+            hp = annotated.dropna(subset=["pos"]).copy()
+            if "pattern_group" in hp.columns:
+                hp = hp.drop_duplicates("pattern_group")            # one circle per clonal pattern
+            hp["label"] = [_hit_label(g, lt, pr) for g, lt, pr in
+                           zip(hp["gene"], hp["locus_tag"], hp["product"], strict=False)]
+            hp["_p"] = pd.to_numeric(hp[pval_col], errors="coerce")
+            hit_points = hp
+        draws.append(("Manhattan", lambda: plot_manhattan(pos, pvals, threshold, out_fig_dir / "pyseer_manhattan.png",
+                                                           contig, contig_len, pair_title, hit_points)))
+    for name, draw in draws:
         try:
             draw()
         except Exception as exc:  # noqa: BLE001 — plotting must never abort an already-saved run
@@ -566,6 +595,8 @@ def main(argv: list[str] | None = None) -> None:
                    help="Direction label for β>0 (phenotype==1); e.g. 'respiratory (invasion)'.")
     p.add_argument("--neg-label", default="faeces", help="Direction label for β<0 (phenotype==0).")
     p.add_argument("--pair-title", default="blood vs faeces", help="Contrast name for the Manhattan title.")
+    p.add_argument("--feature-mode", choices=("variants", "unitigs"), default="variants",
+                   help="variants: parse POS from id + GFF map. unitigs: defer gene mapping (bwa align hits).")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -575,6 +606,7 @@ def main(argv: list[str] | None = None) -> None:
         contig=args.contig, contig_len=args.contig_len, pval_col=args.pval_col,
         alpha=args.alpha, k_dimensions=args.max_dimensions,
         pos_label=args.pos_label, neg_label=args.neg_label, pair_title=args.pair_title,
+        feature_mode=args.feature_mode,
     )
 
 

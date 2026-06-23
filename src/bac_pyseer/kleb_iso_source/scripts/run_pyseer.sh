@@ -69,11 +69,20 @@ MIN_AF=${MIN_AF:-0.01}          # env: allele-frequency window; raise to 0.05/0.
 MAX_AF=${MAX_AF:-0.99}
 USE_LINEAGE=${USE_LINEAGE:-1}   # env: 0 = omit --lineage entirely (no per-variant SL attribution); 1 = keep it
 USE_LMM=${USE_LMM:-0}           # env: 1 = LMM (FaST-LMM random effects via a kinship matrix) instead of fixed-effects MDS — better structure control for clonal data
+FEATURES=${FEATURES:-variants}  # env: variants (--pres core-SNP Rtab) | unitigs (--kmers GGCAT matrix = the accessory/HGT axis)
 GWAS_DIR=$IN_DIR/$GWAS_SUBDIR
 GFF=$DATA/david/raw/related_lr/gff/GCF_000016305.1.gff
 mkdir -p "$GWAS_DIR"
 
 RTAB=$IN_DIR/variant_by_loci_presence.Rtab
+# Per-cohort GGCAT unitig matrix (Phase 1 output). For FEATURES=unitigs we swap --pres RTAB -> --kmers
+# this, but DELIBERATELY reuse the variant phenotype + core-SNP kinship (similarity.tsv) below: a
+# unitig-derived kinship would let the LMM random effect absorb the accessory/HGT structure we are
+# trying to detect, whereas the core-SNP kinship corrects clonal/phylogenetic structure and leaves
+# the unitig fixed-effects free to find HGT-linked invasion features. pyseer intersects to the common
+# samples (blood/faeces 13,171; resp/faeces 8,979) — same set as the variant GWAS, so the two are
+# directly comparable.
+UNITIG_MATRIX=${UNITIG_MATRIX:-$DATA/david/processed/pyseer_iso_source/unitigs/$PAIR/unitigs.pyseer.gz}
 PHENO=$IN_DIR/phenotype.tsv
 DIST=$IN_DIR/jaccard_distances.tsv
 SAMPLES=$IN_DIR/samples.txt          # sample-id list (phenotype/Rtab order) — input to similarity_pyseer
@@ -82,7 +91,16 @@ CLUSTERS=$GWAS_DIR/sublineage_clusters.tsv
 PATTERNS=$GWAS_DIR/patterns.txt
 ASSOC=$GWAS_DIR/${OUT_STEM}.assoc
 
-echo "Job $SLURM_JOB_ID  Node $SLURMD_NODENAME  cohort=$COHORT  K=$K  $(date)"
+echo "Job $SLURM_JOB_ID  Node $SLURMD_NODENAME  cohort=$COHORT  K=$K  features=$FEATURES  $(date)"
+
+# Feature input: variants (--pres core-SNP Rtab) or unitigs (--kmers GGCAT matrix).
+if [ "$FEATURES" = "unitigs" ]; then
+    [ -s "$UNITIG_MATRIX" ] || { echo "ERROR: unitig matrix $UNITIG_MATRIX missing/empty"; exit 1; }
+    FEATURE_ARGS=(--kmers "$UNITIG_MATRIX")
+    echo "FEATURES=unitigs -> --kmers $UNITIG_MATRIX ($(ls -lh "$UNITIG_MATRIX" | awk '{print $5}'))"
+else
+    FEATURE_ARGS=(--pres "$RTAB")
+fi
 
 # 0) sublineage-clusters file (tab-sep: sample <TAB> Sublineage; NaN -> 'unknown'), for
 #    pyseer --lineage (reports the lineage each hit is most associated with). Aligned to
@@ -119,13 +137,16 @@ if [ "$USE_LMM" = "1" ]; then
     # LMM: build the kinship/similarity matrix once from the variant Rtab (shared across LMM runs).
     #      similarity_pyseer wants a sample-id list (phenotype order, == Rtab columns).
     if [ ! -s "$SIMILARITY" ]; then
+        # unitig runs must REUSE the core-SNP kinship (see UNITIG_MATRIX note); never build it from
+        # the k-mers, which would absorb the HGT signal into the random effect.
+        [ "$FEATURES" = "unitigs" ] && { echo "ERROR: FEATURES=unitigs needs the variant core-SNP kinship at $SIMILARITY — run the variant LMM first"; exit 1; }
         echo "building LMM similarity (kinship) from Rtab via similarity_pyseer  $(date)"
         tail -n +2 "$PHENO" | cut -f1 > "$SAMPLES"
         pixi run --manifest-path "$PIXI_MANIFEST" similarity_pyseer \
             --pres "$RTAB" --min-af "$MIN_AF" --max-af "$MAX_AF" "$SAMPLES" > "$SIMILARITY"
         echo "wrote $SIMILARITY ($(wc -l < "$SIMILARITY") rows)  $(date)"
     else
-        echo "reusing existing similarity matrix $SIMILARITY"
+        echo "reusing existing similarity matrix $SIMILARITY (core-SNP kinship)"
     fi
 else
     # fixed-effects: scree plot of the MDS eigenvalues to eyeball/justify K (non-fatal, MDS-only).
@@ -152,7 +173,7 @@ else
     echo "pyseer config: fixed-effects K=$K  min-af=$MIN_AF  max-af=$MAX_AF  use-lineage=$USE_LINEAGE  min-sl-size=$MIN_SL_SIZE"
 fi
 pixi run --manifest-path "$PIXI_MANIFEST" pyseer \
-    --pres "$RTAB" \
+    "${FEATURE_ARGS[@]}" \
     --phenotypes "$PHENO" --phenotype-column "$LABEL_COL" \
     "${STRUCT_ARGS[@]}" \
     ${LINEAGE_ARGS[@]+"${LINEAGE_ARGS[@]}"} \
@@ -167,6 +188,7 @@ echo "pyseer done: $(wc -l < "$ASSOC") assoc lines  $(date)"
 #    table are scp'd to the repo docs/figures from the laptop afterwards (commit from local).
 uv run python src/bac_pyseer/kleb_iso_source/pyseer_postprocess.py \
     --assoc "$ASSOC" --patterns "$PATTERNS" --gff "$GFF" \
+    --feature-mode "$FEATURES" \
     --out-fig-dir "$GWAS_DIR" \
     --out-table "$GWAS_DIR/${OUT_STEM}_hits_annotated.tsv" \
     --summary-json "$GWAS_DIR/${OUT_STEM}_gwas_summary.json" \
