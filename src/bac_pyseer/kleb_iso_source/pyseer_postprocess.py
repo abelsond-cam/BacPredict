@@ -159,6 +159,45 @@ def _hit_label(gene: object, locus_tag: object, product: object, maxlen: int = 3
     return locus or "?"
 
 
+def display_name(gene: object, locus_tag: object, product: object) -> str:
+    """Readable hit name (gene symbol > product > locus tag), untruncated — the table-column form.
+
+    ~55% of reference genes carry no ``gene`` symbol (only a ``KPN_RS`` locus tag), but the ``product``
+    description is informative ("capsule assembly Wzi", "porin OmpK35"); this surfaces it. Same priority
+    as :func:`_hit_label` (the plot-label form), without the length cap.
+    """
+    g = "" if pd.isna(gene) else str(gene)
+    locus = "" if pd.isna(locus_tag) else str(locus_tag)
+    prod = "" if pd.isna(product) else str(product)
+    if g and g != locus:
+        return g
+    return prod or locus or "?"
+
+
+def variant_key(variant: object, contig: str) -> tuple[int, str, str] | None:
+    """Parse ``(POS, REF, ALT)`` from a ``<contig>_<POS>_<REF>_<ALT>`` variant id (REF/ALT have no ``_``)."""
+    s = str(variant)
+    tail = s[len(contig) + 1:] if s.startswith(contig + "_") else s
+    parts = tail.split("_")
+    if len(parts) >= 3 and parts[0].isdigit():
+        return int(parts[0]), parts[1], parts[2]
+    return None
+
+
+def load_consequence_map(effect_map_path: Path) -> dict[tuple[int, str, str], str]:
+    """``(POS,REF,ALT) -> consequence class`` from the SnpEff effect map (``annotate_locus_consequence``).
+
+    Lets each GWAS hit be labelled by the consequence of its associated SNP (synonymous / missense / LoF /
+    noncoding) — the per-hit consequence-spectrum evidence. Reference-determined, so it is a property of
+    the locus, not the sample.
+    """
+    em = pd.read_csv(
+        effect_map_path, sep="\t", usecols=["pos", "ref", "alt", "class"],
+        dtype={"pos": "int64", "ref": str, "alt": str, "class": str},
+    )
+    return dict(zip(zip(em["pos"], em["ref"], em["alt"], strict=True), em["class"], strict=True))
+
+
 def significant_hits(
     assoc: pd.DataFrame, threshold: float, pval_col: str = PVAL_COL,
     pos_label: str = "blood (invasion)", neg_label: str = "faeces",
@@ -468,6 +507,7 @@ def run(
     pval_col: str, alpha: float, k_dimensions: int | None,
     pos_label: str = "blood (invasion)", neg_label: str = "faeces",
     pair_title: str = "blood vs faeces", feature_mode: str = "variants",
+    effect_map: Path | None = None,
 ) -> dict[str, object]:
     """Compute the threshold + λ, draw QQ/Manhattan, annotate hits, write the summary.
 
@@ -516,6 +556,24 @@ def run(
          mapped.reset_index(drop=True)],
         axis=1,
     )
+    # readable label (gene symbol > product > locus tag) — ~55% of genes lack a gene symbol
+    if len(annotated):
+        annotated["display_name"] = [
+            display_name(g, lt, pr)
+            for g, lt, pr in zip(annotated.get("gene"), annotated.get("locus_tag"), annotated.get("product"), strict=True)
+        ]
+    # consequence of the associated SNP (variant mode only; unitig ids are sequences, mapped via bwa later)
+    consequence_counts: dict | None = None
+    if effect_map is not None and feature_mode != "unitigs" and len(annotated):
+        cmap = load_consequence_map(effect_map)
+        keys = [variant_key(v, contig) for v in annotated["variant"]]
+        annotated["consequence"] = [cmap.get(k, "not_found") if k else "unparsed" for k in keys]
+        logging.info("consequence: %s", annotated["consequence"].value_counts().to_dict())
+        if "direction" in annotated.columns:
+            consequence_counts = {
+                str(d): grp["consequence"].value_counts().to_dict()
+                for d, grp in annotated.groupby("direction")
+            }
     out_table.parent.mkdir(parents=True, exist_ok=True)
     annotated.to_csv(out_table, sep="\t", index=False)
     logging.info("wrote %s (%d annotated hits)", out_table, len(annotated))
@@ -534,6 +592,7 @@ def run(
         "n_significant": int(len(hits)),
         "n_significant_in_gene": int((annotated["location"] == "in").sum()) if len(annotated) else 0,
         "n_significant_virulence": n_virulence,
+        "consequence_by_direction": consequence_counts,
         "n_genes_on_contig": int(len(gene_df)),
         "outputs": {
             "hits_annotated_tsv": str(out_table),
@@ -597,6 +656,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--pair-title", default="blood vs faeces", help="Contrast name for the Manhattan title.")
     p.add_argument("--feature-mode", choices=("variants", "unitigs"), default="variants",
                    help="variants: parse POS from id + GFF map. unitigs: defer gene mapping (bwa align hits).")
+    p.add_argument("--effect-map", type=Path, default=None,
+                   help="SnpEff effect map (pos,ref,alt,class) → adds a 'consequence' column per hit (variant mode).")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -606,7 +667,7 @@ def main(argv: list[str] | None = None) -> None:
         contig=args.contig, contig_len=args.contig_len, pval_col=args.pval_col,
         alpha=args.alpha, k_dimensions=args.max_dimensions,
         pos_label=args.pos_label, neg_label=args.neg_label, pair_title=args.pair_title,
-        feature_mode=args.feature_mode,
+        feature_mode=args.feature_mode, effect_map=args.effect_map,
     )
 
 

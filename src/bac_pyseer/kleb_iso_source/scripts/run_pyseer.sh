@@ -72,6 +72,7 @@ USE_LMM=${USE_LMM:-0}           # env: 1 = LMM (FaST-LMM random effects via a ki
 FEATURES=${FEATURES:-variants}  # env: variants (--pres core-SNP Rtab) | unitigs (--kmers GGCAT matrix = the accessory/HGT axis)
 GWAS_DIR=$IN_DIR/$GWAS_SUBDIR
 GFF=$DATA/david/raw/related_lr/gff/GCF_000016305.1.gff
+EFFECT_MAP=$DATA/david/processed/pyseer_iso_source/source_hotspot/locus_effect_map.tsv.gz  # per-hit SNP consequence (variant mode)
 mkdir -p "$GWAS_DIR"
 
 RTAB=$IN_DIR/variant_by_loci_presence.Rtab
@@ -186,9 +187,12 @@ echo "pyseer done: $(wc -l < "$ASSOC") assoc lines  $(date)"
 
 # 3) diagnostics + gene mapping (uv env). Figures land in GWAS_DIR; the small PNGs + hit
 #    table are scp'd to the repo docs/figures from the laptop afterwards (commit from local).
+# variant mode: annotate each hit's SNP consequence (synonymous/missense/LoF/noncoding) from the effect map
+EMAP_ARG=()
+[ "$FEATURES" = "variants" ] && [ -s "$EFFECT_MAP" ] && EMAP_ARG=(--effect-map "$EFFECT_MAP")
 uv run python src/bac_pyseer/kleb_iso_source/pyseer_postprocess.py \
     --assoc "$ASSOC" --patterns "$PATTERNS" --gff "$GFF" \
-    --feature-mode "$FEATURES" \
+    --feature-mode "$FEATURES" ${EMAP_ARG[@]+"${EMAP_ARG[@]}"} \
     --out-fig-dir "$GWAS_DIR" \
     --out-table "$GWAS_DIR/${OUT_STEM}_hits_annotated.tsv" \
     --summary-json "$GWAS_DIR/${OUT_STEM}_gwas_summary.json" \
