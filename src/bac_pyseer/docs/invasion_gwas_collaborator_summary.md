@@ -1,97 +1,37 @@
-# *Klebsiella* invasion GWAS — collaborator summary (two niche contrasts)
+# *Klebsiella* invasion GWAS — collaborator summary
 
-*Interim, core-genome (chromosomal) axis. Updated 2026-06-18.*
+*Short, collaborator-facing abstract. The canonical, fully-detailed write-up (all axes, figures,
+caveats, cross-axis synthesis) is the hub [`PROGRESS.md`](PROGRESS.md).*
 
-## Question & design
+**Question & design.** Does genomic variation distinguish **invasive** *Klebsiella* (blood,
+respiratory) from **gut carriage** (faeces)? Two contrasts share faeces as baseline — blood vs faeces
+(n=13,602) and respiratory vs faeces (n=9,169) — on core-genome variant calls vs the MGH 78578
+chromosome (`NC_009648`), corrected by a linear mixed model (genome-wide kinship; λ = 0.562 / 0.498,
+both < 1 = conservative). This is the **chromosomal / core-allele axis**; accessory determinants
+(capsule *type*, aerobactin *iuc*, yersiniabactin *ybt*) are mobile/accessory and invisible here —
+that's the in-progress unitig GWAS.
 
-Does genomic variation distinguish **invasive** *Klebsiella* (isolated from a sterile site)
-from **gut carriage** (faeces)? Gut colonisation is the reservoir for invasive disease, so we
-contrast invasive-niche isolates against faecal isolates, with faeces as the shared baseline:
+**Headline.** A reproducible, cross-lineage **adhesion + capsule** invasion signature — the
+**fimbrial/pilus usher** (`KPN_RS24485`) and **capsule-assembly *wzi*** (`KPN_RS13515`), the same SNP
+β>0 in *both* invasive niches — plus **BtuB**; and a **blood-specific iron-acquisition** signal
+(siderophore receptor, iron-redox, NfuA) that is coherently null in respiratory (consistent with
+blood iron-restriction). Effect sizes are small (≤8% variance explained): leads, not a classifier.
 
-| contrast | invasive (=1) | control (=0) | n | λ |
-|---|---|---|---|---|
-| **1** | blood | faeces | 13,602 | 0.562 |
-| **2** | respiratory | faeces | 9,169 | 0.498 |
+**New since the prior version (see the hub):**
+- **Per-hit SNP consequence.** The **blood-invasion-direction hits carry no protein-coding change** (10
+  synonymous + 8 noncoding, 0 missense/LoF), whereas respiratory-invasion *does* include missense/LoF.
+  An observation, not a verdict — synonymous/noncoding can be regulatory/expression-level drivers or can
+  tag a background; to be resolved on the accessory (unitig/GPA) axes.
+- **Clade-specific hits are treated as real, not confounding** (the LMM over-corrects population, λ<1) —
+  plausibly clade-specific adaptation to the acquired accessory genome.
+- **Per-source hotspot Chi-sq (secondary/orthogonal):** a modest respiratory-weighted signal of
+  functional diversification in **regulators** (`phoQ`, `mgrB`, `ramA`, `qseC`) + iron (`sufB`); the
+  largest raw hotspots are clade-linked sequence diversity in chromosomally-integrated mobile elements
+  (cps K-locus, a DISARM pathogenicity island, a prophage), not codon-level selection.
 
-- **Cohorts:** KPSC human isolates, country-balanced 2:1, pooled study threads.
-- **Signal:** core-genome **variant calls** (SNPs/indels vs the *K. pneumoniae* MGH 78578
-  reference, NC_009648), af 1–99%. This is the **chromosomal / core-allele axis** — it cannot
-  see accessory gene gain/loss (capsule *type*, aerobactin/*iuc*, yersiniabactin/*ybt* are
-  mobile/accessory and **invisible here**; that's the planned unitig GWAS).
-- **Population-structure control:** linear mixed model (genome-wide kinship). **λ ≈ 0.5 in both**
-  — the same mildly-conservative behaviour (controlled bulk, clean signal tail, no inflation).
-  A fixed-effects MDS attempt under-corrected badly (λ=4.34) and was abandoned.
-- **Ranking:** by **variance explained** (∝ f(1−f)·β², direction-agnostic — a "faeces" allele
-  is just the converse "blood" allele). Effect sizes are uniformly **small** (median ~1–1.3% of
-  case/control variance, max ~8%): no single core variant predicts invasion, and invasiveness is
-  polygenic *and* heavily accessory-driven. **These are leads, not a classifier.** We focus on
-  **MAF > 5%** (neither allele a tiny sample), which also drops the rare lineage-private markers.
+**Caveats.** Between-strain (association, not tracked gut→blood); chromosomal axis only; conservative
+test (λ<1 = a floor on signal); consequence ≠ causality.
 
-## Replication is the real test
-
-Both contrasts share the **gut as baseline**, so a *faeces-associated* variant recurs
-**trivially** (a gut-resident sub-clade is over-represented vs any non-gut niche). The
-informative test is **invasion-direction recurrence** — β > 0 in *both* contrasts.
-
-**Consistency:** **all 18 blood-invasion hits also trend invasion (β > 0) in respiratory** —
-100% direction concordance; none flip. They split by how strongly they recur:
-
-### A. Reproducible cross-niche invasion hits — genome-wide significant in BOTH
-
-| gene | function | blood β (VE) | resp β (p) | lineage |
-|---|---|---|---|---|
-| **fimbria/pilus usher** (KPN_RS24485) | fimbrial assembly; adhesion | +0.20 (3.2%) | +0.24 (2.4e-10) | cross-lineage |
-| **capsule assembly Wzi** (KPN_RS13515) | capsule surface-anchoring (K-locus) | +0.27 (1.0%) | +0.25 (1.8e-8) | cross-lineage |
-| **BtuB** (KPN_RS22930) | TonB-dependent B12/cobalamin (& siderophore/colicin) receptor | +0.09 | +0.10 (1.5e-7) | cross-lineage |
-
-A reproducible **adhesion + capsule + outer-membrane-receptor** signature, holding across two
-independent invasive niches and across lineages. The same SNP in each case. *(Wzi is modest in
-effect size but reproducible across niches — for a real signal, reproducibility beats VE.)*
-
-### B. Blood-specific iron-acquisition signal — coherent, *not* weak
-
-The three iron-acquisition/handling hits are **present in respiratory at similar frequency but
-null there**, while strongly blood-associated:
-
-| gene | blood β (VE) | resp p (null) |
-|---|---|---|
-| **TonB-dependent siderophore receptor** (KPN_RS11350) | +0.39 (3.4%) | 0.012 |
-| **iron-cofactor redox enzyme** (KPN_RS09430) | +0.29 (3.5%) | 0.022 |
-| **NfuA** Fe-S cluster biogenesis (KPN_RS20445) | +0.19 (3.6%) | 0.008 |
-
-All three vanishing **together** in respiratory (not half) is the signature of a genuine
-**niche-specific** effect, not noise: **blood is iron-restricted** (transferrin/lactoferrin
-sequestration) so iron-piracy is advantageous for bloodstream invasion, whereas the respiratory
-niche has different iron/redox dynamics. So the iron signal is **real and blood-specific**, which
-the second contrast *strengthens* rather than refutes.
-
-### C. Lineage-restricted / sub-threshold (7 hits)
-
-dnaK (SL307), an HTH regulator and a PLP-aminotransferase (both SL147), iolB, hpxZ — trend
-invasion in respiratory but don't reach significance, consistent with partly-clonal (lineage-bound)
-blood signals.
-
-## Caveats
-
-- **Core-genome axis only** — accessory/HGT determinants (capsule type, aerobactin, yersiniabactin)
-  are untested here; the **unitig GWAS** is the next, complementary analysis.
-- **Between-strain design** (strains *isolated from* blood vs faeces, not the same strain tracked
-  gut→blood): these are **associations**, not proven mechanism.
-- **Small effects, conservative test** (λ < 1): a floor on the signal, not a ceiling.
-- **Gene labels:** many hit loci have no gene *symbol* in the MGH 78578 reference (verified against
-  the GFF — not a pipeline error); we label by symbol → product description → locus tag.
-
-## Next steps
-
-1. **Unitig GWAS** — the accessory/HGT axis (aerobactin, ybt, capsule type) this core scan can't see.
-2. **Panaroo gene-presence/absence GWAS.**
-3. **faeces vs liver/abscess** — third niche; *blocked* on recurating the mixed liver/abscess
-   category in BacHGT `metadata_curation.py`.
-
-## Supporting files (`src/bac_pyseer/docs/visualise/`)
-
-- `lmm_model/` — blood-vs-faeces: QQ, Manhattan (hits sized by variance explained, top labelled),
-  VE-ranked hit table, README.
-- `faeces_resp_lmm_model/` — respiratory-vs-faeces equivalents, plus
-  `blood_invasion_replication_in_resp.tsv` (every blood-invasion hit with its respiratory p/β and
-  replication class) and `cross_contrast_overlap_blood_vs_resp.tsv`.
+**Next.** Unitig GWAS (accessory/HGT axis); Panaroo gene-presence/absence; faeces vs liver/abscess
+(blocked on recurating the mixed liver/abscess category in BacHGT). Supporting detail + figures:
+[`PROGRESS.md`](PROGRESS.md) and [`visualise/`](visualise/).

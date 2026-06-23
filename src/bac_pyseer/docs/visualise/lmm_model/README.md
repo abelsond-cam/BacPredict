@@ -10,6 +10,9 @@ variant Rtab (`similarity.tsv`, 1.4 GB, shared/reused across LMM runs).
 **Verdict: LMM is the correct method for this cohort. This is the result we trust.**
 It replaces the MDS fixed-effects attempt (`../mds_model/`, λ=4.34, abandoned).
 
+> Detail page. The project narrative + cross-axis synthesis + the per-hit **consequence**
+> evidence live in the hub [`../../PROGRESS.md`](../../PROGRESS.md).
+
 ## Why (the numbers)
 
 - **Genomic inflation λ = 0.562.** Below 1 — the bulk is mildly *over*-corrected
@@ -71,12 +74,23 @@ flag them; within a block you cannot resolve which gene (if any) is causal (perf
 | 3.2 | KPN_RS24485 (fimbrial usher) | invasion | **cross-lineage** | 0.274 | +0.20 |
 
 **Reading:** several of the strongest are **lineage-restricted** (dnaK→SL307, RcnA→SL307,
-HTH→SL147, siderophore→SL17) — confounded even by effect size, so not generalisable
-invasion signals. The strongest **cross-lineage invasion** hits (the generalisable ones)
-are the **iron-cofactor redox enzyme**, the **fimbrial usher**, and **nadB**; capsule
-***wzi*** is real but modest (~1% VE), *not* the headline I first reported. The coherent
-**capsule + fimbrial + core-iron** theme holds — but as a spread of small cross-lineage
-effects, not a few dominant genes, with the accessory iron/capsule machinery untested here.
+HTH→SL147, siderophore→SL17). The LMM kinship random effect already *over*-corrects for
+population (λ=0.562 < 1), so these are **not** simply lineage confounding — they survive a
+conservative filter and are **plausibly real clade-specific signals** (candidate adaptation
+within that lineage, possibly to its accessory genome). They are niche signals *within* a
+clade rather than necessarily generalisable across lineages — worth pursuing, not discounting.
+The **cross-lineage invasion** hits (generalisable across backgrounds) are the **iron-cofactor
+redox enzyme**, the **fimbrial usher**, and **nadB**; capsule ***wzi*** is cross-lineage but
+modest (~1% VE). The coherent **capsule + fimbrial + core-iron** theme holds as a spread of
+small cross-lineage effects plus the clade-specific signals, with the accessory iron/capsule
+machinery untested on this chromosomal axis.
+
+**Consequence of the hits (see [hub §4.2](../../PROGRESS.md)).** Annotated by SnpEff effect
+(the `consequence` column): the **18 blood-invasion-direction hits carry no protein-coding
+change — 10 synonymous + 8 noncoding, 0 missense/LoF** — while the faeces direction holds the
+missense/LoF. This is an observation, not a verdict: synonymous/noncoding SNPs can be
+functionally critical (regulatory/expression) or can tag an unobserved causal variant — the
+distinction needs the regulatory-context and the accessory (unitig/GPA) follow-ups.
 
 ## Files
 
@@ -88,11 +102,10 @@ effects, not a few dominant genes, with the accessory iron/capsule machinery unt
   description → locus tag. `↑`/`↓` = allele direction, a minor glyph — *not* the ranking axis.
 - `blood_vs_faeces_hits_annotated.tsv` — the **110 significant hits**, gene-mapped +
   virulence cross-ref, **ranked by `var_explained_pct`**; carries `maf` (rarer allele;
-  filter `maf > 0.05` for the robust set) and `pattern_group` / `n_in_pattern` flagging the
-  clonal blocks. `direction` is an attribute, not the sort key. This is the result we keep.
-- `hits_by_direction_then_lineage.tsv` — *superseded* by the variance-explained ranking
-  above; kept only as the earlier direction-first view.
-- `blood_vs_faeces_gwas_summary.json` — λ, thresholds, counts.
+  filter `maf > 0.05` for the robust set), `pattern_group` / `n_in_pattern` (clonal blocks),
+  and now **`display_name`** (gene-symbol → product → locus tag) + **`consequence`** (the
+  SNP's SnpEff class). `direction` is an attribute, not the sort key. This is the result we keep.
+- `blood_vs_faeces_gwas_summary.json` — λ, thresholds, counts, `consequence_by_direction`.
 
 ## Provenance / reproduce
 

@@ -5,15 +5,19 @@ faeces** isolation source. Package overview: [CLAUDE.md](../CLAUDE.md); global
 conventions: root [CLAUDE.md](../../../CLAUDE.md) §0. Milestones are tracked in
 [ToDo.md](../../../ToDo.md) under "Pyseer GWAS → kleb_iso_source".
 
-Three strands:
+> **Consolidated narrative + cross-axis synthesis: the hub [`../docs/PROGRESS.md`](../docs/PROGRESS.md).**
+> This file holds the collation/pipeline detail + running notes; PROGRESS.md holds the results story.
 
-- **(a) Hotspot-rate Chi-sq** — per-source hotspot rate vs the whole-population
-  background mutation rate at each locus (control). **Blocked on Aaron uploading
-  hotspots to HPC.**
-- **(b) Pyseer SNP GWAS (KPSC-wide)** — snippy variant calls → variant-loci presence
-  matrix + Jaccard distances for population-structure correction. **Collation built
-  (see below); GWAS run is the next increment.**
-- **(c) Pyseer presence/absence GWAS** — same variant calls + the per-SL Panaroo GPA.
+Current state of the analysis axes (detail in PROGRESS.md):
+
+- **(a) Variant (core-SNP) LMM GWAS** — **DONE** and the method of record. blood/faeces +
+  resp/faeces; fixed-effects MDS abandoned (λ=4.34). Each hit now carries its SNP `consequence`.
+- **(b) Per-source hotspot Chi-sq** — **DONE** (secondary/orthogonal: diversifying-selection
+  "arms race" behind the phenotype). Built from our own per-sample caches + the SnpEff effect map
+  — *not* blocked on an external hotspot upload (that whole-population dN/dS route was a documented
+  NULL, since removed).
+- **(c) Unitig (accessory/HGT) LMM** — matrices built; LMM run needs more memory (OOM'd at 128 G).
+- **(d) Panaroo gene-presence/absence GWAS** — planned (inputs TBD).
 
 ---
 

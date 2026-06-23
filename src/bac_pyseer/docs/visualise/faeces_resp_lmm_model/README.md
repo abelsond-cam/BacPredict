@@ -4,6 +4,9 @@ Second invasive-niche contrast, run to test whether the blood-vs-faeces invasion
 recurs. Same pipeline as blood/faeces (parameterised: `PAIR=faeces_respiratory`,
 `LABEL_COL=respiratory_vs_faeces_label`), same LMM method, same VE-ranked postprocess.
 
+> Detail page. Project narrative + cross-axis synthesis + the per-hit consequence evidence:
+> the hub [`../../PROGRESS.md`](../../PROGRESS.md).
+
 - Cohort `sampled_country_2_1_all` — **n = 9,169** (faeces 4,737 / respiratory 4,432, ratio
   1.07), country-balanced 2:1, pooled threads. Tokens: faeces = *"faeces & rectal swabs"*,
   respiratory = *"lower respiratory, endotracheal"*. **faeces = 0, respiratory = 1**, so
@@ -47,6 +50,13 @@ was largely **blood-specific or weak**, not a general invasion determinant.
 (Reproducibility across niches outweighs single-contrast effect size: *wzi* is modest in VE
 but robust, which is the stronger evidence of a real signal.)
 
+**Consequence of the hits (see [hub §4.2](../../PROGRESS.md)).** Unlike blood — whose
+invasion-direction hits carry *no* protein-coding change — the **respiratory-invasion
+direction includes missense (7) and LoF (3)** changes (15 synonymous + 15 noncoding + 7
+missense + 3 LoF; e.g. an MdtB/MuxB efflux LoF, a carbohydrate porin, *citC*; mostly SL258).
+So at respiratory, coding-level change *is* part of the invasion-associated signal — a niche
+difference to read alongside the (tentative) regulatory/clade interpretations in the hub.
+
 ## Caveats (unchanged from the core-genome design)
 
 - This is the **chromosomal / core-allele axis** — accessory determinants (capsule *type*,
@@ -58,10 +68,12 @@ but robust, which is the stronger evidence of a real signal.)
 - `manhattan_resp_faeces_lmm.png` — all significant hits sized by variance explained,
   top hits labelled by gene/product name (MAF>5%); `↑`/`↓` = allele direction.
 - `qq_resp_faeces_lmm.png` — QQ (λ=0.498).
-- `respiratory_vs_faeces_hits_annotated.tsv` — the 88 hits, VE-ranked, gene-mapped.
-- `respiratory_vs_faeces_gwas_summary.json` — λ, thresholds, counts.
+- `respiratory_vs_faeces_hits_annotated.tsv` — the 88 hits, VE-ranked, gene-mapped; carries
+  **`display_name`** + **`consequence`** (SnpEff class of the SNP).
+- `respiratory_vs_faeces_gwas_summary.json` — λ, thresholds, counts, `consequence_by_direction`.
 - `cross_contrast_overlap_blood_vs_resp.tsv` — the 33 genes significant in both contrasts,
-  with both betas/VEs and a `concordant_invasion` flag (the 2 that replicate up).
+  with both betas/VEs and a `concordant_invasion` flag (the 2 that replicate up). The
+  β-blood-vs-β-resp scatter is [`../../progress_figures/replication_scatter.png`](../../progress_figures/replication_scatter.png).
 
 ## Reproduce
 
