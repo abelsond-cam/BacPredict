@@ -155,7 +155,8 @@ def build_pickup_table(calls: pd.DataFrame, metadata: Path) -> pd.DataFrame:
         "bakta_pickup_pct": round(100 * n_named / n_calls, 1) if n_calls else float("nan"),
         "n_kleborate_carriers": None, "kleborate_agree_pct": None,
     }
-    return pd.concat([cb, pd.DataFrame([overall])], ignore_index=True)
+    cb.loc[len(cb)] = overall  # label-append the OVERALL row (no all-NA concat FutureWarning)
+    return cb
 
 
 def to_markdown(df: pd.DataFrame) -> str:
