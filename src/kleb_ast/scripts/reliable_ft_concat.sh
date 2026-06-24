@@ -31,18 +31,21 @@ if [[ -z "$DRUG" ]]; then echo "ERROR: no drug for array index $SLURM_ARRAY_TASK
 
 D=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed
 FTC=$D/train_kleb_ast/snp_embeddings/ft_amr_cache/$DRUG
+FRC=$D/train_kleb_ast/snp_embeddings/frozen_amr_cache/$DRUG
 OUT=$D/train_kleb_ast/snp_embeddings/reliable_ft_concat/$DRUG
 mkdir -p "$OUT"
 if [[ ! -f "$FTC/ft_genome_mean_${DRUG}.npz" ]]; then echo "ERROR: FT cache missing: $FTC" >&2; exit 1; fi
-echo "=== Kp reliable ESM-vs-FT + concat — drug=$DRUG (task $SLURM_ARRAY_TASK_ID) ==="
+[[ -d "$FRC/frozen_amr_emb" ]] || echo "WARN: frozen cache missing ($FRC) — frozen per-gene LR skipped"
+echo "=== Kp reliable ESM-vs-FT(+frozen) + concat — drug=$DRUG (task $SLURM_ARRAY_TASK_ID) ==="
 
 uv run python -m kleb_ast.reliable_ft_concat \
     --drug "$DRUG" \
     --ast-sheet-path "$D/train_kleb_ast/binary_ast_with_split.csv" \
     --ft-cache-dir "$FTC" \
+    --frozen-cache-dir "$FRC" \
     --esm-store-dir "$D/klebsiella_esm_embeddings" \
     --parquet-dir "$D/klebsiella_protein_sequences" \
     --sidecar-dir "$D/train_kleb_ast/amr_annotation" \
     --out-dir "$OUT" --grain family --n-folds 5 --seed 1
 
-echo "Kp reliable ESM-vs-FT + concat ($DRUG) finished — $OUT"
+echo "Kp reliable ESM-vs-FT(+frozen) + concat ($DRUG) finished — $OUT"

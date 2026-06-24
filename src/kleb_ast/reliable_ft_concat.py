@@ -4,11 +4,12 @@ Consumes Phase-2b's FT token cache (:mod:`kleb_ast.cache_ft_amr_proteins`) + the
 the **reliable CARD/Kleborate AMR labels**, the two deliverables the Bakta-labelled pipeline produced
 unreliably:
 
-1. **Per-AMR-gene ESM-LR vs FT-LR** — for each AMR gene-family, the zero-imputed out-of-fold k-fold LR on
-   the raw ESM-C token (from the store, ``emb[flat_index]`` via the sidecar) vs the fine-tuned Bacformer
-   contextualised token (from the cache), on the *same* reliable carriers →
-   ``reliable_esm_vs_ft_per_gene_<drug>.csv``. This is the corrected version of the disputed "does the FT
-   token learn the gene" comparison.
+1. **Per-AMR-gene ESM-LR vs frozen-Bac-LR vs FT-LR** — for each AMR gene-family, the zero-imputed out-of-fold
+   k-fold LR on the raw ESM-C token (from the store, ``emb[flat_index]`` via the sidecar), the **frozen**
+   Bacformer contextualised token (from ``cache_frozen_amr_proteins``, when ``--frozen-cache-dir`` is given)
+   and the **fine-tuned** Bacformer token (from the cache), on the *same* reliable carriers →
+   ``reliable_esm_vs_ft_per_gene_<drug>.csv`` (each block carries both AUROC and AUPRC). The progression
+   ESM → frozen → fine-tuned isolates how much context and then fine-tuning add per gene.
 2. **FT-mean ⊕ best-gene concat** — genome-mean (FT) alone, then concatenated with the single best AMR gene
    (by its own reliable LR), as an ESM-gene block and as an FT-token block →
    ``reliable_concat_<drug>.csv`` (the FT + concat best-embedding number for the Kp summary panel's third
@@ -62,6 +63,21 @@ def load_ft_gene(ft_cache_dir: Path, sanitized: str) -> tuple[list[str], np.ndar
     return [str(s) for s in z["sample_ids"]], z["vectors"]
 
 
+def load_frozen_gene(frozen_cache_dir: Path, sanitized: str) -> tuple[list[str], np.ndarray]:
+    """One family's *frozen* Bacformer tokens from the cache → ``(carrier_ids, vectors)``."""
+    z = np.load(frozen_cache_dir / "frozen_amr_emb" / f"{sanitized}.npz", allow_pickle=True)
+    return [str(s) for s in z["sample_ids"]], z["vectors"]
+
+
+def _fit_metrics(fit: dict | None, ids: list[str], y: np.ndarray) -> tuple[float, float]:
+    """``(AUROC, AUPRC)`` from a per-gene fit dict — AUPRC from its out-of-fold probabilities — or (nan, nan)."""
+    if not fit:
+        return float("nan"), float("nan")
+    p = np.array([fit["oof_prob"].get(s, np.nan) for s in ids])
+    ap = float(average_precision_score(y, p)) if not np.isnan(p).any() else float("nan")
+    return float(fit["auroc"]), ap
+
+
 def run(
     *,
     ast_sheet: Path,
@@ -71,6 +87,7 @@ def run(
     parquet_dir: Path,
     sidecar_dir: Path,
     out_dir: Path,
+    frozen_cache_dir: Path | None = None,
     grain: str = "family",
     n_folds: int = 5,
     seed: int = 1,
@@ -101,12 +118,21 @@ def run(
         ft_ids, ft_vec = load_ft_gene(ft_cache_dir, san_of[label])
         ft_fit = _fit_one_gene_imputed(ft_ids, ft_vec, all_ids, y_all, ft_vec.shape[1],
                                        n_folds=n_folds, seed=seed)
-        esm_au = float(esm_fit["auroc"]) if esm_fit else float("nan")
-        ft_au = float(ft_fit["auroc"]) if ft_fit else float("nan")
+        # frozen Bacformer per-gene LR (same imputed k-fold, FT-mean universe) — from the frozen token cache
+        fr_fit = None
+        if frozen_cache_dir is not None and (frozen_cache_dir / "frozen_amr_emb" / f"{san_of[label]}.npz").exists():
+            fr_ids, fr_vec = load_frozen_gene(frozen_cache_dir, san_of[label])
+            fr_fit = _fit_one_gene_imputed(fr_ids, fr_vec, all_ids, y_all, fr_vec.shape[1],
+                                           n_folds=n_folds, seed=seed)
+        esm_au, esm_ap = _fit_metrics(esm_fit, read_ids, y_read)
+        ft_au, ft_ap = _fit_metrics(ft_fit, all_ids, y_all)
+        fr_au, fr_ap = _fit_metrics(fr_fit, all_ids, y_all)
         rows.append({
             "gene_family": label, "amr_source": ent["source"],
             "n_carriers": len(ent["ids"]), "prevalence": len(ent["ids"]) / max(len(read_ids), 1),
-            "esm_lr_auroc": esm_au, "ft_lr_auroc": ft_au, "delta_ft_minus_esm": ft_au - esm_au,
+            "esm_lr_auroc": esm_au, "esm_lr_auprc": esm_ap,
+            "frozen_lr_auroc": fr_au, "frozen_lr_auprc": fr_ap,
+            "ft_lr_auroc": ft_au, "ft_lr_auprc": ft_ap, "delta_ft_minus_esm": ft_au - esm_au,
         })
     per_gene = pd.DataFrame(rows).sort_values("n_carriers", ascending=False).reset_index(drop=True)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -157,6 +183,8 @@ def main() -> None:
     p.add_argument("--drug", type=str, required=True)
     p.add_argument("--ft-cache-dir", type=Path, required=True,
                    help="ft_amr_cache/<drug>/ from cache_ft_amr_proteins (ft_genome_mean + ft_amr_emb/ + manifest).")
+    p.add_argument("--frozen-cache-dir", type=Path, default=None,
+                   help="frozen_amr_cache/<drug>/ from cache_frozen_amr_proteins — adds per-gene frozen LR (else skipped).")
     p.add_argument("--esm-store-dir", type=Path, default=rds / "processed" / "klebsiella_esm_embeddings")
     p.add_argument("--parquet-dir", type=Path, default=rds / "processed" / "klebsiella_protein_sequences")
     p.add_argument("--sidecar-dir", type=Path, default=rds / "processed" / "train_kleb_ast" / "amr_annotation")
@@ -168,7 +196,8 @@ def main() -> None:
     run(
         ast_sheet=args.ast_sheet_path, drug=args.drug, ft_cache_dir=args.ft_cache_dir,
         esm_dir=args.esm_store_dir, parquet_dir=args.parquet_dir, sidecar_dir=args.sidecar_dir,
-        out_dir=args.out_dir, grain=args.grain, n_folds=args.n_folds, seed=args.seed,
+        out_dir=args.out_dir, frozen_cache_dir=args.frozen_cache_dir, grain=args.grain,
+        n_folds=args.n_folds, seed=args.seed,
     )
 
 
