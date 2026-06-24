@@ -1,17 +1,17 @@
-locus_tag	display_name	product	blood_consequence	blood_ve	resp_consequence	resp_ve	hotspot_verdict	hotspot_SR_nonsyn
-KPN_RS10715	helix-turn-helix domain-containing protein	helix-turn-helix domain-containing protein	synonymous	6.588529557831324				
-KPN_RS00630	pdhR	pyruvate dehydrogenase complex transcriptional repressor PdhR			noncoding	2.9439324902168673		
-KPN_RS01560	ecpR	ECP biosynthesis operon DNA-binding transcriptional regulator EcpR	missense	1.5791724192771088	missense	2.090354544413654		
-KPN_RS04215	MerR family transcriptional regulator	MerR family transcriptional regulator	missense	1.7186389283172694	missense	1.8495299853975904		
-KPN_RS04610	LacI family DNA-binding transcriptional regulator	LacI family DNA-binding transcriptional regulator			missense	1.6231288930722891		
-KPN_RS16450	flhA	formate hydrogenlyase transcriptional activator FlhA	missense	1.289047652493976				
-KPN_RS12285	LysR family transcriptional regulator	LysR family transcriptional regulator	synonymous	1.2227891117108434				
-KPN_RS08630	DeoR/GlpR family DNA-binding transcription regulator	DeoR/GlpR family DNA-binding transcription regulator			synonymous	1.1558649253012043		
-KPN_RS02365	acrR	multidrug efflux transporter transcriptional repressor AcrR			noncoding	1.0387521243975903		
-KPN_RS14685	sensor histidine kinase	sensor histidine kinase			missense	0.675771062746988		
-KPN_RS28875	helix-turn-helix domain-containing protein	helix-turn-helix domain-containing protein			noncoding	0.3751904902771084		
-KPN_RS10920	LysR family transcriptional regulator	LysR family transcriptional regulator	missense	0.3266372533975904				
-KPN_RS03010	RamA family antibiotic efflux transcriptional regulator	RamA family antibiotic efflux transcriptional regulator					functional(non-syn)	1.8
-KPN_RS06070	phoQ	phoQ					functional(non-syn)	1.77
-KPN_RS18430	qseC	qseC					functional(non-syn)	1.44
-KPN_RS29045	mgrB	mgrB					functional(non-syn)	2.09
+locus_tag	display_name	product	blood_consequence	blood_invasive_af	blood_ve	resp_consequence	resp_invasive_af	resp_ve	poisson_dn_ds	poisson_is_sig	hotspot_verdict
+KPN_RS10715	helix-turn-helix domain-containing protein	helix-turn-helix domain-containing protein	synonymous	0.109	6.588529557831324				1.583333333	False	
+KPN_RS00630	pdhR	pyruvate dehydrogenase complex transcriptional repressor PdhR				noncoding	0.0428	2.9439324902168673	0.444444444	False	
+KPN_RS01560	ecpR	ECP biosynthesis operon DNA-binding transcriptional regulator EcpR	missense	0.9858	1.5791724192771088	missense	0.9833	2.090354544413654	3.666666667	True	
+KPN_RS04215	MerR family transcriptional regulator	MerR family transcriptional regulator	missense	0.9857	1.7186389283172694	missense	0.9826	1.8495299853975904	4.615384615	True	
+KPN_RS04610	LacI family DNA-binding transcriptional regulator	LacI family DNA-binding transcriptional regulator				missense	0.9771	1.6231288930722891	1.56	True	
+KPN_RS16450	flhA	formate hydrogenlyase transcriptional activator FlhA	missense	0.9829	1.289047652493976				5.0	True	
+KPN_RS12285	LysR family transcriptional regulator	LysR family transcriptional regulator	synonymous	0.9826	1.2227891117108434				2.571428571	True	
+KPN_RS08630	DeoR/GlpR family DNA-binding transcription regulator	DeoR/GlpR family DNA-binding transcription regulator				synonymous	0.5569999999999999	1.1558649253012043	0.52173913	False	
+KPN_RS02365	acrR	multidrug efflux transporter transcriptional repressor AcrR				noncoding	0.0115	1.0387521243975903	6.7	True	
+KPN_RS14685	sensor histidine kinase	sensor histidine kinase				missense	0.9774	0.675771062746988	1.714285714	False	
+KPN_RS28875	helix-turn-helix domain-containing protein	helix-turn-helix domain-containing protein				noncoding	0.0223	0.3751904902771084		False	
+KPN_RS10920	LysR family transcriptional regulator	LysR family transcriptional regulator	missense	0.9888	0.3266372533975904				1.428571429	False	
+KPN_RS03010	RamA family antibiotic efflux transcriptional regulator	RamA family antibiotic efflux transcriptional regulator							38.5	True	functional(non-syn)
+KPN_RS06070	phoQ	phoQ							2.233333333	True	functional(non-syn)
+KPN_RS18430	qseC	qseC								False	functional(non-syn)
+KPN_RS29045	mgrB	mgrB							6.75	True	functional(non-syn)

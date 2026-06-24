@@ -209,7 +209,8 @@ def significant_hits(
     (∝ f(1-f)·β², normalised by the balanced-binary phenotype variance ~0.249) — *not* by
     direction or raw significance (which foregrounds rare lineage-private markers; note
     pyseer's own ``variant_h2`` does the same and is deliberately not used here). A
-    presence/absence variant is symmetric, so β sign is kept only as the ``direction``
+    presence/absence variant is symmetric, so β sign is not a ranking axis: it is reoriented to the
+    invasion allele (``invasive_af`` / ``abs_beta`` / ``invasion_allele``) and kept as the ``direction``
     attribute. ``pattern_group`` / ``n_in_pattern`` flag variants sharing one
     presence/absence pattern (perfect LD = one clonal sub-lineage signal, one row per gene).
     """
@@ -223,6 +224,17 @@ def significant_hits(
     beta = pd.to_numeric(hits["beta"], errors="coerce") if "beta" in hits.columns else pd.Series(np.nan, index=hits.index)
     hits["var_explained_pct"] = af * (1 - af) * beta**2 / pheno_var * 100
     hits["maf"] = np.minimum(af, 1 - af)  # rarer allele; MAF>0.05 = neither allele a tiny sample
+
+    # Invasion orientation. pyseer reports af/β relative to the *reference* (ALT presence), an artefact
+    # of reference choice — not of biology. We are interested in whichever allele confers invasion,
+    # common or rare. So orient every hit to its invasion allele (β>0 ⇒ ALT, β<0 ⇒ REF) and report:
+    #   invasive_af = frequency of the invasion allele (af if β>0 else 1-af) — high ⇒ a population-wide
+    #                 invasion-adapted allele (rare derived variants lose it); low ⇒ a rare invasion variant;
+    #   abs_beta    = |β|, the direction-free effect magnitude.
+    # var_explained_pct (above) is already orientation-invariant: af(1-af)=invasive_af(1-invasive_af), β²=|β|².
+    hits["invasive_af"] = np.where(beta > 0, af, 1 - af)
+    hits["abs_beta"] = beta.abs()
+    hits["invasion_allele"] = np.where(beta > 0, "ALT", "REF")  # allele (vs reference) that confers invasion
 
     # clonal blocks: identical (af, β, p) == one presence/absence pattern (perfect LD)
     pat_key = (af.round(6).astype(str) + "|" + beta.round(6).astype(str) + "|"
@@ -547,7 +559,8 @@ def run(
         mapped = cross_ref_virulence(map_positions_to_genes(hit_pos, gene_df))
 
     # Assemble the annotated hit table: the pyseer stats + POS + the gene-mapping columns.
-    carry = [c for c in ("variant", "var_explained_pct", "maf", "af", "filter-pvalue", pval_col, "beta",
+    carry = [c for c in ("variant", "var_explained_pct", "invasive_af", "abs_beta", "invasion_allele",
+                         "maf", "af", "filter-pvalue", pval_col, "beta",
                          "beta-std-err", "direction", "lineage", "variant_h2", "pattern_group",
                          "n_in_pattern", "notes") if c in hits.columns]
     annotated = pd.concat(

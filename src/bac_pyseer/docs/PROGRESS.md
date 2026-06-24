@@ -1,175 +1,227 @@
-# *Klebsiella* invasion GWAS — progress report
+# *Klebsiella* invasion GWAS — variant-axis report
 
-Single hub for the pyseer/GWAS analysis of *Klebsiella pneumoniae* **invasion** (blood / respiratory vs
-faeces isolation source). The per-phase READMEs under [`visualise/`](visualise/) hold the method detail;
-this page is the narrative + the cross-axis synthesis. **Posture: the tables and figures lead; the
-statistics are the evidence; known gene mechanisms are annotation; conclusions are kept tentative.**
+**What primes a *Klebsiella* isolate to cause invasive disease (blood / respiratory) rather than gut
+carriage (faeces)?** This is the single, self-contained write-up of the **variant (core-SNP) axis**: two
+linear-mixed-model GWAS sharing faeces as the control, every hit re-oriented to its **invasion allele**,
+read for *where the invasion signal sits, how reproducibly, in which lineages, and in which genes*. The
+accessory/HGT axes (unitig, gene presence/absence) are pending (§6). Per-axis figures + tables live under
+[`visualise/`](visualise/) and [`progress_figures/`](progress_figures/); this page is the whole narrative.
 
----
+**Posture.** Evidence first, conclusions tentative. We do **not** equate synonymous/noncoding with
+"non-functional". The LMM over-corrects population structure (λ≪1), so clade-restricted hits are treated
+as **real**, not confounding. Effect sizes are small (≤8% variance each): these are *leads*, not a
+classifier.
 
-## 1. Purpose & question
-
-Does genomic variation associate with the isolation source we use as an invasion proxy (blood and
-respiratory = invasive niches; faeces = gut carriage)? The programme's larger question is **whether
-invasion is driven more by horizontally-acquired (accessory/HGT) determinants or by chromosomal
-changes** — so we look along several independent axes (§3) and ask which signals each surfaces.
-
-## 2. Data & cohorts
-
-One common reference for every sample: **`NC_009648`** (*K. pneumoniae* MGH 78578 chromosome,
-5,315,120 bp). Variant calls are anchored to this chromosome **only** — the reference's five plasmids
-(`NC_009649`–`53`) are **not** in the call set, so plasmid-borne accessory content is invisible to the
-variant axis (§3). Per-contrast orientation ([`orientation_table.tsv`](orientation_table.tsv)):
-
-| contrast | method | n | λ | variants tested | hits | invasion-direction hits |
-|---|---|--:|--:|--:|--:|--:|
-| blood vs faeces | LMM (FaST-LMM, core-SNP kinship) | 13,602 (faeces 6,426 / blood 7,176) | **0.562** | 372,238 | 110 | 18 |
-| resp vs faeces | LMM (FaST-LMM, core-SNP kinship) | 9,169 (faeces 4,737 / resp 4,432) | **0.498** | 326,146 | 88 | 40 |
-
-**λ < 1 in both.** The LMM random effect (a kinship built from the core SNPs themselves) is a
-*conservative* — arguably *over-* — correction for population structure. A practical consequence worth
-keeping in mind throughout: signals that survive this correction, including **clade-/lineage-attributed
-hits, are unlikely to be pure structure artefacts** and deserve to be examined, not discounted.
-
-## 3. The four analysis axes — what each can and cannot see
-
-| axis | feature | sees | blind to | status |
-|---|---|---|---|---|
-| **Variant (core SNP)** | reference-anchored SNP/indel presence | chromosomal alleles, incl. SNPs *within* chromosomally-integrated islands | the 5 reference plasmids; any accessory gene absent from MGH 78578 | **done** (this report) |
-| **Unitig (accessory/HGT)** | GGCAT coloured de-Bruijn unitigs | accessory sequence incl. plasmid/MGE content | — | in progress (matrices built; LMM run needs more memory) |
-| **Hotspot (per-source diversifying)** | distinct-locus richness per gene per source | whether a niche accrues more variation in a gene | causality | **done** — secondary/orthogonal (§6) |
-| **Gene presence/absence** | Panaroo GPA Rtab | gene gain/loss | within-gene change | planned |
-
-The variant axis is the **chromosomal** view. The unitig and GPA axes are where **plasmid-borne /
-accessory** adaptation should appear — the direct test of the HGT-vs-chromosomal question.
+**Headline.** The blood GWAS **replicates near-completely in an independent respiratory cohort** —
+**85 of 86 independent patterns share the invasion direction** (binomial p≈1.1×10⁻²⁴; β correlated in
+magnitude, r²=0.78). Most invasion variance sits in **common alleles of genes present in the reference**
+(79% of blood's invasion variance at invasive_af ≥ 0.5) — invasion is largely a **population-wide adapted
+state**, not a rare-variant phenomenon. The coherent gene themes are **transcriptional regulators
+(de-repression)** and **iron / Fe-S acquisition**; a minority of hits sit in **independently recurrent
+(convergent) mutation hotspots**, the rest are single-origin alleles spread clonally.
 
 ---
 
-## 4. PRIMARY — niche-specific phenotype GWAS (the variant axis)
+## Data, cohorts, and how we read a hit
 
-Method of record is the **LMM** (`pyseer --lmm`, FaST-LMM kinship); the fixed-effects MDS attempt was
-abandoned (λ=4.34, [`visualise/mds_model/`](visualise/mds_model/)). Hits are ranked by variance
-explained. Full detail: [`visualise/lmm_model/`](visualise/lmm_model/) (blood/faeces) and
-[`visualise/faeces_resp_lmm_model/`](visualise/faeces_resp_lmm_model/) (resp/faeces, the replication
-contrast). β>0 = the invasive side.
+One reference for every sample: **`NC_009648`** (*K. pneumoniae* MGH 78578 chromosome, 5,315,120 bp).
+Calls are anchored to this chromosome **only** — its five plasmids (`NC_009649`–`53`) are **not** in the
+call set, so plasmid-borne accessory content is invisible to this axis (that is what the unitig/GPA axes,
+§6, are for). Per-contrast orientation ([`orientation_table.tsv`](orientation_table.tsv)):
 
-### 4.1 What associates
+| contrast | n (control / invasive) | λ | variants | hits | rare / common invasion allele |
+|---|---|--:|--:|--:|--:|
+| blood vs faeces | 13,602 (6,426 / 7,176) | **0.562** | 372,238 | 110 | 14 / 96 |
+| resp vs faeces | 9,169 (4,737 / 4,432) | **0.498** | 326,146 | 88 | 43 / 45 |
 
-- **A cross-lineage adhesion + capsule signature replicates across both invasive niches**: the
-  **fimbrial/pilus outer-membrane usher** (`KPN_RS24485`) and **capsule-assembly *wzi*** (`KPN_RS13515`)
-  are significant with β>0 in *both* blood/faeces and resp/faeces — same SNP, same direction
-  ([`replication_scatter`](progress_figures/replication_scatter.png),
-  [`cross_contrast_overlap_blood_vs_resp.tsv`](visualise/faeces_resp_lmm_model/cross_contrast_overlap_blood_vs_resp.tsv)).
-  Of the 18 blood-invasion hits, these two are the only ones reaching genome-wide significance in the
-  invasion direction in respiratory.
-- **Blood additionally carries an iron / Fe-S theme** (siderophore receptor, iron-redox enzyme, NfuA,
-  BtuB, *nadB*) that does **not** replicate in respiratory — niche-specific, to be read alongside §4.2.
-- Many hits are **single-Sublineage-attributed** (e.g. SL258, SL147, SL17, SL307). Given λ<1 (§2) these
-  are treated as **plausibly real clade-level signals** — candidate clade-specific adaptation — not
-  dismissed as confounding.
+Method of record: **LMM** (`pyseer --lmm`, FaST-LMM kinship from the core SNPs); the fixed-effects MDS
+attempt was abandoned (λ=4.34, severe under-correction). **λ<1 in both** ⇒ the kinship random effect is a
+*conservative* (arguably over-) correction, so surviving signals — including clade-attributed ones — are
+unlikely to be pure structure artefacts.
 
-### 4.2 The consequence spectrum of the hits (the evidence)
-
-Each hit's associated SNP is labelled by its reference consequence (SnpEff effect map). The breakdown
-([`hit_consequence_spectrum.png`](progress_figures/hit_consequence_spectrum.png)):
-
-| contrast · direction | synonymous | noncoding | missense | LoF |
-|---|--:|--:|--:|--:|
-| **blood — invasion (β>0)** | 10 | 8 | **0** | **0** |
-| blood — faeces (β<0) | 36 | 14 | 40 | 2 |
-| **resp — invasion (β>0)** | 15 | 15 | 7 | 3 |
-| resp — faeces (β<0) | 16 | 10 | 22 | 0 |
-
-**The observation** (a factual breakdown, *not* a conclusion): the **blood-invasion** hits carry **no
-protein-coding changes** — every one is synonymous or noncoding — whereas the faeces direction and the
-respiratory-invasion direction both include missense/LoF changes.
-
-**What this does and does not mean.** It does **not** follow that the blood-invasion hits are
-"non-functional" or mere lineage tags: **synonymous** SNPs can affect translation/mRNA, and **noncoding**
-SNPs can hit promoters, RBSs, operators or sRNAs and be the actual driver of an expression-level
-phenotype. Equally, any of them *may* tag an unobserved causal variant or a genetic background. The
-consequence label alone cannot decide between these. Tentative readings to **test, not conclude**:
-
-1. the blood-invasion association may act through **regulatory / expression-level** changes (the
-   noncoding hits — see the regulatory-context columns in the hit table) rather than convergent
-   protein-coding adaptation;
-2. and/or it may reflect **clade-/accessory-background** structure that the chromosomal scan can only
-   tag — directly testable on the unitig/GPA axes (§3, §7).
-
-Respiratory's inclusion of missense/LoF in the invasion direction (e.g. an MdtB/MuxB efflux LoF, a
-carbohydrate porin, *citC*; mostly SL258) is the complementary observation — there, coding-level change
-*is* part of the invasion-associated signal.
+**The four axes.** Variant/core-SNP (**this report**: chromosomal alleles, incl. SNPs within
+chromosomally-integrated islands; blind to plasmids) · **independent-origin hotspot** (a sub-analysis of
+the same variants, §5) · **unitig** (accessory/HGT sequence, §6, running) · **gene presence/absence**
+(Panaroo, §6, planned).
 
 ---
 
-## 5. Loss-of-function & regulator hits (focus)
+## §1 · Invasion framing and the common-allele spectrum
 
-Regulators/repressors that surface across the variant GWAS and the hotspot Chi-sq, with the consequence
-of the associated change ([`regulator_derepression_table.tsv`](regulator_derepression_table.tsv); 16
-hits). The organising question — to test, not assert — is **de-repression**: loss-of-function or
-missense change in a *negative* regulator can de-repress a stress / efflux / virulence pathway.
+pyseer reports each variant's `β`/`af` **relative to the reference allele** — an artefact of which genome
+we picked, not of biology. We care about *all* invasion-priming variation, and the **common** allele is
+often the one *Klebsiella* evolution has selected. So every hit is re-oriented to its **invasion allele**:
 
-- **From the hotspot Chi-sq (non-synonymous-enriched):** **`phoQ`** (PhoPQ sensor kinase), **`mgrB`**
-  (PhoPQ feedback *repressor* — its LoF is the canonical colistin/PhoPQ-de-repression route), **`ramA`**
-  (AcrAB-TolC efflux activator), **`qseC`** (quorum-sensing sensor kinase).
-- **From the phenotype GWAS:** **`acrR`** (AcrAB efflux *repressor*; noncoding change), **`pdhR`**
-  (pyruvate-dehydrogenase *repressor*; noncoding), `ecpR`, and several LysR/LacI/MerR-family regulators
-  (missense); plus a respiratory **MdtB/MuxB efflux** LoF.
+- **`invasive_af`** = frequency of the invasion-associated allele (`af` if β>0, else `1−af`). Near **1** ⇒
+  the invasion-adapted allele is **common / population-wide**; near **0** ⇒ a **rare** invasion variant.
+- **`|β|`** (`abs_beta`) = effect magnitude, reported positive (every hit reads "+ invasion").
+- **`var_explained`** ≈ `af(1−af)·β²` (normalised by the binary-phenotype variance ≈0.249) is **invariant
+  to the reference choice** — the direction-free footing that ranks hits and gates §4/§5.
 
-These are candidate de-repression events; whether the noncoding/regulatory changes alter expression is
-the experiment, not a claim here.
+**Most invasion variance sits at the common end of the spectrum.**
+![invasive_af histogram + cumulative variance](progress_figures/invasive_af_histogram.png)
+Weighting the `invasive_af` distribution by variance explained, **79% of blood's invasion variance (66%
+respiratory) lies at `invasive_af` ≥ 0.5** — common, population-wide invasion-adapted alleles, the signal
+a conventional rare-variant (β>0-only) GWAS would discard as "faeces hits". The top loci span both ends:
+common — a **riboflavin-synthase** noncoding change (invasive_af 0.93, VE 8.1%), the **RcnA Ni/Co efflux**
+missense (0.93, 7.5%), **focA** (0.89, 4.7%); rare — **dnaK** (0.06, 7.8%), **phoA** (0.11, 7.7%).
+
+**Synonymous hits are removed only where they are clade diversity, not signal (the hypervariable rule).**
+A synonymous SNP changes no protein, but it can *tag* a real selective sweep — so we keep synonymous hits
+in ordinary genes (the iron pathway, §4b, is carried by synonymous tags) and **drop them only in
+hypervariable genes** (capsule/defence; defined in §4a), where the synonymous variation is lineage
+sequence diversity. In practice this sets aside the **wzi** (capsule) synonymous hit; the iron synonymous
+tags are retained.
+![invasion variance by consequence](progress_figures/invasion_variance_by_consequence.png)
 
 ---
 
-## 6. SECONDARY (orthogonal) — hotspot 'arms-race' Chi-sq
+## §2 · Blood ↔ respiratory concordance — the strongest evidence the signal is real
 
-A different question from §4: *does an invasion niche accrue **more distinct functional variation** in a
-gene than the background — i.e. is there diversifying selection / an "arms race" behind the phenotype?*
-Distinct-locus richness per gene per source, two controls — **population-vs-niche-specific** (niche-pair
-vs one-vs-rest contrasts) and **synonymous** (neutral baseline). Detail + the ancestry-correction note:
-[`visualise/source_hotspot_chisq/`](visualise/source_hotspot_chisq/). Evidence
-([`hotspot_codon_vs_clade.png`](progress_figures/hotspot_codon_vs_clade.png)) splits the 42 significant
-genes into two classes:
+Both contrasts share faeces as control and use the invasive niche as case, so a variant's β sign is
+directly comparable: β>0 ⇒ the ALT allele is the invasion allele in *both*. Taking the **union of every
+Bonferroni-significant variant in either niche** (165 variants: 110 blood + 88 resp, 33 shared) and
+looking each up in *both* full associations:
 
-- **Codon-level functional** (non-syn share-ratio ≫ synonymous): the regulators of §5 (`phoQ`, `mgrB`,
-  `ramA`, `qseC`) + **`sufB`** (Fe-S; the one cross-niche functional hit). Modest effects (1.3–2.8×),
-  synonymous-clean — a respiratory-weighted signal of functional diversification.
-- **Clade-linked sequence diversity** (non-syn ≈ synonymous): the **cps K-locus** (~2.72–2.75 Mb),
-  a chromosomally-integrated **pathogenicity/defence island** (~5.14 Mb: a *"STY4528 pathogenicity-island
-  replication protein"* + ParB + the **DISARM** anti-phage system + RM + an Abi toxin), and a **prophage**
-  gene (~1.59 Mb). The synonymous control shows these are **not** under codon-level diversifying selection,
-  but they *are* real between-clade diversity in integrated mobile elements — consistent with §2/§4.1's
-  clade-adaptation reading, not a confound to discard.
+- of the **137 testable in both cohorts, 136 (99.3%) agree in invasion direction**;
+- collapsing perfect-LD clonal blocks to independent patterns, **85 of 86 patterns are concordant**
+  (binomial sign-test **p ≈ 1.1×10⁻²⁴**);
+- the effect sizes correlate in **magnitude** too: **r² = 0.78** (Pearson r = 0.88) for β_blood vs β_resp.
 
-This axis is **secondary**: it qualifies the phenotype hits (which are diversifying vs which are
-clade-structured), it does not establish association.
+![blood↔resp concordance union](progress_figures/blood_resp_concordance_union.png)
 
-## 7. Unitig (in progress) & Panaroo GPA (planned)
+So the hits are a **shared invasion signal across two independent invasive niches**, not blood-specific —
+even though most are *below* the per-variant genome-wide bar in the smaller respiratory cohort. The strict
+subset clearing Bonferroni in **both** is a cross-lineage **adhesion + capsule** signature — the
+**fimbrial/pilus usher** (`KPN_RS24485`), **capsule *wzi*** (`KPN_RS13515`), and a **btuB** variant (same
+SNP, same direction). Detail: [`blood_resp_concordance_union.tsv`](visualise/faeces_resp_lmm_model/blood_resp_concordance_union.tsv).
 
-The accessory/HGT axes — where plasmid-borne adaptation invisible to §4 should surface. Unitig matrices
-are built (per cohort, GGCAT, 1% MAF); the blood/faeces unitig LMM run OOM'd at 128 GB and needs a larger
-allocation (or a harder MAF pre-filter). GPA awaits the per-SL Panaroo outputs. **Placeholder** — fill on
-completion.
+---
 
-## 8. Cross-axis synthesis
+## §3 · Lineage breadth — species-wide, single-sublineage, or rare
 
-[`cross_axis_candidates.tsv`](cross_axis_candidates.tsv) — one row per gene across the union of
-significant hits (167 genes): variant blood/resp β, VE, **consequence**, lineage; replication flag;
-`is_regulator` / `mobile_element` flags; hotspot verdict; unitig placeholder. The two genes significant
-and invasion-concordant across both variant contrasts are the **fimbrial usher** and **Wzi**.
+For each hit we asked how its invasion allele is distributed across Kleborate sub-lineages (SL), by
+intersecting the per-sample carriage matrix with SL labels ([`lineage_breadth.tsv`](visualise/faeces_resp_lmm_model/lineage_breadth.tsv);
+reference = the 13,602-isolate blood/faeces cohort, which spans SL258/147/17/307 + many rare SLs).
 
-## 9. Caveats
+![lineage breadth](progress_figures/lineage_breadth.png)
 
-- **Population structure.** The LMM is conservative (λ<1, §2), so clade-attributed hits are treated as
-  plausibly real; but residual structure cannot be *fully* excluded — the unitig/GPA axes and explicit
+- **Common invasion alleles are pan-lineage.** All **110** common (REF) invasion alleles are
+  **species-wide** (carried across hundreds of SLs; e.g. the riboflavin-synthase allele in 12,665 carriers
+  across 356 SLs) — consistent with §1: the population-wide invasion-adapted background.
+- **Rare invasion alleles split three ways:** **17 species-wide** (a derived allele recurring across many
+  distantly-related SLs — see §5, convergence), **7 single-sublineage** (e.g. a **TonB siderophore**
+  variant 88% in SL307, the **dnaK** variant 84% in SL307), **8 few-sublineage**, and **23 sub-1%** (very
+  rare / lineage-private).
+
+Because the LMM over-corrects (λ≪1) and the hits replicate across niches (§2), the **single-sublineage
+hits are treated as real candidate clade-specific adaptations** — plausibly to that clade's acquired/HGT
+accessory content — not as confounding. They are exactly the hits the accessory axes (§6) should
+illuminate.
+
+---
+
+## §4 · What genes the hits are in
+
+### §4a · Frequently-mutated vs real biology (the filter)
+
+Some genes appear as hits simply because they are **hypervariable** — they accumulate sequence diversity
+for reasons unrelated to invasion (capsule immune-evasion, phage-defence arms races). We flag these with
+the per-niche **distinct-locus-richness Chi-sq**: a gene whose **synonymous** diversity is as enriched as
+its non-synonymous (NS/syn ≈ 1, the `density/clade` verdict) is *just frequently mutated*; a gene with
+**non-syn ≫ syn** carries codon-level selection.
+
+![frequently-mutated vs selection](progress_figures/frequently_mutated_vs_selection.png)
+
+Six hit genes are flagged hypervariable — **capsule *wzi*, cps K-locus (*gndA*, *ugd*, polysaccharide
+export), a type-I restriction-modification defence gene, a Y-family DNA polymerase** — and set aside (their
+synonymous hits dropped, §1). Note this is the **inverse** of a naïve "high NS/syn = noise" reading: the
+genome-wide raw NS/syn baseline is **1.68** (≡ site-normalised dN/dS ≈ 0.56), and the genes *above* it are
+the real ones (§4b/§5), while the hypervariable genes sit *on* the synonymous diagonal.
+
+### §4b · The coherent invasion themes
+
+With the hypervariable genes set aside, the named themes carrying invasion variance are
+([`cross_axis_candidates.tsv`](cross_axis_candidates.tsv), Σ VE by category):
+
+![invasion variance by category](progress_figures/invasion_variance_by_category.png)
+
+- **Transcriptional regulators / de-repression** (16 genes, Σ VE ≈ 21) — the lab-focus theme. **RamA**
+  (efflux activator), **mgrB** (PhoPQ feedback *repressor* — its loss is the canonical PhoPQ-de-repression
+  route), **phoQ**, **qseC**, **acrR** (AcrAB *repressor*), **pdhR**. The organising question (to test, not
+  assert) is **de-repression**: loss-of-function/missense in a *negative* regulator de-represses a stress /
+  efflux / virulence pathway. Read in the invasion frame, *does the invasion allele carry the disruption or
+  the intact form?* — table: [`regulator_derepression_table.tsv`](regulator_derepression_table.tsv),
+  carrying consequence, `invasive_af`, dN/dS and the recurrent-mutation flag.
+- **Iron / Fe-S acquisition** (7 genes, Σ VE ≈ 13) — **TonB siderophore receptor, an iron-redox enzyme,
+  NfuA, *nadB*, *btuB***. This theme **replicates in direction** across to respiratory (§2) and several of
+  its genes are independently-recurrent hotspots (§5) — a coherent pathway, the pattern expected of true
+  invasion determinants.
+- **Adhesion / fimbrial** (3 genes, Σ VE ≈ 8) — the cross-lineage **fimbrial usher** (§2).
+- A large **diffuse remainder** (Σ VE ≈ 209 across 135 genes) — metabolic, membrane, and hypothetical
+  loci, individually small; not yet a theme.
+
+(Gene mechanisms are supporting annotation; the statistics lead. Whether a noncoding/regulatory change
+alters expression is the experiment, not a claim here.)
+
+---
+
+## §5 · Independent-origin (recurrent-mutation) hotspots
+
+A separate question from §4's *which genes*: of the invasion-hit genes, **which arose by recurrent,
+phylogenetically-independent mutation** (convergent adaptation — the same gene hit repeatedly across the
+tree) **vs which were acquired once and spread widely** (single origin, clonal dissemination)? The
+collaborator's genome-wide **Poisson recurrent-mutation test** answers this directly: `is_sig` flags a
+gene with significantly more independent mutations than expected (768 / 5,422 genes genome-wide, 14.2%),
+and `poisson_dn_ds` (raw non-syn/syn, baseline 1.68) measures the protein-level pressure.
+
+![independent-origin hotspots](progress_figures/independent_origin_hotspots.png)
+
+**37 of the 167 invasion-hit genes are independent-origin hotspots.** They are precisely the §4b theme
+genes: **RamA (dN/dS 38.5), mgrB (6.75), phoQ (2.23), the iron-redox enzyme (3.2), the TonB siderophore
+receptor (2.23)** — repeatedly, independently selected ⇒ strong evidence of convergent invasion
+adaptation. By contrast the **fimbrial usher (1.23), NfuA (1.0), *nadB* (0.75)** are *not* recurrent
+hotspots — single-origin alleles spread clonally (cf. §3: the single-sublineage rare hits). This is **not**
+an "arms race" reading: §1 already shows much invasion-directed mutation is population-wide; §5 adds *how*
+it arose — recurrent independent origin vs single-origin spread.
+
+The per-niche distinct-locus-richness Chi-sq (§4a's tool) is kept as a secondary cross-check: it asks
+whether an invasion niche carries *more* of a gene's distinct variation than the background — a modest,
+respiratory-weighted signal in the same regulators (`phoQ`, `mgrB`, `ramA`, `qseC`) + `sufB`; detail in
+[`visualise/source_hotspot_chisq/`](visualise/source_hotspot_chisq/).
+
+---
+
+## §6 · Accessory axes (pending) — unitig & Panaroo GPA
+
+The chromosomal variant axis cannot see plasmids or accessory genes absent from MGH 78578 — yet the
+single-sublineage hits (§3) and the clade-adaptation reading point exactly there. Two axes are in flight:
+
+- **Unitig (accessory/HGT) LMM** — GGCAT coloured de-Bruijn unitigs, 64-way sharded (the n×n kinship is
+  computed once and reused by every shard; mathematically exact). The blood/faeces chain has completed;
+  λ + hit count are being re-queried (the result fetch hit a transient connection error). **Placeholder.**
+- **Panaroo gene presence/absence GWAS** (`--pres`) — gene gain/loss. **Planned** (inputs TBD).
+
+**Planned figures for these axes** (ideas, for when they land): a unitig Manhattan + unitig↔variant gene
+overlap; a unitig blood↔resp concordance mirroring §2; an **UpSet** of hit overlap across all axes
+(variant-blood / variant-resp / independent-origin / hypervariable / unitig / GPA); and a genome-wide
+dN/dS-vs-invasion-VE scatter (does positive selection track invasion association?). These are where
+plasmid-borne accessory adaptation — the direct test of the HGT-vs-chromosomal question — should surface.
+
+---
+
+## §7 · Caveats & status
+
+- **Between-strain association**, not a within-host gut→blood transition; chromosome-anchored only
+  (plasmids invisible, §6); small per-variant effects (leads, not a classifier).
+- **Population structure**: the LMM is conservative (λ<1), so clade-attributed hits are treated as
+  plausibly real — but residual structure cannot be *fully* excluded; the unitig/GPA axes and explicit
   clade analyses are the resolving follow-ups.
-- **Chromosome-anchored.** The variant axis cannot see the reference plasmids or accessory genes absent
-  from MGH 78578 (§3).
-- **Consequence ≠ causality.** §4.2 — synonymous/noncoding are not assumed non-functional.
-- **Modest hotspot effects** (§6), and it is a screen, not proof.
+- **Consequence ≠ causality**; **`invasive_af` ≠ mechanism** — common vs rare, and the consequence label,
+  do not alone separate causal from regulatory from background-tag.
+- **The fixed-effects MDS run was abandoned** (λ=4.34); LMM is the method of record.
 
-## 10. Status & next
-
-Variant LMM (both contrasts) + per-hit consequence + hotspot Chi-sq: **done**. Next: re-run the unitig
-LMM (more memory), then GPA; Bakta re-annotation of the reference for richer gene symbols. Cross-task
+**Status.** Variant LMM (both contrasts) + invasion orientation + per-hit consequence + blood↔resp
+concordance + lineage breadth + independent-origin hotspots: **done** (this report). Next: the unitig LMM
+result (§6), then Panaroo GPA; a Bakta re-annotation of the reference for richer gene symbols. Cross-task
 tracker: [`../../../ToDo.md`](../../../ToDo.md).

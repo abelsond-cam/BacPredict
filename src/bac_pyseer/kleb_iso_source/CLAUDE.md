@@ -12,11 +12,12 @@ Current state of the analysis axes (detail in PROGRESS.md):
 
 - **(a) Variant (core-SNP) LMM GWAS** — **DONE** and the method of record. blood/faeces +
   resp/faeces; fixed-effects MDS abandoned (λ=4.34). Each hit now carries its SNP `consequence`.
-- **(b) Per-source hotspot Chi-sq** — **DONE** (secondary/orthogonal: diversifying-selection
-  "arms race" behind the phenotype). Built from our own per-sample caches + the SnpEff effect map
-  — *not* blocked on an external hotspot upload (that whole-population dN/dS route was a documented
-  NULL, since removed).
-- **(c) Unitig (accessory/HGT) LMM** — matrices built; LMM run needs more memory (OOM'd at 128 G).
+- **(b) Per-source hotspot Chi-sq + Poisson recurrent-mutation test** — **DONE** (the §4a/§5
+  cross-checks, *not* "arms race"). The per-source Chi-sq flags **hypervariable** genes (capsule/defence,
+  syn≈non-syn); the collaborator Poisson test (`data/combined_poisson_test_variant_hotspots.txt`) supplies
+  per-gene dN/dS + the phylogenetically-**independent recurrent-mutation** flag (`is_sig`) that drives §5.
+- **(c) Unitig (accessory/HGT) LMM** — running **sharded** (64×~100k unitigs, `--mem=128G`; n×n kinship
+  computed once, reused per shard). blood/faeces chain completed; λ + hits being re-queried. resp + GPA next.
 - **(d) Panaroo gene-presence/absence GWAS** — planned (inputs TBD).
 
 ---
@@ -134,8 +135,12 @@ only ~10-30% dense); (3) writing the dense 13,602² distance TSV. Levers before 
   - **Invasion-direction replication (β>0 in both): only capsule *wzi* (KPN_RS13515) and the
     fimbrial/pilus usher (KPN_RS24485)** — same SNP, same direction, cross-lineage, comparable
     or larger effect. A reproducible adhesion+capsule invasion signature across two niches.
-  - **The blood-vs-faeces iron theme does NOT replicate** (iron-redox/nadB/phoA/dnaK/siderophore
-    absent; btuB opposite sign) → was blood-specific or weak, not a general invasion determinant.
+  - **The blood iron / Fe-S theme replicates in *direction*** (corrects an earlier "does not replicate"
+    note): at the *same variants* in resp, all 5 iron loci (siderophore receptor, iron-redox enzyme, nfuA,
+    nadB, btuB) carry **concordant invasion-direction β** (resp nominal p 0.008–0.04; btuB synonymous
+    4,661,266 genome-wide sig at 1.5e-7), attenuated ~½ — sub-genome-wide in the smaller resp cohort but
+    uniformly same-direction (sign-test p≈0.03) ⇒ real, shared across niches, not blood-specific. btuB is
+    the *same* direction in both contrasts (the old "opposite sign" was one sub-significant variant).
   - Methodology note: hits ranked by variance explained, MAF>5% for the robust set; ranking +
     plotting is direction-agnostic (see the blood/faeces `lmm_model/` README).
   - Next replication: faeces vs liver/abscess.
