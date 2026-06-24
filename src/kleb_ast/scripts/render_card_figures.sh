@@ -10,7 +10,7 @@
 #   #2 CARD cause histogram (family + allele) -> <drug>_card_cause_histogram_<grain>.png
 #   #3 CARD ladder (family)                   -> <drug>_card_ladder_family.png
 # and once across all drugs:
-#   #4 combined panel (family + allele)       -> kp_card_summary_panel_<grain>.png
+#   #4 headline panel (CARD ceiling vs best Bacformer) -> kp_card_vs_best_bacformer.png
 #   #5 gene-ingredient concat summary         -> ingredient/gene_ingredient_concat_<mean>.png
 set -euo pipefail
 cd "$(dirname "$0")/../../.."        # repo root
@@ -42,8 +42,8 @@ for drug in "${DRUGS[@]}"; do
         echo "  (per-gene #1 skipped for ${drug})"
 done
 
-# #4 combined panel (both grains)
-uv run python -m kleb_ast.build_card_panel --grains family allele
+# #4 headline panel — CARD ceiling vs best Bacformer (family-grain ceiling)
+uv run python -m kleb_ast.build_card_panel
 
 # #5 gene-ingredient concat summary (render from the committed per-drug CSVs under ${VIS}/ingredient)
 uv run python -m kleb_ast.plot_gene_ingredient_concat \

@@ -6,3 +6,4 @@ ESM Sul,ESM,0.7999144915985921,,Sul,True
 BacF FT PmrB,Bacformer,0.9787059175134488,,PmrB,False
 BacF FT mean ⊕ ESM Sul,Bacformer,0.9775187620375904,0.9825384099687102,Sul,True
 BacF FT mean ⊕ BacF FT PmrB,Bacformer,0.9803330676761638,0.9854226770536194,PmrB,False
+BacF FT mean ⊕ frozen BacF Sul,Bacformer,0.97868931394036,,Sul,True
