@@ -52,10 +52,12 @@ FAMILY_LABEL = {
 
 
 def _gene_auroc(per_gene_csv: Path, gene: str, col: str) -> float | None:
-    """``col`` (esm_lr_auroc / ft_lr_auroc) for ``gene`` in the reliable per-gene CSV, or None."""
+    """``col`` (esm_lr_auroc / ft_lr_auroc / *_auprc) for ``gene`` in the reliable per-gene CSV, or None."""
     if not per_gene_csv.exists():
         return None
     df = pd.read_csv(per_gene_csv)
+    if col not in df.columns:                       # older per-gene CSV without the AUPRC columns
+        return None
     row = df[df["gene_family"].astype(str) == str(gene)]
     return float(row[col].iloc[0]) if not row.empty else None
 
@@ -108,15 +110,17 @@ def build_table(drug: str, *, grain: str, summary_csv: Path, per_gene_csv: Path,
         rows.append({"rung": "CARD all-determinant ceiling", "family": "CARD",
                      "auroc": ceiling, "auprc": ceiling_pr, "gene": "", "causal": None})
 
-    # the per-gene CSV carries only AUROC for single genes — AUPRC is n/a for these two rungs
+    # single-gene rungs — AUROC + AUPRC (auprc is None on older per-gene CSVs that predate the column)
     esm_au = _gene_auroc(per_gene_csv, best_esm, "esm_lr_auroc")
     if esm_au is not None:
-        rows.append({"rung": f"ESM {best_esm}", "family": "ESM", "auroc": esm_au, "auprc": nan,
-                     "gene": best_esm, "causal": best_esm in causal})
+        esm_ap = _gene_auroc(per_gene_csv, best_esm, "esm_lr_auprc")
+        rows.append({"rung": f"ESM {best_esm}", "family": "ESM", "auroc": esm_au,
+                     "auprc": esm_ap if esm_ap is not None else nan, "gene": best_esm, "causal": best_esm in causal})
     ft_au = _gene_auroc(per_gene_csv, best_ft, "ft_lr_auroc")
     if ft_au is not None:
-        rows.append({"rung": f"BacF FT {best_ft}", "family": "Bacformer", "auroc": ft_au, "auprc": nan,
-                     "gene": best_ft, "causal": best_ft in causal})
+        ft_ap = _gene_auroc(per_gene_csv, best_ft, "ft_lr_auprc")
+        rows.append({"rung": f"BacF FT {best_ft}", "family": "Bacformer", "auroc": ft_au,
+                     "auprc": ft_ap if ft_ap is not None else nan, "gene": best_ft, "causal": best_ft in causal})
 
     rows.append({"rung": f"BacF FT mean ⊕ ESM {best_esm}", "family": "Bacformer",
                  "auroc": float(srow["ft_concat_best_esm_auroc"]), "auprc": float(srow["ft_concat_best_esm_auprc"]),
@@ -180,7 +184,7 @@ def plot_ladder(df: pd.DataFrame, out_path: Path, *, drug: str, grain: str, info
     ax_roc.set_title(f"{drug} ({grain} grain): CARD AST read-out ladder\n"
                      f"unsupervised best ESM gene = {info['best_esm_gene']} ({esm_tag}) · "
                      f"best BacF FT gene = {info['best_ft_gene']} ({ft_tag})", fontsize=11.5)
-    fig.text(0.5, 0.012, "BacF = Bacformer · AUPRC n/a for single-gene & frozen-concat rungs",
+    fig.text(0.5, 0.012, "BacF = Bacformer · AUPRC n/a for the frozen-concat rung",
              ha="center", va="bottom", fontsize=8.0, color="0.4")
     fig.tight_layout(rect=(0, 0.03, 1, 1))
     out_path.parent.mkdir(parents=True, exist_ok=True)

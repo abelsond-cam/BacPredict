@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 ESM_COLOUR = "#7e3f9e"        # purple — ESM-C per-gene LR
+FROZEN_COLOUR = "#3b6fd4"     # royal blue — frozen Bacformer per-gene LR (between ESM purple and FT indigo)
 FT_COLOUR = "#2e2a7a"         # deep indigo — fine-tuned Bacformer per-gene LR
 CEILING_COLOUR = "#c0392b"    # red — CARD determinant ceiling
 RES_HATCH = "xxx"             # cross-hatch marks a gene known causal for the drug
@@ -79,7 +80,9 @@ def build_merged_per_gene(
     rel = pd.read_csv(reliable_csv)
     rel = rel.rename(columns={"gene_family": "gene", "amr_source": "source"})
     rel["is_causal"] = rel["gene"].map(lambda g: _norm(g) in causal_norm)
-    keep = ["gene", "source", "n_carriers", "esm_lr_auroc", "ft_lr_auroc", "is_causal"]
+    keep = ["gene", "source", "n_carriers", "esm_lr_auroc", "frozen_lr_auroc", "ft_lr_auroc", "is_causal"]
+    if "frozen_lr_auroc" not in rel.columns:
+        rel["frozen_lr_auroc"] = float("nan")   # older per-gene CSV (pre-frozen) — frozen bar simply absent
     frames = [rel[keep]]
     amr_norm = {_norm(g) for g in rel["gene"]}
 
@@ -122,21 +125,23 @@ def plot_merged(merged: pd.DataFrame, out_path: Path, *, drug: str, grain: str,
     df = (pd.concat([top, forced]).drop_duplicates("gene")
           .sort_values("esm_lr_auroc", ascending=True).reset_index(drop=True))
     x = np.arange(len(df))
-    w = 0.4
+    w = 0.8 / 3
 
-    fig, ax = plt.subplots(figsize=(max(9.5, 0.64 * len(df) + 2.0), 6.2))
-    b_esm = ax.bar(x - w / 2, df["esm_lr_auroc"], width=w, color=ESM_COLOUR, edgecolor="black",
+    fig, ax = plt.subplots(figsize=(max(10.0, 0.78 * len(df) + 2.0), 6.2))
+    b_esm = ax.bar(x - w, df["esm_lr_auroc"], width=w, color=ESM_COLOUR, edgecolor="black",
                    linewidth=0.5, label="ESM-C per-gene LR", zorder=3)
-    b_ft = ax.bar(x + w / 2, df["ft_lr_auroc"], width=w, color=FT_COLOUR, edgecolor="black",
+    b_fr = ax.bar(x, df["frozen_lr_auroc"], width=w, color=FROZEN_COLOUR, edgecolor="black",
+                  linewidth=0.5, label="frozen Bacformer per-gene LR", zorder=3)
+    b_ft = ax.bar(x + w, df["ft_lr_auroc"], width=w, color=FT_COLOUR, edgecolor="black",
                   linewidth=0.5, label="fine-tuned Bacformer per-gene LR", zorder=3)
-    for rects in (b_esm, b_ft):
+    for rects in (b_esm, b_fr, b_ft):
         for rect, causal in zip(rects, df["is_causal"], strict=True):
             if causal:
                 rect.set_hatch(RES_HATCH)
             h = rect.get_height()
             if not np.isnan(h):
                 ax.text(rect.get_x() + rect.get_width() / 2, h + 0.006, f"{h:.2f}",
-                        rotation=90, ha="center", va="bottom", fontsize=6.0)
+                        rotation=90, ha="center", va="bottom", fontsize=5.5)
 
     ax.axhline(0.5, color="0.6", linestyle=":", linewidth=1.0, zorder=1)
     ax.text(len(df) - 0.5, 0.5, " chance", color="0.5", fontsize=7.5, ha="right", va="bottom")
@@ -156,6 +161,7 @@ def plot_merged(merged: pd.DataFrame, out_path: Path, *, drug: str, grain: str,
 
     legend = [
         Patch(facecolor=ESM_COLOUR, edgecolor="black", label="ESM-C per-gene LR"),
+        Patch(facecolor=FROZEN_COLOUR, edgecolor="black", label="frozen Bacformer per-gene LR"),
         Patch(facecolor=FT_COLOUR, edgecolor="black", label="fine-tuned Bacformer per-gene LR"),
         Patch(facecolor="white", edgecolor="black", hatch=RES_HATCH, label=f"known causal for {drug}"),
         Patch(facecolor=SOURCE_LABEL_COLOUR["acquired"], label="label: acquired (CARD)"),
@@ -165,7 +171,7 @@ def plot_merged(merged: pd.DataFrame, out_path: Path, *, drug: str, grain: str,
     ax.legend(handles=legend, loc="upper left", bbox_to_anchor=(0.01, 0.7), fontsize=8.0,
               framealpha=0.3, ncol=1)
     ax.set_title(
-        f"{drug} ({grain} grain): per-gene ESM-C vs fine-tuned Bacformer LR\n"
+        f"{drug} ({grain} grain): per-gene ESM-C vs frozen vs fine-tuned Bacformer LR\n"
         f"gene identity from CARD (acquired/chromosomal) else Bakta · cross-hatch = known causal for {drug}",
         fontsize=11.0)
     fig.tight_layout()
