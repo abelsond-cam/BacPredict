@@ -29,7 +29,7 @@ for drug in "${DRUGS[@]}"; do
     # #2 CARD cause histogram — both grains (mutation-aware: GyrA (mut)/(WT) bars + __ALL_CARD__ ceiling)
     for grain in family allele; do
         uv run python -m kleb_ast.plot_kleborate_cause_histogram \
-            --drug "${drug}" --source-name CARD --all-key __ALL_CARD__ \
+            --drug "${drug}" --source-name CARD --all-key __ALL_CARD__ --grain "${grain}" \
             --csv "${dir}/card_determinant_lr_${drug}_${grain}.csv" \
             --out "${dir}/${drug}_card_cause_histogram_${grain}.png"
     done

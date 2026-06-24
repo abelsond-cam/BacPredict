@@ -38,7 +38,8 @@ CHROM_CODING_RED = "#ef3b2c"   # intrinsic chromosomal gene (WT)
 CHROM_MUT_RED = "#cb181d"      # chromosomal point mutation
 PORIN_RED = "#a50f15"          # porin truncation / loss
 TRUNC_RED = "#67000d"          # truncation / loss-of-function — darkest
-BACFORMER_COLOUR = "#7e3f9e"  # purple — the deployed Bacformer reference line
+BACFORMER_COLOUR = "#7e3f9e"  # purple — the best-Bacformer reference line
+CEILING_COLOUR = "#c0392b"    # red — the CARD/Kleborate one-hot ceiling (uniform across all plots)
 
 # category → (colour, hatch, legend label). All red shades, no hatch — every bar is a CARD determinant.
 CATEGORY_STYLE: dict[str, tuple[str, str, str]] = {
@@ -51,12 +52,16 @@ CATEGORY_STYLE: dict[str, tuple[str, str, str]] = {
 
 
 def plot_cause(csv_path: Path, out_path: Path, *, drug: str, bacformer_auroc: float | None = None,
-               source_name: str = "Kleborate", all_key: str | None = None) -> None:
+               source_name: str = "Kleborate", all_key: str | None = None, grain: str = "family",
+               bacformer_label: str = "Finetuned Bacformer mean") -> None:
     """Bars per determinant by mechanism category, ascending, with the all-determinant ceiling line.
 
     ``source_name`` ("Kleborate" / "CARD") drives the ceiling-row key (``__ALL_<source_name>__``, unless
     ``all_key`` overrides), the title and the y-label — so the same plotter renders the CARD one-hot
-    histogram (:mod:`kleb_ast.card_determinant_lr`) and the Kleborate one.
+    histogram (:mod:`kleb_ast.card_determinant_lr`) and the Kleborate one. ``bacformer_auroc`` /
+    ``bacformer_label`` draw the **best** Bacformer read-out (FT mean, single FT gene, or concat) so the
+    line shows Bacformer clearing the catalogue ceiling. On ``grain="allele"`` (many narrow bars) the
+    in-bar value labels are dropped and the x-tick labels halved.
     """
     key = all_key or f"__ALL_{source_name}__"
     df = pd.read_csv(csv_path)
@@ -77,12 +82,13 @@ def plot_cause(csv_path: Path, out_path: Path, *, drug: str, bacformer_auroc: fl
     for b, h in zip(rendered, hatches, strict=True):
         if h:
             b.set_hatch(h)
-    # Value label *inside* the top of each bar (white) — keeps it clear of the ceiling/Bacformer lines
-    # even when a single tall bar reaches them. Font shrinks as the bars get narrower (allele grain has
-    # many) so the label never overruns its bar.
-    val_fs = max(5.5, min(7.5, 75.0 / max(len(bars), 1)))
-    for i, v in enumerate(bars["mut_auroc"]):
-        ax.text(i, v - 0.012, f"{v:.3f}", ha="center", va="top", fontsize=val_fs, fontweight="bold", color="white")
+    # Value label *inside* the top of each bar (white). Dropped on the dense allele grain — the bars get
+    # too narrow for a legible number there (the y-axis carries it instead).
+    if grain != "allele":
+        val_fs = max(5.5, min(7.5, 75.0 / max(len(bars), 1)))
+        for i, v in enumerate(bars["mut_auroc"]):
+            ax.text(i, v - 0.012, f"{v:.3f}", ha="center", va="top", fontsize=val_fs,
+                    fontweight="bold", color="white")
 
     # Line labels at opposite ends (ceiling far-left, Bacformer far-right) so they never overlap each
     # other, via a blended transform (x = axes fraction, y = data).
@@ -90,17 +96,17 @@ def plot_cause(csv_path: Path, out_path: Path, *, drug: str, bacformer_auroc: fl
     label_bbox = {"facecolor": "white", "edgecolor": "none", "alpha": 0.75, "pad": 0.5}
     if not full.empty:
         fa = float(full["mut_auroc"].iloc[0])
-        ax.axhline(fa, color="black", linestyle="--", linewidth=1.2)
+        ax.axhline(fa, color=CEILING_COLOUR, linestyle="--", linewidth=1.3)
         ax.text(0.5, fa + 0.005, f"Ceiling (all {source_name} determinants) = {fa:.3f}",
-                transform=blend, ha="center", va="bottom", fontsize=7.5, bbox=label_bbox)
+                transform=blend, ha="center", va="bottom", fontsize=7.5, color=CEILING_COLOUR, bbox=label_bbox)
     if bacformer_auroc is not None:
         ax.axhline(bacformer_auroc, color=BACFORMER_COLOUR, linestyle="-.", linewidth=1.5)
-        ax.text(0.99, bacformer_auroc + 0.005, f"Finetuned Bacformer mean = {bacformer_auroc:.3f}",
+        ax.text(0.99, bacformer_auroc + 0.005, f"{bacformer_label} = {bacformer_auroc:.3f}",
                 transform=blend, ha="right", va="bottom", fontsize=7.5, color=BACFORMER_COLOUR, bbox=label_bbox)
     ax.axhline(0.5, color="0.6", linestyle=":", linewidth=1.0)
 
     ax.set_xticks(list(x))
-    ax.set_xticklabels(bars["site"], rotation=30, ha="right", fontsize=9.5)
+    ax.set_xticklabels(bars["site"], rotation=30, ha="right", fontsize=4.75 if grain == "allele" else 9.5)
     ax.set_ylabel(f"{source_name}-determinant LR AUROC (k-fold)", fontsize=12)
     ax.set_ylim(0.45, 1.03)
     ax.grid(axis="y", alpha=0.3)
@@ -116,7 +122,7 @@ def plot_cause(csv_path: Path, out_path: Path, *, drug: str, bacformer_auroc: fl
         labels.append(label)
     if bacformer_auroc is not None:
         handles.append(plt.Line2D([0], [0], color=BACFORMER_COLOUR, linestyle="-.", linewidth=1.5))
-        labels.append("Finetuned Bacformer mean")
+        labels.append(bacformer_label)
     ax.legend(handles, labels, loc="upper left", bbox_to_anchor=(0.01, 0.99), fontsize=9, framealpha=0.95)
     ax.set_title(f"{drug}: Kp resistance from {source_name} determinants by class (HGT vs chromosomal)",
                  fontsize=12.5)
@@ -135,6 +141,29 @@ def _bacformer_auroc(eval_summary: Path | None, drug: str) -> float | None:
     return float(row["auroc"].iloc[0]) if not row.empty else None
 
 
+def best_bacformer(summary_csv: Path | None, drug: str) -> tuple[float | None, str | None]:
+    """Best *deployable* FT-Bacformer read-out for ``drug`` — ``(auroc, short label)`` or ``(None, None)``.
+
+    Compares the FT genome-mean and the FT mean ⊕ FT gene concat — both genome-level models — and returns
+    the stronger, so the reference line shows the best Bacformer clearing the catalogue ceiling. Bare
+    single-gene FT probes are *excluded*: their AUROC can ride lineage (e.g. FT GyrA scoring high on
+    colistin) rather than mechanism, which would overstate the line.
+    """
+    if summary_csv is None or not summary_csv.exists():
+        return None, None
+    summ = pd.read_csv(summary_csv)
+    row = summ[summ["drug"] == drug]
+    if row.empty:
+        return None, None
+    row = row.iloc[0]
+    cands: list[tuple[float, str]] = []
+    if pd.notna(row.get("ft_mean_only_auroc")):
+        cands.append((float(row["ft_mean_only_auroc"]), "FT mean"))
+    if pd.notna(row.get("ft_concat_best_ft_auroc")):
+        cands.append((float(row["ft_concat_best_ft_auroc"]), f"FT mean ⊕ FT {row.get('best_ft_gene', '')}"))
+    return max(cands, key=lambda t: t[0]) if cands else (None, None)
+
+
 def main() -> None:
     """CLI entry point."""
     here = Path(__file__).resolve().parent
@@ -146,7 +175,12 @@ def main() -> None:
     parser.add_argument("--out", type=Path, default=None,
                         help="Default: docs/visualisations/kp_<drug>/<drug>_kleborate_cause_histogram.png.")
     parser.add_argument("--eval-summary", type=Path, default=vis / "eval" / "eval_summary.csv",
-                        help="eval_summary.csv — draws the deployed Bacformer AUROC reference line.")
+                        help="eval_summary.csv — fallback deployed Bacformer AUROC if no reliable summary.")
+    parser.add_argument("--summary-csv", type=Path,
+                        default=vis / "reliable_amr" / "kp_reliable_concat_summary.csv",
+                        help="reliable concat summary — for the best-Bacformer (FT mean / concat) reference line.")
+    parser.add_argument("--grain", type=str, default="family", choices=["family", "allele"],
+                        help="CARD grain — allele drops the in-bar numbers and halves the x-tick labels.")
     parser.add_argument("--source-name", type=str, default="Kleborate",
                         help='Determinant source ("Kleborate" / "CARD") — drives the title, y-label and ceiling key.')
     parser.add_argument("--all-key", type=str, default=None,
@@ -155,8 +189,13 @@ def main() -> None:
     drug_dir = vis / f"kp_{args.drug}"
     csv = args.csv or drug_dir / f"kleborate_determinant_lr_{args.drug}.csv"
     out = args.out or drug_dir / f"{args.drug}_kleborate_cause_histogram.png"
-    plot_cause(csv, out, drug=args.drug, bacformer_auroc=_bacformer_auroc(args.eval_summary, args.drug),
-               source_name=args.source_name, all_key=args.all_key)
+    bac_auroc, bac_variant = best_bacformer(args.summary_csv, args.drug)
+    if bac_auroc is not None:
+        bac_label = f"Best Bacformer ({bac_variant})"
+    else:
+        bac_auroc, bac_label = _bacformer_auroc(args.eval_summary, args.drug), "Finetuned Bacformer mean"
+    plot_cause(csv, out, drug=args.drug, bacformer_auroc=bac_auroc, source_name=args.source_name,
+               all_key=args.all_key, grain=args.grain, bacformer_label=bac_label)
     print(f"Wrote {out}")
 
 
