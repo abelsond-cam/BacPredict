@@ -1,8 +1,8 @@
-rung,family,auroc,gene,causal
-BacF FT mean,Bacformer,0.9160975609756096,,
-CARD top: MgrB (mut),CARD,0.668656056587091,MgrB (mut),True
-CARD all-determinant ceiling,CARD,0.6798724264241509,,
-ESM OmpK36,ESM,0.6988850174216028,OmpK36,False
-BacF FT GyrA,Bacformer,0.9361672473867596,GyrA,False
-BacF FT mean ⊕ ESM OmpK36,Bacformer,0.931219512195122,OmpK36,False
-BacF FT mean ⊕ BacF FT GyrA,Bacformer,0.9345644599303136,GyrA,False
+rung,family,auroc,auprc,gene,causal
+BacF FT mean,Bacformer,0.9160975609756096,0.8455501025158625,,
+CARD top: MgrB (mut),CARD,0.668656056587091,0.4738786487007128,MgrB (mut),True
+CARD all-determinant ceiling,CARD,0.6798724264241509,0.4956775003463417,,
+ESM OmpK36,ESM,0.6988850174216028,,OmpK36,False
+BacF FT GyrA,Bacformer,0.9361672473867596,,GyrA,False
+BacF FT mean ⊕ ESM OmpK36,Bacformer,0.931219512195122,0.8779038527753749,OmpK36,False
+BacF FT mean ⊕ BacF FT GyrA,Bacformer,0.9345644599303136,0.8882665107173362,GyrA,False

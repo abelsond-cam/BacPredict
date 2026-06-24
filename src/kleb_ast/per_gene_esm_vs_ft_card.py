@@ -162,7 +162,8 @@ def plot_merged(merged: pd.DataFrame, out_path: Path, *, drug: str, grain: str,
         Patch(facecolor=SOURCE_LABEL_COLOUR["chromosomal"], label="label: chromosomal (CARD)"),
         Patch(facecolor=SOURCE_LABEL_COLOUR["bakta_nonamr"], label="label: non-AMR (Bakta)"),
     ]
-    ax.legend(handles=legend, loc="upper left", fontsize=8.0, framealpha=0.95, ncol=1)
+    ax.legend(handles=legend, loc="upper left", bbox_to_anchor=(0.01, 0.7), fontsize=8.0,
+              framealpha=0.3, ncol=1)
     ax.set_title(
         f"{drug} ({grain} grain): per-gene ESM-C vs fine-tuned Bacformer LR\n"
         f"gene identity from CARD (acquired/chromosomal) else Bakta · cross-hatch = known causal for {drug}",

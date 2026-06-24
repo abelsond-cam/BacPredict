@@ -60,16 +60,17 @@ def _gene_auroc(per_gene_csv: Path, gene: str, col: str) -> float | None:
     return float(row[col].iloc[0]) if not row.empty else None
 
 
-def _card_ceiling_and_top(card_csv: Path | None) -> tuple[float | None, dict | None]:
-    """``(__ALL_CARD__ auroc, top-determinant row)`` from a card_determinant_lr CSV (or (None, None))."""
+def _card_ceiling_and_top(card_csv: Path | None) -> tuple[float | None, float | None, dict | None]:
+    """``(__ALL_CARD__ auroc, __ALL_CARD__ auprc, top-determinant row)`` from a determinant CSV."""
     if card_csv is None or not Path(card_csv).exists():
-        return None, None
+        return None, None, None
     df = pd.read_csv(card_csv)
     ceil_row = df[df["gene_name"] == CARD_ALL_KEY]
     ceiling = float(ceil_row["mut_auroc"].iloc[0]) if not ceil_row.empty else None
+    ceiling_pr = float(ceil_row["mut_auprc"].iloc[0]) if not ceil_row.empty else None
     bars = df[df["gene_name"] != CARD_ALL_KEY].sort_values("mut_auroc", ascending=False)
     top = bars.iloc[0].to_dict() if not bars.empty else None
-    return ceiling, top
+    return ceiling, ceiling_pr, top
 
 
 def build_table(drug: str, *, grain: str, summary_csv: Path, per_gene_csv: Path,
@@ -83,70 +84,88 @@ def build_table(drug: str, *, grain: str, summary_csv: Path, per_gene_csv: Path,
     best_esm, best_ft = str(srow["best_esm_gene"]), str(srow["best_ft_gene"])
     causal = causal_genes_for_drug(drug, grain=grain, card_csv=card_csv_path)
 
-    rows = [{"rung": "BacF FT mean", "family": "Bacformer",
-             "auroc": float(srow["ft_mean_only_auroc"]), "gene": "", "causal": None}]
+    nan = float("nan")
+    rows = [{"rung": "BacF FT mean", "family": "Bacformer", "auroc": float(srow["ft_mean_only_auroc"]),
+             "auprc": float(srow["ft_mean_only_auprc"]), "gene": "", "causal": None}]
 
     # CARD catalogue — the top single determinant and the all-determinant ceiling, both as red bars
-    ceiling, top = _card_ceiling_and_top(card_csv)
+    ceiling, ceiling_pr, top = _card_ceiling_and_top(card_csv)
     if top is not None:
         rows.append({"rung": f"CARD top: {top['site']}", "family": "CARD",
-                     "auroc": float(top["mut_auroc"]), "gene": str(top["site"]),
-                     "causal": bool(top.get("is_causal", False))})
+                     "auroc": float(top["mut_auroc"]), "auprc": float(top.get("mut_auprc", nan)),
+                     "gene": str(top["site"]), "causal": bool(top.get("is_causal", False))})
     if ceiling is not None:
         rows.append({"rung": "CARD all-determinant ceiling", "family": "CARD",
-                     "auroc": ceiling, "gene": "", "causal": None})
+                     "auroc": ceiling, "auprc": ceiling_pr, "gene": "", "causal": None})
 
+    # the per-gene CSV carries only AUROC for single genes — AUPRC is n/a for these two rungs
     esm_au = _gene_auroc(per_gene_csv, best_esm, "esm_lr_auroc")
     if esm_au is not None:
-        rows.append({"rung": f"ESM {best_esm}", "family": "ESM", "auroc": esm_au,
+        rows.append({"rung": f"ESM {best_esm}", "family": "ESM", "auroc": esm_au, "auprc": nan,
                      "gene": best_esm, "causal": best_esm in causal})
     ft_au = _gene_auroc(per_gene_csv, best_ft, "ft_lr_auroc")
     if ft_au is not None:
-        rows.append({"rung": f"BacF FT {best_ft}", "family": "Bacformer", "auroc": ft_au,
+        rows.append({"rung": f"BacF FT {best_ft}", "family": "Bacformer", "auroc": ft_au, "auprc": nan,
                      "gene": best_ft, "causal": best_ft in causal})
 
     rows.append({"rung": f"BacF FT mean ⊕ ESM {best_esm}", "family": "Bacformer",
-                 "auroc": float(srow["ft_concat_best_esm_auroc"]), "gene": best_esm,
-                 "causal": best_esm in causal})
+                 "auroc": float(srow["ft_concat_best_esm_auroc"]), "auprc": float(srow["ft_concat_best_esm_auprc"]),
+                 "gene": best_esm, "causal": best_esm in causal})
     rows.append({"rung": f"BacF FT mean ⊕ BacF FT {best_ft}", "family": "Bacformer",
-                 "auroc": float(srow["ft_concat_best_ft_auroc"]), "gene": best_ft,
-                 "causal": best_ft in causal})
+                 "auroc": float(srow["ft_concat_best_ft_auroc"]), "auprc": float(srow["ft_concat_best_ft_auprc"]),
+                 "gene": best_ft, "causal": best_ft in causal})
 
     info = {"best_esm_gene": best_esm, "best_ft_gene": best_ft, "ceiling": ceiling,
             "best_esm_causal": best_esm in causal, "best_ft_causal": best_ft in causal}
     return pd.DataFrame(rows), info
 
 
-def plot_ladder(df: pd.DataFrame, out_path: Path, *, drug: str, grain: str, info: dict) -> None:
-    """Single-panel AUROC ladder, bars ascending, family-coloured — the CARD ceiling is itself a red bar."""
-    df = df.sort_values("auroc").reset_index(drop=True)
-    colours = [FAMILY_COLOURS.get(f, "#888888") for f in df["family"]]
-    fig, ax = plt.subplots(figsize=(10.5, 6.0))
+def _draw_metric_panel(ax, df: pd.DataFrame, colours: list[str], metric: str, ylabel: str) -> None:
+    """One metric panel (auroc/auprc) over the shared bar order; bars absent + 'n/a' where the metric is NaN."""
     x = range(len(df))
-    bars = ax.bar(x, df["auroc"], color=colours, edgecolor="black", linewidth=0.7, width=0.7)
-    for b, causal in zip(bars, df["causal"], strict=True):
-        if causal:
-            b.set_hatch("xxx")  # cross-hatch a rung whose injected gene is a known causal determinant
-    for xi, v in zip(x, df["auroc"], strict=True):
-        ax.text(xi, v + 0.003, f"{v:.3f}", ha="center", va="bottom", fontsize=10, fontweight="bold")
-
-    ax.set_xticks(list(x))
-    ax.set_xticklabels(df["rung"], rotation=28, ha="right", fontsize=9.0)
-    ax.set_ylabel("eval-holdout AUROC (k-fold)", fontsize=12)
-    ax.set_ylim(max(0.0, df["auroc"].min() - 0.05), 1.005)
+    vals = df[metric]
+    bars = ax.bar(x, vals.fillna(0.0), color=colours, edgecolor="black", linewidth=0.7, width=0.7)
+    for b, v, causal in zip(bars, vals, df["causal"], strict=True):
+        if pd.isna(v):
+            b.set_visible(False)            # metric unavailable for this rung (single-gene AUPRC)
+        elif causal:
+            b.set_hatch("xxx")              # cross-hatch a rung whose injected gene is causal
+    # headroom: lift the top to 1.01 when a bar clears 0.99 so its value label has room
+    top = 1.01 if float(vals.max()) > 0.99 else 1.005
+    ax.set_ylim(max(0.0, float(vals.min()) - 0.05), top)
+    for xi, v in zip(x, vals, strict=True):
+        if pd.notna(v):
+            ax.text(xi, v + 0.003, f"{v:.3f}", ha="center", va="bottom", fontsize=10, fontweight="bold")
+        else:
+            ax.text(xi, ax.get_ylim()[0] + 0.01, "n/a", ha="center", va="bottom", fontsize=8, color="0.55")
+    ax.set_ylabel(ylabel, fontsize=12)
     ax.grid(axis="y", alpha=0.3)
     ax.spines[["top", "right"]].set_visible(False)
+
+
+def plot_ladder(df: pd.DataFrame, out_path: Path, *, drug: str, grain: str, info: dict) -> None:
+    """Two-panel ladder — AUROC (top) + AUPRC (bottom), same bar order/names; the CARD ceiling is a red bar."""
+    df = df.sort_values("auroc").reset_index(drop=True)
+    colours = [FAMILY_COLOURS.get(f, "#888888") for f in df["family"]]
+    fig, (ax_roc, ax_pr) = plt.subplots(2, 1, figsize=(10.5, 9.6), sharex=True)
+    _draw_metric_panel(ax_roc, df, colours, "auroc", "eval-holdout AUROC (k-fold)")
+    _draw_metric_panel(ax_pr, df, colours, "auprc", "eval-holdout AUPRC (k-fold)")
+
+    ax_pr.set_xticks(range(len(df)))
+    ax_pr.set_xticklabels(df["rung"], rotation=28, ha="right", fontsize=9.0)
+
     handles = [plt.Rectangle((0, 0), 1, 1, color=c, ec="black", lw=0.7) for c in FAMILY_COLOURS.values()]
     handles.append(plt.Rectangle((0, 0), 1, 1, facecolor="white", ec="black", lw=0.7, hatch="xxx"))
     labels = list(FAMILY_LABEL.values()) + ["injected gene is causal"]
-    ax.legend(handles, labels, loc="lower right", fontsize=8.5, framealpha=0.95)
+    ax_roc.legend(handles, labels, loc="upper left", bbox_to_anchor=(0.01, 0.99), fontsize=8.5, framealpha=0.3)
 
     esm_tag = "causal" if info["best_esm_causal"] else "CONTEXT proxy"
     ft_tag = "causal" if info["best_ft_causal"] else "CONTEXT proxy"
-    ax.set_title(f"{drug} ({grain} grain): CARD AST read-out ladder\n"
-                 f"unsupervised best ESM gene = {info['best_esm_gene']} ({esm_tag}) · "
-                 f"best BacF FT gene = {info['best_ft_gene']} ({ft_tag})", fontsize=11.5)
-    fig.text(0.99, 0.985, "BacF = Bacformer", ha="right", va="top", fontsize=8.0, color="0.4")
+    ax_roc.set_title(f"{drug} ({grain} grain): CARD AST read-out ladder\n"
+                     f"unsupervised best ESM gene = {info['best_esm_gene']} ({esm_tag}) · "
+                     f"best BacF FT gene = {info['best_ft_gene']} ({ft_tag})", fontsize=11.5)
+    fig.text(0.99, 0.99, "BacF = Bacformer · AUPRC n/a for single-gene rungs", ha="right", va="top",
+             fontsize=8.0, color="0.4")
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=150)

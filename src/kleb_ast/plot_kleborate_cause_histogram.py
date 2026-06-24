@@ -104,7 +104,8 @@ def plot_cause(csv_path: Path, out_path: Path, *, drug: str, bacformer_auroc: fl
     if bacformer_auroc is not None:
         handles.append(plt.Line2D([0], [0], color=BACFORMER_COLOUR, linestyle="-.", linewidth=1.5))
         labels.append(bacformer_label)
-    ax.legend(handles, labels, loc="upper left", bbox_to_anchor=(0.01, 0.99), fontsize=9, framealpha=0.95)
+    # low-left: the ceiling + Bacformer lines (and their labels) live up at the top, so keep the legend clear
+    ax.legend(handles, labels, loc="upper left", bbox_to_anchor=(0.01, 0.62), fontsize=9, framealpha=0.3)
     ax.set_title(f"{drug}: Kp resistance from {source_name} determinants by class (HGT vs chromosomal)",
                  fontsize=12.5)
     fig.tight_layout()
