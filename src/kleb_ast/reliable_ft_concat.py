@@ -26,6 +26,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from sklearn.metrics import average_precision_score
 
 from kleb_ast.per_gene_lr_from_annotation import MIN_CARRIERS, collect_reliable_amr
 from snp_embeddings.build_per_gene_lr_store import _fit_one_gene, _fit_one_gene_imputed
@@ -113,11 +114,17 @@ def run(
     logger.info("%s: %d AMR families scored (ESM vs FT)", drug, len(per_gene))
 
     # 2) concat: mean-only, mean ⊕ best ESM gene, mean ⊕ best FT gene (best by each one's reliable LR).
-    def _score(x: np.ndarray) -> float:
+    def _score(x: np.ndarray) -> tuple[float, float]:
+        """(AUROC, AUPRC) of the zero-imputed k-fold LR; AUPRC from the fit's out-of-fold probabilities."""
         fit = _fit_one_gene(all_ids, x.astype(np.float32), y_all, n_folds=n_folds, seed=seed)
-        return float(fit["auroc"]) if fit else float("nan")
+        if not fit:
+            return float("nan"), float("nan")
+        p = np.array([fit["oof_prob"].get(s, np.nan) for s in all_ids])
+        auprc = float(average_precision_score(y_all, p)) if not np.isnan(p).any() else float("nan")
+        return float(fit["auroc"]), auprc
 
-    crows = [{"config": "mean_only", "gene": "", "n_features": dim, "auroc": _score(mean_block)}]
+    m_au, m_ap = _score(mean_block)
+    crows = [{"config": "mean_only", "gene": "", "n_features": dim, "auroc": m_au, "auprc": m_ap}]
     scored = per_gene[per_gene["n_carriers"] >= MIN_CARRIERS]
     if not scored.empty:
         best_esm = scored.sort_values("esm_lr_auroc", ascending=False).iloc[0]["gene_family"]
@@ -125,13 +132,15 @@ def run(
         esm_block = _impute_block(by_label[best_esm]["ids"],
                                   np.vstack(by_label[best_esm]["vecs"]).astype(np.float32), all_ids, dim)
         x_esm = np.hstack([mean_block, esm_block])
+        e_au, e_ap = _score(x_esm)
         crows.append({"config": "mean+best_esm_gene", "gene": best_esm,
-                      "n_features": x_esm.shape[1], "auroc": _score(x_esm)})
+                      "n_features": x_esm.shape[1], "auroc": e_au, "auprc": e_ap})
         ft_ids, ft_vec = load_ft_gene(ft_cache_dir, san_of[best_ft])
         ft_block = _impute_block(ft_ids, ft_vec, all_ids, ft_vec.shape[1])
         x_ft = np.hstack([mean_block, ft_block])
+        f_au, f_ap = _score(x_ft)
         crows.append({"config": "mean+best_ft_gene", "gene": best_ft,
-                      "n_features": x_ft.shape[1], "auroc": _score(x_ft)})
+                      "n_features": x_ft.shape[1], "auroc": f_au, "auprc": f_ap})
     concat = pd.DataFrame(crows)
     mean_au = concat.loc[concat["config"] == "mean_only", "auroc"]
     concat["delta_vs_mean"] = concat["auroc"] - (float(mean_au.iloc[0]) if not mean_au.empty else float("nan"))
