@@ -1,0 +1,7 @@
+rung,family,auroc,gene,causal
+FT Bacformer mean,Bacformer,0.986743744892068,,
+CARD top: QnrB,one-hot,0.6054630384431247,QnrB,True
+ESM GyrA,ESM,0.8972302824452092,GyrA,True
+FT GyrA,FT_gene,0.986466323263678,GyrA,True
+concat: FT mean ⊕ ESM GyrA,mix,0.9881233551521694,GyrA,True
+concat: FT mean ⊕ FT GyrA,mix_ft,0.9862713783356202,GyrA,True

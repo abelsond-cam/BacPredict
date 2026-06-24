@@ -1,0 +1,5 @@
+gene_name,site,category,mut_auroc,mut_auroc_sd,mut_auprc,mut_auprc_sd,n_determinants,n_genomes_with_determinant,embeddable,is_causal,is_rrna,is_noncoding
+__ALL_CARD__,__ALL_CARD__,all,0.8658189817050272,2.298380017448157e-16,0.8794593567443842,1.1491900087240784e-16,9,762,False,False,False,False
+TetA,TetA,acquired_hgt,0.7631310692633727,2.298380017448157e-16,0.7897729391562083,2.298380017448157e-16,1,518,True,True,False,False
+TetD,TetD,acquired_hgt,0.6077981651376146,0.0,0.6551850192212446,1.1491900087240784e-16,1,265,True,True,False,False
+TetR,TetR,acquired_hgt,0.5068807339449543,1.1491900087240784e-16,0.5664606966816822,1.1491900087240784e-16,1,10,True,True,False,False

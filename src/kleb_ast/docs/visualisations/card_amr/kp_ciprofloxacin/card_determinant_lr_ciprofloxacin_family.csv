@@ -1,0 +1,7 @@
+gene_name,site,category,mut_auroc,mut_auroc_sd,mut_auprc,mut_auprc_sd,n_determinants,n_genomes_with_determinant,embeddable,is_causal,is_rrna,is_noncoding
+__ALL_CARD__,__ALL_CARD__,all,0.6700813891800267,8.195313270626505e-05,0.7668789506470444,4.497912146491153e-05,8,3868,False,False,False,False
+QnrB,QnrB,acquired_hgt,0.6054630384431247,0.0,0.7301170723366431,0.0,1,952,True,True,False,False
+ParC,ParC,chromosomal_mutation,0.5688249679748456,1.1491900087240784e-16,0.7003447019909731,0.0,1,3784,False,True,False,True
+GyrA,GyrA,chromosomal_mutation,0.5336199422900252,2.298380017448157e-16,0.6835331054942415,0.0,1,3868,False,True,False,True
+QnrS,QnrS,acquired_hgt,0.5268040836924034,1.1491900087240784e-16,0.6838242869100508,0.0,1,245,True,True,False,False
+QnrA,QnrA,acquired_hgt,0.5017921146953405,0.0,0.6694524928637351,2.298380017448157e-16,1,12,True,True,False,False

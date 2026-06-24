@@ -1,0 +1,7 @@
+rung,family,auroc,gene,causal
+FT Bacformer mean,Bacformer,0.9789549711097828,,
+CARD top: Dfr,one-hot,0.9001130524152108,Dfr,True
+ESM Sul,ESM,0.7999144915985921,Sul,True
+FT PmrB,FT_gene,0.9787059175134488,PmrB,False
+concat: FT mean ⊕ ESM Sul,mix,0.9775187620375904,Sul,True
+concat: FT mean ⊕ FT PmrB,mix_ft,0.9803330676761638,PmrB,False
