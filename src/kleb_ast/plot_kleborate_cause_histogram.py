@@ -44,11 +44,18 @@ CATEGORY_STYLE: dict[str, tuple[str, str, str]] = {
 }
 
 
-def plot_cause(csv_path: Path, out_path: Path, *, drug: str, bacformer_auroc: float | None = None) -> None:
-    """Bars per Kleborate column by mechanism category, ascending, with the all-determinant ceiling line."""
+def plot_cause(csv_path: Path, out_path: Path, *, drug: str, bacformer_auroc: float | None = None,
+               source_name: str = "Kleborate", all_key: str | None = None) -> None:
+    """Bars per determinant by mechanism category, ascending, with the all-determinant ceiling line.
+
+    ``source_name`` ("Kleborate" / "CARD") drives the ceiling-row key (``__ALL_<source_name>__``, unless
+    ``all_key`` overrides), the title and the y-label — so the same plotter renders the CARD one-hot
+    histogram (:mod:`kleb_ast.card_determinant_lr`) and the Kleborate one.
+    """
+    key = all_key or f"__ALL_{source_name}__"
     df = pd.read_csv(csv_path)
-    full = df[df["gene_name"] == ALL_KEY]
-    bars = df[df["gene_name"] != ALL_KEY].sort_values("mut_auroc", ascending=True).reset_index(drop=True)
+    full = df[df["gene_name"] == key]
+    bars = df[df["gene_name"] != key].sort_values("mut_auroc", ascending=True).reset_index(drop=True)
 
     colours, hatches = [], []
     for cat in bars["category"]:
@@ -76,7 +83,7 @@ def plot_cause(csv_path: Path, out_path: Path, *, drug: str, bacformer_auroc: fl
     if not full.empty:
         fa = float(full["mut_auroc"].iloc[0])
         ax.axhline(fa, color="black", linestyle="--", linewidth=1.2)
-        ax.text(0.5, fa + 0.005, f"Ceiling (all Kleborate determinants) = {fa:.3f}",
+        ax.text(0.5, fa + 0.005, f"Ceiling (all {source_name} determinants) = {fa:.3f}",
                 transform=blend, ha="center", va="bottom", fontsize=7.5, bbox=label_bbox)
     if bacformer_auroc is not None:
         ax.axhline(bacformer_auroc, color=BACFORMER_COLOUR, linestyle="-.", linewidth=1.5)
@@ -86,7 +93,7 @@ def plot_cause(csv_path: Path, out_path: Path, *, drug: str, bacformer_auroc: fl
 
     ax.set_xticks(list(x))
     ax.set_xticklabels(bars["site"], rotation=30, ha="right", fontsize=9.5)
-    ax.set_ylabel("Kleborate-determinant LR AUROC (k-fold)", fontsize=12)
+    ax.set_ylabel(f"{source_name}-determinant LR AUROC (k-fold)", fontsize=12)
     ax.set_ylim(0.45, 1.03)
     ax.grid(axis="y", alpha=0.3)
     ax.spines[["top", "right"]].set_visible(False)
@@ -103,7 +110,8 @@ def plot_cause(csv_path: Path, out_path: Path, *, drug: str, bacformer_auroc: fl
         handles.append(plt.Line2D([0], [0], color=BACFORMER_COLOUR, linestyle="-.", linewidth=1.5))
         labels.append("Finetuned Bacformer mean")
     ax.legend(handles, labels, loc="upper left", bbox_to_anchor=(0.01, 0.99), fontsize=9, framealpha=0.95)
-    ax.set_title(f"{drug}: Kp resistance from Kleborate determinants by class (HGT vs chromosomal)", fontsize=12.5)
+    ax.set_title(f"{drug}: Kp resistance from {source_name} determinants by class (HGT vs chromosomal)",
+                 fontsize=12.5)
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=150)

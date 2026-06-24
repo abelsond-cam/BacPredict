@@ -97,10 +97,66 @@ _DRUG_CAUSAL: dict[str, dict] = {
 }
 
 
+# Drug → INCLUSIVE determinant spec (the one-hot ceiling universe — *broader* than the causal hatch). Where
+# _DRUG_CAUSAL narrows β-lactams to the drug-appropriate subgroup (carbapenems → carbapenemases), the
+# ceiling should weigh every plausibly-relevant determinant (all Bla subgroups + porins) and let the LR
+# decide — under-including only lowers the ceiling. Mirrors the inclusive scope of DRUG_COLUMNS.
+_BLA_ALL_INCL = ("Bla", "Bla_inhR", "Bla_ESBL", "Bla_ESBL_inhR", "Bla_Carb", "Bla_chr")
+_DRUG_DETERMINANT: dict[str, dict] = {
+    **{d: {"bla_class": _BLA_ALL_INCL, "chromosomal": _PORINS}
+       for d in ("ertapenem", "imipenem", "meropenem", "cefotaxime", "ceftriaxone", "ceftazidime",
+                 "cefepime", "aztreonam", "cefoxitin", "cefazolin", "cefuroxime",
+                 "ampicillin-sulbactam", "piperacillin-tazobactam")},
+    "ciprofloxacin": {"card_class": ("Flq",), "chromosomal": _FLQ_CHR, "cr_fq": True},
+    "levofloxacin": {"card_class": ("Flq",), "chromosomal": _FLQ_CHR, "cr_fq": True},
+    "gentamicin": {"card_class": ("AGly",)},
+    "amikacin": {"card_class": ("AGly",)},
+    "tobramycin": {"card_class": ("AGly",)},
+    "colistin": {"card_class": ("Col",), "chromosomal": _COL_CHR},
+    "tetracycline": {"card_class": ("Tet",)},
+    "azithromycin": {"card_class": ("MLS",)},
+    "trimethoprim-sulfamethoxazole": {"card_class": ("Tmt", "Sul")},
+}
+
+
 @lru_cache(maxsize=4)
 def _load_card(card_csv: str) -> pd.DataFrame:
     """Read CARD_AMR_clustered.csv as all-string columns (empty bla_class stays ``""``)."""
     return pd.read_csv(card_csv, dtype=str).fillna("")
+
+
+def _genes_for_spec(spec: dict, card: pd.DataFrame, col: str, grain: str) -> set[str]:
+    """Resolve a causal/determinant spec dict to a set of CARD ``col`` values + chromosomal display names."""
+    out: set[str] = set()
+    classes = spec.get("card_class", ())
+    if classes:
+        out |= set(card.loc[card["class"].isin(classes), col]) - {""}
+    blacs = spec.get("bla_class", ())
+    if blacs:
+        out |= set(card.loc[card["bla_class"].isin(blacs), col]) - {""}
+    if spec.get("cr_fq") and grain == "allele":
+        cr = card["allele"].str.lower().str.contains("ib-cr", na=False)
+        out |= set(card.loc[cr, "allele"]) - {""}
+    out |= set(spec.get("chromosomal", ()))
+    return out
+
+
+def determinant_genes_for_drug(
+    drug: str, *, grain: str = "family", card_csv: Path | str | None = None
+) -> set[str]:
+    """Inclusive CARD gene/allele set for the drug's resistance classes — the one-hot **ceiling** universe.
+
+    Broader than :func:`causal_genes_for_drug`: β-lactams span every ``bla_class`` subgroup (a ceiling
+    should weigh all plausible determinants, like the inclusive ``DRUG_COLUMNS``). Used to scope the CARD
+    one-hot bars + ``__ALL_CARD__`` ceiling and the ladder's gene universe.
+    """
+    if grain not in ("family", "allele"):
+        raise ValueError(f"grain must be 'family' or 'allele', got {grain!r}")
+    spec = _DRUG_DETERMINANT.get(drug)
+    if spec is None:
+        raise ValueError(f"no determinant spec for drug {drug!r} (known: {sorted(_DRUG_DETERMINANT)})")
+    card = _load_card(str(card_csv or DEFAULT_CARD_CSV))
+    return _genes_for_spec(spec, card, "gene" if grain == "family" else "allele", grain)
 
 
 def causal_genes_for_drug(
@@ -138,20 +194,7 @@ def causal_genes_for_drug(
     if spec is None:
         raise ValueError(f"no causal-mechanism spec for drug {drug!r} (known: {sorted(_DRUG_CAUSAL)})")
     card = _load_card(str(card_csv or DEFAULT_CARD_CSV))
-    col = "gene" if grain == "family" else "allele"
-
-    out: set[str] = set()
-    classes = spec.get("card_class", ())
-    if classes:
-        out |= set(card.loc[card["class"].isin(classes), col]) - {""}
-    blacs = spec.get("bla_class", ())
-    if blacs:
-        out |= set(card.loc[card["bla_class"].isin(blacs), col]) - {""}
-    if spec.get("cr_fq") and grain == "allele":
-        cr = card["allele"].str.lower().str.contains("ib-cr", na=False)
-        out |= set(card.loc[cr, "allele"]) - {""}
-    out |= set(spec.get("chromosomal", ()))
-    return out
+    return _genes_for_spec(spec, card, "gene" if grain == "family" else "allele", grain)
 
 
 def merged_label(

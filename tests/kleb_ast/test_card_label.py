@@ -12,8 +12,10 @@ import pytest
 
 from kleb_ast.card_label import (
     _DRUG_CAUSAL,
+    _DRUG_DETERMINANT,
     DEFAULT_CARD_CSV,
     causal_genes_for_drug,
+    determinant_genes_for_drug,
     merged_label,
 )
 
@@ -71,11 +73,28 @@ def test_causal_bad_grain_raises() -> None:
 
 
 def test_drug_causal_keys_match_drug_columns() -> None:
-    """The causal spec covers exactly the drugs the ceiling map covers (no drift between the two maps)."""
+    """The causal + determinant specs cover exactly the drugs the ceiling map covers (no drift)."""
     pytest.importorskip("snp_embeddings.kfold_probe")  # DRUG_COLUMNS import pulls the probe harness
     from kleb_ast.kleborate_determinant_lr import DRUG_COLUMNS
 
     assert set(_DRUG_CAUSAL) == set(DRUG_COLUMNS)
+    assert set(_DRUG_DETERMINANT) == set(DRUG_COLUMNS)
+
+
+def test_determinant_superset_of_causal_meropenem() -> None:
+    """Inclusive determinant scope ⊇ the narrow causal set, and adds the non-carbapenem β-lactamases."""
+    causal = causal_genes_for_drug("meropenem", grain="family")
+    determ = determinant_genes_for_drug("meropenem", grain="family")
+    assert causal <= determ
+    # SHV-OKP-LEN (intrinsic β-lactamase, Bla_chr) belongs in the ceiling but is not carbapenem-causal
+    assert "SHV-OKP-LEN" in determ
+    assert "SHV-OKP-LEN" not in causal
+
+
+def test_determinant_flq_matches_causal() -> None:
+    """Where the causal map is already class-wide (fluoroquinolones), determinant == causal."""
+    assert determinant_genes_for_drug("ciprofloxacin", grain="family") == causal_genes_for_drug(
+        "ciprofloxacin", grain="family")
 
 
 # --------------------------------------------------------------------------- #
