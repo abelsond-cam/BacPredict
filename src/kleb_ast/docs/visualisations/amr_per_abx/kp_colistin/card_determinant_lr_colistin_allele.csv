@@ -1,0 +1,5 @@
+gene_name,site,category,mut_auroc,mut_auroc_sd,mut_auprc,mut_auprc_sd,n_determinants,n_genomes_with_determinant,embeddable,is_causal,is_rrna,is_noncoding
+__ALL_CARD__,__ALL_CARD__,all,0.6798724264241509,0.0016143545588586806,0.4956775003463417,0.0014197387072256863,6,1345,False,False,False,False
+MgrB (mut),MgrB (mut),truncation_lof,0.668656056587091,0.0,0.4738786487007128,0.0,1,154,False,True,False,True
+PmrB (WT),PmrB (WT),chromosomal_coding,0.508399646330681,1.1491900087240784e-16,0.281993214377556,0.0,1,1345,True,False,False,False
+mcr-9.1,mcr-9.1,acquired_hgt,0.5004947160119574,0.0014483801764740602,0.2778586146503912,0.0006385928061587823,1,10,True,True,False,False

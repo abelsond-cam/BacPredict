@@ -1,7 +1,0 @@
-rung,family,auroc,gene,causal
-FT Bacformer mean,Bacformer,0.979160908739152,,
-CARD top: KPC,one-hot,0.7443406395975566,KPC,True
-ESM OmpK36,ESM,0.8304060029849096,OmpK36,True
-FT OmpK35,FT_gene,0.9823254657011774,OmpK35,True
-concat: FT mean ⊕ ESM OmpK36,mix,0.9848819855176608,OmpK36,True
-concat: FT mean ⊕ FT OmpK35,mix_ft,0.9828644077165442,OmpK35,True

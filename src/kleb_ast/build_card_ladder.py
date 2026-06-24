@@ -184,12 +184,12 @@ def main() -> None:
     p.add_argument("--per-gene-csv", type=Path, default=None,
                    help="Default: reliable_amr/per_gene/reliable_esm_vs_ft_per_gene_<drug>.csv.")
     p.add_argument("--card-csv", type=Path, default=None,
-                   help="Default: card_amr/kp_<drug>/card_determinant_lr_<drug>_<grain>.csv (ceiling + top).")
-    p.add_argument("--out-dir", type=Path, default=None, help="Default: docs/visualisations/card_amr/kp_<drug>.")
+                   help="Default: amr_per_abx/kp_<drug>/card_determinant_lr_<drug>_<grain>.csv (ceiling + top).")
+    p.add_argument("--out-dir", type=Path, default=None, help="Default: docs/visualisations/amr_per_abx/kp_<drug>.")
     args = p.parse_args()
     per_gene = args.per_gene_csv or rel / "per_gene" / f"reliable_esm_vs_ft_per_gene_{args.drug}.csv"
-    card_csv = args.card_csv or vis / "card_amr" / f"kp_{args.drug}" / f"card_determinant_lr_{args.drug}_{args.grain}.csv"
-    out_dir = args.out_dir or vis / "card_amr" / f"kp_{args.drug}"
+    card_csv = args.card_csv or vis / "amr_per_abx" / f"kp_{args.drug}" / f"card_determinant_lr_{args.drug}_{args.grain}.csv"
+    out_dir = args.out_dir or vis / "amr_per_abx" / f"kp_{args.drug}"
     run(drug=args.drug, grain=args.grain, summary_csv=args.summary_csv, per_gene_csv=per_gene,
         card_csv=card_csv, out_dir=out_dir)
 

@@ -203,7 +203,7 @@ def score_drug(calls: pd.DataFrame, ast_sheet: Path, drug: str, *, grain: str,
 
 def run(calls_dir: Path, ast_sheet: Path, out_dir: Path, drugs: list[str], grains: list[str],
         metadata: Path, seeds: tuple[int, ...] = (1, 2, 3)) -> None:
-    """Score every (drug, grain) and write ``card_amr/kp_<drug>/card_determinant_lr_<drug>_<grain>.csv``."""
+    """Score every (drug, grain) and write ``amr_per_abx/kp_<drug>/card_determinant_lr_<drug>_<grain>.csv``."""
     calls = load_calls(calls_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     for drug in drugs:
@@ -230,7 +230,7 @@ def main() -> None:
                    help="Sidecar dir holding amr_calls_all.parquet (else crawls the sidecars).")
     p.add_argument("--ast-sheet", type=Path,
                    default=rds / "processed" / "train_kleb_ast" / "binary_ast_with_split.csv")
-    p.add_argument("--out-dir", type=Path, default=here / "docs" / "visualisations" / "card_amr")
+    p.add_argument("--out-dir", type=Path, default=here / "docs" / "visualisations" / "amr_per_abx")
     p.add_argument("--metadata", type=Path, default=DEFAULT_METADATA,
                    help="metadata_v2 TSV — Kleborate mutation columns for the chromosomal mut/WT split.")
     p.add_argument("--drugs", type=str, nargs="+", required=True)

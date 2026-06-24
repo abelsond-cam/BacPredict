@@ -129,8 +129,8 @@ def main() -> None:
     vis = here / "docs" / "visualisations"
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--summary-csv", type=Path, default=vis / "reliable_amr" / "kp_reliable_concat_summary.csv")
-    p.add_argument("--card-amr-dir", type=Path, default=vis / "card_amr")
-    p.add_argument("--out-dir", type=Path, default=vis / "card_amr")
+    p.add_argument("--card-amr-dir", type=Path, default=vis / "amr_per_abx")
+    p.add_argument("--out-dir", type=Path, default=vis / "amr_per_abx")
     p.add_argument("--grains", type=str, nargs="+", default=["family", "allele"], choices=["family", "allele"])
     args = p.parse_args()
     for grain in args.grains:

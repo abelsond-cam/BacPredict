@@ -201,18 +201,18 @@ def main() -> None:
     p.add_argument("--reliable-csv", type=Path, default=None,
                    help="Default: reliable_amr/per_gene/reliable_esm_vs_ft_per_gene_<drug>.csv.")
     p.add_argument("--bakta-csv", type=Path, default=None,
-                   help="Default: kp_<drug>/esm_vs_ft_per_gene_<drug>.csv (non-AMR lineage genes).")
+                   help="Default: amr_per_abx/kp_<drug>/esm_vs_ft_per_gene_<drug>.csv (non-AMR lineage genes).")
     p.add_argument("--card-lr-csv", type=Path, default=None,
-                   help="Default: card_amr/kp_<drug>/card_determinant_lr_<drug>_<grain>.csv (ceiling line).")
-    p.add_argument("--out-dir", type=Path, default=None, help="Default: docs/visualisations/card_amr/kp_<drug>.")
+                   help="Default: amr_per_abx/kp_<drug>/card_determinant_lr_<drug>_<grain>.csv (ceiling line).")
+    p.add_argument("--out-dir", type=Path, default=None, help="Default: docs/visualisations/amr_per_abx/kp_<drug>.")
     p.add_argument("--top-n-nonamr", type=int, default=15)
     p.add_argument("--top-n", type=int, default=18)
     args = p.parse_args()
 
     reliable = args.reliable_csv or vis / "reliable_amr" / "per_gene" / f"reliable_esm_vs_ft_per_gene_{args.drug}.csv"
-    bakta = args.bakta_csv or vis / f"kp_{args.drug}" / f"esm_vs_ft_per_gene_{args.drug}.csv"
-    card_lr = args.card_lr_csv or vis / "card_amr" / f"kp_{args.drug}" / f"card_determinant_lr_{args.drug}_{args.grain}.csv"
-    out_dir = args.out_dir or vis / "card_amr" / f"kp_{args.drug}"
+    bakta = args.bakta_csv or vis / "amr_per_abx" / f"kp_{args.drug}" / f"esm_vs_ft_per_gene_{args.drug}.csv"
+    card_lr = args.card_lr_csv or vis / "amr_per_abx" / f"kp_{args.drug}" / f"card_determinant_lr_{args.drug}_{args.grain}.csv"
+    out_dir = args.out_dir or vis / "amr_per_abx" / f"kp_{args.drug}"
     run(drug=args.drug, grain=args.grain, reliable_csv=reliable, bakta_csv=bakta, out_dir=out_dir,
         card_lr_csv=card_lr, top_n_nonamr=args.top_n_nonamr, top_n=args.top_n)
 

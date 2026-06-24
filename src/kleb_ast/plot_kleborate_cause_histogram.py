@@ -139,11 +139,16 @@ def main() -> None:
                         help="Default: docs/visualisations/kp_<drug>/<drug>_kleborate_cause_histogram.png.")
     parser.add_argument("--eval-summary", type=Path, default=vis / "eval" / "eval_summary.csv",
                         help="eval_summary.csv — draws the deployed Bacformer AUROC reference line.")
+    parser.add_argument("--source-name", type=str, default="Kleborate",
+                        help='Determinant source ("Kleborate" / "CARD") — drives the title, y-label and ceiling key.')
+    parser.add_argument("--all-key", type=str, default=None,
+                        help="Ceiling-row key override (default __ALL_<source-name>__, e.g. __ALL_CARD__).")
     args = parser.parse_args()
     drug_dir = vis / f"kp_{args.drug}"
     csv = args.csv or drug_dir / f"kleborate_determinant_lr_{args.drug}.csv"
     out = args.out or drug_dir / f"{args.drug}_kleborate_cause_histogram.png"
-    plot_cause(csv, out, drug=args.drug, bacformer_auroc=_bacformer_auroc(args.eval_summary, args.drug))
+    plot_cause(csv, out, drug=args.drug, bacformer_auroc=_bacformer_auroc(args.eval_summary, args.drug),
+               source_name=args.source_name, all_key=args.all_key)
     print(f"Wrote {out}")
 
 

@@ -93,7 +93,8 @@ def plot_summary(df: pd.DataFrame, out_path: Path, *, mean: str = "ft_mean") -> 
 def delta_summary(df: pd.DataFrame) -> pd.DataFrame:
     """Mean Δ(ingredient − its own mean) per (mean × ingredient) cell across drugs."""
     g = df[df["ingredient"] != "none"].groupby(["mean", "ingredient"])["delta_vs_its_mean"]
-    return g.agg(["mean", "std", "count"]).reset_index().rename(columns={"mean": "delta_mean"})
+    # rename the agg "mean" before reset_index — else it collides with the "mean" groupby index level
+    return g.agg(["mean", "std", "count"]).rename(columns={"mean": "delta_mean"}).reset_index()
 
 
 def run(concat_root: Path, out_dir: Path) -> None:
@@ -116,7 +117,7 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--concat-root", type=Path,
                    default=rds / "processed" / "train_kleb_ast" / "snp_embeddings" / "gene_ingredient_concat")
-    p.add_argument("--out-dir", type=Path, default=here / "docs" / "visualisations" / "card_amr" / "ingredient")
+    p.add_argument("--out-dir", type=Path, default=here / "docs" / "visualisations" / "amr_per_abx" / "ingredient")
     args = p.parse_args()
     run(args.concat_root, args.out_dir)
 

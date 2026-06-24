@@ -1,3 +1,0 @@
-gene_name,site,category,mut_auroc,mut_auroc_sd,mut_auprc,mut_auprc_sd,n_determinants,n_genomes_with_determinant,embeddable,is_rrna,is_noncoding
-AGly_acquired,AGly (acquired),acquired_hgt,0.9570812419877017,0.0019347201071875783,0.8678136798537132,0.0033829147076360603,52,2515,True,False,False
-__ALL_Kleborate__,__ALL_Kleborate__,all,0.9570812419877017,0.0019347201071875783,0.8678136798537132,0.0033829147076360603,52,2515,False,False,False

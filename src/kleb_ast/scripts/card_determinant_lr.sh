@@ -29,4 +29,4 @@ DRUGS=(cefotaxime ertapenem ampicillin-sulbactam ceftriaxone cefuroxime ciproflo
 
 echo "=== CARD determinant LR (one-hot ceiling) — ${#DRUGS[@]} drugs × {family,allele} ==="
 uv run python -m kleb_ast.card_determinant_lr --drugs "${DRUGS[@]}" --grains family allele
-echo "done -> docs/visualisations/card_amr/kp_<drug>/card_determinant_lr_<drug>_<grain>.csv"
+echo "done -> docs/visualisations/amr_per_abx/kp_<drug>/card_determinant_lr_<drug>_<grain>.csv"

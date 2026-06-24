@@ -1,0 +1,9 @@
+config,mean,ingredient,gene,auroc,delta_vs_its_mean
+frozen_mean_only,frozen_mean,none,,0.7409756097560974,0.0
+frozen_mean+esm_gene,frozen_mean,esm,OmpK36,0.7873867595818815,0.04641114982578409
+frozen_mean+frozen_bac_gene,frozen_mean,frozen_bac,OmpK36,0.7643205574912892,0.0233449477351918
+frozen_mean+ft_bac_gene,frozen_mean,ft_bac,GyrA,0.9365853658536586,0.19560975609756115
+ft_mean_only,ft_mean,none,,0.9160975609756097,0.0
+ft_mean+esm_gene,ft_mean,esm,OmpK36,0.931219512195122,0.01512195121951232
+ft_mean+frozen_bac_gene,ft_mean,frozen_bac,OmpK36,0.9266898954703833,0.010592334494773592
+ft_mean+ft_bac_gene,ft_mean,ft_bac,GyrA,0.9345644599303136,0.01846689895470388
