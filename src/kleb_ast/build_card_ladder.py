@@ -43,13 +43,13 @@ FAMILY_COLOURS = {
     "one-hot": "#c0392b",     # red — CARD top determinant (one-hot)
     "ESM": "#7e3f9e",         # purple — ESM single-gene
     "FT_gene": "#3aa0a0",     # teal — fine-tuned Bacformer single-gene token
-    "mix": "#6a4fb3",         # purple-blue — concat FT mean ⊕ ESM gene
-    "mix_ft": "#2e2a7a",      # deep indigo — concat FT mean ⊕ FT gene
+    "mix": "#6a4fb3",         # purple-blue — Bacformer FT mean ⊕ ESM gene
+    "mix_ft": "#2e2a7a",      # deep indigo — Bacformer FT mean ⊕ Bacformer FT gene
 }
 FAMILY_LABEL = {
-    "Bacformer": "FT Bacformer mean", "one-hot": "CARD top determinant", "ESM": "ESM-C single gene",
-    "FT_gene": "FT Bacformer single gene", "mix": "concat (FT mean ⊕ ESM gene)",
-    "mix_ft": "concat (FT mean ⊕ FT gene)",
+    "Bacformer": "Bacformer FT mean", "one-hot": "CARD top determinant", "ESM": "ESM-C single gene",
+    "FT_gene": "Bacformer FT single gene", "mix": "Bacformer FT mean ⊕ ESM gene",
+    "mix_ft": "Bacformer FT mean ⊕ Bacformer FT gene",
 }
 CEILING_COLOUR = "#c0392b"
 
@@ -86,7 +86,7 @@ def build_table(drug: str, *, grain: str, summary_csv: Path, per_gene_csv: Path,
     best_esm, best_ft = str(srow["best_esm_gene"]), str(srow["best_ft_gene"])
     causal = causal_genes_for_drug(drug, grain=grain, card_csv=card_csv_path)
 
-    rows = [{"rung": "FT Bacformer mean", "family": "Bacformer",
+    rows = [{"rung": "Bacformer FT mean", "family": "Bacformer",
              "auroc": float(srow["ft_mean_only_auroc"]), "gene": "", "causal": None}]
 
     ceiling, top = _card_ceiling_and_top(card_csv)
@@ -101,13 +101,13 @@ def build_table(drug: str, *, grain: str, summary_csv: Path, per_gene_csv: Path,
                      "gene": best_esm, "causal": best_esm in causal})
     ft_au = _gene_auroc(per_gene_csv, best_ft, "ft_lr_auroc")
     if ft_au is not None:
-        rows.append({"rung": f"FT {best_ft}", "family": "FT_gene", "auroc": ft_au,
+        rows.append({"rung": f"Bacformer FT {best_ft}", "family": "FT_gene", "auroc": ft_au,
                      "gene": best_ft, "causal": best_ft in causal})
 
-    rows.append({"rung": f"concat: FT mean ⊕ ESM {best_esm}", "family": "mix",
+    rows.append({"rung": f"Bacformer FT mean ⊕ ESM {best_esm}", "family": "mix",
                  "auroc": float(srow["ft_concat_best_esm_auroc"]), "gene": best_esm,
                  "causal": best_esm in causal})
-    rows.append({"rung": f"concat: FT mean ⊕ FT {best_ft}", "family": "mix_ft",
+    rows.append({"rung": f"Bacformer FT mean ⊕ Bacformer FT {best_ft}", "family": "mix_ft",
                  "auroc": float(srow["ft_concat_best_ft_auroc"]), "gene": best_ft,
                  "causal": best_ft in causal})
 
@@ -132,8 +132,9 @@ def plot_ladder(df: pd.DataFrame, out_path: Path, *, drug: str, grain: str, info
     ceiling = info.get("ceiling")
     if ceiling is not None:
         ax.axhline(ceiling, color=CEILING_COLOUR, linestyle=":", linewidth=1.6)
-        ax.text(0.3 * (len(df) - 1), ceiling + 0.004, f"CARD one-hot ceiling = {ceiling:.3f}",
-                ha="center", va="bottom", fontsize=8.0, color=CEILING_COLOUR)
+        # far left — bars are lowest there (ascending), so the label clears them
+        ax.text(-0.4, ceiling + 0.004, f"CARD one-hot ceiling = {ceiling:.3f}",
+                ha="left", va="bottom", fontsize=8.0, color=CEILING_COLOUR)
 
     ax.set_xticks(list(x))
     ax.set_xticklabels(df["rung"], rotation=28, ha="right", fontsize=9.0)
@@ -153,7 +154,7 @@ def plot_ladder(df: pd.DataFrame, out_path: Path, *, drug: str, grain: str, info
     ft_tag = "causal" if info["best_ft_causal"] else "CONTEXT proxy"
     ax.set_title(f"{drug} ({grain} grain): CARD AST read-out ladder\n"
                  f"unsupervised best ESM gene = {info['best_esm_gene']} ({esm_tag}) · "
-                 f"best FT gene = {info['best_ft_gene']} ({ft_tag})", fontsize=11.5)
+                 f"best Bacformer FT gene = {info['best_ft_gene']} ({ft_tag})", fontsize=11.5)
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=150)

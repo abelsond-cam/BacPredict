@@ -3,14 +3,15 @@
 The Kp analogue of ``snp_embeddings.plot_cause_histogram``. Reads a per-drug ceiling table
 (``kp_<drug>/kleborate_determinant_lr_<drug>.csv`` from :mod:`kleb_ast.kleborate_determinant_lr`) and
 draws one bar per Kleborate determinant column, ascending (highest on the right, to match the ladder),
-coloured + hatched by **mechanism category** so the HGT-vs-chromosomal split — the programme's central
-axis — reads at a glance:
+all in the CARD red of the one-hot ceiling (matching the ladder) and shaded by **mechanism category**
+so the HGT-vs-chromosomal split — the programme's central axis — reads at a glance, light→dark:
 
-- **acquired gene (HGT)** — teal, solid: a horizontally-acquired gene Bacformer/ESM can embed (the
+- **acquired gene (HGT)** — lightest red: a horizontally-acquired gene Bacformer/ESM can embed (the
   catalogue's and Bacformer's shared strength);
-- **intrinsic chromosomal gene** — light teal, solid: a chromosomal gene (e.g. intrinsic ``Bla_chr``);
-- **chromosomal point mutation / porin truncation / loss-of-function** — red, hatched: the curated but
+- **intrinsic chromosomal gene** — light-mid red: a chromosomal gene (e.g. intrinsic ``Bla_chr``);
+- **chromosomal point mutation / porin truncation / loss-of-function** — darker reds: the curated but
   *narrow* chromosomal calls; the determinants Kleborate under-catalogues and a protein-mean model loses.
+  No hatch — every bar is a determinant; hatch is reserved for "causal" in the per-gene plot.
 
 A dashed line marks the **``__ALL_Kleborate__``** ceiling (all of the drug's determinants together).
 Where the hatched bars sit far below it (e.g. colistin, azithromycin) the catalogue is blind — and the
@@ -29,18 +30,23 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 ALL_KEY = "__ALL_Kleborate__"
-HGT = "#2a9d8f"        # teal — acquired (HGT), Bacformer's strength
-HGT_LIGHT = "#83c5be"  # light teal — intrinsic chromosomal gene (still embeddable)
-CHROM = "#c0392b"      # royal red — chromosomal mutation / truncation (the narrow curated calls)
+# Every bar is a CARD/Kleborate determinant, so all share the red of the one-hot ceiling (matches the
+# ladder). Mechanism category is encoded by *shade* (light = acquired/HGT → dark = chromosomal loss),
+# not hue, and with no hatch — hatch is reserved for "causal" in the per-gene plot. Reds ramp, light→dark.
+ACQ_RED = "#fb6a4a"            # acquired gene (HGT) — lightest red
+CHROM_CODING_RED = "#ef3b2c"   # intrinsic chromosomal gene (WT)
+CHROM_MUT_RED = "#cb181d"      # chromosomal point mutation
+PORIN_RED = "#a50f15"          # porin truncation / loss
+TRUNC_RED = "#67000d"          # truncation / loss-of-function — darkest
 BACFORMER_COLOUR = "#7e3f9e"  # purple — the deployed Bacformer reference line
 
-# category → (colour, hatch, legend label). Hatched = chromosomal/un-embeddable; solid = embeddable gene.
+# category → (colour, hatch, legend label). All red shades, no hatch — every bar is a CARD determinant.
 CATEGORY_STYLE: dict[str, tuple[str, str, str]] = {
-    "acquired_hgt": (HGT, "", "acquired gene (HGT)"),
-    "chromosomal_coding": (HGT_LIGHT, "", "intrinsic chromosomal gene"),
-    "chromosomal_mutation": (CHROM, "//", "chromosomal point mutation"),
-    "porin_truncation": (CHROM, "xx", "porin truncation / loss"),
-    "truncation_lof": (CHROM, "..", "truncation / loss-of-function"),
+    "acquired_hgt": (ACQ_RED, "", "acquired gene (HGT)"),
+    "chromosomal_coding": (CHROM_CODING_RED, "", "intrinsic chromosomal gene"),
+    "chromosomal_mutation": (CHROM_MUT_RED, "", "chromosomal point mutation"),
+    "porin_truncation": (PORIN_RED, "", "porin truncation / loss"),
+    "truncation_lof": (TRUNC_RED, "", "truncation / loss-of-function"),
 }
 
 
@@ -72,9 +78,11 @@ def plot_cause(csv_path: Path, out_path: Path, *, drug: str, bacformer_auroc: fl
         if h:
             b.set_hatch(h)
     # Value label *inside* the top of each bar (white) — keeps it clear of the ceiling/Bacformer lines
-    # even when a single tall bar reaches them.
+    # even when a single tall bar reaches them. Font shrinks as the bars get narrower (allele grain has
+    # many) so the label never overruns its bar.
+    val_fs = max(5.5, min(7.5, 75.0 / max(len(bars), 1)))
     for i, v in enumerate(bars["mut_auroc"]):
-        ax.text(i, v - 0.012, f"{v:.3f}", ha="center", va="top", fontsize=8.5, fontweight="bold", color="white")
+        ax.text(i, v - 0.012, f"{v:.3f}", ha="center", va="top", fontsize=val_fs, fontweight="bold", color="white")
 
     # Line labels at opposite ends (ceiling far-left, Bacformer far-right) so they never overlap each
     # other, via a blended transform (x = axes fraction, y = data).

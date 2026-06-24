@@ -1,7 +1,7 @@
 rung,family,auroc,gene,causal
-FT Bacformer mean,Bacformer,0.9920438564508568,,
+Bacformer FT mean,Bacformer,0.9920438564508568,,
 CARD top: CTX-M,one-hot,0.7831197789591042,CTX-M,True
 ESM GyrA,ESM,0.8609986197197771,GyrA,False
-FT OmpK36,FT_gene,0.9974087192041252,OmpK36,True
-concat: FT mean ⊕ ESM GyrA,mix,0.9903185061721964,GyrA,False
-concat: FT mean ⊕ FT OmpK36,mix_ft,0.9971027136830044,OmpK36,True
+Bacformer FT OmpK36,FT_gene,0.9974087192041252,OmpK36,True
+Bacformer FT mean ⊕ ESM GyrA,mix,0.9903185061721964,GyrA,False
+Bacformer FT mean ⊕ Bacformer FT OmpK36,mix_ft,0.9971027136830044,OmpK36,True
