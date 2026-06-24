@@ -1,7 +1,8 @@
 rung,family,auroc,gene,causal
-Bacformer FT mean,Bacformer,0.9550017307026653,,
-CARD top: ParC (WT),one-hot,0.9482209737827711,ParC (WT),False
+BacF FT mean,Bacformer,0.9550017307026653,,
+CARD top: ParC (WT),CARD,0.9482209737827711,ParC (WT),False
+CARD all-determinant ceiling,CARD,0.9717436537661256,,
 ESM ParC,ESM,0.9537383177570096,ParC,True
-Bacformer FT GyrA,FT_gene,0.9582554517133955,GyrA,True
-Bacformer FT mean ⊕ ESM ParC,mix,0.9600899965385948,ParC,True
-Bacformer FT mean ⊕ Bacformer FT GyrA,mix_ft,0.9695050190377292,GyrA,True
+BacF FT GyrA,Bacformer,0.9582554517133955,GyrA,True
+BacF FT mean ⊕ ESM ParC,Bacformer,0.9600899965385948,ParC,True
+BacF FT mean ⊕ BacF FT GyrA,Bacformer,0.9695050190377292,GyrA,True

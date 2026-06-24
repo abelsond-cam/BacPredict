@@ -38,20 +38,17 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 CARD_ALL_KEY = "__ALL_CARD__"
+# Three families only, matching the per-gene esm-vs-ft plot's palette: CARD red, ESM purple, Bacformer
+# dark purple. Every Bacformer read-out (FT mean / single gene / concat) shares one colour — the specific
+# variant is spelled out in the bar's x-label, not encoded by hue.
 FAMILY_COLOURS = {
-    "Bacformer": "#1f77b4",   # blue — FT genome-mean
-    "one-hot": "#c0392b",     # red — CARD top determinant (one-hot)
-    "ESM": "#7e3f9e",         # purple — ESM single-gene
-    "FT_gene": "#3aa0a0",     # teal — fine-tuned Bacformer single-gene token
-    "mix": "#6a4fb3",         # purple-blue — Bacformer FT mean ⊕ ESM gene
-    "mix_ft": "#2e2a7a",      # deep indigo — Bacformer FT mean ⊕ Bacformer FT gene
+    "CARD": "#c0392b",        # red — CARD catalogue (top determinant + all-determinant ceiling)
+    "ESM": "#7e3f9e",         # purple — ESM single gene
+    "Bacformer": "#2e2a7a",   # dark purple — every Bacformer read-out
 }
 FAMILY_LABEL = {
-    "Bacformer": "Bacformer FT mean", "one-hot": "CARD top determinant", "ESM": "ESM-C single gene",
-    "FT_gene": "Bacformer FT single gene", "mix": "Bacformer FT mean ⊕ ESM gene",
-    "mix_ft": "Bacformer FT mean ⊕ Bacformer FT gene",
+    "CARD": "CARD catalogue", "ESM": "ESM single gene", "Bacformer": "Bacformer (BacF)",
 }
-CEILING_COLOUR = "#c0392b"
 
 
 def _gene_auroc(per_gene_csv: Path, gene: str, col: str) -> float | None:
@@ -86,14 +83,18 @@ def build_table(drug: str, *, grain: str, summary_csv: Path, per_gene_csv: Path,
     best_esm, best_ft = str(srow["best_esm_gene"]), str(srow["best_ft_gene"])
     causal = causal_genes_for_drug(drug, grain=grain, card_csv=card_csv_path)
 
-    rows = [{"rung": "Bacformer FT mean", "family": "Bacformer",
+    rows = [{"rung": "BacF FT mean", "family": "Bacformer",
              "auroc": float(srow["ft_mean_only_auroc"]), "gene": "", "causal": None}]
 
+    # CARD catalogue — the top single determinant and the all-determinant ceiling, both as red bars
     ceiling, top = _card_ceiling_and_top(card_csv)
     if top is not None:
-        rows.append({"rung": f"CARD top: {top['site']}", "family": "one-hot",
+        rows.append({"rung": f"CARD top: {top['site']}", "family": "CARD",
                      "auroc": float(top["mut_auroc"]), "gene": str(top["site"]),
                      "causal": bool(top.get("is_causal", False))})
+    if ceiling is not None:
+        rows.append({"rung": "CARD all-determinant ceiling", "family": "CARD",
+                     "auroc": ceiling, "gene": "", "causal": None})
 
     esm_au = _gene_auroc(per_gene_csv, best_esm, "esm_lr_auroc")
     if esm_au is not None:
@@ -101,13 +102,13 @@ def build_table(drug: str, *, grain: str, summary_csv: Path, per_gene_csv: Path,
                      "gene": best_esm, "causal": best_esm in causal})
     ft_au = _gene_auroc(per_gene_csv, best_ft, "ft_lr_auroc")
     if ft_au is not None:
-        rows.append({"rung": f"Bacformer FT {best_ft}", "family": "FT_gene", "auroc": ft_au,
+        rows.append({"rung": f"BacF FT {best_ft}", "family": "Bacformer", "auroc": ft_au,
                      "gene": best_ft, "causal": best_ft in causal})
 
-    rows.append({"rung": f"Bacformer FT mean ⊕ ESM {best_esm}", "family": "mix",
+    rows.append({"rung": f"BacF FT mean ⊕ ESM {best_esm}", "family": "Bacformer",
                  "auroc": float(srow["ft_concat_best_esm_auroc"]), "gene": best_esm,
                  "causal": best_esm in causal})
-    rows.append({"rung": f"Bacformer FT mean ⊕ Bacformer FT {best_ft}", "family": "mix_ft",
+    rows.append({"rung": f"BacF FT mean ⊕ BacF FT {best_ft}", "family": "Bacformer",
                  "auroc": float(srow["ft_concat_best_ft_auroc"]), "gene": best_ft,
                  "causal": best_ft in causal})
 
@@ -117,7 +118,7 @@ def build_table(drug: str, *, grain: str, summary_csv: Path, per_gene_csv: Path,
 
 
 def plot_ladder(df: pd.DataFrame, out_path: Path, *, drug: str, grain: str, info: dict) -> None:
-    """Single-panel AUROC ladder, bars ascending, family-coloured, with the __ALL_CARD__ ceiling line."""
+    """Single-panel AUROC ladder, bars ascending, family-coloured — the CARD ceiling is itself a red bar."""
     df = df.sort_values("auroc").reset_index(drop=True)
     colours = [FAMILY_COLOURS.get(f, "#888888") for f in df["family"]]
     fig, ax = plt.subplots(figsize=(10.5, 6.0))
@@ -129,20 +130,10 @@ def plot_ladder(df: pd.DataFrame, out_path: Path, *, drug: str, grain: str, info
     for xi, v in zip(x, df["auroc"], strict=True):
         ax.text(xi, v + 0.003, f"{v:.3f}", ha="center", va="bottom", fontsize=10, fontweight="bold")
 
-    ceiling = info.get("ceiling")
-    if ceiling is not None:
-        ax.axhline(ceiling, color=CEILING_COLOUR, linestyle=":", linewidth=1.6)
-        # far left — bars are lowest there (ascending), so the label clears them
-        ax.text(-0.4, ceiling + 0.004, f"CARD one-hot ceiling = {ceiling:.3f}",
-                ha="left", va="bottom", fontsize=8.0, color=CEILING_COLOUR)
-
     ax.set_xticks(list(x))
     ax.set_xticklabels(df["rung"], rotation=28, ha="right", fontsize=9.0)
     ax.set_ylabel("eval-holdout AUROC (k-fold)", fontsize=12)
-    lo = df["auroc"].min()
-    if ceiling is not None:
-        lo = min(lo, ceiling)
-    ax.set_ylim(max(0.0, lo - 0.05), 1.005)
+    ax.set_ylim(max(0.0, df["auroc"].min() - 0.05), 1.005)
     ax.grid(axis="y", alpha=0.3)
     ax.spines[["top", "right"]].set_visible(False)
     handles = [plt.Rectangle((0, 0), 1, 1, color=c, ec="black", lw=0.7) for c in FAMILY_COLOURS.values()]
@@ -154,7 +145,8 @@ def plot_ladder(df: pd.DataFrame, out_path: Path, *, drug: str, grain: str, info
     ft_tag = "causal" if info["best_ft_causal"] else "CONTEXT proxy"
     ax.set_title(f"{drug} ({grain} grain): CARD AST read-out ladder\n"
                  f"unsupervised best ESM gene = {info['best_esm_gene']} ({esm_tag}) · "
-                 f"best Bacformer FT gene = {info['best_ft_gene']} ({ft_tag})", fontsize=11.5)
+                 f"best BacF FT gene = {info['best_ft_gene']} ({ft_tag})", fontsize=11.5)
+    fig.text(0.99, 0.985, "BacF = Bacformer", ha="right", va="top", fontsize=8.0, color="0.4")
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=150)

@@ -3,19 +3,16 @@
 The Kp analogue of ``snp_embeddings.plot_cause_histogram``. Reads a per-drug ceiling table
 (``kp_<drug>/kleborate_determinant_lr_<drug>.csv`` from :mod:`kleb_ast.kleborate_determinant_lr`) and
 draws one bar per Kleborate determinant column, ascending (highest on the right, to match the ladder),
-all in the CARD red of the one-hot ceiling (matching the ladder) and shaded by **mechanism category**
-so the HGT-vs-chromosomal split — the programme's central axis — reads at a glance, light→dark:
+all in **one CARD red**. The HGT-vs-chromosomal split — the programme's central axis — is carried by the
+**x-label colour** (matching the per-gene esm-vs-ft plot):
 
-- **acquired gene (HGT)** — lightest red: a horizontally-acquired gene Bacformer/ESM can embed (the
-  catalogue's and Bacformer's shared strength);
-- **intrinsic chromosomal gene** — light-mid red: a chromosomal gene (e.g. intrinsic ``Bla_chr``);
-- **chromosomal point mutation / porin truncation / loss-of-function** — darker reds: the curated but
-  *narrow* chromosomal calls; the determinants Kleborate under-catalogues and a protein-mean model loses.
-  No hatch — every bar is a determinant; hatch is reserved for "causal" in the per-gene plot.
+- **red label — acquired / HGT**: a distinct horizontally-acquired gene Bacformer/ESM can embed;
+- **blue label — chromosomal**: a SNP / truncation (gyrA/parC QRDR, ompK porin loss, mgrB, …) where the WT
+  and mutant share an embedding — so the only question the histogram asks is *which the model picks up*.
 
-A dashed line marks the **``__ALL_Kleborate__``** ceiling (all of the drug's determinants together).
-Where the hatched bars sit far below it (e.g. colistin, azithromycin) the catalogue is blind — and the
-deployed Bacformer AUROC (drawn if ``--bacformer-auroc`` is given) sits *above* the ceiling. Login/CPU.
+A dashed red line marks the **``__ALL_Kleborate__``** ceiling (all determinants together). Where the bars
+sit far below it (e.g. colistin, azithromycin) the catalogue is blind — and the best Bacformer read-out
+(drawn if given) sits *above* the ceiling. Login/CPU.
 """
 
 from __future__ import annotations
@@ -30,31 +27,26 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 ALL_KEY = "__ALL_Kleborate__"
-# Every bar is a CARD/Kleborate determinant, so all share the red of the one-hot ceiling (matches the
-# ladder). Mechanism category is encoded by *shade* (light = acquired/HGT → dark = chromosomal loss),
-# not hue, and with no hatch — hatch is reserved for "causal" in the per-gene plot. Reds ramp, light→dark.
-ACQ_RED = "#fb6a4a"            # acquired gene (HGT) — lightest red
-CHROM_CODING_RED = "#ef3b2c"   # intrinsic chromosomal gene (WT)
-CHROM_MUT_RED = "#cb181d"      # chromosomal point mutation
-PORIN_RED = "#a50f15"          # porin truncation / loss
-TRUNC_RED = "#67000d"          # truncation / loss-of-function — darkest
-BACFORMER_COLOUR = "#7e3f9e"  # purple — the best-Bacformer reference line
-CEILING_COLOUR = "#c0392b"    # red — the CARD/Kleborate one-hot ceiling (uniform across all plots)
+# Every bar is a CARD/Kleborate determinant → all one red. The HGT-vs-chromosomal split is carried by the
+# x-label colour (matching the per-gene esm-vs-ft plot): red = acquired/HGT (a distinct gene), blue =
+# chromosomal (a SNP/truncation, where WT and mutant share an embedding). Porin loss folds into chromosomal.
+BAR_RED = "#c0392b"             # all determinant bars — one red (matches the ceiling)
+ACQUIRED_LABEL = "#c0392b"      # red x-label — acquired / HGT determinant
+CHROM_LABEL = "#1f6f8b"         # blue x-label — chromosomal determinant (SNP / truncation)
+BACFORMER_COLOUR = "#2e2a7a"    # dark purple — best-Bacformer reference line (matches esm-vs-ft Bacformer)
+CEILING_COLOUR = "#c0392b"      # red — the CARD/Kleborate one-hot ceiling (uniform across all plots)
+ACQUIRED_CATS = {"acquired_hgt"}  # everything else (coding / mutation / porin / truncation) is chromosomal
 
-# category → (colour, hatch, legend label). All red shades, no hatch — every bar is a CARD determinant.
-CATEGORY_STYLE: dict[str, tuple[str, str, str]] = {
-    "acquired_hgt": (ACQ_RED, "", "acquired gene (HGT)"),
-    "chromosomal_coding": (CHROM_CODING_RED, "", "intrinsic chromosomal gene"),
-    "chromosomal_mutation": (CHROM_MUT_RED, "", "chromosomal point mutation"),
-    "porin_truncation": (PORIN_RED, "", "porin truncation / loss"),
-    "truncation_lof": (TRUNC_RED, "", "truncation / loss-of-function"),
-}
+
+def _label_colour(category: str) -> str:
+    """Red for acquired/HGT, blue for chromosomal (coding / mutation / porin / truncation)."""
+    return ACQUIRED_LABEL if category in ACQUIRED_CATS else CHROM_LABEL
 
 
 def plot_cause(csv_path: Path, out_path: Path, *, drug: str, bacformer_auroc: float | None = None,
                source_name: str = "Kleborate", all_key: str | None = None, grain: str = "family",
                bacformer_label: str = "Finetuned Bacformer mean") -> None:
-    """Bars per determinant by mechanism category, ascending, with the all-determinant ceiling line.
+    """Bars per determinant (all one red), ascending; x-label colour marks acquired (red) vs chromosomal (blue).
 
     ``source_name`` ("Kleborate" / "CARD") drives the ceiling-row key (``__ALL_<source_name>__``, unless
     ``all_key`` overrides), the title and the y-label — so the same plotter renders the CARD one-hot
@@ -68,20 +60,11 @@ def plot_cause(csv_path: Path, out_path: Path, *, drug: str, bacformer_auroc: fl
     full = df[df["gene_name"] == key]
     bars = df[df["gene_name"] != key].sort_values("mut_auroc", ascending=True).reset_index(drop=True)
 
-    colours, hatches = [], []
-    for cat in bars["category"]:
-        colour, hatch, _ = CATEGORY_STYLE.get(cat, ("#9aa3ad", "", "other"))
-        colours.append(colour)
-        hatches.append(hatch)
-
     fig, ax = plt.subplots(figsize=(11.0, 5.8))
     x = range(len(bars))
-    rendered = ax.bar(x, bars["mut_auroc"], yerr=bars["mut_auroc_sd"], capsize=3,
-                      color=colours, edgecolor="black", linewidth=0.7, width=0.74,
-                      error_kw={"ecolor": "black", "elinewidth": 1.0})
-    for b, h in zip(rendered, hatches, strict=True):
-        if h:
-            b.set_hatch(h)
+    ax.bar(x, bars["mut_auroc"], yerr=bars["mut_auroc_sd"], capsize=3,
+           color=BAR_RED, edgecolor="black", linewidth=0.7, width=0.74,
+           error_kw={"ecolor": "black", "elinewidth": 1.0})
     # Value label *inside* the top of each bar (white). Dropped on the dense allele grain — the bars get
     # too narrow for a legible number there (the y-axis carries it instead).
     if grain != "allele":
@@ -107,19 +90,17 @@ def plot_cause(csv_path: Path, out_path: Path, *, drug: str, bacformer_auroc: fl
 
     ax.set_xticks(list(x))
     ax.set_xticklabels(bars["site"], rotation=30, ha="right", fontsize=4.75 if grain == "allele" else 9.5)
+    for tick, cat in zip(ax.get_xticklabels(), bars["category"], strict=True):
+        tick.set_color(_label_colour(str(cat)))
     ax.set_ylabel(f"{source_name}-determinant LR AUROC (k-fold)", fontsize=12)
     ax.set_ylim(0.45, 1.03)
     ax.grid(axis="y", alpha=0.3)
     ax.spines[["top", "right"]].set_visible(False)
 
-    present = list(dict.fromkeys(bars["category"]))  # categories present, in first-seen order
-    handles, labels = [], []
-    for cat in present:
-        if cat not in CATEGORY_STYLE:
-            continue
-        colour, hatch, label = CATEGORY_STYLE[cat]
-        handles.append(plt.Rectangle((0, 0), 1, 1, color=colour, ec="black", lw=0.7, hatch=hatch))
-        labels.append(label)
+    # bars are all one red; the legend keys the x-label colour (mechanism) + the best-Bacformer line
+    handles = [plt.Rectangle((0, 0), 1, 1, color=ACQUIRED_LABEL, ec="black", lw=0.7),
+               plt.Rectangle((0, 0), 1, 1, color=CHROM_LABEL, ec="black", lw=0.7)]
+    labels = ["label: acquired / HGT", "label: chromosomal (SNP/truncation)"]
     if bacformer_auroc is not None:
         handles.append(plt.Line2D([0], [0], color=BACFORMER_COLOUR, linestyle="-.", linewidth=1.5))
         labels.append(bacformer_label)
