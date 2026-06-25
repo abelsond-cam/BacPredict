@@ -62,12 +62,13 @@ def run(
     drug: str,
     parquet_dir: Path,
     esm_store_dir: Path,
-    checkpoint: Path,
+    checkpoint: Path | None,
     ranking_csv: Path,
     out_dir: Path,
     threshold: float,
     top_n: int,
     device: str,
+    mode: str = "finetuned",
     pt_suffix: str = "_esm_embeddings.pt",
     max_samples: int | None = None,
     eval_only: bool = False,
@@ -86,7 +87,9 @@ def run(
     top = select_top_genes(ranking_csv, drug, threshold=threshold, top_n=top_n)
     top_set = set(top["gene_name"].astype(str))
 
-    model = _load_model(device, mode="finetuned", checkpoint=checkpoint)
+    # mode="frozen" forwards the base backbone (no checkpoint) — to cache frozen tokens for the same top
+    # genes, so the per-gene plot can show ESM → frozen → fine-tuned for non-AMR lineage genes too.
+    model = _load_model(device, mode=mode, checkpoint=checkpoint if mode == "finetuned" else None)
     model_dtype = next(model.parameters()).dtype
 
     mean_ids: list[str] = []
@@ -156,8 +159,8 @@ def run(
                          "prevalence": float(r["prevalence"]), "n_carriers": len(gene_ids[g])})
     pd.DataFrame(manifest).to_csv(out_dir / f"top_gene_manifest_{drug}.csv", index=False)
     (out_dir / f"cache_summary_{drug}.json").write_text(json.dumps({
-        "drug": drug, "checkpoint": str(checkpoint), "n_genomes": len(mean_ids),
-        "n_top_genes": len(manifest), "threshold": threshold, "top_n": top_n,
+        "drug": drug, "mode": mode, "checkpoint": str(checkpoint) if checkpoint else None,
+        "n_genomes": len(mean_ids), "n_top_genes": len(manifest), "threshold": threshold, "top_n": top_n,
         "ranking_csv": str(ranking_csv),
     }, indent=2))
     logger.info("Wrote %d per-gene FT Bacformer stores -> %s", len(manifest), gene_dir)
@@ -170,8 +173,10 @@ def main() -> None:
     parser.add_argument("--drug", type=str, required=True)
     parser.add_argument("--parquet-dir", type=Path, required=True)
     parser.add_argument("--esm-store-dir", type=Path, required=True)
-    parser.add_argument("--bacformer-checkpoint", type=Path, required=True,
-                        help="The drug's deployed FT AMR checkpoint dir (the FT backbone forward).")
+    parser.add_argument("--mode", type=str, default="finetuned", choices=["finetuned", "frozen"],
+                        help="finetuned = the drug's FT checkpoint; frozen = base backbone (no checkpoint).")
+    parser.add_argument("--bacformer-checkpoint", type=Path, default=None,
+                        help="The drug's deployed FT AMR checkpoint dir (required for --mode finetuned).")
     parser.add_argument("--ranking-csv", type=Path, required=True,
                         help="per_gene_lr_<drug>.csv (imputed) — selects the top genes to cache.")
     parser.add_argument("--out-dir", type=Path, required=True)
@@ -182,11 +187,13 @@ def main() -> None:
                         help="Forward only the canonical evaluate split (FT-unseen; honest scope, ~5x cheaper).")
     parser.add_argument("--max-samples", type=int, default=None, help="Cap genomes (smoke).")
     args = parser.parse_args()
+    if args.mode == "finetuned" and args.bacformer_checkpoint is None:
+        parser.error("--bacformer-checkpoint is required for --mode finetuned")
     run(
         ast_sheet=args.ast_sheet_path, drug=args.drug, parquet_dir=args.parquet_dir,
         esm_store_dir=args.esm_store_dir, checkpoint=args.bacformer_checkpoint, ranking_csv=args.ranking_csv,
         out_dir=args.out_dir, threshold=args.auroc_threshold, top_n=args.top_n, device=args.device,
-        max_samples=args.max_samples, eval_only=args.eval_only,
+        mode=args.mode, max_samples=args.max_samples, eval_only=args.eval_only,
     )
 
 

@@ -74,6 +74,7 @@ def run(
     esm_dir: Path,
     ft_cache_dir: Path,
     out_dir: Path,
+    frozen_cache_dir: Path | None = None,
     n_folds: int = 5,
     seed: int = 1,
     max_genes: int | None = None,
@@ -92,6 +93,7 @@ def run(
 
     esm_ids, esm_vecs = collect_esm_vectors(eval_ids, top_genes, esm_dir, parquet_dir)
     gene_dir = ft_cache_dir / "gene_emb"
+    frozen_dir = (frozen_cache_dir / "gene_emb") if frozen_cache_dir is not None else None
 
     rows = []
     for _, r in manifest.iterrows():
@@ -113,10 +115,20 @@ def run(
             esm_fit = _fit_one_gene_imputed(e_ids, e_vec, eval_ids, y_eval, e_vec.shape[1],
                                             n_folds=n_folds, seed=seed)
 
+        # frozen Bacformer token (same top gene, base backbone) — gives ESM → frozen → FT for lineage genes
+        frozen_au = float("nan")
+        frp = frozen_dir / f"{san}.npz" if frozen_dir is not None else None
+        if frp is not None and frp.exists():
+            frz = np.load(frp, allow_pickle=True)
+            fr_vec = frz["vectors"]
+            frozen_fit = _fit_one_gene_imputed([str(s) for s in frz["sample_ids"]], fr_vec, eval_ids, y_eval,
+                                               fr_vec.shape[1], n_folds=n_folds, seed=seed)
+            frozen_au = float(frozen_fit["auroc"]) if frozen_fit else float("nan")
+
         esm_au = float(esm_fit["auroc"]) if esm_fit else float("nan")
         ft_au = float(ft_fit["auroc"]) if ft_fit else float("nan")
         rows.append({
-            "gene_name": g, "esm_lr_auroc": esm_au, "ft_lr_auroc": ft_au,
+            "gene_name": g, "esm_lr_auroc": esm_au, "frozen_lr_auroc": frozen_au, "ft_lr_auroc": ft_au,
             "delta_ft_minus_esm": ft_au - esm_au, "prevalence": float(r["prevalence"]),
             "n_carriers_esm": len(e_ids), "n_carriers_ft": len(ft_ids),
             "selection_esm_lr_auroc": float(r["esm_lr_auroc"]),
@@ -142,6 +154,8 @@ def main() -> None:
     parser.add_argument("--esm-store-dir", type=Path, required=True)
     parser.add_argument("--ft-cache-dir", type=Path, required=True,
                         help="ft_bacformer_cache/<drug>/ (gene_emb/*.npz + top_gene_manifest_<drug>.csv).")
+    parser.add_argument("--frozen-cache-dir", type=Path, default=None,
+                        help="frozen_bacformer_cache/<drug>/ (gene_emb/*.npz) — adds frozen_lr_auroc per gene.")
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--n-folds", type=int, default=5)
     parser.add_argument("--seed", type=int, default=1)
@@ -150,7 +164,7 @@ def main() -> None:
     run(
         ast_sheet=args.ast_sheet_path, drug=args.drug, parquet_dir=args.parquet_dir,
         esm_dir=args.esm_store_dir, ft_cache_dir=args.ft_cache_dir, out_dir=args.out_dir,
-        n_folds=args.n_folds, seed=args.seed, max_genes=args.max_genes,
+        frozen_cache_dir=args.frozen_cache_dir, n_folds=args.n_folds, seed=args.seed, max_genes=args.max_genes,
     )
 
 
