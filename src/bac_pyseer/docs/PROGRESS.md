@@ -39,6 +39,23 @@ attempt was abandoned (λ=4.34, severe under-correction). **λ<1 in both** ⇒ t
 *conservative* (arguably over-) correction, so surviving signals — including clade-attributed ones — are
 unlikely to be pure structure artefacts.
 
+**Calibration across the frequency spectrum (completion check).** A single genome-wide λ can hide *where*
+any mis-calibration sits, so we recompute it within allele-frequency bins
+([`genomic_inflation_by_af.tsv`](genomic_inflation_by_af.tsv), via
+[`genomic_inflation_by_af.py`](../kleb_iso_source/genomic_inflation_by_af.py)). The variant axis is
+**conservative at every frequency**, never exceeding 1:
+
+| af bin | blood λ | resp λ |
+|---|--:|--:|
+| 0.01–0.05 | 0.55 | 0.47 |
+| 0.05–0.20 | 0.55 | 0.53 |
+| 0.20–0.50 | 0.64 | 0.62 |
+| 0.50–0.97 (common) | **0.72** | **0.67** |
+
+So the common-allele signal that carries most of the invasion variance (§1) rests on well-calibrated — if
+anything conservative — statistics; the reported λ≈0.5 is not masking a common-variant inflation. (The
+*unitig* axis behaves very differently — calibrated at rare af, inflated at common af — see §6.)
+
 **The four axes.** Variant/core-SNP (**this report**: chromosomal alleles, incl. SNPs within
 chromosomally-integrated islands; blind to plasmids) · **independent-origin hotspot** (a sub-analysis of
 the same variants, §5) · **unitig** (accessory/HGT sequence, §6, running) · **gene presence/absence**
@@ -197,9 +214,18 @@ respiratory-weighted signal in the same regulators (`phoQ`, `mgrB`, `ramA`, `qse
 The chromosomal variant axis cannot see plasmids or accessory genes absent from MGH 78578 — yet the
 single-sublineage hits (§3) and the clade-adaptation reading point exactly there. Two axes are in flight:
 
-- **Unitig (accessory/HGT) LMM** — GGCAT coloured de-Bruijn unitigs, 64-way sharded (the n×n kinship is
-  computed once and reused by every shard; mathematically exact). The blood/faeces chain has completed;
-  λ + hit count are being re-queried (the result fetch hit a transient connection error). **Placeholder.**
+- **Unitig (accessory/HGT) LMM** — GGCAT coloured de-Bruijn unitigs, 64-way sharded; corrected by **the
+  same core-SNP LMM kinship as the variant axis** (`--lmm --similarity` → `--load-lmm`, run-log h² = 0.83).
+  The blood/faeces run completed cleanly (6.28M unitigs, no OOM) but the genome-wide **λ = 3.42** is
+  inflated. Stratifying by frequency ([`genomic_inflation_by_af.tsv`](genomic_inflation_by_af.tsv))
+  localises it sharply: **rare unitigs are well-calibrated (af 0.01–0.05, λ = 0.80) but common unitigs are
+  heavily inflated (af > 0.5, λ = 21)** — the signature of deep soft-core / cross-species structure that a
+  single-reference core-SNP kinship does not capture (the variant axis, by contrast, is conservative at
+  *every* af, 0.55→0.72). So the **rare accessory / HGT signal we most want is the calibrated part**; the
+  common end is structure-confounded. We are testing whether a **unitig-Jaccard kinship** (an
+  accessory-aware structure control) recovers the common end; pending that, hits are triaged by frequency +
+  lineage + cross-niche concordance (mirror §2) + gene mapping, not raw p. **Placeholder — under active
+  calibration.**
 - **Panaroo gene presence/absence GWAS** (`--pres`) — gene gain/loss. **Planned** (inputs TBD).
 
 **Planned figures for these axes** (ideas, for when they land): a unitig Manhattan + unitig↔variant gene
