@@ -55,7 +55,8 @@ def _best_bacformer(s: pd.Series) -> tuple[float, float]:
     """``(AUROC, AUPRC)`` of the strongest deployable Bacformer read-out: FT mean or a FT⊕gene concat."""
     cand = [(s.get("ft_mean_only_auroc"), s.get("ft_mean_only_auprc")),
             (s.get("ft_concat_best_ft_auroc"), s.get("ft_concat_best_ft_auprc")),
-            (s.get("ft_concat_best_esm_auroc"), s.get("ft_concat_best_esm_auprc"))]
+            (s.get("ft_concat_best_esm_auroc"), s.get("ft_concat_best_esm_auprc")),
+            (s.get("ft_concat_best_frozen_auroc"), s.get("ft_concat_best_frozen_auprc"))]
     cand = [(au, ap) for au, ap in cand if pd.notna(au)]
     return max(cand, key=lambda t: t[0]) if cand else (float("nan"), float("nan"))
 

@@ -38,7 +38,10 @@ def _row_for_drug(drug: str, csv: Path) -> dict | None:
         "ft_concat_best_ft_auprc": g("mean+best_ft_gene", "auprc"),
         "ft_concat_best_esm_auroc": g("mean+best_esm_gene", "auroc"),
         "ft_concat_best_esm_auprc": g("mean+best_esm_gene", "auprc"),
+        "ft_concat_best_frozen_auroc": g("mean+best_frozen_gene", "auroc"),
+        "ft_concat_best_frozen_auprc": g("mean+best_frozen_gene", "auprc"),
         "best_ft_gene": gene("mean+best_ft_gene"), "best_esm_gene": gene("mean+best_esm_gene"),
+        "best_frozen_gene": gene("mean+best_frozen_gene"),
     }
 
 

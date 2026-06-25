@@ -167,6 +167,16 @@ def run(
         f_au, f_ap = _score(x_ft)
         crows.append({"config": "mean+best_ft_gene", "gene": best_ft,
                       "n_features": x_ft.shape[1], "auroc": f_au, "auprc": f_ap})
+        # FT mean ⊕ best *frozen*-Bacformer gene — isolates the gain from fine-tuning the gene token
+        if frozen_cache_dir is not None and scored["frozen_lr_auroc"].notna().any():
+            best_frozen = scored.sort_values("frozen_lr_auroc", ascending=False).iloc[0]["gene_family"]
+            fr_npz = frozen_cache_dir / "frozen_amr_emb" / f"{san_of[best_frozen]}.npz"
+            if fr_npz.exists():
+                fr_ids, fr_vec = load_frozen_gene(frozen_cache_dir, san_of[best_frozen])
+                x_fr = np.hstack([mean_block, _impute_block(fr_ids, fr_vec, all_ids, fr_vec.shape[1])])
+                fz_au, fz_ap = _score(x_fr)
+                crows.append({"config": "mean+best_frozen_gene", "gene": best_frozen,
+                              "n_features": x_fr.shape[1], "auroc": fz_au, "auprc": fz_ap})
     concat = pd.DataFrame(crows)
     mean_au = concat.loc[concat["config"] == "mean_only", "auroc"]
     concat["delta_vs_mean"] = concat["auroc"] - (float(mean_au.iloc[0]) if not mean_au.empty else float("nan"))

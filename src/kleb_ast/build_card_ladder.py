@@ -75,18 +75,8 @@ def _card_ceiling_and_top(card_csv: Path | None) -> tuple[float | None, float | 
     return ceiling, ceiling_pr, top
 
 
-def _frozen_concat(ingredient_csv: Path | None) -> tuple[float | None, str | None]:
-    """``(auroc, gene)`` of the FT mean ⊕ frozen-Bacformer-gene concat from the gene-ingredient CSV."""
-    if ingredient_csv is None or not Path(ingredient_csv).exists():
-        return None, None
-    df = pd.read_csv(ingredient_csv)
-    row = df[df["config"] == "ft_mean+frozen_bac_gene"]
-    return (float(row["auroc"].iloc[0]), str(row["gene"].iloc[0])) if not row.empty else (None, None)
-
-
 def build_table(drug: str, *, grain: str, summary_csv: Path, per_gene_csv: Path,
-                card_csv: Path | None, card_csv_path: Path | None = None,
-                ingredient_csv: Path | None = None) -> tuple[pd.DataFrame, dict]:
+                card_csv: Path | None, card_csv_path: Path | None = None) -> tuple[pd.DataFrame, dict]:
     """Assemble the CARD ladder rows + meta for ``drug`` from the reliable summary/per-gene/ceiling CSVs."""
     summ = pd.read_csv(summary_csv)
     srow = summ[summ["drug"] == drug]
@@ -128,12 +118,15 @@ def build_table(drug: str, *, grain: str, summary_csv: Path, per_gene_csv: Path,
     rows.append({"rung": f"BacF FT mean ⊕ BacF FT {best_ft}", "family": "Bacformer",
                  "auroc": float(srow["ft_concat_best_ft_auroc"]), "auprc": float(srow["ft_concat_best_ft_auprc"]),
                  "gene": best_ft, "causal": best_ft in causal})
-    # FT mean ⊕ *frozen* BacF gene — isolates the value of fine-tuning the gene token (vs frozen). From the
-    # gene-ingredient concat CSV (AUROC only; AUPRC n/a there).
-    fr_au, fr_gene = _frozen_concat(ingredient_csv)
-    if fr_au is not None:
+    # FT mean ⊕ *frozen* BacF gene — isolates the gain from fine-tuning the gene token (vs frozen). From the
+    # reliable concat summary (now carries AUROC + AUPRC, same source as the other concat rungs).
+    fr_au = srow.get("ft_concat_best_frozen_auroc")
+    if fr_au is not None and pd.notna(fr_au):
+        fr_gene = str(srow.get("best_frozen_gene", ""))
+        fr_ap = srow.get("ft_concat_best_frozen_auprc")
         rows.append({"rung": f"BacF FT mean ⊕ frozen BacF {fr_gene}", "family": "Bacformer",
-                     "auroc": fr_au, "auprc": nan, "gene": fr_gene, "causal": fr_gene in causal})
+                     "auroc": float(fr_au), "auprc": float(fr_ap) if pd.notna(fr_ap) else nan,
+                     "gene": fr_gene, "causal": fr_gene in causal})
 
     info = {"best_esm_gene": best_esm, "best_ft_gene": best_ft, "ceiling": ceiling,
             "best_esm_causal": best_esm in causal, "best_ft_causal": best_ft in causal}
@@ -184,8 +177,7 @@ def plot_ladder(df: pd.DataFrame, out_path: Path, *, drug: str, grain: str, info
     ax_roc.set_title(f"{drug} ({grain} grain): CARD AST read-out ladder\n"
                      f"unsupervised best ESM gene = {info['best_esm_gene']} ({esm_tag}) · "
                      f"best BacF FT gene = {info['best_ft_gene']} ({ft_tag})", fontsize=11.5)
-    fig.text(0.5, 0.012, "BacF = Bacformer · AUPRC n/a for the frozen-concat rung",
-             ha="center", va="bottom", fontsize=8.0, color="0.4")
+    fig.text(0.5, 0.012, "BacF = Bacformer", ha="center", va="bottom", fontsize=8.0, color="0.4")
     fig.tight_layout(rect=(0, 0.03, 1, 1))
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=150)
@@ -194,10 +186,10 @@ def plot_ladder(df: pd.DataFrame, out_path: Path, *, drug: str, grain: str, info
 
 
 def run(*, drug: str, grain: str, summary_csv: Path, per_gene_csv: Path, card_csv: Path | None,
-        out_dir: Path, card_csv_path: Path | None = None, ingredient_csv: Path | None = None) -> pd.DataFrame:
+        out_dir: Path, card_csv_path: Path | None = None) -> pd.DataFrame:
     """Build the CARD ladder table + plot for one drug/grain."""
     table, info = build_table(drug, grain=grain, summary_csv=summary_csv, per_gene_csv=per_gene_csv,
-                              card_csv=card_csv, card_csv_path=card_csv_path, ingredient_csv=ingredient_csv)
+                              card_csv=card_csv, card_csv_path=card_csv_path)
     out_dir.mkdir(parents=True, exist_ok=True)
     table.to_csv(out_dir / f"{drug}_card_ladder_table_{grain}.csv", index=False)
     plot_ladder(table, out_dir / f"{drug}_card_ladder_{grain}.png", drug=drug, grain=grain, info=info)
@@ -218,15 +210,12 @@ def main() -> None:
     p.add_argument("--card-csv", type=Path, default=None,
                    help="Default: amr_per_abx/kp_<drug>/card_determinant_lr_<drug>_<grain>.csv (ceiling + top).")
     p.add_argument("--out-dir", type=Path, default=None, help="Default: docs/visualisations/amr_per_abx/kp_<drug>.")
-    p.add_argument("--ingredient-csv", type=Path, default=None,
-                   help="Default: amr_per_abx/ingredient/<drug>/gene_ingredient_concat_<drug>.csv (frozen concat).")
     args = p.parse_args()
     per_gene = args.per_gene_csv or rel / "per_gene" / f"reliable_esm_vs_ft_per_gene_{args.drug}.csv"
     card_csv = args.card_csv or vis / "amr_per_abx" / f"kp_{args.drug}" / f"card_determinant_lr_{args.drug}_{args.grain}.csv"
     out_dir = args.out_dir or vis / "amr_per_abx" / f"kp_{args.drug}"
-    ingredient = args.ingredient_csv or vis / "amr_per_abx" / "ingredient" / args.drug / f"gene_ingredient_concat_{args.drug}.csv"
     run(drug=args.drug, grain=args.grain, summary_csv=args.summary_csv, per_gene_csv=per_gene,
-        card_csv=card_csv, out_dir=out_dir, ingredient_csv=ingredient)
+        card_csv=card_csv, out_dir=out_dir)
 
 
 if __name__ == "__main__":
