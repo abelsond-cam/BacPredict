@@ -45,6 +45,10 @@ CAUSAL_HINTS = {
     "imipenem": ["kpc", "oxa", "ndm", "vim", "imp", "bla", "ompk", "carbapenem"],
 }
 
+# skglm/sklearn reject sparse matrices with > 2^31 nonzeros (int64 indices, accept_large_sparse=False).
+# Stay safely under 2^31 ≈ 2.147e9. Train rows beyond this are subsampled; full scale-up needs prune-first.
+MAX_TRAIN_NNZ = 2_000_000_000
+
 
 def load_array(array_dir: Path, drug: str) -> tuple[sparse.csr_matrix, pd.DataFrame, pd.DataFrame]:
     """Load CSR ``X.npz`` + ``samples.csv`` + ``genes.csv``; drop label-NaN rows. X stays sparse."""
@@ -189,8 +193,20 @@ def run_fit(array_dir: Path, drug: str, out_dir: Path, n_alphas: int, tau: float
     sp = samples["train_val_eval"].values
     tr, va, ev = (np.where(sp == s)[0] for s in ("train", "validate", "evaluate"))
     layout = uniform_block_layout(len(genes), EMB_DIM)
+    # Keep the TRAIN matrix under skglm's 2^31-nnz cap (only train is fitted; val/eval are scored via scipy
+    # matvec, which handles int64). Subsample train rows stratified by label, seeded, if over.
+    row_nnz = np.diff(X.indptr)
+    n_tr0 = len(tr)
+    if int(row_nnz[tr].sum()) > MAX_TRAIN_NNZ:
+        frac = MAX_TRAIN_NNZ / float(row_nnz[tr].sum())
+        rng = np.random.default_rng(0)
+        ytr0 = y[tr]
+        tr = np.sort(np.concatenate([rng.choice(tr[ytr0 == c], max(1, int((ytr0 == c).sum() * frac)),
+                                                 replace=False) for c in np.unique(ytr0)]))
+    tr_nnz = int(row_nnz[tr].sum())
     Xtr = X[tr].astype(np.float32)
-    print(f"[{drug}] X={X.shape} genes={layout.n_groups} nnz={X.nnz:,} splits tr/va/ev={len(tr)}/{len(va)}/{len(ev)}")
+    print(f"[{drug}] X={X.shape} genes={layout.n_groups} nnz={X.nnz:,} "
+          f"splits tr/va/ev={len(tr)}(of {n_tr0})/{len(va)}/{len(ev)} train_nnz={tr_nnz:,}")
 
     amax = alpha_max_group(Xtr, y[tr], layout)
     alphas = np.geomspace(amax, amax * 1e-2, n_alphas)
@@ -207,6 +223,8 @@ def run_fit(array_dir: Path, drug: str, out_dir: Path, n_alphas: int, tau: float
     result = {
         "drug": drug, "engine": "skglm-QuadraticGroup-WeightedL1GroupL2-GroupBCD", "n_genes": layout.n_groups,
         "nnz": int(X.nnz), "splits": {"train": len(tr), "validate": len(va), "evaluate": len(ev)},
+        "n_train_total": n_tr0, "n_train_used": len(tr), "train_nnz": tr_nnz,
+        "train_subsampled_for_int32_cap": len(tr) < n_tr0,
         "best_alpha": best["alpha"], "best_alpha_converged": best["converged"], "tau": tau,
         "n_selected_genes": int(len(sel)), "sgl_evaluate": sgl_ev, "mean_pool_evaluate": baseline,
         "delta_auroc_vs_mean_pool": sgl_ev["auroc"] - baseline["auroc"],
