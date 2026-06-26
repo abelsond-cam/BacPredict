@@ -163,44 +163,47 @@ def build(
                 if s in sample_to_row:
                     cell_by_gene_sample[gene][s] = [t for t in val.replace(";", " ").split() if t]
 
-    rows: list[int] = []
-    cols: list[int] = []
-    data: list[float] = []
+    n_cols = n_genes * EMB_DIM
     cov = {"cells": 0, "seq_hit": 0, "seq_miss": 0, "no_emb": 0}
+    # Build each sample as a 1×n_cols CSR row and vstack at the end. Keeping per-sample arrays small
+    # (and freeing them each iteration) avoids the multi-billion-element Python lists a global COO needs.
+    sample_rows: list[sparse.csr_matrix] = []
 
     for s in tqdm(samples, desc="samples"):
         seq_idx = sample_sequence_index(s, parquet_dir)
         emb = load_embeddings(s, esm_dir)
         if seq_idx is None or emb is None:
             cov["no_emb"] += 1
+            sample_rows.append(sparse.csr_matrix((1, n_cols), dtype=np.float32))
             continue
-        r = sample_to_row[s]
+        col_blocks: list[np.ndarray] = []
+        val_blocks: list[np.ndarray] = []
         for gene, per_sample in cell_by_gene_sample.items():
             loci = per_sample.get(s)
             if not loci:
                 continue
             cov["cells"] += 1
-            vecs = []
-            for locus in loci:
-                seq = locus_to_seq.get((s, locus))
-                hits = seq_idx.get(seq) if seq else None
-                if hits:
-                    vecs.append(emb[hits[0]])
+            vecs = [emb[hits[0]] for locus in loci
+                    if (hits := seq_idx.get(locus_to_seq.get((s, locus), ""))) ]
             if not vecs:
                 cov["seq_miss"] += 1
                 continue
             cov["seq_hit"] += 1
-            block = np.mean(vecs, axis=0)
+            block = np.mean(vecs, axis=0) if len(vecs) > 1 else vecs[0]
             base = gene_to_col[gene] * EMB_DIM
             nz = np.nonzero(block)[0]
-            rows.extend([r] * len(nz))
-            cols.extend((base + nz).tolist())
-            data.extend(block[nz].tolist())
+            col_blocks.append(base + nz)
+            val_blocks.append(block[nz].astype(np.float32))
+        if col_blocks:
+            ci = np.concatenate(col_blocks)
+            vv = np.concatenate(val_blocks)
+            row = sparse.csr_matrix((vv, (np.zeros(len(ci), dtype=np.int64), ci)),
+                                    shape=(1, n_cols), dtype=np.float32)
+        else:
+            row = sparse.csr_matrix((1, n_cols), dtype=np.float32)
+        sample_rows.append(row)
 
-    X = sparse.csr_matrix(
-        (np.asarray(data, dtype=np.float32), (np.asarray(rows), np.asarray(cols))),
-        shape=(n_samples, n_genes * EMB_DIM),
-    )
+    X = sparse.vstack(sample_rows, format="csr") if sample_rows else sparse.csr_matrix((0, n_cols))
 
     out_dir.mkdir(parents=True, exist_ok=True)
     sparse.save_npz(out_dir / "X.npz", X)
