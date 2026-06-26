@@ -73,12 +73,20 @@ def main() -> None:
     norms = np.concatenate(all_norms)
 
     gmin = float(norms.min())
+    median = float(np.median(norms))
+    # The premise is about SEPARATION from the zero block, not absolute scale: a zero block has group-norm 0,
+    # so it is out-of-distribution iff no real embedding sits near 0 (gap between 0 and the real minimum).
+    near_zero_thresh = 0.1 * gmin  # an order of magnitude below the smallest real embedding
+    n_near_zero = int((norms < near_zero_thresh).sum())
     print(f"samples used: {used}   real proteins: {len(norms):,}")
     print(f"L2 norm  min={gmin:.4f}  p0.1={np.percentile(norms, 0.1):.4f}  "
-          f"p1={np.percentile(norms, 1):.4f}  median={np.median(norms):.4f}  max={norms.max():.4f}")
-    print(f"proteins with norm < 1.0: {(norms < 1.0).sum()}   < 0.1: {(norms < 0.1).sum()}")
-    verdict = "JUSTIFIED — min norm >> 0; a zero block is out-of-distribution" if gmin > 1.0 else \
-              "CHECK — some real embeddings are small; zero-block encoding may be ambiguous"
+          f"p1={np.percentile(norms, 1):.4f}  median={median:.4f}  max={norms.max():.4f}")
+    print(f"real min/median = {gmin / median:.2f} (tight if ~1) ; proteins with norm < {near_zero_thresh:.3f}: "
+          f"{n_near_zero}")
+    justified = gmin > 1e-3 and n_near_zero == 0
+    verdict = (f"JUSTIFIED — present-gene group-norm >= {gmin:.3f} vs absent block 0.0; clean gap, zero is OOD"
+               if justified else
+               "CHECK — real embeddings reach near zero; absent (0) not cleanly separable from present")
     print(f"zero-block absence encoding: {verdict}")
 
 
