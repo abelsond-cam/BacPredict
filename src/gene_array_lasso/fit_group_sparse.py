@@ -59,8 +59,8 @@ def split_indices(samples: pd.DataFrame) -> dict[str, np.ndarray]:
 
 
 def _dense(X: sparse.csr_matrix, idx: np.ndarray) -> np.ndarray:
-    """Densify the selected rows (groupyr needs dense X)."""
-    return np.asarray(X[idx].todense(), dtype=np.float64)
+    """Densify the selected rows (groupyr needs dense X). float32 halves memory — vital at >1%."""
+    return np.asarray(X[idx].todense(), dtype=np.float32)
 
 
 def gene_groups(n_genes: int) -> list[np.ndarray]:
@@ -136,7 +136,10 @@ def run(array_dir: Path, drug: str, out_dir: Path, l1_ratios: list[float], alpha
     Xev, yev = _dense(X, idx["evaluate"]), y[idx["evaluate"]]
 
     scaler = StandardScaler().fit(Xtr)
-    Xtr_s, Xva_s, Xev_s = scaler.transform(Xtr), scaler.transform(Xva), scaler.transform(Xev)
+    # Keep float32 through scaling (StandardScaler upcasts to float64) so the >1% dense fit fits in himem.
+    Xtr_s = scaler.transform(Xtr).astype(np.float32)
+    Xva_s = scaler.transform(Xva).astype(np.float32)
+    Xev_s = scaler.transform(Xev).astype(np.float32)
 
     print(f"[{drug}] mean-pool baseline …")
     baseline = mean_pool_baseline(Xtr, ytr, Xev, yev, n_genes)
