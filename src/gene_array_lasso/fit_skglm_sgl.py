@@ -172,7 +172,7 @@ def run_smoke(array_dir: Path, drug: str, n_genomes: int, tau: float, max_iter: 
     gate3 = bool(support(coef64) == support(cf) and f32_rel < 1e-2)
     gate4 = bool(np.allclose(coef64, cd, atol=1e-6))
     print(f"GATE1 duality gap closes (not max_iter): {gate1}")
-    print(f"GATE2 group indexing: see tests/gene_array_lasso/test_group_indexing.py (run pytest)")
+    print("GATE2 group indexing: see tests/gene_array_lasso/test_group_indexing.py (run pytest)")
     print(f"GATE3 float32 doesn't move solution: {gate3}  (same support={support(coef64)==support(cf)}, "
           f"max rel|diff|={f32_rel:.2e})")
     print(f"GATE4 sparse==dense coef: {gate4}  (max|diff| {np.abs(coef64 - cd).max():.2e})")
