@@ -609,6 +609,7 @@ dependencies = [
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "seaborn" },
     { name = "session-info" },
+    { name = "skglm" },
     { name = "statsmodels" },
     { name = "tensorboardx" },
     { name = "torch", version = "2.9.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and platform_machine != 'x86_64') or (python_full_version < '3.11' and platform_machine == 'x86_64')" },
@@ -692,6 +693,7 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.11" },
     { name = "seaborn", specifier = ">=0.13.2" },
     { name = "session-info" },
+    { name = "skglm", specifier = "==0.5" },
     { name = "statsmodels", specifier = ">=0.14.6" },
     { name = "tensorboardx", specifier = ">=2.6.2" },
     { name = "torch", specifier = ">=2.5.1" },
@@ -8666,6 +8668,25 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload-time = "2024-12-04T17:35:28.174Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
+]
+
+[[package]]
+name = "skglm"
+version = "0.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numba", version = "0.61.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or platform_machine == 'x86_64'" },
+    { name = "numba", version = "0.64.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and platform_machine != 'x86_64'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or platform_machine == 'x86_64'" },
+    { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and platform_machine != 'x86_64'" },
+    { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scikit-learn", version = "1.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/96/05/580b6e46a116e67e77980dc4a60386c51e37a5477b41201aa3c85205bfa5/skglm-0.5.tar.gz", hash = "sha256:11037aec119dd2869d6b574b6cca8bae69091eeeefe06cbbd0a5aa879ad79dc7", size = 90660, upload-time = "2025-07-29T07:00:31.553Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1b/1b/36cf9dc5f0049624b627f785892a1c169ba440ac0dd6f6bd4b1ef685680d/skglm-0.5-py3-none-any.whl", hash = "sha256:a45a0065ccfea2f85a633b7fe59b2f71bbffed152e9e78ceb00da8c90ad07513", size = 114340, upload-time = "2025-07-29T07:00:29.804Z" },
 ]
 
 [[package]]

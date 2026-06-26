@@ -58,6 +58,7 @@ dependencies = [
   "typed-argument-parser>=1.8.1",
   "statsmodels>=0.14.6",
   "groupyr>=0.3.4",
+  "skglm==0.5",
 ]
 # https://docs.pypi.org/project_metadata/#project-urls
 urls.Documentation = "https://bacpredict.readthedocs.io/"
