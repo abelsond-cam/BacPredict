@@ -83,10 +83,9 @@ def alpha_max_group(X: sparse.csr_matrix, y: np.ndarray, layout: GroupLayout) ->
     n = X.shape[0]
     wg = np.sqrt(layout.block if layout.block else 1.0)
     amax = 0.0
-    XT = X.T.tocsr()
+    XT = X.T.tocsr() if sparse.issparse(X) else np.asarray(X).T  # works for sparse and dense
     for g in range(layout.n_groups):
-        cols = layout.columns(g)
-        gnorm = float(np.linalg.norm(XT[cols] @ r))
+        gnorm = float(np.linalg.norm(np.asarray(XT[layout.columns(g)] @ r).ravel()))
         amax = max(amax, gnorm / (n * wg))
     return amax
 
@@ -186,45 +185,71 @@ def run_smoke(array_dir: Path, drug: str, n_genomes: int, tau: float, max_iter: 
     print(f"ALL GATES PASS (1,3,4; 2 via pytest): {gate1 and gate3 and gate4}")
 
 
-def run_fit(array_dir: Path, drug: str, out_dir: Path, n_alphas: int, tau: float, max_iter: int, tol: float) -> None:
-    """Full fit: warm-started alpha path, select on validate, report on the in-run evaluate test."""
+def filtered_layout(genes: pd.DataFrame, min_gene_prev: float) -> tuple[pd.DataFrame, GroupLayout, np.ndarray | None]:
+    """Keep genes with prevalence > threshold; return (kept_genes, sub-layout, column selector or None)."""
+    keep = genes["prevalence"].values > min_gene_prev
+    kept = np.where(keep)[0]
+    layout = uniform_block_layout(len(kept), EMB_DIM)
+    cols = None if keep.all() else np.concatenate([np.arange(g * EMB_DIM, (g + 1) * EMB_DIM) for g in kept])
+    return genes.iloc[kept].reset_index(drop=True), layout, cols
+
+
+def _cols(M, cols):
+    """Column-subset a sparse or dense matrix; pass through when cols is None."""
+    return M if cols is None else M[:, cols]
+
+
+def run_fit(array_dir: Path, drug: str, out_dir: Path, n_alphas: int, tau: float, max_iter: int, tol: float,
+            dense: bool = False, min_gene_prev: float = 0.0) -> None:
+    """Full warm-started fit with optional prevalence gene-filter and dense/sparse mode.
+
+    ``min_gene_prev`` keeps only genes above that prevalence (e.g. >0.15 shell, >0.90 core); ``dense`` fits the
+    densified train (all samples, no int32 nnz wall) — cheap when the gene set is small.
+    """
     X, samples, genes = load_array(array_dir, drug)
     y = samples[drug].astype(int).values
     sp = samples["train_val_eval"].values
     tr, va, ev = (np.where(sp == s)[0] for s in ("train", "validate", "evaluate"))
-    layout = uniform_block_layout(len(genes), EMB_DIM)
-    # Keep the TRAIN matrix under skglm's 2^31-nnz cap (only train is fitted; val/eval are scored via scipy
-    # matvec, which handles int64). Subsample train rows stratified by label, seeded, if over.
-    row_nnz = np.diff(X.indptr)
+    genes_k, layout, cols = filtered_layout(genes, min_gene_prev)
     n_tr0 = len(tr)
-    if int(row_nnz[tr].sum()) > MAX_TRAIN_NNZ:
-        frac = MAX_TRAIN_NNZ / float(row_nnz[tr].sum())
-        rng = np.random.default_rng(0)
-        ytr0 = y[tr]
-        tr = np.sort(np.concatenate([rng.choice(tr[ytr0 == c], max(1, int((ytr0 == c).sum() * frac)),
-                                                 replace=False) for c in np.unique(ytr0)]))
-    tr_nnz = int(row_nnz[tr].sum())
-    Xtr = X[tr].astype(np.float32)
-    print(f"[{drug}] X={X.shape} genes={layout.n_groups} nnz={X.nnz:,} "
-          f"splits tr/va/ev={len(tr)}(of {n_tr0})/{len(va)}/{len(ev)} train_nnz={tr_nnz:,}")
+
+    if dense:
+        # Densify train (no int32 wall ⇒ all train samples), then dense-slice the kept gene columns.
+        Xtr = _cols(np.asarray(X[tr].todense(), dtype=np.float32), cols)
+        tr_nnz, subsampled = int(np.count_nonzero(Xtr)), False
+    else:
+        Xs = _cols(X[tr], cols).tocsr()
+        if int(Xs.nnz) > MAX_TRAIN_NNZ:  # cap train nnz under skglm's 2^31 limit (stratified subsample)
+            frac = MAX_TRAIN_NNZ / float(Xs.nnz)
+            rng, ytr0 = np.random.default_rng(0), y[tr]
+            loc = np.sort(np.concatenate([rng.choice(np.where(ytr0 == c)[0], max(1, int((ytr0 == c).sum() * frac)),
+                                                     replace=False) for c in np.unique(ytr0)]))
+            tr = tr[loc]
+            Xs = _cols(X[tr], cols).tocsr()
+        Xs.sort_indices()
+        Xtr, tr_nnz, subsampled = Xs.astype(np.float32), int(Xs.nnz), len(tr) < n_tr0
+
+    print(f"[{drug}] {'DENSE' if dense else 'sparse'} genes={layout.n_groups}(>{min_gene_prev:.0%} of {len(genes)}) "
+          f"tr/va/ev={len(tr)}(of {n_tr0})/{len(va)}/{len(ev)} train_nnz={tr_nnz:,} Xtr={tuple(Xtr.shape)}")
 
     amax = alpha_max_group(Xtr, y[tr], layout)
-    alphas = np.geomspace(amax, amax * 1e-2, n_alphas)
+    alphas = np.geomspace(amax, amax * 1e-3, n_alphas)  # 3 decades so the path reaches the selecting regime
     path = fit_path(Xtr, y[tr], layout, alphas, tau, max_iter, tol)
-    # pick alpha by validation AUROC
-    best = max(path, key=lambda r: score(r["coef"], r["intercept"], X[va], y[va])["auroc"])
-    sgl_ev = score(best["coef"], best["intercept"], X[ev], y[ev])
-    baseline = mean_pool_baseline(X[tr], y[tr], X[ev], y[ev], layout)
-    sel = selected_genes(best["coef"], genes, layout)
+    best = max(path, key=lambda r: score(r["coef"], r["intercept"], _cols(X[va], cols), y[va])["auroc"])
+    sgl_ev = score(best["coef"], best["intercept"], _cols(X[ev], cols), y[ev])
+    baseline = mean_pool_baseline(_cols(X[tr], cols), y[tr], _cols(X[ev], cols), y[ev], layout)
+    sel = selected_genes(best["coef"], genes_k, layout)
     causal = causal_hits(sel, drug)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     sel.to_csv(out_dir / "selected_genes.csv", index=False)
     result = {
-        "drug": drug, "engine": "skglm-QuadraticGroup-WeightedL1GroupL2-GroupBCD", "n_genes": layout.n_groups,
-        "nnz": int(X.nnz), "splits": {"train": len(tr), "validate": len(va), "evaluate": len(ev)},
+        "drug": drug, "engine": "skglm-QuadraticGroup-WeightedL1GroupL2-GroupBCD",
+        "dense": dense, "min_gene_prevalence": min_gene_prev,
+        "n_genes": layout.n_groups, "n_genes_full": len(genes),
+        "splits": {"train": len(tr), "validate": len(va), "evaluate": len(ev)},
         "n_train_total": n_tr0, "n_train_used": len(tr), "train_nnz": tr_nnz,
-        "train_subsampled_for_int32_cap": len(tr) < n_tr0,
+        "train_subsampled_for_int32_cap": subsampled,
         "best_alpha": best["alpha"], "best_alpha_converged": best["converged"], "tau": tau,
         "n_selected_genes": int(len(sel)), "sgl_evaluate": sgl_ev, "mean_pool_evaluate": baseline,
         "delta_auroc_vs_mean_pool": sgl_ev["auroc"] - baseline["auroc"],
@@ -250,13 +275,18 @@ def main() -> None:
                    "embeddings have correlated dims, aggressive within-group L1 over-prunes).")
     p.add_argument("--max-iter", type=int, default=200)
     p.add_argument("--tol", type=float, default=1e-8)
+    p.add_argument("--dense", action="store_true",
+                   help="Fit densified train (all samples, no int32 nnz wall) — cheap for small gene sets.")
+    p.add_argument("--min-gene-prevalence", type=float, default=0.0,
+                   help="Keep only genes above this prevalence (e.g. 0.15 shell, 0.90/0.95/0.99 core).")
     args = p.parse_args()
     if args.smoke:
         run_smoke(args.array_dir, args.drug, args.n_genomes, args.tau, args.max_iter, args.tol)
     else:
         if args.out_dir is None:
             p.error("--out-dir required for a full fit")
-        run_fit(args.array_dir, args.drug, args.out_dir, args.n_alphas, args.tau, args.max_iter, args.tol)
+        run_fit(args.array_dir, args.drug, args.out_dir, args.n_alphas, args.tau, args.max_iter, args.tol,
+                dense=args.dense, min_gene_prev=args.min_gene_prevalence)
 
 
 if __name__ == "__main__":
