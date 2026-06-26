@@ -19,9 +19,10 @@ DRUG="${1:?usage: build_and_submit_panaroo.sh <drug>}"
 BACPREDICT=/home/dca36/workspace/BacPredict
 BACHGT=/home/dca36/workspace/BacHGT
 RDS=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david
-TSV_DIR="$RDS/processed/gene_array_lasso/panaroo_input_tsv"
-OUTDIR="$RDS/processed/gene_array_lasso/panaroo"
-LOGDIR="$BACPREDICT/src/gene_array_lasso/scripts/logs"
+GAL="$RDS/processed/gene_array_lasso"
+TSV_DIR="$GAL/panaroo_input_tsv"
+OUTDIR="$GAL/panaroo"
+LOGDIR="$GAL/logs"   # SLURM logs on RDS, not home
 RUNNER="$BACHGT/src/bac_panaroo/slurm_scripts/panaroo_run_strain.sh"
 
 mkdir -p "$LOGDIR" "$OUTDIR"
