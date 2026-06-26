@@ -91,8 +91,8 @@ def load_locus_to_sequence(panaroo_dir: Path, genome_to_sample: dict[str, str]) 
     return out
 
 
-def sample_sequence_index(sample: str, parquet_dir: Path) -> dict[str, list[int]] | None:
-    """Map ``prot_sequence`` (stop-stripped) → list of flat embedding indices for one sample."""
+def sample_sequence_index(sample: str, parquet_dir: Path) -> tuple[dict[str, list[int]], int] | None:
+    """Map ``prot_sequence`` (stop-stripped) → flat embedding indices, plus the parquet protein count."""
     pq = parquet_dir / f"{sample}_protein_sequences.parquet"
     if not pq.exists():
         return None
@@ -102,7 +102,7 @@ def sample_sequence_index(sample: str, parquet_dir: Path) -> dict[str, list[int]
         seq = str(r.get("protein_sequence", "") or "").rstrip("*")
         if seq:
             idx[seq].append(int(r["flat_index"]))
-    return idx
+    return idx, len(recs)
 
 
 def load_embeddings(sample: str, esm_dir: Path) -> np.ndarray | None:
@@ -164,17 +164,27 @@ def build(
                     cell_by_gene_sample[gene][s] = [t for t in val.replace(";", " ").split() if t]
 
     n_cols = n_genes * EMB_DIM
-    cov = {"cells": 0, "seq_hit": 0, "seq_miss": 0, "no_emb": 0}
+    cov = {"cells": 0, "seq_hit": 0, "seq_miss": 0, "no_emb": 0, "misaligned": 0}
     # Build each sample as a 1×n_cols CSR row and vstack at the end. Keeping per-sample arrays small
     # (and freeing them each iteration) avoids the multi-billion-element Python lists a global COO needs.
     sample_rows: list[sparse.csr_matrix] = []
 
+    def empty_row() -> sparse.csr_matrix:
+        return sparse.csr_matrix((1, n_cols), dtype=np.float32)
+
     for s in tqdm(samples, desc="samples"):
-        seq_idx = sample_sequence_index(s, parquet_dir)
+        si = sample_sequence_index(s, parquet_dir)
         emb = load_embeddings(s, esm_dir)
-        if seq_idx is None or emb is None:
+        if si is None or emb is None:
             cov["no_emb"] += 1
-            sample_rows.append(sparse.csr_matrix((1, n_cols), dtype=np.float32))
+            sample_rows.append(empty_row())
+            continue
+        seq_idx, n_prot = si
+        if emb.shape[0] < n_prot:
+            # ESM tensor has fewer rows than parquet proteins → flat indices misaligned; skip the sample
+            # (using shifted embeddings would corrupt the per-gene signal). Same guard as snp_embeddings.
+            cov["misaligned"] += 1
+            sample_rows.append(empty_row())
             continue
         col_blocks: list[np.ndarray] = []
         val_blocks: list[np.ndarray] = []
@@ -225,6 +235,7 @@ def build(
         "X_density": float(X.nnz) / (X.shape[0] * X.shape[1]) if X.shape[1] else 0.0,
         "cell_seq_match_rate": (cov["seq_hit"] / seq_total) if seq_total else 0.0,
         "samples_without_embeddings": cov["no_emb"],
+        "samples_misaligned_skipped": cov["misaligned"],
     }
     (out_dir / "build_summary.json").write_text(json.dumps(summary, indent=2))
     print(json.dumps(summary, indent=2))
