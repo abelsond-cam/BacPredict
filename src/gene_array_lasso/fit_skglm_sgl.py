@@ -49,12 +49,12 @@ CAUSAL_HINTS = {
 def load_array(array_dir: Path, drug: str) -> tuple[sparse.csr_matrix, pd.DataFrame, pd.DataFrame]:
     """Load CSR ``X.npz`` + ``samples.csv`` + ``genes.csv``; drop label-NaN rows. X stays sparse."""
     X = sparse.load_npz(array_dir / "X.npz").tocsr()
-    X.sort_indices()  # skglm's numba sparse path requires canonical (sorted-index) CSR
-    X.sum_duplicates()
     samples = pd.read_csv(array_dir / "samples.csv")
     genes = pd.read_csv(array_dir / "genes.csv")
     keep = samples[drug].notna().values
-    Xk = X[keep].tocsr()
+    # Avoid doubling RAM: the builder writes canonical CSR, so skip sum_duplicates (allocates a full copy)
+    # and skip the X[keep] copy when no rows are dropped. sort_indices is cheap (in-place) insurance.
+    Xk = X if keep.all() else X[keep].tocsr()
     Xk.sort_indices()
     return Xk, samples[keep].reset_index(drop=True), genes
 
@@ -228,7 +228,8 @@ def main() -> None:
     p.add_argument("--smoke", action="store_true", help="Run Stage-1 gates on --n-genomes samples.")
     p.add_argument("--n-genomes", type=int, default=100)
     p.add_argument("--n-alphas", type=int, default=20)
-    p.add_argument("--tau", type=float, default=0.1, help="Per-feature L1 weight (small = conservative).")
+    p.add_argument("--tau", type=float, default=0.05, help="Per-feature L1 weight (small = conservative; "
+                   "embeddings have correlated dims, aggressive within-group L1 over-prunes).")
     p.add_argument("--max-iter", type=int, default=200)
     p.add_argument("--tol", type=float, default=1e-8)
     args = p.parse_args()
