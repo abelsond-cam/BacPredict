@@ -27,7 +27,7 @@ PSUBDIR="${3:-$DRUG}"   # which Panaroo run dir to read (default panaroo/<drug>;
 cd /home/dca36/workspace/BacPredict
 export PYTHONUNBUFFERED=1
 GAL=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/gene_array_lasso
-PCT=$(python3 -c "print(f'{float('"$MINPREV"')*100:g}')")
+PCT=$(python3 -c "print(f'{$MINPREV*100:g}')")   # 0.05 -> 5, 0.01 -> 1
 OUT="$GAL/gene_arrays/${DRUG}_p${PCT}"
 
 echo "=== build gene array: drug=$DRUG min_prev=$MINPREV (>$PCT%) panaroo=$PSUBDIR -> $OUT ==="
