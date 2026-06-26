@@ -40,6 +40,16 @@ samples** (train+validate+evaluate together) → evaluate is a **genuine in-run 
 20% evaluate as a separate run, report on validate. Reuse the **existing kleb_ast folds** (`train_val_eval` in
 the split CSV) throughout.
 
+**Test priority + variant ladder (user, 2026-06-25).** The first **>5%** array fit is a *preliminary*
+pipeline/feasibility test — **the >1% cutoff is the important test** (the headline; draw conclusions there).
+Beyond the embedding ladder for the gene blocks — **B1 frozen ESM-C → B2 frozen Bacformer → Bacformer-FT**
+(swap "Bacformer instead of ESM" and FT embeddings are explicit planned tests, not just follow-ups) — keep
+Axis C (⊕ FT genome-mean) in view. **Why group lasso at all:** the parked attention-head attempt
+([`../tl/train/attention_pool.py`](../tl/train/attention_pool.py), gated-attention MIL pool) *lost* to the
+mean (~0.905 → ~0.868) because it treats the genome as an unordered bag of millions of dims with no
+ortholog/synteny structure. The structured group lasso exists precisely to impose that known per-gene
+grouping — this is the motivation of record.
+
 ## Resolved facts (from the code, 2026-06-25)
 
 - **Embeddings derive from the SR assembly (Open #1 closed).** `tl/embed/preprocess_assemblies_to_protein_sequences.py`
