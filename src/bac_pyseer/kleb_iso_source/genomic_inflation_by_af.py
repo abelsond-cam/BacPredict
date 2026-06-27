@@ -59,15 +59,22 @@ def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--assoc", nargs="+", required=True, help="One or more pyseer .assoc as <label>=<path>.")
     p.add_argument("--pval-col", default="lrt-pvalue")
+    p.add_argument("--bins", default=None,
+                   help="Comma-separated af bin edges, e.g. '0.01,0.05,0.1,...,1.0' (default: 4 coarse bins).")
     p.add_argument("--out", type=Path, required=True)
     args = p.parse_args(argv)
+
+    bins = DEFAULT_BINS
+    if args.bins:
+        edges = [float(x) for x in args.bins.split(",")]
+        bins = tuple(zip(edges[:-1], edges[1:]))  # equal-length slices by construction (no strict= → py3.8-safe)
 
     out_rows: list[dict] = []
     for spec in args.assoc:
         label, _, path = str(spec).partition("=")
         if not path:
             raise SystemExit(f"--assoc entries must be <label>=<path>, got {spec!r}")
-        for r in analyse(Path(path), args.pval_col, DEFAULT_BINS):
+        for r in analyse(Path(path), args.pval_col, bins):
             out_rows.append({"contrast": label, **r})
     df = pd.DataFrame(out_rows)
     args.out.parent.mkdir(parents=True, exist_ok=True)

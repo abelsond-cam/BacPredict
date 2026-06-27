@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=unitig_lmm_shard
-#SBATCH --output=unitig_lmm_shard_%A_%a.out
-#SBATCH --error=unitig_lmm_shard_%A_%a.err
+#SBATCH --output=/home/dca36/rds/hpc-work/pyseer_scratch/unitig_lmm_shard_%A_%a.out
+#SBATCH --error=/home/dca36/rds/hpc-work/pyseer_scratch/unitig_lmm_shard_%A_%a.err
 #SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
 # Resource directives (partition/cpus/mem/time/array) are set PER PHASE by the orchestrator
 # (run_unitig_lmm_sharded.sh) via sbatch CLI overrides — the defaults here are placeholders.

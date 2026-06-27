@@ -5,20 +5,26 @@ faeces** isolation source. Package overview: [CLAUDE.md](../CLAUDE.md); global
 conventions: root [CLAUDE.md](../../../CLAUDE.md) §0. Milestones are tracked in
 [ToDo.md](../../../ToDo.md) under "Pyseer GWAS → kleb_iso_source".
 
-> **Consolidated narrative + cross-axis synthesis: the hub [`../docs/PROGRESS.md`](../docs/PROGRESS.md).**
-> This file holds the collation/pipeline detail + running notes; PROGRESS.md holds the results story.
+> **Results narrative lives in the per-axis docs under [`../docs/`](../docs/):** overview hub
+> [`PROGRESS.md`](../docs/PROGRESS.md), then [`PROGRESS_VARIANTS.md`](../docs/PROGRESS_VARIANTS.md) /
+> [`PROGRESS_UNITIGS.md`](../docs/PROGRESS_UNITIGS.md) / [`PROGRESS_PANAROO.md`](../docs/PROGRESS_PANAROO.md).
+> This file holds the collation/pipeline detail + running notes.
 
-Current state of the analysis axes (detail in PROGRESS.md):
+Current state of the analysis axes (results detail in the per-axis docs):
 
-- **(a) Variant (core-SNP) LMM GWAS** — **DONE** and the method of record. blood/faeces +
-  resp/faeces; fixed-effects MDS abandoned (λ=4.34). Each hit now carries its SNP `consequence`.
+- **(a) Variant (core-SNP) LMM GWAS** — **DONE**, method of record; blood/faeces + resp/faeces, each hit with
+  its SNP `consequence`. **Open: revisit the fixed-effects MDS abandonment** (λ=4.34 may be LD-redundancy of
+  real signal, not under-correction — the same lesson the unitig axis taught). → [`PROGRESS_VARIANTS.md`](../docs/PROGRESS_VARIANTS.md).
 - **(b) Per-source hotspot Chi-sq + Poisson recurrent-mutation test** — **DONE** (the §4a/§5
   cross-checks, *not* "arms race"). The per-source Chi-sq flags **hypervariable** genes (capsule/defence,
   syn≈non-syn); the collaborator Poisson test (`data/combined_poisson_test_variant_hotspots.txt`) supplies
   per-gene dN/dS + the phylogenetically-**independent recurrent-mutation** flag (`is_sig`) that drives §5.
-- **(c) Unitig (accessory/HGT) LMM** — running **sharded** (64×~100k unitigs, `--mem=128G`; n×n kinship
-  computed once, reused per shard). blood/faeces chain completed; λ + hits being re-queried. resp + GPA next.
-- **(d) Panaroo gene-presence/absence GWAS** — planned (inputs TBD).
+- **(c) Unitig (accessory/HGT) LMM** — **DONE + calibration resolved**: the within-lineage permutation shows
+  the common-af inflation is **real accessory signal, not structure** (no af ceiling); λ=24 is LD-redundant
+  (megaplasmid). **Next: geNomad chromosome/plasmid/virus mapping** (the HGT test) + DefenseFinder +
+  faeces↔resp concordance. → [`PROGRESS_UNITIGS.md`](../docs/PROGRESS_UNITIGS.md).
+- **(d) Panaroo gene-presence/absence GWAS** — **may not run** (Panaroo doesn't scale; the unitig axis may
+  subsume it). → [`PROGRESS_PANAROO.md`](../docs/PROGRESS_PANAROO.md).
 
 ---
 

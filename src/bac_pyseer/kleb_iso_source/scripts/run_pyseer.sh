@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=pyseer_blood_faeces
-#SBATCH --output=pyseer_blood_faeces_%j.out
-#SBATCH --error=pyseer_blood_faeces_%j.err
+#SBATCH --output=/home/dca36/rds/hpc-work/pyseer_scratch/pyseer_blood_faeces_%j.out
+#SBATCH --error=/home/dca36/rds/hpc-work/pyseer_scratch/pyseer_blood_faeces_%j.err
 #SBATCH --partition=icelake-himem  # himem: far less oversubscribed than icelake (see ~/check_slurm_nodes.sh) and its ~6.7GB/core fits 128G on 32 cores
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -184,6 +184,10 @@ pixi run --manifest-path "$PIXI_MANIFEST" pyseer \
     > "$ASSOC"
 
 echo "pyseer done: $(wc -l < "$ASSOC") assoc lines  $(date)"
+
+# pyseer drops lineage_effects.txt into the cwd ($REPO, on /home) when --lineage is on — relocate it to
+# the RDS output dir so it never pollutes /home (which is quota-limited and reserved for code).
+[ -f lineage_effects.txt ] && mv -f lineage_effects.txt "$GWAS_DIR/lineage_effects.txt"
 
 # 3) diagnostics + gene mapping (uv env). Figures land in GWAS_DIR; the small PNGs + hit
 #    table are scp'd to the repo docs/figures from the laptop afterwards (commit from local).

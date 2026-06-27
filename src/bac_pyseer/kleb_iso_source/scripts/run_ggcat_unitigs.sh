@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=ggcat_unitigs
-#SBATCH --output=ggcat_unitigs_%j.out
-#SBATCH --error=ggcat_unitigs_%j.err
+#SBATCH --output=/home/dca36/rds/hpc-work/pyseer_scratch/ggcat_unitigs_%j.out
+#SBATCH --error=/home/dca36/rds/hpc-work/pyseer_scratch/ggcat_unitigs_%j.err
 #SBATCH --partition=icelake-himem
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
