@@ -1,0 +1,45 @@
+# bacpredict-gpu — lean aarch64 GPU env for the Isambard embedding runs
+# (ESM-C + frozen Bacformer + baclm-350m-masked forward passes only). Bootstrapped
+# from nuna's PROVEN aarch64 lock (identical pins → identical solve) rather than a
+# fresh CUDA-on-Arm solve. NOT BacPredict's full `--extra hpc` training stack.
+#
+# `bacformer` (public abelsond-cam fork) pulls the whole embedding tree it needs
+# (torch, transformers, scanpy/anndata, biopython, pandas, pyarrow, datasets). We add
+# `tqdm` and `huggingface_hub` (for the model-cache snapshot). NO faesm: the ESM-C
+# (`esmc`) branch of bacformer.pp.load_plm loads via transformers
+# `AutoModel(trust_remote_code=True)`, and baclm-350m-masked loads the same way.
+#
+# VERSION PINS (both matter — nuna's earlier builds drifted and broke CUDA/parity):
+#   * transformers <5.0.0 — BacPredict pins this; the ESM-C/Bacformer/baclm
+#     trust_remote_code modeling files target the 4.x API and break on 5.x.
+#   * torch ==2.9.1 from the EXPLICIT PyTorch cu126 index — PyPI's default aarch64
+#     torch is CPU-only, and the aarch64 cu126 wheel list skips 2.7/2.8 (2.6.0 -> 2.9.0);
+#     2.9.1+cu126 has an aarch64 wheel (node CUDA toolkit is 12.6).
+[project]
+name = "bacpredict-gpu"
+version = "0.0.0"
+description = "Lean aarch64 GPU env: ESM-C + frozen Bacformer + baclm-350m-masked forward-pass embedding."
+requires-python = ">=3.11,<3.13"
+classifiers = [
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+  "bacformer",
+  "torch==2.9.1",
+  "tqdm",
+  "transformers>=4.38.2,<5",
+  "huggingface_hub",
+]
+
+[tool.uv]
+sources.bacformer = { git = "https://github.com/abelsond-cam/Bacformer" }
+sources.torch = { index = "pytorch-cu126" }
+index = [
+  # Explicit PyTorch cu126 index — forces the aarch64 CUDA torch wheel (PyPI's default
+  # aarch64 torch is CPU-only, and UV_TORCH_BACKEND was not honoured on this build node).
+  { name = "pytorch-cu126", url = "https://download.pytorch.org/whl/cu126", explicit = true },
+]
+# Virtual project: this is an environment, not a distributable package.
+package = false
