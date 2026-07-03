@@ -9,14 +9,19 @@
 # stdlib sqlite3, which the ESM-C trust_remote_code modeling file imports); relocate the
 # multi-GB venv + uv cache off $HOME (100 GiB; a full home locks SSH login).
 set -uo pipefail
-: "${PROJECTDIR:?PROJECTDIR must be set (Isambard brics module)}"
+: "${SCRATCHDIR:?SCRATCHDIR must be set (Isambard personal 5 TiB space)}"
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"   # uv
 
+# Everything BacPredict lives on the personal 5 TiB $SCRATCHDIR (persistent to project
+# end on Isambard-AI; NOT the shared /projects/u6fp group allocation). Force HF/TORCH
+# caches here too (override any shared-drive default in .bashrc) so the project is
+# self-contained on David's own space.
 PROJ="$HOME/BacPredict/setup/isambard/gpu"
-export UV_PROJECT_ENVIRONMENT="$PROJECTDIR/david/envs/bacpredict-gpu-venv"
+export UV_PROJECT_ENVIRONMENT="$SCRATCHDIR/envs/bacpredict-gpu-venv"
 export UV_PYTHON_PREFERENCE=only-managed   # managed python-build-standalone bundles sqlite3
 export UV_PYTHON=3.11
-export HF_HOME="${HF_HOME:-$PROJECTDIR/david/cache/hf}"
+export HF_HOME="$SCRATCHDIR/cache/hf"
+export TORCH_HOME="$SCRATCHDIR/cache/torch"
 
 echo "uv: $(uv --version)"
 echo "project -> $PROJ"

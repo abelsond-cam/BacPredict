@@ -10,8 +10,8 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --time=04:00:00
-#SBATCH --output=/projects/u6fp/david/logs/%x-%j.out
-#SBATCH --error=/projects/u6fp/david/logs/%x-%j.out
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
 set -uo pipefail
 
 echo "=== node $(hostname) ; egress test ==="

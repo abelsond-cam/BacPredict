@@ -10,14 +10,15 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
 #SBATCH --time=12:00:00
-#SBATCH --output=/projects/u6fp/david/logs/%x-%j.out
-#SBATCH --error=/projects/u6fp/david/logs/%x-%j.out
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
 set -uo pipefail
-: "${PROJECTDIR:?}"
+: "${PROJECTDIR:?}" "${SCRATCHDIR:?}"
 export PATH="$HOME/.pixi/bin:$PATH"
 
+# Read the shared EBI input sheet, write all cohort data to David's personal 5 TiB scratch.
 EBI_ALL="$PROJECTDIR/david/raw/ebi_amr_records_all_species_20260630.csv"
-export BASE="$PROJECTDIR/david/raw/kleb_ast"
+export BASE="$SCRATCHDIR/raw/kleb_ast"
 export METADATA="$BASE/ebi_kleb_amr_records.csv"
 export NCORES=32 BATCH=100
 SETUP="$HOME/BacPredict/setup/isambard"
