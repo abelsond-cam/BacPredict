@@ -53,22 +53,39 @@ def load_baclm(device: str, dtype=torch.bfloat16):
 
 
 @torch.no_grad()
-def mean_pool_embeddings(seqs: list[str], model, tokenizer, device: str, batch_size: int) -> torch.Tensor:
+def mean_pool_embeddings(seqs: list[str], model, tokenizer, device: str, token_budget: int = 8192) -> torch.Tensor:
     """Embed a homogeneous-modality list of sequences → attention-masked mean-pooled [n, 960] (bf16, CPU).
 
     ``seqs`` must be one modality (all UPPERCASE protein OR all lowercase DNA) — the tokenizer
-    reads modality from case and emits ``token_type_ids`` accordingly. Returns an empty [0, H]
-    tensor for an empty input.
+    reads modality from case and emits ``token_type_ids`` accordingly.
+
+    Batches are formed by a **token budget**, not a fixed count: sequences are length-sorted and
+    packed so ``batch_size × max_len_in_batch ≤ token_budget``. This bounds the O(L²) attention
+    memory (a fixed batch of long char-level sequences at L=2048 otherwise materialises a
+    tens-of-GB attention tensor → OOM), while short proteins still batch densely. Output order
+    is restored to the input order. Returns an empty [0, H] tensor for empty input.
     """
+    hidden = getattr(model.config, "hidden_size", 960)
     if not seqs:
-        hidden = getattr(model.config, "hidden_size", 960)
         return torch.empty((0, hidden), dtype=torch.bfloat16)
 
-    out: list[torch.Tensor] = []
-    for i in range(0, len(seqs), batch_size):
-        chunk = seqs[i : i + batch_size]
+    n = len(seqs)
+    lengths = [min(len(s), MAX_LEN) + 2 for s in seqs]  # +2 for special tokens (char-level ~ len)
+    order = sorted(range(n), key=lambda i: lengths[i])
+    results: list[torch.Tensor | None] = [None] * n
+
+    i = 0
+    while i < n:
+        j, maxlen = i, 0
+        while j < n:
+            nl = max(maxlen, lengths[order[j]])
+            if (j - i + 1) > 1 and (j - i + 1) * nl > token_budget:
+                break
+            maxlen = nl
+            j += 1
+        idxs = order[i:j]
         batch = tokenizer.batch_encode_plus(
-            chunk, padding=True, truncation=True, max_length=MAX_LEN, return_tensors="pt"
+            [seqs[k] for k in idxs], padding=True, truncation=True, max_length=MAX_LEN, return_tensors="pt"
         )
         batch = {k: v.to(device) for k, v in batch.items()}
         res = model(
@@ -76,14 +93,16 @@ def mean_pool_embeddings(seqs: list[str], model, tokenizer, device: str, batch_s
             token_type_ids=batch.get("token_type_ids"),
             attention_mask=batch.get("attention_mask"),
         )
-        hidden = res.last_hidden_state  # [B, L, H]
-        mask = batch["attention_mask"].unsqueeze(-1).to(hidden.dtype)  # [B, L, 1]
-        pooled = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1)  # [B, H]
-        out.append(pooled.to(torch.bfloat16).cpu())
-    return torch.cat(out, dim=0)
+        h = res.last_hidden_state  # [B, L, H]
+        mask = batch["attention_mask"].unsqueeze(-1).to(h.dtype)  # [B, L, 1]
+        pooled = ((h * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1)).to(torch.bfloat16).cpu()  # [B, H]
+        for pos, k in enumerate(idxs):
+            results[k] = pooled[pos]
+        i = j
+    return torch.stack(results)
 
 
-def process_genome(row, model, tokenizer, device: str, output_dir: Path, batch_size: int,
+def process_genome(row, model, tokenizer, device: str, output_dir: Path, token_budget: int,
                    min_intergenic_len: int) -> tuple[str, bool, str]:
     """Embed one genome's proteins + intergenic regions and save its baclm .pt."""
     sample_id = str(row["Sample"])
@@ -95,8 +114,8 @@ def process_genome(row, model, tokenizer, device: str, output_dir: Path, batch_s
         # Non-coding: intergenic DNA regions (lowercase).
         ig = extract_intergenic_from_gff_fna(gff, fna, min_len=min_intergenic_len)
 
-        prot_emb = mean_pool_embeddings(proteins, model, tokenizer, device, batch_size)
-        ig_emb = mean_pool_embeddings(ig["intergenic_sequence"], model, tokenizer, device, batch_size)
+        prot_emb = mean_pool_embeddings(proteins, model, tokenizer, device, token_budget)
+        ig_emb = mean_pool_embeddings(ig["intergenic_sequence"], model, tokenizer, device, token_budget)
 
         torch.save(
             {
@@ -125,7 +144,8 @@ def main() -> None:
     ap.add_argument("--n", type=int, default=None, help="limit number of genomes (testing)")
     ap.add_argument("--skip-existing", action="store_true")
     ap.add_argument("--device", type=str, default="cuda:0")
-    ap.add_argument("--batch-size", type=int, default=64)
+    ap.add_argument("--token-budget", type=int, default=8192,
+                    help="max (batch_size × max_seq_len) per forward — bounds O(L²) attention memory")
     ap.add_argument("--min-intergenic-len", type=int, default=30)
     ap.add_argument("--start-idx", type=int, default=None, help="array slice start (over sorted CSV rows)")
     ap.add_argument("--end-idx", type=int, default=None, help="array slice end")
@@ -160,12 +180,14 @@ def main() -> None:
     logger.info(f"START {datetime.now():%Y-%m-%d %H:%M:%S} | {len(df)} genomes")
     for idx, (_, row) in enumerate(tqdm(df.iterrows(), total=len(df), desc="baclm"), 1):
         sample_id, ok, _ = process_genome(
-            row, model, tokenizer, args.device, args.output_dir, args.batch_size, args.min_intergenic_len
+            row, model, tokenizer, args.device, args.output_dir, args.token_budget, args.min_intergenic_len
         )
         if ok:
             n_ok += 1
         else:
             n_fail += 1
+        if args.device.startswith("cuda"):
+            torch.cuda.empty_cache()  # release the genome's peak alloc before the next (fights fragmentation)
         if idx % 10 == 0:
             per = (time.time() - t0) / idx
             logger.info(f"[{idx}/{len(df)}] {per:.1f}s/genome | ok={n_ok} fail={n_fail} "
