@@ -21,7 +21,6 @@ import pandas as pd
 import torch
 from bacformer.pp import (
     compute_genome_protein_embeddings,
-    load_plm,
     protein_embeddings_to_inputs,
 )
 from tqdm import tqdm
@@ -34,6 +33,31 @@ BACFORMER_EMBEDDINGS_DIR = RDS_ROOT / "david" / "processed" / "klebsiella_bacfor
 
 # The refreshed Bacformer complete-genomes model (not the MAG-trained one).
 BACFORMER_MODEL_ID = "macwiatrak/bacformer-large-masked-complete-genomes"
+
+# ESM-C (protein LM, 960-d) — PIN the revision. `bacformer.pp.load_plm`'s unpinned
+# `esmc` default now resolves to a broken `main` (commit 286a9db NameErrors at import)
+# and is not in our HF cache. `0c0b9c57` is the exact 960-d upload that produced the
+# CSD3 production store (byte-match proven: cosine 0.999 = bf16 rounding). Loading it
+# here reproduces that store and works from the pre-cached $HF_HOME on a GPU node with
+# no egress. Mirrors nuna's load_models.load_esmc + esm_residue_level's pin.
+ESMC_MODEL_PATH = "Synthyra/ESMplusplus_small"
+ESMC_REVISION = "0c0b9c57a7c3da867c8512176ecddb3922816f80"
+
+
+def load_esmc_pinned(device: str, dtype=torch.bfloat16):
+    """Load the pinned 960-d ESM-C on ``device`` in eval mode; return ``(model, tokenizer)``.
+
+    Exactly ``load_plm(model_type="esmc")`` minus the broken-``main`` default: pins
+    :data:`ESMC_REVISION`. ``model.tokenizer`` is the model's own tokenizer (as `load_plm`
+    uses); feed both to ``compute_genome_protein_embeddings``.
+    """
+    model = (
+        AutoModel.from_pretrained(ESMC_MODEL_PATH, revision=ESMC_REVISION, trust_remote_code=True)
+        .to(device)
+        .eval()
+        .to(dtype)
+    )
+    return model, model.tokenizer
 
 
 def load_bacformer_model(device: str, dtype="auto") -> torch.nn.Module:
@@ -258,7 +282,7 @@ def process_genome_from_protein_sequences(
 
         return sample_id, True, ""
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         error_msg = f"Error processing {sample_id}: {str(e)}"
         logger.error(error_msg)
         return sample_id, False, error_msg
@@ -400,12 +424,9 @@ def main():
     device = args.device
     logger.info(f"Using device: {device}")
 
-    # Load ESM model (protein language model) - ONCE
-    logger.info("Loading ESM model (ESM++)...")
-    esm_model, esm_tokenizer = load_plm(
-        model_path="Synthyra/ESMplusplus_small",
-        model_type="esmc",
-    )
+    # Load ESM model (protein language model) - ONCE, pinned revision (see load_esmc_pinned)
+    logger.info(f"Loading pinned ESM-C ({ESMC_MODEL_PATH}@{ESMC_REVISION[:8]})...")
+    esm_model, esm_tokenizer = load_esmc_pinned(device)
     logger.info("ESM model loaded")
 
     # Load Bacformer model - ONCE (only when --bacformer-embeddings is set)
@@ -476,7 +497,7 @@ def main():
         avg_time = sum(genome_times) / len(genome_times)
         min_time = min(genome_times)
         max_time = max(genome_times)
-        logger.info(f"Timing statistics:")
+        logger.info("Timing statistics:")
         logger.info(f"  - Average: {avg_time:.1f}s per genome")
         logger.info(f"  - Min: {min_time:.1f}s")
         logger.info(f"  - Max: {max_time:.1f}s")
