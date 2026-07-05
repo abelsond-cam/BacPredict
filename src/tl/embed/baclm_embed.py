@@ -144,8 +144,9 @@ def main() -> None:
     ap.add_argument("--n", type=int, default=None, help="limit number of genomes (testing)")
     ap.add_argument("--skip-existing", action="store_true")
     ap.add_argument("--device", type=str, default="cuda:0")
-    ap.add_argument("--token-budget", type=int, default=8192,
-                    help="max (batch_size × max_seq_len) per forward — bounds O(L²) attention memory")
+    ap.add_argument("--token-budget", type=int, default=49152,
+                    help="max (batch_size × max_seq_len) per forward — bounds O(L²) attention memory. "
+                    "Higher = better GPU use / throughput; GH200 (95 GB) handles ~49k (full-len batch ~24).")
     ap.add_argument("--min-intergenic-len", type=int, default=30)
     ap.add_argument("--start-idx", type=int, default=None, help="array slice start (over sorted CSV rows)")
     ap.add_argument("--end-idx", type=int, default=None, help="array slice end")
