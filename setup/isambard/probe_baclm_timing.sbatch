@@ -20,6 +20,7 @@ export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 export TOKENIZERS_PARALLELISM=false PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 cd "$S/tmp"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || true
+rm -f "$S/processed/baclm_probe"/*.pt 2>/dev/null || true  # clean prior partial outputs
 "$PY" "$HOME/BacPredict/src/tl/embed/baclm_embed.py" \
   --input-csv "$S/processed/smoke_kleb/input_smoke.csv" --output-dir "$S/processed/baclm_probe" \
-  --n 3 --token-budget "${TOKEN_BUDGET:-49152}" --device cuda:0
+  --n 3 --attn-budget "${ATTN_BUDGET:-30000000}" --device cuda:0

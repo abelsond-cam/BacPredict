@@ -53,17 +53,19 @@ def load_baclm(device: str, dtype=torch.bfloat16):
 
 
 @torch.no_grad()
-def mean_pool_embeddings(seqs: list[str], model, tokenizer, device: str, token_budget: int = 8192) -> torch.Tensor:
+def mean_pool_embeddings(seqs: list[str], model, tokenizer, device: str, attn_budget: int = 30_000_000) -> torch.Tensor:
     """Embed a homogeneous-modality list of sequences → attention-masked mean-pooled [n, 960] (bf16, CPU).
 
     ``seqs`` must be one modality (all UPPERCASE protein OR all lowercase DNA) — the tokenizer
     reads modality from case and emits ``token_type_ids`` accordingly.
 
-    Batches are formed by a **token budget**, not a fixed count: sequences are length-sorted and
-    packed so ``batch_size × max_len_in_batch ≤ token_budget``. This bounds the O(L²) attention
-    memory (a fixed batch of long char-level sequences at L=2048 otherwise materialises a
-    tens-of-GB attention tensor → OOM), while short proteins still batch densely. Output order
-    is restored to the input order. Returns an empty [0, H] tensor for empty input.
+    Batches are formed by an **attention budget**: sequences are length-sorted and packed so
+    ``batch_size × max_len_in_batch² ≤ attn_budget``. baclm's custom attention materialises the
+    full O(L²) matrix (no flash attention), so peak memory scales with ``batch × L²`` — a linear
+    ``batch × L`` cap still OOMs at long L (a batch of 24 at L≈2050 tried to allocate ~78 GB).
+    Short proteins therefore batch densely; long intergenic regions fall to batch ~7 at L=2048.
+    ``30e6`` fits comfortably on a 95 GB GH200; raise/lower to trade GPU memory for throughput.
+    Output order is restored to the input order. Returns an empty [0, H] tensor for empty input.
     """
     hidden = getattr(model.config, "hidden_size", 960)
     if not seqs:
@@ -79,7 +81,7 @@ def mean_pool_embeddings(seqs: list[str], model, tokenizer, device: str, token_b
         j, maxlen = i, 0
         while j < n:
             nl = max(maxlen, lengths[order[j]])
-            if (j - i + 1) > 1 and (j - i + 1) * nl > token_budget:
+            if (j - i + 1) > 1 and (j - i + 1) * nl * nl > attn_budget:
                 break
             maxlen = nl
             j += 1
@@ -102,7 +104,7 @@ def mean_pool_embeddings(seqs: list[str], model, tokenizer, device: str, token_b
     return torch.stack(results)
 
 
-def process_genome(row, model, tokenizer, device: str, output_dir: Path, token_budget: int,
+def process_genome(row, model, tokenizer, device: str, output_dir: Path, attn_budget: int,
                    min_intergenic_len: int) -> tuple[str, bool, str]:
     """Embed one genome's proteins + intergenic regions and save its baclm .pt."""
     sample_id = str(row["Sample"])
@@ -114,8 +116,8 @@ def process_genome(row, model, tokenizer, device: str, output_dir: Path, token_b
         # Non-coding: intergenic DNA regions (lowercase).
         ig = extract_intergenic_from_gff_fna(gff, fna, min_len=min_intergenic_len)
 
-        prot_emb = mean_pool_embeddings(proteins, model, tokenizer, device, token_budget)
-        ig_emb = mean_pool_embeddings(ig["intergenic_sequence"], model, tokenizer, device, token_budget)
+        prot_emb = mean_pool_embeddings(proteins, model, tokenizer, device, attn_budget)
+        ig_emb = mean_pool_embeddings(ig["intergenic_sequence"], model, tokenizer, device, attn_budget)
 
         torch.save(
             {
@@ -144,9 +146,9 @@ def main() -> None:
     ap.add_argument("--n", type=int, default=None, help="limit number of genomes (testing)")
     ap.add_argument("--skip-existing", action="store_true")
     ap.add_argument("--device", type=str, default="cuda:0")
-    ap.add_argument("--token-budget", type=int, default=49152,
-                    help="max (batch_size × max_seq_len) per forward — bounds O(L²) attention memory. "
-                    "Higher = better GPU use / throughput; GH200 (95 GB) handles ~49k (full-len batch ~24).")
+    ap.add_argument("--attn-budget", type=int, default=30_000_000,
+                    help="max (batch_size × max_seq_len²) per forward — bounds baclm's O(L²) attention "
+                    "memory. 30e6 is safe on a 95 GB GH200; raise/lower to trade memory for throughput.")
     ap.add_argument("--min-intergenic-len", type=int, default=30)
     ap.add_argument("--start-idx", type=int, default=None, help="array slice start (over sorted CSV rows)")
     ap.add_argument("--end-idx", type=int, default=None, help="array slice end")
@@ -181,7 +183,7 @@ def main() -> None:
     logger.info(f"START {datetime.now():%Y-%m-%d %H:%M:%S} | {len(df)} genomes")
     for idx, (_, row) in enumerate(tqdm(df.iterrows(), total=len(df), desc="baclm"), 1):
         sample_id, ok, _ = process_genome(
-            row, model, tokenizer, args.device, args.output_dir, args.token_budget, args.min_intergenic_len
+            row, model, tokenizer, args.device, args.output_dir, args.attn_budget, args.min_intergenic_len
         )
         if ok:
             n_ok += 1
@@ -195,6 +197,8 @@ def main() -> None:
                         f"| ETA {timedelta(seconds=int(per * (len(df) - idx)))}")
 
     logger.info(f"DONE {datetime.now():%Y-%m-%d %H:%M:%S} | ok={n_ok} fail={n_fail} | {timedelta(seconds=int(time.time() - t0))}")
+    if args.device.startswith("cuda"):
+        logger.info(f"peak GPU mem: {torch.cuda.max_memory_allocated() / 1e9:.1f} GB")
 
 
 if __name__ == "__main__":
