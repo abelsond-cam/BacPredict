@@ -76,7 +76,7 @@ for modality, seqs in [("protein", proteins), ("dna", igs)]:
                   attention_mask=d["attention_mask"]).last_hidden_state
         m = d["attention_mask"].unsqueeze(-1).to(h.dtype)
         slow_pool = ((h * m).sum(1) / m.sum(1).clamp_min(1)).to(torch.bfloat16).cpu()
-    fast_pool = mean_pool_embeddings(seqs, model, tok, "cuda:0", modality, batch_size=128)
+    fast_pool = mean_pool_embeddings(seqs, model, tok, "cuda:0", modality)
     cos = F.cosine_similarity(fast_pool.float(), slow_pool.float(), dim=1)
     assert cos.min() > 0.999, f"{modality}: min cosine {cos.min():.5f}"
     print(f"{modality}: input_ids+token_type_ids byte-identical, pooled cos.min={cos.min():.5f} "
@@ -85,9 +85,10 @@ print("=== EQUIVALENCE GATE PASS: fast baclm path == developers' tokenizer ===")
 PY
 
 echo "=== 5. baclm coding + non-coding embeddings from parquet (timed) ==="
-/usr/bin/time -v "$PY" "$EMB/baclm_embed.py" \
+rm -rf "$SMOKE/baclm"   # clear any stale .pt so step 6 can't pass on old outputs
+"$PY" "$EMB/baclm_embed.py" \
   --protein-dir "$SMOKE/protein_sequences" --intergenic-dir "$SMOKE/intergenic" \
-  --output-dir "$SMOKE/baclm" --batch-size 128 --device cuda:0 2>&1 | grep -iE "s/genome|DONE|peak GPU|Elapsed \(wall" || true
+  --output-dir "$SMOKE/baclm" --device cuda:0   # default batch-size (16), memory-safe
 
 echo "=== 6. assert outputs + shapes ==="
 "$PY" - "$SMOKE" <<'PY'

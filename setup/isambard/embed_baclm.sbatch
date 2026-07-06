@@ -43,4 +43,4 @@ echo "=== $TASK baclm task $ID/$NT : TOTAL=$TOTAL slice [$START:$END] ==="
 "$PY" "$EMB/baclm_embed.py" \
   --protein-dir "$PROC/protein_sequences" --intergenic-dir "$PROC/intergenic" \
   --output-dir "$PROC/baclm" \
-  --start-idx "$START" --end-idx "$END" --skip-existing --batch-size 128 --device cuda:0
+  --start-idx "$START" --end-idx "$END" --skip-existing --device cuda:0   # default batch-size (16)

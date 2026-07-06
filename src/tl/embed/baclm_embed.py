@@ -43,6 +43,14 @@ BACLM_MODEL_ID = "macwiatrak/baclm-350m-masked"
 MAX_LEN = 2048  # model context length (char-level)
 _MODALITY = {"protein": 0, "dna": 1}  # token_type_ids: protein=0, DNA=1 (special tokens=2)
 
+# Peak GPU memory of a baclm batch is set by the self-attention score matrix, which scales as
+# ``batch × maxlen²`` (this aarch64 GH200 falls back to the quadratic, non-flash attention path). A
+# fixed batch of 128 at maxlen≈1500 already OOMs at ~88 GiB. A small fixed batch (8–16) is safe even
+# at the full maxlen=2048 (16 × 2048² ≈ 20 GiB): baclm is small and the forward is cheap, and
+# extraction is now a separate CPU stage, so the modest GPU under-use on short-sequence batches is
+# not the bottleneck. Length-sorting keeps padding minimal within each fixed-size batch.
+_DEFAULT_BATCH = 16
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -74,7 +82,7 @@ def _encode_fast(tokenizer, seqs: list[str]):
 
 @torch.no_grad()
 def mean_pool_embeddings(
-    seqs: list[str], model, tokenizer, device: str, modality: str, batch_size: int = 128
+    seqs: list[str], model, tokenizer, device: str, modality: str, batch_size: int = _DEFAULT_BATCH,
 ) -> torch.Tensor:
     """Embed a homogeneous-modality list of sequences → attention-masked mean-pooled [n, 960] (bf16, CPU).
 
@@ -82,10 +90,11 @@ def mean_pool_embeddings(
     fixes ``token_type_ids`` for every real token (protein→0, DNA→1) with special tokens→2, built
     vectorised from ``all_special_ids`` rather than baclm's per-residue Python inference.
 
-    Mirrors ``bacformer.pp.generate_protein_embeddings``: length-sort to minimise padding,
-    contiguous ``batch_size`` slices, ``padding="longest"``, ``truncation`` to :data:`MAX_LEN`, bf16
-    forward, attention-masked mean-pool. Output order is restored to the input order. Returns an
-    empty [0, H] tensor for empty input.
+    Length-sorts (to minimise padding), then runs contiguous ``batch_size`` slices — a small fixed
+    batch (default :data:`_DEFAULT_BATCH`) that stays memory-safe even at the full ``maxlen=2048``
+    (see the note on the attention-matrix bound). Each batch: ``padding="longest"``, ``truncation``
+    to :data:`MAX_LEN`, bf16 forward, attention-masked mean-pool. Output order is restored to the
+    input order. Returns an empty [0, H] tensor for empty input.
     """
     hidden = getattr(model.config, "hidden_size", 960)
     if not seqs:
@@ -168,7 +177,9 @@ def main() -> None:
     ap.add_argument("--n", type=int, default=None, help="limit number of genomes (testing)")
     ap.add_argument("--skip-existing", action="store_true")
     ap.add_argument("--device", type=str, default="cuda:0")
-    ap.add_argument("--batch-size", type=int, default=128, help="sequences per forward (default 128, as ESM-C)")
+    ap.add_argument("--batch-size", type=int, default=_DEFAULT_BATCH,
+                    help=f"sequences per forward (default {_DEFAULT_BATCH}; small keeps the attention "
+                    "matrix batch×maxlen² memory-safe at maxlen=2048)")
     ap.add_argument("--start-idx", type=int, default=None, help="array slice start (over sorted parquet list)")
     ap.add_argument("--end-idx", type=int, default=None, help="array slice end")
     args = ap.parse_args()
