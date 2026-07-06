@@ -43,13 +43,13 @@ BACLM_MODEL_ID = "macwiatrak/baclm-350m-masked"
 MAX_LEN = 2048  # model context length (char-level)
 _MODALITY = {"protein": 0, "dna": 1}  # token_type_ids: protein=0, DNA=1 (special tokens=2)
 
-# Peak GPU memory of a baclm batch is set by the self-attention score matrix, which scales as
-# ``batch × maxlen²`` (this aarch64 GH200 falls back to the quadratic, non-flash attention path). A
-# fixed batch of 128 at maxlen≈1500 already OOMs at ~88 GiB. A small fixed batch (8–16) is safe even
-# at the full maxlen=2048 (16 × 2048² ≈ 20 GiB): baclm is small and the forward is cheap, and
-# extraction is now a separate CPU stage, so the modest GPU under-use on short-sequence batches is
-# not the bottleneck. Length-sorting keeps padding minimal within each fixed-size batch.
-_DEFAULT_BATCH = 16
+# Run with an env that has flash-attn built for GH200 (Maciej's shared bacformer env — see
+# embed_baclm.sbatch). flash_attn_varlen makes attention memory linear in total tokens, so batch 128
+# peaks at only ~8.5 GiB even at maxlen=2048 and throughput is ~700-800 seq/s. WITHOUT flash-attn
+# baclm falls back to a dense "packed SDPA with block-diagonal mask" whose memory is O((batch×len)²)
+# — batch 128 then needs ~1 TB and OOMs; a tiny batch avoids the OOM but runs ~100× slower. So this
+# default assumes the flash-attn env; length-sorting still keeps padding minimal within each batch.
+_DEFAULT_BATCH = 128
 
 logging.basicConfig(
     level=logging.INFO,

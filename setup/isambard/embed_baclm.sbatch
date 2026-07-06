@@ -17,7 +17,11 @@
 set -uo pipefail
 : "${SCRATCHDIR:?}" "${TASK:?set TASK=tb|kleb}"
 S="$SCRATCHDIR"
-PY="$S/envs/bacpredict-gpu-venv/bin/python"
+# baclm needs flash-attn (built for GH200). Our lean venv has no aarch64 flash-attn wheel and the
+# system gcc is too old to build it — so run baclm with Maciej Wiatrak's shared bacformer env, which
+# already has torch 2.9.1 + flash_attn 2.8.3 (matches our torch pin). Without flash-attn baclm's
+# attention falls back to a dense O((batch×len)²) path that OOMs / runs ~100× slower.
+PY="/projects/u6fp/public/micromamba/envs/bacformer/bin/python"
 export HF_HOME="$S/cache/hf" TORCH_HOME="$S/cache/torch"
 export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 export TOKENIZERS_PARALLELISM=false
@@ -43,4 +47,4 @@ echo "=== $TASK baclm task $ID/$NT : TOTAL=$TOTAL slice [$START:$END] ==="
 "$PY" "$EMB/baclm_embed.py" \
   --protein-dir "$PROC/protein_sequences" --intergenic-dir "$PROC/intergenic" \
   --output-dir "$PROC/baclm" \
-  --start-idx "$START" --end-idx "$END" --skip-existing --device cuda:0   # default batch-size (16)
+  --start-idx "$START" --end-idx "$END" --skip-existing --device cuda:0   # default batch-size (128, flash-attn)

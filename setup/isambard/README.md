@@ -7,6 +7,13 @@ the personal 5 TiB `$SCRATCHDIR`** (`/scratch/u6fp/dca36.u6fp`), not the shared 
 Everything runs via `sbatch` (login-node processes are killed on SSH disconnect). Code moves via
 git (`git pull` here), never scp.
 
+**baclm runs in Maciej Wiatrak's shared env**, not our lean venv:
+`/projects/u6fp/public/micromamba/envs/bacformer/bin/python` (torch 2.9.1 + **flash_attn 2.8.3**,
+matching our torch pin). baclm's attention needs flash-attn; without it it falls back to a dense
+`O((batch×len)²)` "packed SDPA" path that OOMs / runs ~100× slower (measured). No aarch64 flash-attn
+wheel exists and the login gcc (7.5) is too old to build one, so we reuse the authors' prebuilt env.
+ESM-C + Bacformer stay on our own pinned venv (store parity).
+
 ## Layout (on `$SCRATCHDIR`)
 
 ```

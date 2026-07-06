@@ -18,7 +18,8 @@
 set -uo pipefail
 : "${SCRATCHDIR:?}"
 S="$SCRATCHDIR"
-PY="$S/envs/bacpredict-gpu-venv/bin/python"
+PY="$S/envs/bacpredict-gpu-venv/bin/python"        # our pinned env: ESM-C + Bacformer (parity)
+BACLM_PY="/projects/u6fp/public/micromamba/envs/bacformer/bin/python"  # Maciej's env: baclm (flash-attn)
 export HF_HOME="$S/cache/hf" TORCH_HOME="$S/cache/torch"
 export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 export TOKENIZERS_PARALLELISM=false
@@ -47,7 +48,7 @@ echo "=== 3. ESM-C + Bacformer embeddings ==="
   --bacformer-dir "$SMOKE/bacformer" --bacformer-embeddings --device cuda:0
 
 echo "=== 4. EQUIVALENCE GATE: our fast token_type_ids/input_ids == baclm's own (byte-identical) ==="
-"$PY" - "$SMOKE" <<'PY'
+"$BACLM_PY" - "$SMOKE" <<'PY'
 import glob, sys
 import pandas as pd, torch
 import torch.nn.functional as F
@@ -86,9 +87,9 @@ PY
 
 echo "=== 5. baclm coding + non-coding embeddings from parquet (timed) ==="
 rm -rf "$SMOKE/baclm"   # clear any stale .pt so step 6 can't pass on old outputs
-"$PY" "$EMB/baclm_embed.py" \
+"$BACLM_PY" "$EMB/baclm_embed.py" \
   --protein-dir "$SMOKE/protein_sequences" --intergenic-dir "$SMOKE/intergenic" \
-  --output-dir "$SMOKE/baclm" --device cuda:0   # default batch-size (16), memory-safe
+  --output-dir "$SMOKE/baclm" --device cuda:0   # default batch-size (128), flash-attn env
 
 echo "=== 6. assert outputs + shapes ==="
 "$PY" - "$SMOKE" <<'PY'
