@@ -24,14 +24,22 @@ PY="$VENV/bin/python"
 export UV_CACHE_DIR="$S/cache/uv" HF_HOME="$S/cache/hf" TORCH_HOME="$S/cache/torch"
 export TMPDIR="$S/tmp"; mkdir -p "$TMPDIR"
 
+# System gcc is 7.5 (too old — PyTorch needs >=9). Load a modern gcc and point nvcc's host compiler
+# at it, else the build dies on "too old version of GCC".
+module load gcc-native/12.3
 module load cuda/12.6
+export CC="$(command -v gcc)" CXX="$(command -v g++)" CUDAHOSTCXX="$(command -v g++)"
 export CUDA_HOME="${CUDA_HOME:-$(dirname "$(dirname "$(command -v nvcc)")")}"
+echo "gcc: $CC -> $(gcc --version | head -1)"
 echo "nvcc: $(command -v nvcc)"; nvcc --version | tail -2
 echo "CUDA_HOME=$CUDA_HOME"
+case "$(gcc -dumpversion)" in 7*|8*) echo "FATAL: gcc still <9"; exit 1;; esac
 
-# GH200 = Hopper sm_90. Bound compile parallelism so nvcc's per-file RAM doesn't blow the allocation.
+# GH200 = Hopper sm_90. Force a local source build (no aarch64 wheel exists — the download 404s).
+# Bound compile parallelism so nvcc's per-file RAM doesn't blow the allocation.
 export TORCH_CUDA_ARCH_LIST="9.0"
 export MAX_JOBS=32
+export FLASH_ATTENTION_FORCE_BUILD=TRUE
 
 echo "=== build deps into the venv (needed for --no-build-isolation) ==="
 uv pip install --python "$PY" setuptools wheel ninja packaging psutil
