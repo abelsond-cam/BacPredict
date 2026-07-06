@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Stage-A smoke (n=10, GPU): exercise the whole Isambard embedding pipeline end-to-end on 10
-# Kp genomes — build input CSV -> extract proteins -> ESM-C + Bacformer -> baclm coding+non-coding
-# -> assert every output exists with the right shapes. Pinned ESM-C + Bacformer + baclm all load
-# from the pre-cached $HF_HOME (no egress needed). Minimal GPU spend (<~15 min of a 1 h budget).
+# Kp genomes — build input CSV -> extract proteins + intergenic parquets -> ESM-C + Bacformer ->
+# EQUIVALENCE GATE (our fast baclm token_type_ids == the model's own) -> baclm coding+non-coding
+# from parquet (timed) -> assert every output exists with the right shapes. Pinned ESM-C + Bacformer
+# + baclm all load from the pre-cached $HF_HOME (no egress). Minimal GPU spend (<~15 min of 1 h).
 #SBATCH --job-name=smoke-embed-kleb
 #SBATCH --partition=workq
 #SBATCH --account=brics.u6fp
@@ -34,20 +35,61 @@ echo "=== 1. build input CSV (Kp) + take first 10 ==="
 head -n 11 "$SMOKE/input_full.csv" > "$SMOKE/input_smoke.csv"
 echo "smoke rows: $(( $(wc -l < "$SMOKE/input_smoke.csv") - 1 ))"
 
-echo "=== 2. extract protein sequences ==="
+echo "=== 2. extract protein + intergenic parquets (CPU) ==="
 "$PY" "$EMB/preprocess_assemblies_to_protein_sequences.py" \
   --input-csv "$SMOKE/input_smoke.csv" --output-dir "$SMOKE/protein_sequences" --workers 8
+"$PY" "$EMB/extract_intergenic_to_parquet.py" \
+  --input-csv "$SMOKE/input_smoke.csv" --output-dir "$SMOKE/intergenic" --workers 8
 
 echo "=== 3. ESM-C + Bacformer embeddings ==="
 "$PY" "$EMB/generate_embeddings.py" \
   --input-dir "$SMOKE/protein_sequences" --esm-dir "$SMOKE/esm" \
   --bacformer-dir "$SMOKE/bacformer" --bacformer-embeddings --device cuda:0
 
-echo "=== 4. baclm coding + non-coding embeddings ==="
-"$PY" "$EMB/baclm_embed.py" \
-  --input-csv "$SMOKE/input_smoke.csv" --output-dir "$SMOKE/baclm" --device cuda:0
+echo "=== 4. EQUIVALENCE GATE: our fast token_type_ids/input_ids == baclm's own (byte-identical) ==="
+"$PY" - "$SMOKE" <<'PY'
+import glob, sys
+import pandas as pd, torch
+import torch.nn.functional as F
+from tl.embed.baclm_embed import _MODALITY, _encode_fast, load_baclm, mean_pool_embeddings
+S = sys.argv[1]
+model, tok = load_baclm("cuda:0")
+special = torch.tensor(sorted(tok.all_special_ids))
+pf = sorted(glob.glob(f"{S}/protein_sequences/*_protein_sequences.parquet"))[0]
+proteins = [p for c in pd.read_parquet(pf)["protein_sequence"].iloc[0] for p in c][:64]
+igf = sorted(glob.glob(f"{S}/intergenic/*_intergenic.parquet"))[0]
+igs = list(pd.read_parquet(igf)["intergenic_sequence"].iloc[0])[:64]
 
-echo "=== 5. assert outputs + shapes ==="
+for modality, seqs in [("protein", proteins), ("dna", igs)]:
+    if not seqs:
+        print(f"{modality}: no sequences in this genome, skipping"); continue
+    mod_id = _MODALITY[modality]
+    fast = _encode_fast(tok, seqs)
+    fast_tt = torch.where(torch.isin(fast["input_ids"], special), 2, mod_id)
+    slow = tok.batch_encode_plus(seqs, padding="longest", truncation=True, max_length=2048, return_tensors="pt")
+    assert torch.equal(fast["input_ids"], slow["input_ids"]), f"{modality}: input_ids differ"
+    assert torch.equal(fast_tt, slow["token_type_ids"]), f"{modality}: token_type_ids differ"
+    # embeddings: identical inputs -> identical forward. Cross-check fast pool vs a slow-path forward.
+    with torch.no_grad():
+        d = {k: v.to("cuda:0") for k, v in slow.items()}
+        h = model(input_ids=d["input_ids"], token_type_ids=d["token_type_ids"],
+                  attention_mask=d["attention_mask"]).last_hidden_state
+        m = d["attention_mask"].unsqueeze(-1).to(h.dtype)
+        slow_pool = ((h * m).sum(1) / m.sum(1).clamp_min(1)).to(torch.bfloat16).cpu()
+    fast_pool = mean_pool_embeddings(seqs, model, tok, "cuda:0", modality, batch_size=128)
+    cos = F.cosine_similarity(fast_pool.float(), slow_pool.float(), dim=1)
+    assert cos.min() > 0.999, f"{modality}: min cosine {cos.min():.5f}"
+    print(f"{modality}: input_ids+token_type_ids byte-identical, pooled cos.min={cos.min():.5f} "
+          f"({tuple(fast['input_ids'].shape)})")
+print("=== EQUIVALENCE GATE PASS: fast baclm path == developers' tokenizer ===")
+PY
+
+echo "=== 5. baclm coding + non-coding embeddings from parquet (timed) ==="
+/usr/bin/time -v "$PY" "$EMB/baclm_embed.py" \
+  --protein-dir "$SMOKE/protein_sequences" --intergenic-dir "$SMOKE/intergenic" \
+  --output-dir "$SMOKE/baclm" --batch-size 128 --device cuda:0 2>&1 | grep -iE "s/genome|DONE|peak GPU|Elapsed \(wall" || true
+
+echo "=== 6. assert outputs + shapes ==="
 "$PY" - "$SMOKE" <<'PY'
 import sys, glob, torch
 S = sys.argv[1]

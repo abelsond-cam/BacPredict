@@ -31,8 +31,9 @@ case "$TASK" in
 esac
 cd "$S/tmp"
 
-# baclm re-derives proteins + intergenic from gff+fna in the input CSV; slice the CSV rows.
-TOTAL=$(( $(wc -l < "$PROC/embedding_input.csv") - 1 ))
+# baclm reads the shared protein + intergenic parquet stores (extract_proteins.sbatch); slice the
+# sorted protein-parquet list so each array task owns a fixed set regardless of scheduling.
+TOTAL=$(find "$PROC/protein_sequences" -name '*_protein_sequences.parquet' -type f | wc -l)
 NT="${SLURM_ARRAY_TASK_COUNT:-1}"; ID="${SLURM_ARRAY_TASK_ID:-0}"
 CHUNK=$(( (TOTAL + NT - 1) / NT ))
 START=$(( ID * CHUNK )); END=$(( START + CHUNK )); [ "$END" -gt "$TOTAL" ] && END=$TOTAL
@@ -40,5 +41,6 @@ echo "=== $TASK baclm task $ID/$NT : TOTAL=$TOTAL slice [$START:$END] ==="
 [ "$START" -ge "$TOTAL" ] && { echo "slice past end, nothing to do"; exit 0; }
 
 "$PY" "$EMB/baclm_embed.py" \
-  --input-csv "$PROC/embedding_input.csv" --output-dir "$PROC/baclm" \
-  --start-idx "$START" --end-idx "$END" --skip-existing --device cuda:0
+  --protein-dir "$PROC/protein_sequences" --intergenic-dir "$PROC/intergenic" \
+  --output-dir "$PROC/baclm" \
+  --start-idx "$START" --end-idx "$END" --skip-existing --batch-size 128 --device cuda:0

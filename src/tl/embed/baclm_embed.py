@@ -3,20 +3,28 @@
 `macwiatrak/baclm-350m-masked` is a mixed protein+DNA char-level masked LM (960-d). For each
 genome we embed BOTH modalities and mean-pool each region into one 960-d vector:
 
-  * coding      — the CDS protein sequences (UPPERCASE amino acids), from
-                  `extract_proteins_from_gff_fna` (same flat order as the ESM-C store);
-  * non-coding  — the intergenic DNA regions (lowercase nucleotides), from
-                  `extract_intergenic_from_gff_fna`.
+  * coding      — the CDS protein sequences (UPPERCASE amino acids), read from the shared
+                  ``{sample}_protein_sequences.parquet`` (the same store the ESM-C path consumes);
+  * non-coding  — the intergenic DNA regions (lowercase nucleotides), read from
+                  ``{sample}_intergenic.parquet`` (written by ``extract_intergenic_to_parquet.py``).
 
-The "slight input change" the model needs vs a standard encoder: the char-level tokenizer is
-**case-sensitive** (UPPERCASE = protein modality, lowercase = DNA) and the forward pass takes
-``token_type_ids`` (which the tokenizer derives from case) to tell the two apart. We take
-``outputs.last_hidden_state`` and attention-masked-mean-pool over residues. Not per-residue
-(deferred) and not fed to Bacformer — a standalone store.
+Two-stage split, exactly like the ESM-C pipeline (``generate_embeddings.py``): extraction is a
+separate CPU job; this GPU job only *reads* parquet and runs forwards — it never parses a GFF or
+translates a CDS. The forward loop mirrors ``bacformer.pp.generate_protein_embeddings``:
+length-sort, contiguous ``batch_size``, ``padding="longest"``, ``truncation`` to the model context,
+bf16, ``no_grad``, attention-masked mean-pool.
+
+**token_type_ids — the fast path.** baclm's char splitting is fast (Rust), but ``BacLMTokenizer``
+overrides ``batch_encode_plus`` to infer ``token_type_ids`` in a *pure-Python per-residue loop*
+(``_infer_token_type_ids``), which dominates runtime over ~2M residues/genome. Because we embed each
+modality separately, the correct ``token_type_ids`` is a **constant** — protein→0, DNA→1, and every
+special token→2 — so we build it with one vectorised op (from ``all_special_ids``) and call the fast
+base tokenizer directly, bypassing the Python loop. For a homogeneous batch this is byte-identical
+to ``_infer_token_type_ids`` (asserted in the smoke). Not per-residue (deferred) and not fed to
+Bacformer — a standalone store.
 
 Saves `{sample_id}_baclm_embeddings.pt` (bf16): ``protein_embeddings`` [n_cds, 960],
 ``intergenic_embeddings`` [n_ig, 960], plus region-count + intergenic-coordinate metadata.
-Reads the same `(Sample, sr_assembly_file, sr_gff_file)` CSV as the protein-sequence step.
 """
 
 import argparse
@@ -29,13 +37,11 @@ from pathlib import Path
 import pandas as pd
 import torch
 from tqdm import tqdm
-from transformers import AutoModel, AutoTokenizer
-
-from tl.embed.extract_intergenic_from_gff_fna import extract_intergenic_from_gff_fna
-from tl.embed.extract_proteins_from_gff_fna import extract_proteins_from_gff_fna
+from transformers import AutoModel, AutoTokenizer, PreTrainedTokenizerFast
 
 BACLM_MODEL_ID = "macwiatrak/baclm-350m-masked"
 MAX_LEN = 2048  # model context length (char-level)
+_MODALITY = {"protein": 0, "dna": 1}  # token_type_ids: protein=0, DNA=1 (special tokens=2)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,71 +58,87 @@ def load_baclm(device: str, dtype=torch.bfloat16):
     return model, tok
 
 
+def _encode_fast(tokenizer, seqs: list[str]):
+    """Tokenise a batch the way ``BacLMTokenizer`` does, minus the per-residue Python loop.
+
+    Wraps each sequence as ``{bos}{seq}{eos}`` and calls the **fast base** ``batch_encode_plus``
+    (``PreTrainedTokenizerFast`` — Rust), skipping ``BacLMTokenizer._infer_token_type_ids``. Returns
+    the HF ``BatchEncoding`` with ``input_ids``/``attention_mask`` (no ``token_type_ids`` — the
+    caller builds those cheaply). ``input_ids`` are byte-identical to the model tokenizer's own.
+    """
+    wrapped = [f"{tokenizer.bos_token}{s}{tokenizer.eos_token}" for s in seqs]
+    return PreTrainedTokenizerFast.batch_encode_plus(
+        tokenizer, wrapped, padding="longest", truncation=True, max_length=MAX_LEN, return_tensors="pt"
+    )
+
+
 @torch.no_grad()
-def mean_pool_embeddings(seqs: list[str], model, tokenizer, device: str, token_budget: int = 8192) -> torch.Tensor:
+def mean_pool_embeddings(
+    seqs: list[str], model, tokenizer, device: str, modality: str, batch_size: int = 128
+) -> torch.Tensor:
     """Embed a homogeneous-modality list of sequences → attention-masked mean-pooled [n, 960] (bf16, CPU).
 
-    ``seqs`` must be one modality (all UPPERCASE protein OR all lowercase DNA) — the tokenizer reads
-    modality from case and emits ``token_type_ids`` (verified: uppercase→0 protein, lowercase→1 DNA).
+    ``modality`` is ``"protein"`` (UPPERCASE amino acids) or ``"dna"`` (lowercase nucleotides); it
+    fixes ``token_type_ids`` for every real token (protein→0, DNA→1) with special tokens→2, built
+    vectorised from ``all_special_ids`` rather than baclm's per-residue Python inference.
 
-    Batches are formed by a **linear token budget**: sequences are length-sorted (to minimise
-    padding) and packed so ``batch_size × max_len_in_batch ≤ token_budget`` — i.e. a cap on total
-    tokens per forward. Empirically peak memory tracks total tokens: ~8k (the passing smoke) is safe,
-    while ~49k (batch ≈24 at L≈2050) OOMs. The model context is 2048 and the tokenizer truncates to
-    ``max_length`` correctly, so no giant sequence reaches the model. Output order is restored to the
-    input order. Returns an empty [0, H] tensor for empty input.
+    Mirrors ``bacformer.pp.generate_protein_embeddings``: length-sort to minimise padding,
+    contiguous ``batch_size`` slices, ``padding="longest"``, ``truncation`` to :data:`MAX_LEN`, bf16
+    forward, attention-masked mean-pool. Output order is restored to the input order. Returns an
+    empty [0, H] tensor for empty input.
     """
     hidden = getattr(model.config, "hidden_size", 960)
     if not seqs:
         return torch.empty((0, hidden), dtype=torch.bfloat16)
+    if modality not in _MODALITY:
+        raise ValueError(f"modality must be one of {sorted(_MODALITY)}, got {modality!r}")
+    mod_id = _MODALITY[modality]
+    special_ids = torch.tensor(sorted(tokenizer.all_special_ids), device=device)
 
     n = len(seqs)
-    lengths = [min(len(s), MAX_LEN) + 2 for s in seqs]  # +2 for special tokens (char-level ~ len)
-    order = sorted(range(n), key=lambda i: lengths[i])
+    order = sorted(range(n), key=lambda i: len(seqs[i]))  # length-sort (padding-minimising)
     results: list[torch.Tensor | None] = [None] * n
 
-    i = 0
-    while i < n:
-        j, maxlen = i, 0
-        while j < n:
-            nl = max(maxlen, lengths[order[j]])
-            if (j - i + 1) > 1 and (j - i + 1) * nl > token_budget:
-                break
-            maxlen = nl
-            j += 1
-        idxs = order[i:j]
-        batch = tokenizer.batch_encode_plus(
-            [seqs[k] for k in idxs], padding=True, truncation=True, max_length=MAX_LEN, return_tensors="pt"
-        )
-        batch = {k: v.to(device) for k, v in batch.items()}
-        res = model(
-            input_ids=batch["input_ids"],
-            token_type_ids=batch.get("token_type_ids"),
-            attention_mask=batch.get("attention_mask"),
-        )
-        h = res.last_hidden_state  # [B, L, H]
-        mask = batch["attention_mask"].unsqueeze(-1).to(h.dtype)  # [B, L, 1]
-        pooled = ((h * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1)).to(torch.bfloat16).cpu()  # [B, H]
+    for start in range(0, n, batch_size):
+        idxs = order[start : start + batch_size]
+        enc = _encode_fast(tokenizer, [seqs[k] for k in idxs])
+        input_ids = enc["input_ids"].to(device)
+        attention_mask = enc["attention_mask"].to(device)
+        # token_type_ids: mod_id for real tokens, 2 for special tokens (matches _infer_token_type_ids).
+        is_special = torch.isin(input_ids, special_ids)
+        token_type_ids = torch.where(is_special, 2, mod_id)
+
+        out = model(input_ids=input_ids, token_type_ids=token_type_ids, attention_mask=attention_mask)
+        h = out.last_hidden_state  # [B, L, H]
+        m = attention_mask.unsqueeze(-1).to(h.dtype)  # [B, L, 1]
+        pooled = ((h * m).sum(dim=1) / m.sum(dim=1).clamp_min(1)).to(torch.bfloat16).cpu()  # [B, H]
         for pos, k in enumerate(idxs):
             results[k] = pooled[pos]
-        i = j
     return torch.stack(results)
 
 
-def process_genome(row, model, tokenizer, device: str, output_dir: Path, token_budget: int,
-                   min_intergenic_len: int) -> tuple[str, bool, str]:
-    """Embed one genome's proteins + intergenic regions and save its baclm .pt."""
-    sample_id = str(row["Sample"])
-    try:
-        gff, fna = str(row["sr_gff_file"]), str(row["sr_assembly_file"])
-        # Coding: flatten the per-contig protein lists into ESM-C flat-index order.
-        prot = extract_proteins_from_gff_fna(gff, fna)
-        proteins = [p for contig in prot["protein_sequence"] for p in contig]
-        # Non-coding: intergenic DNA regions (lowercase).
-        ig = extract_intergenic_from_gff_fna(gff, fna, min_len=min_intergenic_len)
+def _flatten_proteins(protein_parquet: Path) -> list[str]:
+    """Read a protein-sequence parquet and flatten its per-contig lists into ESM-C flat order."""
+    seq_col = pd.read_parquet(protein_parquet)["protein_sequence"].iloc[0]
+    return [p for contig in seq_col for p in contig]
 
-        prot_emb = mean_pool_embeddings(proteins, model, tokenizer, device, token_budget)
-        ig_emb = mean_pool_embeddings(ig["intergenic_sequence"], model, tokenizer, device, token_budget)
+
+def process_genome(sample_id: str, protein_parquet: Path, intergenic_parquet: Path | None,
+                   model, tokenizer, device: str, output_dir: Path, batch_size: int) -> tuple[str, bool, str]:
+    """Embed one genome's proteins + intergenic regions (read from parquet) and save its baclm .pt."""
+    try:
+        proteins = _flatten_proteins(protein_parquet)
+        if intergenic_parquet is not None and intergenic_parquet.exists():
+            ig_df = pd.read_parquet(intergenic_parquet)
+            ig_seqs = list(ig_df["intergenic_sequence"].iloc[0])
+            ig_seqid = list(ig_df["intergenic_seqid"].iloc[0])
+            ig_start = list(ig_df["intergenic_start"].iloc[0])
+            ig_end = list(ig_df["intergenic_end"].iloc[0])
+        else:
+            ig_seqs, ig_seqid, ig_start, ig_end = [], [], [], []
+
+        prot_emb = mean_pool_embeddings(proteins, model, tokenizer, device, "protein", batch_size)
+        ig_emb = mean_pool_embeddings(ig_seqs, model, tokenizer, device, "dna", batch_size)
 
         torch.save(
             {
@@ -124,9 +146,9 @@ def process_genome(row, model, tokenizer, device: str, output_dir: Path, token_b
                 "intergenic_embeddings": ig_emb,             # [n_ig, 960] bf16
                 "n_proteins": int(prot_emb.shape[0]),
                 "n_intergenic": int(ig_emb.shape[0]),
-                "intergenic_seqid": ig["intergenic_seqid"],
-                "intergenic_start": ig["intergenic_start"],
-                "intergenic_end": ig["intergenic_end"],
+                "intergenic_seqid": ig_seqid,
+                "intergenic_start": ig_start,
+                "intergenic_end": ig_end,
             },
             output_dir / f"{sample_id}_baclm_embeddings.pt",
         )
@@ -138,38 +160,43 @@ def process_genome(row, model, tokenizer, device: str, output_dir: Path, token_b
 
 
 def main() -> None:
-    """Run baclm coding + non-coding embedding over the input CSV (array-sliceable)."""
+    """Run baclm coding + non-coding embedding over the protein-parquet store (array-sliceable)."""
     ap = argparse.ArgumentParser(description="baclm-350m-masked mean-pooled coding + non-coding embeddings.")
-    ap.add_argument("--input-csv", type=Path, required=True, help="CSV: Sample, sr_assembly_file, sr_gff_file")
+    ap.add_argument("--protein-dir", type=Path, required=True, help="dir of {Sample}_protein_sequences.parquet")
+    ap.add_argument("--intergenic-dir", type=Path, required=True, help="dir of {Sample}_intergenic.parquet")
     ap.add_argument("--output-dir", type=Path, required=True, help="output dir for {Sample}_baclm_embeddings.pt")
     ap.add_argument("--n", type=int, default=None, help="limit number of genomes (testing)")
     ap.add_argument("--skip-existing", action="store_true")
     ap.add_argument("--device", type=str, default="cuda:0")
-    ap.add_argument("--token-budget", type=int, default=8192,
-                    help="max (batch_size × max_seq_len) total tokens per forward. 8192 is the safe "
-                    "smoke value; raise to trade GPU memory for throughput (49152 OOMs).")
-    ap.add_argument("--min-intergenic-len", type=int, default=30)
-    ap.add_argument("--start-idx", type=int, default=None, help="array slice start (over sorted CSV rows)")
+    ap.add_argument("--batch-size", type=int, default=128, help="sequences per forward (default 128, as ESM-C)")
+    ap.add_argument("--start-idx", type=int, default=None, help="array slice start (over sorted parquet list)")
     ap.add_argument("--end-idx", type=int, default=None, help="array slice end")
     args = ap.parse_args()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    df = pd.read_csv(args.input_csv)
-    df = df.dropna(subset=["Sample", "sr_assembly_file", "sr_gff_file"]).sort_values("Sample").reset_index(drop=True)
+    protein_files = sorted(args.protein_dir.glob("*_protein_sequences.parquet"))
+    if not protein_files:
+        logger.error(f"no *_protein_sequences.parquet under {args.protein_dir}")
+        sys.exit(1)
     if args.n:
-        df = df.head(args.n)
+        protein_files = protein_files[: args.n]
 
     # Array slice BEFORE skip-existing (fixed responsibility set; avoids the shrinking-list race).
     if args.start_idx is not None and args.end_idx is not None:
-        total = len(df)
-        df = df.iloc[args.start_idx : args.end_idx].reset_index(drop=True)
-        logger.info(f"Array slice {args.start_idx}:{args.end_idx} of {total} -> {len(df)} rows")
+        total = len(protein_files)
+        protein_files = protein_files[args.start_idx : args.end_idx]
+        logger.info(f"Array slice {args.start_idx}:{args.end_idx} of {total} -> {len(protein_files)} files")
+
+    def sample_of(p: Path) -> str:
+        return p.name.replace("_protein_sequences.parquet", "")
 
     if args.skip_existing:
-        before = len(df)
-        df = df[~df["Sample"].apply(lambda s: (args.output_dir / f"{s}_baclm_embeddings.pt").exists())]
-        logger.info(f"skip-existing: dropped {before - len(df)} already-done")
-    if df.empty:
+        before = len(protein_files)
+        protein_files = [
+            p for p in protein_files if not (args.output_dir / f"{sample_of(p)}_baclm_embeddings.pt").exists()
+        ]
+        logger.info(f"skip-existing: dropped {before - len(protein_files)} already-done")
+    if not protein_files:
         logger.info("nothing to do")
         return
 
@@ -179,23 +206,25 @@ def main() -> None:
 
     n_ok = n_fail = 0
     t0 = time.time()
-    logger.info(f"START {datetime.now():%Y-%m-%d %H:%M:%S} | {len(df)} genomes")
-    for idx, (_, row) in enumerate(tqdm(df.iterrows(), total=len(df), desc="baclm"), 1):
-        sample_id, ok, _ = process_genome(
-            row, model, tokenizer, args.device, args.output_dir, args.token_budget, args.min_intergenic_len
+    logger.info(f"START {datetime.now():%Y-%m-%d %H:%M:%S} | {len(protein_files)} genomes")
+    for idx, protein_parquet in enumerate(tqdm(protein_files, desc="baclm"), 1):
+        sample_id = sample_of(protein_parquet)
+        intergenic_parquet = args.intergenic_dir / f"{sample_id}_intergenic.parquet"
+        _, ok, _ = process_genome(
+            sample_id, protein_parquet, intergenic_parquet, model, tokenizer,
+            args.device, args.output_dir, args.batch_size,
         )
-        if ok:
-            n_ok += 1
-        else:
-            n_fail += 1
+        n_ok += ok
+        n_fail += not ok
         if args.device.startswith("cuda"):
             torch.cuda.empty_cache()  # release the genome's peak alloc before the next (fights fragmentation)
         if idx % 10 == 0:
             per = (time.time() - t0) / idx
-            logger.info(f"[{idx}/{len(df)}] {per:.1f}s/genome | ok={n_ok} fail={n_fail} "
-                        f"| ETA {timedelta(seconds=int(per * (len(df) - idx)))}")
+            logger.info(f"[{idx}/{len(protein_files)}] {per:.1f}s/genome | ok={n_ok} fail={n_fail} "
+                        f"| ETA {timedelta(seconds=int(per * (len(protein_files) - idx)))}")
 
-    logger.info(f"DONE {datetime.now():%Y-%m-%d %H:%M:%S} | ok={n_ok} fail={n_fail} | {timedelta(seconds=int(time.time() - t0))}")
+    logger.info(f"DONE {datetime.now():%Y-%m-%d %H:%M:%S} | ok={n_ok} fail={n_fail} "
+                f"| {timedelta(seconds=int(time.time() - t0))}")
     if args.device.startswith("cuda"):
         logger.info(f"peak GPU mem: {torch.cuda.max_memory_allocated() / 1e9:.1f} GB")
 

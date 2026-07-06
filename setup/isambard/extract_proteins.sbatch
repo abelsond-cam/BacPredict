@@ -30,10 +30,16 @@ mkdir -p "$PROC" "$S/tmp"; cd "$S/tmp"
 echo "=== [$(date -u +%H:%M:%S)] build input CSV for $TASK ==="
 "$PY" "$EMB/build_ast_input_csv.py" --base "$RAW" --out "$PROC/embedding_input.csv"
 
-echo "=== [$(date -u +%H:%M:%S)] extract protein sequences ==="
+echo "=== [$(date -u +%H:%M:%S)] extract protein sequences (coding) ==="
 "$PY" "$EMB/preprocess_assemblies_to_protein_sequences.py" \
   --input-csv "$PROC/embedding_input.csv" --output-dir "$PROC/protein_sequences" \
   --workers 48 --skip-existing
 
-N=$(find "$PROC/protein_sequences" -name '*_protein_sequences.parquet' -type f | wc -l)
-echo "=== [$(date -u +%H:%M:%S)] DONE $TASK: $N protein-sequence parquets ==="
+echo "=== [$(date -u +%H:%M:%S)] extract intergenic regions (non-coding, for baclm) ==="
+"$PY" "$EMB/extract_intergenic_to_parquet.py" \
+  --input-csv "$PROC/embedding_input.csv" --output-dir "$PROC/intergenic" \
+  --workers 48 --skip-existing
+
+NP=$(find "$PROC/protein_sequences" -name '*_protein_sequences.parquet' -type f | wc -l)
+NI=$(find "$PROC/intergenic" -name '*_intergenic.parquet' -type f | wc -l)
+echo "=== [$(date -u +%H:%M:%S)] DONE $TASK: $NP protein + $NI intergenic parquets ==="
