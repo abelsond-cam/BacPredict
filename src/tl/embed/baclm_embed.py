@@ -139,10 +139,12 @@ def process_genome(sample_id: str, protein_parquet: Path, intergenic_parquet: Pa
         proteins = _flatten_proteins(protein_parquet)
         if intergenic_parquet is not None and intergenic_parquet.exists():
             ig_df = pd.read_parquet(intergenic_parquet)
-            ig_seqs = list(ig_df["intergenic_sequence"].iloc[0])
-            ig_seqid = list(ig_df["intergenic_seqid"].iloc[0])
-            ig_start = list(ig_df["intergenic_start"].iloc[0])
-            ig_end = list(ig_df["intergenic_end"].iloc[0])
+            ig_seqs = [str(x) for x in ig_df["intergenic_sequence"].iloc[0]]
+            # Cast coords to native python types — parquet/pandas yields numpy scalars, which
+            # torch.load(weights_only=True) (the torch>=2.6 default) refuses. Keep the .pt safe-loadable.
+            ig_seqid = [str(x) for x in ig_df["intergenic_seqid"].iloc[0]]
+            ig_start = [int(x) for x in ig_df["intergenic_start"].iloc[0]]
+            ig_end = [int(x) for x in ig_df["intergenic_end"].iloc[0]]
         else:
             ig_seqs, ig_seqid, ig_start, ig_end = [], [], [], []
 
