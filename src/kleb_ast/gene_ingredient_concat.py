@@ -26,8 +26,8 @@ import pandas as pd
 
 from kleb_ast.per_gene_lr_from_annotation import MIN_CARRIERS, collect_reliable_amr
 from kleb_ast.reliable_ft_concat import _impute_block, load_ft_gene, load_ft_mean
-from snp_embeddings.build_per_gene_lr_store import _fit_one_gene, _fit_one_gene_imputed
-from snp_embeddings.snp_vs_esm_prediction import resolve_clean_splits
+from pangena_predict.build_per_gene_lr_store import _fit_one_gene, _fit_one_gene_imputed
+from pangena_predict.snp_vs_esm_prediction import resolve_clean_splits
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

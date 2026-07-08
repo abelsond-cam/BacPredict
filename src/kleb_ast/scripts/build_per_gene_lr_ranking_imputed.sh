@@ -57,7 +57,7 @@ PARQUET=$D/klebsiella_protein_sequences
 EMB=$D/klebsiella_esm_embeddings
 # Per-drug subdir: the module also writes non-drug-specific files (build_summary, gene_lr_auroc,
 # gene_prevalence), so concurrent array tasks must not share an out-dir or they race on those.
-OUT=$D/train_kleb_ast/snp_embeddings/per_gene_lr_ranking_imputed/$DRUG
+OUT=$D/train_kleb_ast/pangena_predict/per_gene_lr_ranking_imputed/$DRUG
 
 echo "========================================================================"
 echo "Kp per-gene LR ranking — drug=$DRUG (array task $SLURM_ARRAY_TASK_ID)"
@@ -73,7 +73,7 @@ if [[ -f "$OUT/per_gene_lr_${DRUG}.csv" ]]; then
 fi
 mkdir -p "$OUT"
 
-uv run python src/snp_embeddings/build_per_gene_lr_store.py \
+uv run python src/pangena_predict/build_per_gene_lr_store.py \
     --split-csv "$SHEET" \
     --drug "$DRUG" \
     --parquet-dir "$PARQUET" \

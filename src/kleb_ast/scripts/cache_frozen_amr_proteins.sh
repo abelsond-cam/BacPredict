@@ -33,7 +33,7 @@ if [[ -z "$DRUG" ]]; then echo "ERROR: no drug for array index $SLURM_ARRAY_TASK
 GRAIN=${GRAIN:-family}
 
 D=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed
-OUT=$D/train_kleb_ast/snp_embeddings/frozen_amr_cache
+OUT=$D/train_kleb_ast/pangena_predict/frozen_amr_cache
 mkdir -p "$OUT"
 echo "=== Kp FROZEN AMR-token cache — drug=$DRUG grain=$GRAIN (task $SLURM_ARRAY_TASK_ID) ==="
 

@@ -116,7 +116,7 @@ def main() -> None:
     here = Path(__file__).resolve().parent
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--concat-root", type=Path,
-                   default=rds / "processed" / "train_kleb_ast" / "snp_embeddings" / "gene_ingredient_concat")
+                   default=rds / "processed" / "train_kleb_ast" / "pangena_predict" / "gene_ingredient_concat")
     p.add_argument("--out-dir", type=Path, default=here / "docs" / "visualisations" / "amr_per_abx" / "ingredient")
     args = p.parse_args()
     run(args.concat_root, args.out_dir)

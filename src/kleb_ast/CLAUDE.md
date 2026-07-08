@@ -16,16 +16,16 @@ Predict susceptibility for clinically relevant antibiotics in *Klebsiella pneumo
 
 Bacformer should excel where resistance is driven by **HGT / gene acquisition** (carbapenemases like KPC/NDM/OXA-48, ESBLs, aminoglycoside-modifying enzymes, *mcr*) and add much less where resistance is driven by **chromosomal point mutations** (e.g. FQ via *gyrA*/*parC* QRDR, *ramR/ramA*-driven efflux, *ompK35*/*K36* porin loss, *pmrAB*/*phoPQ* colistin). Kp is the **strong** test — both classes are well-represented. Every AMR result MUST be **stratified by resistance mechanism**.
 
-## Kleborate determinant "ceiling" — the catalogue baseline (snp_embeddings port)
+## Kleborate determinant "ceiling" — the catalogue baseline (pangena_predict port)
 
-The TB diagnostic (Task 7, `src/snp_embeddings/`) measures every drug's Bacformer read-out against a
+The TB diagnostic (Task 7, `src/pangena_predict/`) measures every drug's Bacformer read-out against a
 **catalogue ceiling** — the AUROC a one-hot of all known resistance determinants reaches through the
 same k-fold LR. For TB that catalogue is the WHO/TB-Profiler variant set. **For Kp the catalogue is
 Kleborate**, whose per-isolate determinant calls are already in `metadata_v2` (no re-run needed).
 
 - **Module:** [`kleborate_determinant_lr.py`](kleborate_determinant_lr.py) — the Kp analogue of
-  `snp_embeddings/tbprofiler_gene_lr.py`. Per drug it builds a determinant one-hot from the relevant
-  Kleborate columns and scores it through `snp_embeddings.kfold_probe.run_kfold_probe`, emitting one
+  `pangena_predict/tbprofiler_gene_lr.py`. Per drug it builds a determinant one-hot from the relevant
+  Kleborate columns and scores it through `pangena_predict.kfold_probe.run_kfold_probe`, emitting one
   **bar per Kleborate column** (tagged `acquired_hgt` / `chromosomal_coding` / `chromosomal_mutation` /
   `porin_truncation` / `truncation_lof` — the HGT-vs-chromosomal axis) plus the combined
   `__ALL_Kleborate__` **ceiling** row, to `docs/visualisations/kp_<drug>/kleborate_determinant_lr_<drug>.csv`.
@@ -154,9 +154,9 @@ Kleb-specific metadata / embedding curation
 - `scripts/add_paths_gff_fna_to_metadata.sh` — wrapper.
 
 Determinant ceiling / mechanism stratification
-- `kleborate_determinant_lr.py` — per-drug Kleborate determinant one-hot LR → the catalogue **ceiling** + per-mechanism bars (HGT vs chromosomal). The Kp analogue of `snp_embeddings/tbprofiler_gene_lr.py`. See the section above.
+- `kleborate_determinant_lr.py` — per-drug Kleborate determinant one-hot LR → the catalogue **ceiling** + per-mechanism bars (HGT vs chromosomal). The Kp analogue of `pangena_predict/tbprofiler_gene_lr.py`. See the section above.
 
-Imports from [`../tl/train/`](../tl/train/) (split_utils, datasets) and [`../tl/embed/`](../tl/embed/) and [`../tl/genome_download/`](../tl/genome_download/) for shared infrastructure, and from [`../snp_embeddings/`](../snp_embeddings/) (`kfold_probe`, and `locate_gene` for the Kp gene→embedding-index port).
+Imports from [`../tl/train/`](../tl/train/) (split_utils, datasets) and [`../tl/embed/`](../tl/embed/) and [`../tl/genome_download/`](../tl/genome_download/) for shared infrastructure, and from [`../pangena_predict/`](../pangena_predict/) (`kfold_probe`, and `locate_gene` for the Kp gene→embedding-index port).
 
 ## Downstream / parked experiments (all on hold)
 

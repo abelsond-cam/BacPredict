@@ -1,7 +1,7 @@
 """Bar-plot the Kp per-gene ESM-C LR ranking — which single gene's ESM-C vector predicts AST.
 
-The Kp analogue of ``snp_embeddings.plot_per_gene_lr_ranking``. Reads a per-gene ranking table
-(``per_gene_lr_<drug>.csv`` from ``snp_embeddings.build_per_gene_lr_store`` driven on the Kp cohort) and
+The Kp analogue of ``pangena_predict.plot_per_gene_lr_ranking``. Reads a per-gene ranking table
+(``per_gene_lr_<drug>.csv`` from ``pangena_predict.build_per_gene_lr_store`` driven on the Kp cohort) and
 renders the top-N genes by out-of-fold train AUROC, ascending (highest on the right). This is the
 auto-discovery step that picks the causal gene the concat probe injects: for the chromosomal/intrinsic
 drugs we expect the known biology to surface (colistin → *pmrB*/*mgrB*/*phoQ*, azithromycin →

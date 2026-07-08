@@ -3,10 +3,10 @@
 The **genome mean** is the mask-normalised mean of Bacformer's ``last_hidden_state`` over the real
 protein tokens — exactly the pool the genome-classification head averages, and **gene/drug-agnostic**.
 Computing it once over the whole Kp cohort lets every per-drug concat probe + ladder
-(:mod:`snp_embeddings.concatenate_bacformer_genome_esm_protein_emb`) run **CPU-only** via
+(:mod:`pangena_predict.concatenate_bacformer_genome_esm_protein_emb`) run **CPU-only** via
 ``--bacformer-vectors``, the lesson from the TB sweep.
 
-Parquet-free: unlike :mod:`snp_embeddings.bacformer_genome_vectors` (which also extracts a gene token at
+Parquet-free: unlike :mod:`pangena_predict.bacformer_genome_vectors` (which also extracts a gene token at
 a gene's flat index, needing the protein parquet and a single-copy filter), the genome mean needs only
 the ESM-C store's real-protein rows — so this covers *every* Kp genome, with no gene-presence filter.
 Reuses the shared forward helpers (``_load_model`` / ``_forward_inputs`` / ``_real_protein_indices`` /
@@ -24,8 +24,8 @@ import numpy as np
 import pandas as pd
 import torch
 
-from snp_embeddings.bacformer_genome_vectors import _forward_inputs, _load_model
-from snp_embeddings.snp_vs_esm_prediction import _real_protein_indices
+from pangena_predict.bacformer_genome_vectors import _forward_inputs, _load_model
+from pangena_predict.snp_vs_esm_prediction import _real_protein_indices
 from tl.embed.generate_embeddings import bacformer_last_hidden_state
 
 logger = logging.getLogger(__name__)

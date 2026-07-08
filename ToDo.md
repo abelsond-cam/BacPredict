@@ -104,7 +104,7 @@ weights + HGT/MGE annotations consumed from the sister `BacHGT` module.
 - [ ] **Decision point:** Aim 1 outcome sets the embedding source for Aim 2 (Bacformer if HGT-preserving, DP-style if context-attractor); document the implication for cross-species HGT-aware work
 - [ ] Boundary-detection head (Aim 2): pull ISEScan + MGEfinder ground truth from BacHGT; train per-protein head; evaluate held-out + on SR assemblies
 
-## Task 7 — SNP embeddings: why TB AST is poor ([src/snp_embeddings/](src/snp_embeddings/))
+## Task 7 — SNP embeddings: why TB AST is poor ([src/pangena_predict/](src/pangena_predict/))
 
 **State (2026-06-13).** Re-planned + rebuilt; not yet run. Diagnostic task testing the central
 hypothesis that Bacformer is blind to chromosomal point mutations because a **chain of two plain
@@ -112,21 +112,21 @@ means** (ESM-C residue→protein, then Bacformer protein→genome — both strai
 means, no learned attention) dilutes the single causal RRDR residue. Positive control: TB rpoB /
 `rifampin`. The first cut was rejected (it loaded all embeddings + used an ad-hoc `train_test_split`,
 so its numbers weren't comparable to the deployed model); rebuilt on the repo infra. Full spec in
-the task [CLAUDE.md](src/snp_embeddings/CLAUDE.md); approved plan in
+the task [CLAUDE.md](src/pangena_predict/CLAUDE.md); approved plan in
 `~/.claude/plans/i-d-like-to-start-crystalline-allen.md`. On branch `dev` (per user).
 
 - [x] Increment 0 — scaffold + docs (package stub, task CLAUDE.md, this block, root-doc entries)
 - [x] **Code built + lint-clean (2026-06-13).** Three-step linear probes, all on the deployed
   model's canonical `binary_ast_with_split.csv` holdout (`tl.train.evaluate.resolve_holdouts`) +
   `tl.train.metrics`:
-  [snp_vs_esm_prediction.py](src/snp_embeddings/snp_vs_esm_prediction.py) (Step 1 one-hot RRDR,
+  [snp_vs_esm_prediction.py](src/pangena_predict/snp_vs_esm_prediction.py) (Step 1 one-hot RRDR,
   Step 2 frozen pooled ESM-C, Step 3a masked-marginal LLR, Step 2b Bacformer token; intersection
   head-line; optional reference-AUROC assertion),
-  [rpob_genotype.py](src/snp_embeddings/rpob_genotype.py) (RRDR allele + **rpoB-copy QC** +
-  provenance docstring), [locate_gene.py](src/snp_embeddings/locate_gene.py),
-  [frozen_bacformer_rpob_vectors.py](src/snp_embeddings/frozen_bacformer_rpob_vectors.py) (2b GPU),
-  [geometry_probe.py](src/snp_embeddings/geometry_probe.py) (3b),
-  [reference_gene/rpoB_H37Rv.faa](src/snp_embeddings/reference_gene/rpoB_H37Rv.faa),
+  [rpob_genotype.py](src/pangena_predict/rpob_genotype.py) (RRDR allele + **rpoB-copy QC** +
+  provenance docstring), [locate_gene.py](src/pangena_predict/locate_gene.py),
+  [frozen_bacformer_rpob_vectors.py](src/pangena_predict/frozen_bacformer_rpob_vectors.py) (2b GPU),
+  [geometry_probe.py](src/pangena_predict/geometry_probe.py) (3b),
+  [reference_gene/rpoB_H37Rv.faa](src/pangena_predict/reference_gene/rpoB_H37Rv.faa),
   scripts `run_snp_vs_esm_prediction.sh` + `smoke_geometry_probe.sh`. Shared touch:
   [tl/embed/esm_residue_level.py](src/tl/embed/esm_residue_level.py) (residue-level ops) +
   [tl/embed/generate_embeddings.py](src/tl/embed/generate_embeddings.py) (extracted

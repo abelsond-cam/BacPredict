@@ -84,7 +84,7 @@ class PanelInjectingFileDataset(LabelInjectingFileDataset):
     """:class:`LabelInjectingFileDataset` that also injects the per-protein surprisal panel.
 
     Loads a sibling ``{sample_id}_panel.npz`` (``panel`` ``[n_proteins, panel_dim]`` in flat
-    protein order, built by ``snp_embeddings.build_panel_store``), standardises it with a
+    protein order, built by ``pangena_predict.build_panel_store``), standardises it with a
     train-only mean/std, and attaches it as ``sample["panel"]`` of shape ``[1, n, panel_dim]``
     so it concatenates onto the backbone tokens in the attention pool. ``none``-mode runs keep
     using the plain :class:`LabelInjectingFileDataset` — this subclass is opt-in.
@@ -95,7 +95,7 @@ class PanelInjectingFileDataset(LabelInjectingFileDataset):
     no cap, so an oversized genome's panel is *longer* than its embedding. ``__getitem__`` keeps
     the panel's first ``n_proteins`` rows in that case (same flat order) and raises only when the
     panel is *shorter* than the embedding (a genuine misalignment) — mirroring the count-guard in
-    ``snp_embeddings.snp_vs_esm_prediction`` while tolerating the protein cap.
+    ``pangena_predict.snp_vs_esm_prediction`` while tolerating the protein cap.
 
     Parameters
     ----------

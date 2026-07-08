@@ -16,7 +16,7 @@ Everything is read from the already-computed per-drug ladder tables
 included only if both a ladder table and a ceiling CSV exist for it. Also emits the simple
 FT-only AUROC bar (the motivation figure, the TB analogue of ``kp_amr_panel_auroc.png``).
 
-Pure matplotlib over small CSVs — login/CPU. Figures are written into the snp_embeddings report's
+Pure matplotlib over small CSVs — login/CPU. Figures are written into the pangena_predict report's
 visualisation dir so ``PROGRESS_REPORT.md`` can reference them.
 """
 
@@ -39,9 +39,9 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 REPO = Path(__file__).resolve().parents[2]
-TB_VIZ = REPO / "src" / "snp_embeddings" / "docs" / "visualisations"
+TB_VIZ = REPO / "src" / "pangena_predict" / "docs" / "visualisations"
 KP_VIZ = REPO / "src" / "kleb_ast" / "docs" / "visualisations"
-OUT_DIR = REPO / "src" / "snp_embeddings" / "docs" / "visualisations"
+OUT_DIR = REPO / "src" / "pangena_predict" / "docs" / "visualisations"
 
 CEILING_COLOUR = "#c0392b"   # red — catalogue one-hot ceiling (WHO / Kleborate)
 FT_COLOUR = "#2e2a7a"        # indigo — Bacformer fine-tuned mean-pool (deployed)

@@ -3,7 +3,7 @@
 The CARD analogue of :mod:`kleb_ast.kleborate_determinant_lr`. Where that one-hot-encodes Kleborate's
 determinant *columns* from ``metadata_v2``, this one-hot-encodes **our own CARD gene/allele presence** from
 the ``{Sample}_amr.parquet`` sidecars and scores ``presence → drug label`` through the same k-fold × m-seed
-harness (:func:`snp_embeddings.kfold_probe.run_kfold_probe`). Per drug it emits, at family **and** allele
+harness (:func:`pangena_predict.kfold_probe.run_kfold_probe`). Per drug it emits, at family **and** allele
 grain:
 
 - one **bar per CARD gene** (carried by ≥ ``MIN_DETERMINANT_GENOMES`` genomes), tagged by mechanism

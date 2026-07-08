@@ -14,7 +14,7 @@ Why top-N and not "all > 0.6": the pervasive lineage signal means 600–1700 gen
 "all" would be ~26 GB/drug. Top-N (default 50, AUROC > 0.6 floor) is generous over the ~20 a multi-gene
 concat would use and keeps the store ~1 GB/drug.
 
-Reuses the snp_embeddings forward helpers (``_load_model`` / ``_forward_inputs`` finetuned backbone,
+Reuses the pangena_predict forward helpers (``_load_model`` / ``_forward_inputs`` finetuned backbone,
 ``_real_protein_indices``, ``flatten_proteins``, ``bacformer_last_hidden_state``). GPU; one drug per run.
 """
 
@@ -31,9 +31,9 @@ import numpy as np
 import pandas as pd
 import torch
 
-from snp_embeddings.bacformer_genome_vectors import _forward_inputs, _load_model
-from snp_embeddings.locate_gene import flatten_proteins
-from snp_embeddings.snp_vs_esm_prediction import _real_protein_indices, resolve_clean_splits
+from pangena_predict.bacformer_genome_vectors import _forward_inputs, _load_model
+from pangena_predict.locate_gene import flatten_proteins
+from pangena_predict.snp_vs_esm_prediction import _real_protein_indices, resolve_clean_splits
 from tl.embed.generate_embeddings import bacformer_last_hidden_state
 
 logger = logging.getLogger(__name__)

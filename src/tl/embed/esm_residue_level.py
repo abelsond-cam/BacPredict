@@ -1,4 +1,4 @@
-"""Residue-level ESM-C (ESM++) operations shared by the ``snp_embeddings`` task.
+"""Residue-level ESM-C (ESM++) operations shared by the ``pangena_predict`` task.
 
 This is the shared home for *per-residue* ESM-C work — the opposite end from the
 production embedding path (:mod:`tl.embed.generate_embeddings`), which only ever

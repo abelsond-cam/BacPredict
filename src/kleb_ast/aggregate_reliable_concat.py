@@ -72,7 +72,7 @@ def main() -> None:
     here = Path(__file__).resolve().parent
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--root", type=Path,
-                   default=rds / "processed" / "train_kleb_ast" / "snp_embeddings" / "reliable_ft_concat",
+                   default=rds / "processed" / "train_kleb_ast" / "pangena_predict" / "reliable_ft_concat",
                    help="Dir holding <drug>/reliable_concat_<drug>.csv (the reliable_ft_concat OUT root).")
     p.add_argument("--out-csv", type=Path,
                    default=here / "docs" / "visualisations" / "reliable_amr" / "kp_reliable_concat_summary.csv")

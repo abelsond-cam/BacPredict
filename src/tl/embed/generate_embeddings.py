@@ -64,7 +64,7 @@ def load_bacformer_model(device: str, dtype="auto") -> torch.nn.Module:
     """Load the frozen Bacformer complete-genomes model, on ``device``, in eval mode.
 
     Single source of truth for loading Bacformer — reused by this script's
-    embedding pipeline and by :mod:`snp_embeddings.bacformer_genome_vectors`.
+    embedding pipeline and by :mod:`pangena_predict.bacformer_genome_vectors`.
     ``dtype="auto"`` lets HF pick the checkpoint dtype (works on CPU for Stage-A
     smoke); pass ``torch.bfloat16`` to force the GPU pipeline's historical dtype.
     """

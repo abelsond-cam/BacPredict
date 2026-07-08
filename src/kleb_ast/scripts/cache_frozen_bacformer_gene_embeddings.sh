@@ -32,8 +32,8 @@ DRUG=${DRUGS[$SLURM_ARRAY_TASK_ID]}
 if [[ -z "$DRUG" ]]; then echo "ERROR: no drug for array index $SLURM_ARRAY_TASK_ID" >&2; exit 1; fi
 
 D=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed
-RANK=$D/train_kleb_ast/snp_embeddings/per_gene_lr_ranking_imputed/$DRUG/per_gene_lr_${DRUG}.csv
-OUT=$D/train_kleb_ast/snp_embeddings/frozen_bacformer_cache/$DRUG
+RANK=$D/train_kleb_ast/pangena_predict/per_gene_lr_ranking_imputed/$DRUG/per_gene_lr_${DRUG}.csv
+OUT=$D/train_kleb_ast/pangena_predict/frozen_bacformer_cache/$DRUG
 mkdir -p "$OUT"
 if [[ ! -f "$RANK" ]]; then echo "ERROR: ranking CSV missing: $RANK" >&2; exit 1; fi
 

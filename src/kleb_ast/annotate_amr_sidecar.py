@@ -38,7 +38,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from snp_embeddings.locate_gene import flatten_proteins
+from pangena_predict.locate_gene import flatten_proteins
 from tl.embed.extract_proteins_from_gff_fna import extract_proteins_from_gff_fna
 
 RDS_ROOT = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw")

@@ -38,8 +38,8 @@ if [[ -z "$DRUG" ]]; then echo "ERROR: no drug for array index $SLURM_ARRAY_TASK
 
 D=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed
 CKPT=$D/train_kleb_ast/models/finetune/klebsiella_pneumoniae_${DRUG}_lr_0.00015_finetuned_fold00_seed1
-RANK=$D/train_kleb_ast/snp_embeddings/per_gene_lr_ranking_imputed/$DRUG/per_gene_lr_${DRUG}.csv
-OUT=$D/train_kleb_ast/snp_embeddings/ft_bacformer_cache/$DRUG
+RANK=$D/train_kleb_ast/pangena_predict/per_gene_lr_ranking_imputed/$DRUG/per_gene_lr_${DRUG}.csv
+OUT=$D/train_kleb_ast/pangena_predict/ft_bacformer_cache/$DRUG
 mkdir -p "$OUT"
 if [[ ! -d "$CKPT" ]]; then echo "ERROR: FT checkpoint missing: $CKPT" >&2; exit 1; fi
 if [[ ! -f "$RANK" ]]; then echo "ERROR: ranking CSV missing: $RANK" >&2; exit 1; fi

@@ -39,9 +39,9 @@ D=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed
 SHEET=$D/train_kleb_ast/binary_ast_with_split.csv
 PARQUET=$D/klebsiella_protein_sequences
 EMB=$D/klebsiella_esm_embeddings
-FTNPZ=$D/train_kleb_ast/snp_embeddings/ft_bacformer_cache/$DRUG/ft_genome_mean_${DRUG}.npz
-RANK=$D/train_kleb_ast/snp_embeddings/per_gene_lr_ranking_imputed/$DRUG/per_gene_lr_${DRUG}.csv
-OUT=$D/train_kleb_ast/snp_embeddings/concat_ft/$DRUG
+FTNPZ=$D/train_kleb_ast/pangena_predict/ft_bacformer_cache/$DRUG/ft_genome_mean_${DRUG}.npz
+RANK=$D/train_kleb_ast/pangena_predict/per_gene_lr_ranking_imputed/$DRUG/per_gene_lr_${DRUG}.csv
+OUT=$D/train_kleb_ast/pangena_predict/concat_ft/$DRUG
 mkdir -p "$OUT"
 if [[ ! -f "$FTNPZ" ]]; then echo "ERROR: FT mean NPZ missing: $FTNPZ (run cache_ft_bacformer_gene_embeddings.sh first)" >&2; exit 1; fi
 if [[ ! -f "$RANK" ]]; then echo "ERROR: ranking CSV missing: $RANK" >&2; exit 1; fi
@@ -49,7 +49,7 @@ if [[ ! -f "$RANK" ]]; then echo "ERROR: ranking CSV missing: $RANK" >&2; exit 1
 echo "=== Kp FT-concat (CPU) — drug=$DRUG (task $SLURM_ARRAY_TASK_ID) ==="
 echo "ftnpz=$FTNPZ"; echo "rank=$RANK"
 
-uv run python src/snp_embeddings/concatenate_bacformer_genome_esm_protein_emb.py \
+uv run python src/pangena_predict/concatenate_bacformer_genome_esm_protein_emb.py \
     --ast-sheet-path "$SHEET" \
     --parquet-dir "$PARQUET" \
     --esm-store-dir "$EMB" \

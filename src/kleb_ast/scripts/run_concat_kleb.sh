@@ -2,8 +2,8 @@
 # Kp concat probe — ESM-C top-gene vector (auto-picked from the per-gene ranking) (+) Bacformer
 # genome-mean -> logistic regression, scored on the canonical eval fold + a k-fold x m-seed harness.
 #
-# The Kp port of src/snp_embeddings/scripts/run_concat_kfold_frozen.sh (same module,
-# snp_embeddings.concatenate_bacformer_genome_esm_protein_emb). CPU-only: the Bacformer genome-mean is
+# The Kp port of src/pangena_predict/scripts/run_concat_kfold_frozen.sh (same module,
+# pangena_predict.concatenate_bacformer_genome_esm_protein_emb). CPU-only: the Bacformer genome-mean is
 # loaded from the cached frozen NPZ (bacformer_frozen_genome_mean.npz, 6838 x 960) via --bacformer-vectors,
 # and --gene-from-ranking reads the top out-of-fold-AUROC gene from each drug's per_gene_lr_<drug>.csv.
 # One array task per drug, the same four as the ranking. Writes concat_frozen_<drug>_<jobid>.json (with a
@@ -54,8 +54,8 @@ SHEET=$D/train_kleb_ast/binary_ast_with_split.csv
 PARQUET=$D/klebsiella_protein_sequences
 EMB=$D/klebsiella_esm_embeddings
 NPZ=$D/train_kleb_ast/bacformer_frozen_genome_mean.npz
-RANK=$D/train_kleb_ast/snp_embeddings/per_gene_lr_ranking_imputed/$DRUG/per_gene_lr_${DRUG}.csv
-OUT=$D/train_kleb_ast/snp_embeddings/concat/$DRUG
+RANK=$D/train_kleb_ast/pangena_predict/per_gene_lr_ranking_imputed/$DRUG/per_gene_lr_${DRUG}.csv
+OUT=$D/train_kleb_ast/pangena_predict/concat/$DRUG
 mkdir -p "$OUT"
 
 if [[ ! -f "$RANK" ]]; then
@@ -69,7 +69,7 @@ echo "Ranking: $RANK   NPZ: $NPZ"
 echo "Out:     $OUT/concat_frozen_${DRUG}_${SLURM_ARRAY_JOB_ID}.json"
 echo "========================================================================"
 
-uv run python src/snp_embeddings/concatenate_bacformer_genome_esm_protein_emb.py \
+uv run python src/pangena_predict/concatenate_bacformer_genome_esm_protein_emb.py \
     --ast-sheet-path "$SHEET" \
     --parquet-dir "$PARQUET" \
     --esm-store-dir "$EMB" \

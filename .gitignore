@@ -15,9 +15,9 @@ __pycache__/
 .pixi/
 
 # TB-Profiler intermediate files if ever run from the env dir (the cohort array runs from node scratch)
-src/snp_embeddings/tbprofiler/*.paf
-src/snp_embeddings/tbprofiler/*.vcf.gz
-src/snp_embeddings/tbprofiler/*.vcf.gz.*
+src/pangena_predict/tbprofiler/*.paf
+src/pangena_predict/tbprofiler/*.vcf.gz
+src/pangena_predict/tbprofiler/*.vcf.gz.*
 
 # Distribution / packaging
 /dist/
@@ -45,8 +45,8 @@ src/snp_embeddings/tbprofiler/*.vcf.gz.*
 # …but documentation figures (small, committed) are kept.
 !src/kleb_iso_source/docs/figures/*.png
 !src/tb_ast/docs/figures/*.png
-!src/snp_embeddings/docs/figures/*.png
-!src/snp_embeddings/docs/visualisations/**/*.png
+!src/pangena_predict/docs/figures/*.png
+!src/pangena_predict/docs/visualisations/**/*.png
 !src/kleb_ast/docs/visualisations/**/*.png
 !src/bac_pyseer/kleb_iso_source/docs/figures/*.png
 !src/bac_pyseer/docs/visualise/*/*.png

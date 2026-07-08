@@ -1,10 +1,10 @@
 """Per-determinant Kleborate LR — the *Klebsiella* resistance-catalogue "ceiling".
 
-The Kp analogue of ``snp_embeddings.tbprofiler_gene_lr`` (the WHO one-hot ceiling for TB). Where TB's
+The Kp analogue of ``pangena_predict.tbprofiler_gene_lr`` (the WHO one-hot ceiling for TB). Where TB's
 ceiling is built from the WHO/TB-Profiler variant catalogue, Kp's is built from **Kleborate** determinant
 calls already stored in ``metadata_v2``. For each drug we build a one-hot of the relevant Kleborate
 determinants and score ``determinants → drug label`` through the same k-fold × m-seed harness
-(:func:`snp_embeddings.kfold_probe.run_kfold_probe`), so the AUROC is directly comparable to the
+(:func:`pangena_predict.kfold_probe.run_kfold_probe`), so the AUROC is directly comparable to the
 ESM-gene / Bacformer-mean / concat ladder.
 
 Two grains are emitted per drug:
@@ -37,7 +37,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from snp_embeddings.kfold_probe import FeatureSpec, run_kfold_probe
+from pangena_predict.kfold_probe import FeatureSpec, run_kfold_probe
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

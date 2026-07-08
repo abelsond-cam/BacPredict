@@ -14,7 +14,7 @@ gene annotations — read from the FT cache manifest):
 - **FT-LR**  — LR on the gene's fine-tuned Bacformer embedding (loaded from the FT cache).
 
 Both are fit identically — zero-imputed over the full eval holdout, out-of-fold k-fold
-(:func:`snp_embeddings.build_per_gene_lr_store._fit_one_gene_imputed`) — so the two AUROCs are directly
+(:func:`pangena_predict.build_per_gene_lr_store._fit_one_gene_imputed`) — so the two AUROCs are directly
 comparable on the same samples. Writes ``esm_vs_ft_per_gene_<drug>.csv``
 (gene_name, esm_lr_auroc, ft_lr_auroc, delta_ft_minus_esm, prevalence, n_carriers_*). CPU only — no forward
 pass (the FT embeddings are already cached by ``cache_ft_bacformer_gene_embeddings.py``).
@@ -30,8 +30,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from snp_embeddings.build_per_gene_lr_store import _fit_one_gene_imputed, _read_genome
-from snp_embeddings.snp_vs_esm_prediction import resolve_clean_splits
+from pangena_predict.build_per_gene_lr_store import _fit_one_gene_imputed, _read_genome
+from pangena_predict.snp_vs_esm_prediction import resolve_clean_splits
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

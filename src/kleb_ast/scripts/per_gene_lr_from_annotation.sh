@@ -34,7 +34,7 @@ DRUG=${DRUGS[$SLURM_ARRAY_TASK_ID]}
 if [[ -z "$DRUG" ]]; then echo "ERROR: no drug for array index $SLURM_ARRAY_TASK_ID" >&2; exit 1; fi
 
 D=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed
-OUT=$D/train_kleb_ast/snp_embeddings/reliable_per_gene_esm_lr/$DRUG
+OUT=$D/train_kleb_ast/pangena_predict/reliable_per_gene_esm_lr/$DRUG
 mkdir -p "$OUT"
 echo "=== Kp reliable per-gene ESM-LR — drug=$DRUG (task $SLURM_ARRAY_TASK_ID) ==="
 

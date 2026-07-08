@@ -33,9 +33,9 @@ DRUG=${DRUGS[$SLURM_ARRAY_TASK_ID]}
 if [[ -z "$DRUG" ]]; then echo "ERROR: no drug for array index $SLURM_ARRAY_TASK_ID" >&2; exit 1; fi
 
 D=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed
-FTC=$D/train_kleb_ast/snp_embeddings/ft_bacformer_cache/$DRUG
-FRC=$D/train_kleb_ast/snp_embeddings/frozen_bacformer_cache/$DRUG
-OUT=$D/train_kleb_ast/snp_embeddings/esm_vs_ft_per_gene/$DRUG
+FTC=$D/train_kleb_ast/pangena_predict/ft_bacformer_cache/$DRUG
+FRC=$D/train_kleb_ast/pangena_predict/frozen_bacformer_cache/$DRUG
+OUT=$D/train_kleb_ast/pangena_predict/esm_vs_ft_per_gene/$DRUG
 mkdir -p "$OUT"
 if [[ ! -f "$FTC/top_gene_manifest_${DRUG}.csv" ]]; then echo "ERROR: FT cache manifest missing: $FTC" >&2; exit 1; fi
 [[ -d "$FRC/gene_emb" ]] || echo "WARN: frozen gene cache missing ($FRC) — frozen_lr_auroc skipped"

@@ -1,8 +1,8 @@
 #!/bin/bash
 # Kp per-gene ESM-C LR ranking — "does this gene's own ESM-C vector predict resistance?"
 #
-# The Kp port of src/snp_embeddings/scripts/build_per_gene_lr_ranking.sh (same module,
-# snp_embeddings.build_per_gene_lr_store; only the paths + drug list change). For every gene present in
+# The Kp port of src/pangena_predict/scripts/build_per_gene_lr_ranking.sh (same module,
+# pangena_predict.build_per_gene_lr_store; only the paths + drug list change). For every gene present in
 # >=10% of genomes (core + accessory) it fits a stand-alone out-of-fold LogisticRegression on that gene's
 # 960-d ESM-C protein vector -> the drug label, and ranks genes by their out-of-fold train AUROC. The top
 # gene per drug is the causal-gene candidate the concat probe then concatenates onto the Bacformer mean.
@@ -57,7 +57,7 @@ PARQUET=$D/klebsiella_protein_sequences
 EMB=$D/klebsiella_esm_embeddings
 # Per-drug subdir: the module also writes non-drug-specific files (build_summary, gene_lr_auroc,
 # gene_prevalence), so concurrent array tasks must not share an out-dir or they race on those.
-OUT=$D/train_kleb_ast/snp_embeddings/per_gene_lr_ranking/$DRUG
+OUT=$D/train_kleb_ast/pangena_predict/per_gene_lr_ranking/$DRUG
 
 echo "========================================================================"
 echo "Kp per-gene LR ranking — drug=$DRUG (array task $SLURM_ARRAY_TASK_ID)"
@@ -73,7 +73,7 @@ if [[ -f "$OUT/per_gene_lr_${DRUG}.csv" ]]; then
 fi
 mkdir -p "$OUT"
 
-uv run python src/snp_embeddings/build_per_gene_lr_store.py \
+uv run python src/pangena_predict/build_per_gene_lr_store.py \
     --split-csv "$SHEET" \
     --drug "$DRUG" \
     --parquet-dir "$PARQUET" \

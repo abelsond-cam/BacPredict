@@ -15,7 +15,7 @@ Saved per drug to ``<out>/<drug>/``:
   each single-copy carrier, plus whether Bakta also named that protein (for the reliable-vs-Bakta split).
 - ``amr_gene_manifest_<drug>.csv`` — family, sanitized, amr_source, n_carriers, n_bakta.
 
-Eval-holdout only (the FT-unseen, honest scope). Reuses the snp_embeddings forward helpers. GPU; one drug
+Eval-holdout only (the FT-unseen, honest scope). Reuses the pangena_predict forward helpers. GPU; one drug
 per run. The CPU consumer (:mod:`kleb_ast.reliable_ft_concat`) reads these to compute reliable FT-LR + concat.
 """
 
@@ -32,9 +32,9 @@ import numpy as np
 import pandas as pd
 import torch
 
-from snp_embeddings.bacformer_genome_vectors import _forward_inputs, _load_model
-from snp_embeddings.locate_gene import flatten_proteins
-from snp_embeddings.snp_vs_esm_prediction import _real_protein_indices, resolve_clean_splits
+from pangena_predict.bacformer_genome_vectors import _forward_inputs, _load_model
+from pangena_predict.locate_gene import flatten_proteins
+from pangena_predict.snp_vs_esm_prediction import _real_protein_indices, resolve_clean_splits
 from tl.embed.generate_embeddings import bacformer_last_hidden_state
 
 logger = logging.getLogger(__name__)

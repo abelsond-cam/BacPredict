@@ -47,7 +47,7 @@ import torch
 from scipy import sparse
 from tqdm import tqdm
 
-from snp_embeddings.locate_gene import flatten_proteins
+from pangena_predict.locate_gene import flatten_proteins
 
 RDS_ROOT = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david")
 ESM_DIR_DEFAULT = RDS_ROOT / "processed" / "klebsiella_esm_embeddings"
@@ -182,7 +182,7 @@ def build(
         seq_idx, n_prot = si
         if emb.shape[0] < n_prot:
             # ESM tensor has fewer rows than parquet proteins → flat indices misaligned; skip the sample
-            # (using shifted embeddings would corrupt the per-gene signal). Same guard as snp_embeddings.
+            # (using shifted embeddings would corrupt the per-gene signal). Same guard as pangena_predict.
             cov["misaligned"] += 1
             sample_rows.append(empty_row())
             continue

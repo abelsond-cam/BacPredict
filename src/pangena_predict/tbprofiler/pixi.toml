@@ -1,0 +1,23 @@
+# Pixi environment for TB-Profiler — the WHO-catalogue AST comparator for the concat models.
+#
+# TB-Profiler is a bioconda tool (pulls bwa / minimap2 / samtools / bcftools / etc. as deps), so it
+# lives in its own pixi env rather than the main uv env. Install once on the HPC login node (internet):
+#     cd ~/workspace/BacPredict/src/pangena_predict/tbprofiler && pixi install
+# then invoke with `pixi run` from this dir, e.g. `pixi run tb-profiler version`.
+#
+# Used in --fasta mode over the gzipped assemblies (raw/tb/assemblies/{Sample}.fa.gz) to produce, per
+# genome: a per-drug R/S call (native comparator) + the WHO-catalogue resistance variants (one-hot → LR).
+
+[workspace]
+name = "tbprofiler"
+version = "0.1.0"
+description = "TB-Profiler WHO-catalogue AST baseline for the pangena_predict concat comparison"
+channels = ["conda-forge", "bioconda"]
+platforms = ["linux-64"]
+
+[dependencies]
+tb-profiler = "*"
+
+[tasks]
+version = "tb-profiler version"
+list-db = "tb-profiler list_db"

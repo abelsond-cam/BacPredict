@@ -30,9 +30,9 @@ import pandas as pd
 import torch
 
 from kleb_ast.cache_ft_amr_proteins import _bakta_matches, _sanitize
-from snp_embeddings.bacformer_genome_vectors import _forward_inputs, _load_model
-from snp_embeddings.locate_gene import flatten_proteins
-from snp_embeddings.snp_vs_esm_prediction import _real_protein_indices, resolve_clean_splits
+from pangena_predict.bacformer_genome_vectors import _forward_inputs, _load_model
+from pangena_predict.locate_gene import flatten_proteins
+from pangena_predict.snp_vs_esm_prediction import _real_protein_indices, resolve_clean_splits
 from tl.embed.generate_embeddings import bacformer_last_hidden_state
 
 logger = logging.getLogger(__name__)
