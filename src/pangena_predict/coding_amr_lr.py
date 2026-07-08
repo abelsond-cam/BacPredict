@@ -422,6 +422,76 @@ def _ladder_grid(pool_size: int, step: int, fine_until: int) -> list[int]:
     return out
 
 
+def ladder_over_frames(
+    frames: dict[str, pd.DataFrame],
+    label_map: dict[str, int],
+    *,
+    seeds: tuple[int, ...] = (1, 2, 3),
+    step: int = 500,
+    fine_until: int = 6000,
+    evaluate_seed: int = 1,
+    evaluate_fraction: float = 0.20,
+    pair: tuple[str, str] | None = None,
+) -> dict:
+    """Generic learning curve for any set of pre-aligned feature frames on a fixed evaluate holdout.
+
+    The evaluate holdout is pinned by ``evaluate_seed`` (identical to the k-fold harness's). For each
+    rung ``n`` and seed, a label-stratified subsample of ``n`` training genomes is drawn from the shared
+    pool and the *same* rows feed every frame's LR — so per-rung frame AUROCs are paired. ``pair``
+    (``(a, b)``) additionally records the paired ``a − b`` AUROC per rung. Reused by the coding
+    ESM-vs-baclm ladder and the IGR baclm ladder. Returns rung records + universe/pool sizes.
+    """
+    universe = sorted(set.intersection(*[set(f.index) for f in frames.values()]) & set(label_map))
+    uni_df = pd.DataFrame({"Sample": universe})
+    evaluate_ids_set, _folds = generate_kfold_splits(
+        uni_df, n_folds=5, seed=evaluate_seed,
+        evaluate_fraction=evaluate_fraction, evaluate_seed=evaluate_seed,
+    )
+    evaluate_ids = sorted(evaluate_ids_set)
+    pool = [s for s in universe if s not in evaluate_ids_set]
+    if len(pool) < step:
+        return {"error": f"train pool ({len(pool)}) smaller than one rung ({step})",
+                "n_universe": len(universe), "n_train_pool": len(pool)}
+
+    grid = _ladder_grid(len(pool), step, fine_until)
+    orders = {seed: _stratified_order(pool, label_map, seed) for seed in seeds}
+    rungs: list[dict] = []
+    for n_train in grid:
+        scores: dict[str, list[float]] = {name: [] for name in frames}
+        deltas: list[float] = []
+        for seed in seeds:
+            train_ids = orders[seed][:n_train]
+            per_seed: dict[str, float | None] = {}
+            for name, frame in frames.items():
+                res = fit_score_step(
+                    frame, kind="numeric", standardise=True, label_map=label_map,
+                    train_ids=train_ids, validate_ids=[], evaluate_ids=evaluate_ids,
+                )
+                auroc = res["metrics"]["auroc"] if "metrics" in res else None
+                per_seed[name] = auroc
+                if auroc is not None:
+                    scores[name].append(auroc)
+            if pair is not None and per_seed.get(pair[0]) is not None and per_seed.get(pair[1]) is not None:
+                deltas.append(per_seed[pair[0]] - per_seed[pair[1]])
+        rung = {"n_train": n_train, **{name: _agg(scores[name]) for name in frames}}
+        if pair is not None:
+            rung[f"delta_{pair[0]}_minus_{pair[1]}"] = _agg(deltas)
+        rungs.append(rung)
+
+    n_pos = sum(1 for s in pool if label_map[s] == 1)
+    return {
+        "n_universe": len(universe),
+        "n_evaluate": len(evaluate_ids),
+        "n_train_pool": len(pool),
+        "pool_pos": n_pos,
+        "pool_neg": len(pool) - n_pos,
+        "seeds": list(seeds),
+        "step": step,
+        "fine_until": fine_until,
+        "rungs": rungs,
+    }
+
+
 def run_gene_ladder(
     target: GeneTarget,
     paths: SpeciesPaths,
@@ -438,10 +508,9 @@ def run_gene_ladder(
     """AUROC vs training-set size for ESM and baclm on one (gene, drug), on a **fixed** evaluate holdout.
 
     Both frames are scored on the identical holdout (pinned by ``evaluate_seed`` — the same one the
-    k-fold panel uses, so the top rung is comparable to the panel's full-N point). For each rung ``n``
-    and seed, a label-stratified subsample of ``n`` training genomes is drawn from the shared pool and
-    the *same* rows feed the ESM and baclm LRs (paired Δ). Answers whether baclm's coding gap to ESM
-    **closes with data** (data-hungry embedding) or **persists** (genuinely lower ceiling).
+    k-fold panel uses, so the top rung is comparable to the panel's full-N point). Answers whether
+    baclm's coding gap to ESM **closes with data** (data-hungry embedding) or **persists** (lower
+    ceiling). Thin wrapper over :func:`ladder_over_frames` with the ESM/baclm coding frames.
     """
     esm, baclm, label_map, error = _build_frames(
         target, paths, pool_workers=pool_workers, sample_limit=sample_limit, gene_table=gene_table,
@@ -450,70 +519,19 @@ def run_gene_ladder(
         return {"gene": target.gene, "drug": target.drug, "error": error,
                 "n_esm": len(esm), "n_baclm": len(baclm)}
 
-    universe = sorted(set(esm.index) & set(baclm.index) & set(label_map))
-    uni_df = pd.DataFrame({"Sample": universe})
-    evaluate_ids_set, _folds = generate_kfold_splits(
-        uni_df, n_folds=5, seed=evaluate_seed,
-        evaluate_fraction=evaluate_fraction, evaluate_seed=evaluate_seed,
+    lad = ladder_over_frames(
+        {"esm": esm, "baclm": baclm}, label_map, seeds=seeds, step=step, fine_until=fine_until,
+        evaluate_seed=evaluate_seed, evaluate_fraction=evaluate_fraction, pair=("baclm", "esm"),
     )
-    evaluate_ids = sorted(evaluate_ids_set)
-    pool = [s for s in universe if s not in evaluate_ids_set]
-    if len(pool) < step:
-        return {"gene": target.gene, "drug": target.drug,
-                "error": f"train pool ({len(pool)}) smaller than one rung ({step})"}
-
-    frames = {"esm": esm, "baclm": baclm}
-    grid = _ladder_grid(len(pool), step, fine_until)
-    logger.info("[%s / %s] ladder: pool=%d evaluate=%d rungs=%s seeds=%s",
-                target.gene, target.drug, len(pool), len(evaluate_ids), grid, list(seeds))
-
-    orders = {seed: _stratified_order(pool, label_map, seed) for seed in seeds}
-    rungs: list[dict] = []
-    for n_train in grid:
-        scores = {"esm": [], "baclm": []}
-        deltas: list[float] = []
-        for seed in seeds:
-            train_ids = orders[seed][:n_train]
-            per_seed: dict[str, float | None] = {}
-            for name, frame in frames.items():
-                res = fit_score_step(
-                    frame, kind="numeric", standardise=True, label_map=label_map,
-                    train_ids=train_ids, validate_ids=[], evaluate_ids=evaluate_ids,
-                )
-                auroc = res["metrics"]["auroc"] if "metrics" in res else None
-                per_seed[name] = auroc
-                if auroc is not None:
-                    scores[name].append(auroc)
-            if per_seed["esm"] is not None and per_seed["baclm"] is not None:
-                deltas.append(per_seed["baclm"] - per_seed["esm"])
-        rungs.append({
-            "n_train": n_train,
-            "esm": _agg(scores["esm"]),
-            "baclm": _agg(scores["baclm"]),
-            "delta_baclm_minus_esm": _agg(deltas),
-        })
-
-    n_pos = sum(1 for s in pool if label_map[s] == 1)
-    top = rungs[-1]
-    if top["esm"] and top["baclm"]:
+    out = {"gene": target.gene, "drug": target.drug, "n_esm": len(esm), "n_baclm": len(baclm), **lad}
+    if lad.get("error"):
+        return out
+    top = lad["rungs"][-1]
+    if top.get("esm") and top.get("baclm"):
         logger.info("[%s / %s] full pool (n=%d): ESM %.4f  baclm %.4f  Δ=%+.4f",
                     target.gene, target.drug, top["n_train"],
                     top["esm"]["mean"], top["baclm"]["mean"], top["delta_baclm_minus_esm"]["mean"])
-    return {
-        "gene": target.gene,
-        "drug": target.drug,
-        "n_esm": len(esm),
-        "n_baclm": len(baclm),
-        "n_universe": len(universe),
-        "n_evaluate": len(evaluate_ids),
-        "n_train_pool": len(pool),
-        "pool_pos": n_pos,
-        "pool_neg": len(pool) - n_pos,
-        "seeds": list(seeds),
-        "step": step,
-        "fine_until": fine_until,
-        "rungs": rungs,
-    }
+    return out
 
 
 def plot_ladder(payload: dict, png_path: Path) -> None:
