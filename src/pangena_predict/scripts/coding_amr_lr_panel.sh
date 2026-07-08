@@ -11,11 +11,13 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
+#SBATCH --mem=64G
 #SBATCH --time=8:00:00
 #SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
 #SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
-# CPU-only — no --gres=gpu. If workq refuses a GPU-less job, add `#SBATCH --gres=gpu:1` (idle GPU);
-# the whole panel over ~38k genomes runs well under an hour per gene, so 8 h is generous headroom.
+# CPU-only — NO --gres=gpu. A no-GPU job schedules normally on workq; the PENDING(None) right after
+# submit is transient, not a stall. Memory defaults are GPU-tied (DefMemPerGPU) so a GPU-less job MUST
+# set --mem. The whole panel over ~38k genomes runs well under an hour per gene; 8 h is headroom.
 set -uo pipefail
 : "${SCRATCHDIR:?}" "${TASK:=tb}"
 S="$SCRATCHDIR"

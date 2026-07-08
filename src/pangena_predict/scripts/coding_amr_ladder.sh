@@ -4,19 +4,22 @@
 # the SAME rows to the ESM and baclm LRs (paired Δ). Distinguishes "baclm gap closes with data"
 # (data-hungry embedding) from "baclm has a lower ceiling" (persistent gap). CPU-only.
 #
-#   sbatch --gres=gpu:1 --export=ALL,TASK=tb   -J coding-ladder-tb   src/pangena_predict/scripts/coding_amr_ladder.sh
-#   sbatch --gres=gpu:1 --export=ALL,TASK=kleb -J coding-ladder-kleb src/pangena_predict/scripts/coding_amr_ladder.sh
+#   sbatch --export=ALL,TASK=tb   -J coding-ladder-tb   src/pangena_predict/scripts/coding_amr_ladder.sh
+#   sbatch --export=ALL,TASK=kleb -J coding-ladder-kleb src/pangena_predict/scripts/coding_amr_ladder.sh
 #SBATCH --partition=workq
 #SBATCH --account=brics.u6fp
 #SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
+#SBATCH --mem=64G
 #SBATCH --time=12:00:00
 #SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
 #SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
-# Isambard workq will not place a 0-GPU job (PENDING(None)); submit with --gres=gpu:1 (idle GPU) so it
-# schedules off the login node and survives the session. LR at large n dominates — 12 h is headroom.
+# CPU-only — NO --gres=gpu. A no-GPU job on workq schedules normally (reaches PENDING(Priority) and
+# runs); the PENDING(None) seen right after submit is transient, not a stall — do not add a GPU handle
+# to "fix" it. Memory defaults are GPU-tied here (DefMemPerGPU), so a GPU-less job MUST set --mem
+# explicitly. LR at large n dominates — 12 h is headroom.
 set -uo pipefail
 : "${SCRATCHDIR:?}" "${TASK:=tb}"
 S="$SCRATCHDIR"
