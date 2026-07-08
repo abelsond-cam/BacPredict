@@ -8,6 +8,13 @@ attention-pool remedy proved necessary but not sufficient — driving the pivot 
 authoritative running record is [the task `CLAUDE.md`](../CLAUDE.md); the per-figure numbers are
 pinned in [`docs/surprisal_analysis.json`](surprisal_analysis.json).
 
+**Companion embedding docs.** The full-cohort baclm genome embeddings (TB 38257 + Kp 9724, run
+2026-07-07) — a candidate non-coding/coding signal channel for this task's augmentation pivot — are
+described in [`docs/Baclm_embeddings.md`](Baclm_embeddings.md): the coding/non-coding split, the
+`.pt` schema, and how to cross-reference every embedding row back to the assembly / GFF (intergenic
+rows are self-locating via `seqid/start/end`; protein rows join through the retained
+`protein_sequences.parquet` flat index).
+
 ---
 
 ## 1. The question
