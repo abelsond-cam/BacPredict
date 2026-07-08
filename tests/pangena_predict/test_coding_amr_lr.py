@@ -15,6 +15,7 @@ from pangena_predict.coding_amr_lr import (
     GeneTarget,
     SpeciesPaths,
     _baclm_minus_esm,
+    build_multi_gene_presence,
     load_baclm_gene_vectors,
     run_gene_comparison,
 )
@@ -80,6 +81,18 @@ def test_esm_vs_baclm_comparison_recovers_signal(tmp_path):
     assert res.n_esm == 30 and res.n_baclm == 30
     for name in ("esm", "baclm"):
         assert res.kfold["frames"][name]["aggregate"]["auroc"]["mean"] > 0.6
+
+
+def test_multi_gene_presence_matches_single_gene(tmp_path):
+    paths = _make_fixtures(tmp_path, n=8)
+    ids = [f"s{i:03d}" for i in range(8)]
+    tables = build_multi_gene_presence(ids, paths.parquet_dir, [("rpoB", ()), ("geneC", ())])
+    # one sweep locates every gene at its true flat index (rpoB=1, geneC=2)
+    assert (tables["rpoB"]["gene_flat_index"] == 1).all()
+    assert (tables["geneC"]["gene_flat_index"] == 2).all()
+    # agrees row-for-row with the per-gene builder
+    single = build_gene_presence_table(ids, paths.parquet_dir, "rpoB")
+    assert tables["rpoB"]["gene_flat_index"].equals(single["gene_flat_index"])
 
 
 def test_delta_orientation_is_baclm_minus_esm():

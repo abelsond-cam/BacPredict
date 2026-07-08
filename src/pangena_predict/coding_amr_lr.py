@@ -36,7 +36,7 @@ import pandas as pd
 import torch
 
 from pangena_predict.kfold_probe import FeatureSpec, run_kfold_probe, summarise_kfold
-from pangena_predict.locate_gene import build_gene_presence_table
+from pangena_predict.locate_gene import build_gene_presence_table, flatten_proteins
 from pangena_predict.snp_vs_esm_prediction import load_pooled_gene_vectors, resolve_clean_splits
 
 logger = logging.getLogger(__name__)
@@ -134,6 +134,64 @@ def _read_baclm_gene_one(
     return sample_id, prot[flat_index].float().clone().numpy(), None
 
 
+def _scan_one_parquet_multi(sid, pq_path, wanted_by_gene):
+    """Flatten one genome's parquet **once** and locate every target gene (worker-safe).
+
+    Returns ``(sid, per_gene)`` where ``per_gene[gene]`` is the single-copy hit dict or ``None``
+    (absent / multi-copy); ``per_gene`` itself is ``None`` if the parquet is missing.
+    """
+    if not pq_path.exists():
+        return sid, None
+    records = flatten_proteins(pd.read_parquet(pq_path))
+    n_prot = len(records)
+    per_gene: dict = {}
+    for gene, wanted in wanted_by_gene.items():
+        hits = [r for r in records if r["gene_name"] is not None and str(r["gene_name"]).lower() in wanted]
+        per_gene[gene] = (
+            {"gene_flat_index": int(hits[0]["flat_index"]), "n_proteins": n_prot,
+             "gene_name": hits[0]["gene_name"], "annotation": hits[0].get("protein_name")}
+            if len(hits) == 1 else None
+        )
+    return sid, per_gene
+
+
+def build_multi_gene_presence(sample_ids, parquet_dir, gene_specs, *,
+                              parquet_suffix="_protein_sequences.parquet", pool_workers=1):
+    """One parquet sweep → per-gene single-copy presence tables for every gene in ``gene_specs``.
+
+    ``gene_specs`` is a list of ``(gene, aliases_tuple)``. Reads each genome's parquet **once** (the
+    dominant cost) and locates all target genes, instead of :func:`build_gene_presence_table` re-reading
+    the whole cohort per gene — a ~len(genes)× I/O saving for the panel. Returns ``dict[gene] → DataFrame``
+    with the same schema build_gene_presence_table produces (indexed by Sample, single-copy only).
+    """
+    wanted_by_gene = {g: frozenset([g.lower(), *(a.lower() for a in aliases)]) for g, aliases in gene_specs}
+    parquet_dir = Path(parquet_dir)
+    tasks = [(str(s), parquet_dir / f"{s}{parquet_suffix}", wanted_by_gene) for s in sample_ids]
+    if pool_workers > 1:
+        import multiprocessing as mp
+
+        with mp.Pool(pool_workers) as pool:
+            results = pool.starmap(_scan_one_parquet_multi, tasks)
+    else:
+        results = [_scan_one_parquet_multi(*t) for t in tasks]
+
+    rows_by_gene: dict = {g: [] for g, _ in gene_specs}
+    n_missing = 0
+    for sid, per_gene in results:
+        if per_gene is None:
+            n_missing += 1
+            continue
+        for gene, hit in per_gene.items():
+            if hit is not None:
+                rows_by_gene[gene].append({"Sample": sid, **hit})
+    empty = pd.DataFrame(columns=["gene_flat_index", "n_proteins", "gene_name", "annotation"]).rename_axis("Sample")
+    tables = {g: (pd.DataFrame(rows).set_index("Sample") if rows else empty.copy()) for g, rows in rows_by_gene.items()}
+    for g, t in tables.items():
+        logger.info("multi-gene presence: %s single-copy in %d/%d genomes (missing parquet=%d)",
+                    g, len(t), len(sample_ids), n_missing)
+    return tables
+
+
 def load_baclm_gene_vectors(
     gene_table: pd.DataFrame,
     baclm_dir: Path,
@@ -203,18 +261,27 @@ def run_gene_comparison(
     seeds: tuple[int, ...] = (1, 2, 3),
     pool_workers: int = 1,
     sample_limit: int | None = None,
+    gene_table: pd.DataFrame | None = None,
 ) -> ComparisonResult:
-    """Build ESM + baclm gene frames for one (gene, drug) and score them through the k-fold harness."""
+    """Build ESM + baclm gene frames for one (gene, drug) and score them through the k-fold harness.
+
+    ``gene_table`` (optional) is a pre-built presence table from :func:`build_multi_gene_presence` —
+    pass it in panel mode to avoid re-reading the parquet cohort per gene; it is subset to this drug's
+    labelled samples. When ``None`` the single-gene :func:`build_gene_presence_table` sweep is used.
+    """
     label_map, *_split = resolve_clean_splits(paths.ast_sheet, target.drug)
     sample_ids = sorted(label_map)
     if sample_limit is not None:
         sample_ids = sample_ids[:sample_limit]
         label_map = {s: label_map[s] for s in sample_ids}
 
-    gene_table = build_gene_presence_table(
-        sample_ids, paths.parquet_dir, target.gene, aliases=target.aliases,
-        parquet_suffix=paths.parquet_suffix,
-    )
+    if gene_table is None:
+        gene_table = build_gene_presence_table(
+            sample_ids, paths.parquet_dir, target.gene, aliases=target.aliases,
+            parquet_suffix=paths.parquet_suffix,
+        )
+    else:
+        gene_table = gene_table.loc[gene_table.index.intersection(sample_ids)]
     if gene_table.empty:
         return ComparisonResult(target.gene, target.drug, 0, 0, error="no single-copy genomes for gene")
 
@@ -311,10 +378,25 @@ def main() -> None:
         targets = PANEL[args.species]
 
     seeds = tuple(int(s) for s in args.seeds.split(","))
+
+    # Panel: sweep the parquet cohort ONCE for all genes, then reuse the presence tables per (gene, drug).
+    presence: dict[str, pd.DataFrame] | None = None
+    if len(targets) > 1:
+        all_ids = sorted(pd.read_csv(paths.ast_sheet, usecols=["Sample"])["Sample"].astype(str).unique())
+        if args.n is not None:
+            all_ids = all_ids[: args.n]
+        gene_specs = list({(t.gene, t.aliases) for t in targets})
+        logger.info("panel: one parquet sweep over %d genomes for %d genes", len(all_ids), len(gene_specs))
+        presence = build_multi_gene_presence(
+            all_ids, paths.parquet_dir, gene_specs,
+            parquet_suffix=paths.parquet_suffix, pool_workers=args.pool_workers,
+        )
+
     results = [
         run_gene_comparison(
             t, paths, n_folds=args.n_folds, seeds=seeds,
             pool_workers=args.pool_workers, sample_limit=args.n,
+            gene_table=(presence[t.gene] if presence is not None else None),
         )
         for t in targets
     ]
