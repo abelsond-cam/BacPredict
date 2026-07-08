@@ -15,9 +15,12 @@ from pangena_predict.coding_amr_lr import (
     GeneTarget,
     SpeciesPaths,
     _baclm_minus_esm,
+    _ladder_grid,
+    _stratified_order,
     build_multi_gene_presence,
     load_baclm_gene_vectors,
     run_gene_comparison,
+    run_gene_ladder,
 )
 from pangena_predict.locate_gene import build_gene_presence_table
 
@@ -93,6 +96,42 @@ def test_multi_gene_presence_matches_single_gene(tmp_path):
     # agrees row-for-row with the per-gene builder
     single = build_gene_presence_table(ids, paths.parquet_dir, "rpoB")
     assert tables["rpoB"]["gene_flat_index"].equals(single["gene_flat_index"])
+
+
+def test_ladder_grid_dense_then_coarse_and_endpoint():
+    # fine step up to fine_until, then 4x coarser; full pool always the last rung; strictly increasing
+    grid = _ladder_grid(pool_size=9000, step=500, fine_until=3000)
+    assert grid[0] == 500
+    assert grid[-1] == 9000  # endpoint always included
+    assert grid == sorted(set(grid))
+    fine = [b - a for a, b in zip(grid, grid[1:], strict=False) if b <= 3000]
+    assert all(d == 500 for d in fine)  # 500-increments in the fine regime
+    # fine_until >= pool forces literal step throughout (+ endpoint)
+    assert _ladder_grid(pool_size=1500, step=500, fine_until=10000) == [500, 1000, 1500]
+
+
+def test_stratified_order_prefix_preserves_class_ratio():
+    label_map = {f"s{i:03d}": (1 if i < 30 else 0) for i in range(100)}  # 30% positive
+    order = _stratified_order(list(label_map), label_map, seed=1)
+    assert len(order) == 100 and set(order) == set(label_map)
+    # any prefix keeps roughly the 30% positive rate (nested, stratified)
+    for n in (10, 40, 70):
+        pos = sum(label_map[s] for s in order[:n])
+        assert abs(pos / n - 0.30) <= 0.12
+    # nested: the length-40 prefix contains the length-10 prefix
+    assert set(order[:10]) <= set(order[:40])
+
+
+def test_ladder_recovers_signal_and_endpoint_matches_kfold(tmp_path):
+    paths = _make_fixtures(tmp_path, n=60)
+    lad = run_gene_ladder(GeneTarget("rpoB", "testdrug"), paths, seeds=(1, 2),
+                          step=10, fine_until=1000)
+    assert lad.get("error") is None
+    assert lad["rungs"][0]["n_train"] == 10
+    assert lad["rungs"][-1]["n_train"] == lad["n_train_pool"]  # endpoint = full pool
+    # the signal is recoverable at the top rung for both frames
+    assert lad["rungs"][-1]["esm"]["mean"] > 0.6
+    assert lad["rungs"][-1]["baclm"]["mean"] > 0.6
 
 
 def test_delta_orientation_is_baclm_minus_esm():

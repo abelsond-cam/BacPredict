@@ -37,7 +37,12 @@ import torch
 
 from pangena_predict.kfold_probe import FeatureSpec, run_kfold_probe, summarise_kfold
 from pangena_predict.locate_gene import build_gene_presence_table, flatten_proteins
-from pangena_predict.snp_vs_esm_prediction import load_pooled_gene_vectors, resolve_clean_splits
+from pangena_predict.snp_vs_esm_prediction import (
+    fit_score_step,
+    load_pooled_gene_vectors,
+    resolve_clean_splits,
+)
+from tl.train.split_utils import generate_kfold_splits
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -253,21 +258,22 @@ class ComparisonResult:
     error: str | None = None
 
 
-def run_gene_comparison(
+def _build_frames(
     target: GeneTarget,
     paths: SpeciesPaths,
     *,
-    n_folds: int = 5,
-    seeds: tuple[int, ...] = (1, 2, 3),
     pool_workers: int = 1,
     sample_limit: int | None = None,
     gene_table: pd.DataFrame | None = None,
-) -> ComparisonResult:
-    """Build ESM + baclm gene frames for one (gene, drug) and score them through the k-fold harness.
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, int], str | None]:
+    """Resolve clean labels and build the aligned ESM + baclm gene frames for one (gene, drug).
 
+    Shared by the k-fold panel (:func:`run_gene_comparison`) and the learning-curve ladder
+    (:func:`run_gene_ladder`): both need the same pair of 960-vector frames over the same samples.
     ``gene_table`` (optional) is a pre-built presence table from :func:`build_multi_gene_presence` —
     pass it in panel mode to avoid re-reading the parquet cohort per gene; it is subset to this drug's
     labelled samples. When ``None`` the single-gene :func:`build_gene_presence_table` sweep is used.
+    Returns ``(esm, baclm, label_map, error)`` — ``error`` is ``None`` on success.
     """
     label_map, *_split = resolve_clean_splits(paths.ast_sheet, target.drug)
     sample_ids = sorted(label_map)
@@ -282,8 +288,9 @@ def run_gene_comparison(
         )
     else:
         gene_table = gene_table.loc[gene_table.index.intersection(sample_ids)]
+    empty = pd.DataFrame()
     if gene_table.empty:
-        return ComparisonResult(target.gene, target.drug, 0, 0, error="no single-copy genomes for gene")
+        return empty, empty, label_map, "no single-copy genomes for gene"
 
     esm = load_pooled_gene_vectors(
         gene_table, paths.esm_dir, pt_suffix=paths.esm_suffix, pool_workers=pool_workers,
@@ -292,10 +299,26 @@ def run_gene_comparison(
         gene_table, paths.baclm_dir, pt_suffix=paths.baclm_suffix, pool_workers=pool_workers,
     )
     if esm.empty or baclm.empty:
-        return ComparisonResult(
-            target.gene, target.drug, len(esm), len(baclm),
-            error=f"empty frame (esm={len(esm)} baclm={len(baclm)})",
-        )
+        return esm, baclm, label_map, f"empty frame (esm={len(esm)} baclm={len(baclm)})"
+    return esm, baclm, label_map, None
+
+
+def run_gene_comparison(
+    target: GeneTarget,
+    paths: SpeciesPaths,
+    *,
+    n_folds: int = 5,
+    seeds: tuple[int, ...] = (1, 2, 3),
+    pool_workers: int = 1,
+    sample_limit: int | None = None,
+    gene_table: pd.DataFrame | None = None,
+) -> ComparisonResult:
+    """Build ESM + baclm gene frames for one (gene, drug) and score them through the k-fold harness."""
+    esm, baclm, label_map, error = _build_frames(
+        target, paths, pool_workers=pool_workers, sample_limit=sample_limit, gene_table=gene_table,
+    )
+    if error is not None:
+        return ComparisonResult(target.gene, target.drug, len(esm), len(baclm), error=error)
 
     specs = {
         "esm": FeatureSpec(frame=esm, kind="numeric", standardise=True),
@@ -339,6 +362,199 @@ def _baclm_minus_esm(paired: dict) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# Learning-curve ladder — AUROC vs training-set size, ESM vs baclm, fixed evaluate holdout
+# ---------------------------------------------------------------------------
+
+def _agg(values: list[float]) -> dict | None:
+    """Mean / sd (ddof=1) / min / max / n over a rung's per-seed values (``None`` if empty)."""
+    vals = np.asarray([v for v in values if v is not None], dtype=float)
+    if vals.size == 0:
+        return None
+    return {
+        "mean": float(vals.mean()),
+        "sd": float(vals.std(ddof=1)) if vals.size > 1 else 0.0,
+        "min": float(vals.min()),
+        "max": float(vals.max()),
+        "n": int(vals.size),
+    }
+
+
+def _stratified_order(ids: list[str], label_map: dict[str, int], seed: int) -> list[str]:
+    """Seeded, label-stratified, **nested** ordering of ``ids``.
+
+    Shuffles the positives and negatives separately, then interleaves them by fractional rank so that
+    *any prefix* preserves the class ratio — a prefix of length ``n`` is a stratified subsample, and the
+    length-``n+step`` subsample contains it (nested), which cuts rung-to-rung noise in the curve.
+    """
+    rng = np.random.default_rng(seed)
+    pos = [s for s in ids if label_map[s] == 1]
+    neg = [s for s in ids if label_map[s] == 0]
+    rng.shuffle(pos)
+    rng.shuffle(neg)
+
+    def ranked(lst: list[str]) -> list[tuple[float, str]]:
+        n = len(lst)
+        return [((i + 0.5) / n, s) for i, s in enumerate(lst)]
+
+    merged = sorted(ranked(pos) + ranked(neg), key=lambda t: t[0])
+    return [s for _, s in merged]
+
+
+def _ladder_grid(pool_size: int, step: int, fine_until: int) -> list[int]:
+    """Training sizes to evaluate: fine ``step`` up to ``fine_until``, then ``4×step``, always full.
+
+    The learning curve is steep at low n (where the ESM/baclm gap either closes or persists) and flat at
+    high n, so we sample densely below ``fine_until`` and coarsely above it — the endpoint (full pool) is
+    always included. Pass ``fine_until >= pool_size`` to force literal ``step``-increments throughout.
+    """
+    grid: list[int] = []
+    n = step
+    while n < pool_size:
+        grid.append(n)
+        n += step if n < fine_until else max(step, 4 * step)
+    grid.append(pool_size)
+    seen: set[int] = set()
+    out: list[int] = []
+    for x in grid:
+        if 0 < x <= pool_size and x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
+
+
+def run_gene_ladder(
+    target: GeneTarget,
+    paths: SpeciesPaths,
+    *,
+    seeds: tuple[int, ...] = (1, 2, 3),
+    step: int = 500,
+    fine_until: int = 6000,
+    evaluate_seed: int = 1,
+    evaluate_fraction: float = 0.20,
+    pool_workers: int = 1,
+    sample_limit: int | None = None,
+    gene_table: pd.DataFrame | None = None,
+) -> dict:
+    """AUROC vs training-set size for ESM and baclm on one (gene, drug), on a **fixed** evaluate holdout.
+
+    Both frames are scored on the identical holdout (pinned by ``evaluate_seed`` — the same one the
+    k-fold panel uses, so the top rung is comparable to the panel's full-N point). For each rung ``n``
+    and seed, a label-stratified subsample of ``n`` training genomes is drawn from the shared pool and
+    the *same* rows feed the ESM and baclm LRs (paired Δ). Answers whether baclm's coding gap to ESM
+    **closes with data** (data-hungry embedding) or **persists** (genuinely lower ceiling).
+    """
+    esm, baclm, label_map, error = _build_frames(
+        target, paths, pool_workers=pool_workers, sample_limit=sample_limit, gene_table=gene_table,
+    )
+    if error is not None:
+        return {"gene": target.gene, "drug": target.drug, "error": error,
+                "n_esm": len(esm), "n_baclm": len(baclm)}
+
+    universe = sorted(set(esm.index) & set(baclm.index) & set(label_map))
+    uni_df = pd.DataFrame({"Sample": universe})
+    evaluate_ids_set, _folds = generate_kfold_splits(
+        uni_df, n_folds=5, seed=evaluate_seed,
+        evaluate_fraction=evaluate_fraction, evaluate_seed=evaluate_seed,
+    )
+    evaluate_ids = sorted(evaluate_ids_set)
+    pool = [s for s in universe if s not in evaluate_ids_set]
+    if len(pool) < step:
+        return {"gene": target.gene, "drug": target.drug,
+                "error": f"train pool ({len(pool)}) smaller than one rung ({step})"}
+
+    frames = {"esm": esm, "baclm": baclm}
+    grid = _ladder_grid(len(pool), step, fine_until)
+    logger.info("[%s / %s] ladder: pool=%d evaluate=%d rungs=%s seeds=%s",
+                target.gene, target.drug, len(pool), len(evaluate_ids), grid, list(seeds))
+
+    orders = {seed: _stratified_order(pool, label_map, seed) for seed in seeds}
+    rungs: list[dict] = []
+    for n_train in grid:
+        scores = {"esm": [], "baclm": []}
+        deltas: list[float] = []
+        for seed in seeds:
+            train_ids = orders[seed][:n_train]
+            per_seed: dict[str, float | None] = {}
+            for name, frame in frames.items():
+                res = fit_score_step(
+                    frame, kind="numeric", standardise=True, label_map=label_map,
+                    train_ids=train_ids, validate_ids=[], evaluate_ids=evaluate_ids,
+                )
+                auroc = res["metrics"]["auroc"] if "metrics" in res else None
+                per_seed[name] = auroc
+                if auroc is not None:
+                    scores[name].append(auroc)
+            if per_seed["esm"] is not None and per_seed["baclm"] is not None:
+                deltas.append(per_seed["baclm"] - per_seed["esm"])
+        rungs.append({
+            "n_train": n_train,
+            "esm": _agg(scores["esm"]),
+            "baclm": _agg(scores["baclm"]),
+            "delta_baclm_minus_esm": _agg(deltas),
+        })
+
+    n_pos = sum(1 for s in pool if label_map[s] == 1)
+    top = rungs[-1]
+    if top["esm"] and top["baclm"]:
+        logger.info("[%s / %s] full pool (n=%d): ESM %.4f  baclm %.4f  Δ=%+.4f",
+                    target.gene, target.drug, top["n_train"],
+                    top["esm"]["mean"], top["baclm"]["mean"], top["delta_baclm_minus_esm"]["mean"])
+    return {
+        "gene": target.gene,
+        "drug": target.drug,
+        "n_esm": len(esm),
+        "n_baclm": len(baclm),
+        "n_universe": len(universe),
+        "n_evaluate": len(evaluate_ids),
+        "n_train_pool": len(pool),
+        "pool_pos": n_pos,
+        "pool_neg": len(pool) - n_pos,
+        "seeds": list(seeds),
+        "step": step,
+        "fine_until": fine_until,
+        "rungs": rungs,
+    }
+
+
+def plot_ladder(payload: dict, png_path: Path) -> None:
+    """Render the ESM-vs-baclm learning curves (one panel per gene) with ±sd bands to ``png_path``."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    ladders = [lad for lad in payload["ladders"] if lad.get("rungs")]
+    if not ladders:
+        logger.warning("no ladders with rungs to plot")
+        return
+    ncol = min(3, len(ladders))
+    nrow = (len(ladders) + ncol - 1) // ncol
+    fig, axes = plt.subplots(nrow, ncol, figsize=(5.2 * ncol, 4.0 * nrow), squeeze=False)
+    esm_c, bac_c = "#7e3f9e", "#1e8449"
+    for ax, lad in zip(axes.flat, ladders, strict=False):
+        ns = [r["n_train"] for r in lad["rungs"]]
+        for name, colour in (("esm", esm_c), ("baclm", bac_c)):
+            m = np.array([r[name]["mean"] if r[name] else np.nan for r in lad["rungs"]])
+            sd = np.array([r[name]["sd"] if r[name] else 0.0 for r in lad["rungs"]])
+            ax.plot(ns, m, "-o", ms=3, color=colour, label=name)
+            ax.fill_between(ns, m - sd, m + sd, color=colour, alpha=0.15)
+        ax.set_title(f"{lad['gene']} / {lad['drug']}  (n={lad['n_train_pool']} train, eval={lad['n_evaluate']})",
+                     fontsize=10)
+        ax.set_xlabel("training genomes")
+        ax.set_ylabel("evaluate AUROC")
+        ax.grid(alpha=0.3)
+        ax.legend(fontsize=8, loc="lower right")
+    for ax in axes.flat[len(ladders):]:
+        ax.set_visible(False)
+    fig.suptitle(f"Coding baclm vs ESM — learning curves ({payload['species']})", fontsize=12)
+    fig.tight_layout(rect=(0, 0, 1, 0.98))
+    png_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(png_path, dpi=140)
+    plt.close(fig)
+    logger.info("wrote %s", png_path)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -357,6 +573,12 @@ def main() -> None:
     ap.add_argument("--seeds", default="1,2,3", help="comma-separated seeds")
     ap.add_argument("--pool-workers", type=int, default=1)
     ap.add_argument("--n", type=int, default=None, help="Stage-A smoke: cap #samples")
+    ap.add_argument("--ladder", action="store_true",
+                    help="learning-curve mode: AUROC vs training-set size (ESM vs baclm) instead of k-fold")
+    ap.add_argument("--ladder-step", type=int, default=500, help="fine training-size increment (ladder)")
+    ap.add_argument("--ladder-fine-until", type=int, default=6000,
+                    help="use the fine step up to this n, then 4× coarser (ladder); ≥ pool forces step throughout")
+    ap.add_argument("--plot", action="store_true", help="also render a PNG next to --output (ladder mode)")
     ap.add_argument("--output", type=Path, required=True, help="results JSON path")
     args = ap.parse_args()
 
@@ -391,6 +613,49 @@ def main() -> None:
             all_ids, paths.parquet_dir, gene_specs,
             parquet_suffix=paths.parquet_suffix, pool_workers=args.pool_workers,
         )
+
+    if args.ladder:
+        ladders = [
+            run_gene_ladder(
+                t, paths, seeds=seeds, step=args.ladder_step, fine_until=args.ladder_fine_until,
+                pool_workers=args.pool_workers, sample_limit=args.n,
+                gene_table=(presence[t.gene] if presence is not None else None),
+            )
+            for t in targets
+        ]
+        payload = {
+            "schema_version": SCHEMA_VERSION,
+            "task": "pangena_predict",
+            "analysis": "coding_amr_lr_baclm_vs_esm_ladder",
+            "species": args.species,
+            "seeds": list(seeds),
+            "ladder_step": args.ladder_step,
+            "ladder_fine_until": args.ladder_fine_until,
+            "sample_limit": args.n,
+            "paths": {k: str(v) for k, v in vars(paths).items()},
+            "ladders": ladders,
+        }
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(payload, indent=2))
+        logger.info("wrote %s (%d gene ladders)", args.output, len(ladders))
+        if args.plot:
+            plot_ladder(payload, args.output.with_suffix(".png"))
+
+        # Console headline: full-pool endpoint + does the gap close from the first rung?
+        print("\n=== baclm vs ESM coding learning curve (AUROC; low-n → full pool) ===")
+        for lad in ladders:
+            if lad.get("error"):
+                print(f"  {lad['gene']:<8} {lad['drug']:<14} ERROR: {lad['error']}")
+                continue
+            r0, rN = lad["rungs"][0], lad["rungs"][-1]
+            d0 = r0["delta_baclm_minus_esm"]["mean"] if r0["delta_baclm_minus_esm"] else float("nan")
+            dN = rN["delta_baclm_minus_esm"]["mean"] if rN["delta_baclm_minus_esm"] else float("nan")
+            print(
+                f"  {lad['gene']:<8} {lad['drug']:<14} "
+                f"n={r0['n_train']:<6}Δ={d0:+.4f}  →  n={rN['n_train']:<6}Δ={dN:+.4f}  "
+                f"(ESM {rN['esm']['mean']:.4f} / baclm {rN['baclm']['mean']:.4f}; pool={lad['n_train_pool']})"
+            )
+        return
 
     results = [
         run_gene_comparison(
