@@ -14,7 +14,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from kleb_ast.convert_ast_data import process_klebsiella_ast_data
+from pangena_predict.parse_ebi_ast_to_binary import parse_ebi_ast_to_binary as process_klebsiella_ast_data
 
 DEFAULT_INPUT = Path(
     "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/raw/klebsiella_ebi_amr_records_20260216.csv"

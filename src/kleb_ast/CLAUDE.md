@@ -141,8 +141,9 @@ Training entrypoints
 
 Label / data prep
 - `prepare_esmc_embeddings_and_labels_to_finetune_amr.py` — merge AST labels + embeddings → split CSV.
-- `preprocess_ebi_amr_records.py` — parse EBI AST CSV → binary resistance labels.
-- `convert_ast_data.py` — `process_klebsiella_ast_data()` helper.
+- `preprocess_ebi_amr_records.py` — thin Kp wrapper; delegates to the canonical parser.
+- **Canonical EBI AST → binary parser now lives in `pangena_predict/parse_ebi_ast_to_binary.py`**
+  (organism-agnostic; was the misnamed `kleb_ast/convert_ast_data.py`). Use it for TB and Kp alike.
 
 Kleb-specific metadata / embedding curation
 - `add_paths_gff_fna_to_metadata.py` — populate `sr_assembly_file` + `sr_gff_file` in the Kleb metadata TSV.

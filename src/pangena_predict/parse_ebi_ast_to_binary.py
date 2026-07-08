@@ -1,9 +1,32 @@
+"""Canonical EBI AST parser — **organism-agnostic** (TB, Klebsiella, any EBI-format cohort).
+
+Turns a raw EBI AMR records CSV (long format: one row per sample × antibiotic × test) into the
+`binary_ast.csv` pivot the AMR pipeline consumes, plus `regression_log_mic.csv`, a metadata table,
+per-antibiotic stats, and an antibiogram. The **encoded nuance** (do not reconstruct it — reuse this):
+
+- resistance → binary: ``resistant`` → 1, ``susceptible`` → 0, ``intermediate`` → NaN
+  (:func:`convert_resistance_to_binary`);
+- MIC → log scale with censoring adjustments for ``<`` / ``>`` / bracketed ``>,<`` (:func:`convert_ebi_mic_data`);
+- **repeat tests per sample × antibiotic are averaged** (``pivot_table(aggfunc="mean")``), so a sample
+  whose DSTs disagree becomes a *fractional* label — which downstream (``resolve_clean_splits``) drops as
+  ambiguous. TB has ~8 tests/sample yet almost never conflicts (e.g. rifampin: 16 fractional of 38,758).
+
+History: this was ``kleb_ast/convert_ast_data.py`` (misleadingly named; ``process_klebsiella_ast_data``
+is aliased at the bottom for back-compat). It is the single source of truth for EBI AST → binary labels.
+
+Run it (any species) via the CLI, pointing ``--input``/``--output-dir`` at the cohort:
+    uv run python src/pangena_predict/parse_ebi_ast_to_binary.py \\
+        --input <root>/raw/<cohort>/ebi_..._records.csv --output-dir <root>/processed/train_<cohort>_ast
+"""
+
 import pathlib
 import re
 
 import numpy as np
 import pandas as pd
 
+# NB: these DEFAULT_* point at the (now-down) CSD3 Klebsiella cohort and exist only as CLI fallbacks —
+# always pass --input/--output-dir for TB or any Isambard cohort.
 BASE_DIR = pathlib.Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david")
 RAW_SUB = "raw"
 PROCESSED_SUB = "processed"
@@ -710,7 +733,7 @@ def print_antibiotic_stats_table(antibiotic_stats_df, title_suffix=""):
         )
 
 
-def process_klebsiella_ast_data(
+def parse_ebi_ast_to_binary(
     input_file=None,
     min_antibiotic_count=1000,
     reporting_size=None,
@@ -762,7 +785,7 @@ def process_klebsiella_ast_data(
     output_dir = pathlib.Path(output_dir) if output_dir is not None else DEFAULT_OUTPUT_DIR
     viz_dir = pathlib.Path(viz_dir) if viz_dir is not None else DEFAULT_VIZ_DIR
     print("=" * 80)
-    print("KLEBSIELLA AST DATA PROCESSING PIPELINE")
+    print("EBI AST → BINARY RESISTANCE PIPELINE (organism-agnostic)")
     print("=" * 80)
     
     # Step 1: Load data
@@ -976,6 +999,10 @@ def process_klebsiella_ast_data(
     }
 
 
+# Back-compat alias — old callers imported ``process_klebsiella_ast_data`` (the misleading name).
+process_klebsiella_ast_data = parse_ebi_ast_to_binary
+
+
 def main():
     """Load AST data and run the EBI AST processing pipeline from the command line."""
     import argparse
@@ -1030,7 +1057,7 @@ def main():
     )
     args = parser.parse_args()
 
-    process_klebsiella_ast_data(
+    parse_ebi_ast_to_binary(
         input_file=args.input,
         min_antibiotic_count=args.min_antibiotic_count,
         reporting_size=args.reporting_size,
