@@ -14,7 +14,7 @@ Fine-tune [Bacformer](https://github.com/amina-BS/bacformer) on bacterial genome
 | 2. AST in *Klebsiella pneumoniae* | [src/kleb_ast/](src/kleb_ast/) | Active |
 | 3. Isolation source in *Klebsiella* | [src/kleb_iso_source/](src/kleb_iso_source/) | Active |
 | 6. `predictHGT` embedding diagnostic | [src/predict_hgt/](src/predict_hgt/) | Diagnostic, can run in parallel |
-| 7. SNP-embedding signal-loss diagnostic | [src/snp_embeddings/](src/snp_embeddings/) | Active (diagnostic — why TB AST is poor) |
+| 7. Pangenome-embedding AMR/phenotype prediction (baclm IGR/RNA + genes; grew out of the TB SNP-signal-loss diagnostic) | [src/pangena_predict/](src/pangena_predict/) | Active |
 
 Task 4 (mixed-assembly detection) and Task 5 (DefensePredictor on short reads) are deferred — condensed plans live in [ToDo.md](ToDo.md). Recreate as `src/admixture/` and `src/dp_short_read/` when work actually starts.
 
@@ -43,12 +43,17 @@ Folds × seeds (≥5 each) are an **advanced final step**, only for external pub
 
 ### §0.3 Paths
 
-- HPC root: `/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/`
-- Raw data: `project_k/david/raw/<task>/`
-- Processed data: `project_k/david/processed/<task>/`
+Cluster-dependent data root (the layout `raw/<task>/`, `processed/<task>/`, `final/` is the same
+on both — only the root differs):
+
+- **Isambard (active):** root `$PROJECTDIR/david/` = `/projects/u6fp/david/`
+- **CSD3/UoHPC (down since 27 Jun 2026):** root `/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/`
+- Raw data: `<root>/raw/<task>/` · Processed: `<root>/processed/<task>/` · Curated: `<root>/final/`
 - Local dev: `/Users/davidabelson/developer/BacPredict/`
 
-Per-task data paths live in each task's `CLAUDE.md`.
+Per-task data paths live in each task's `CLAUDE.md`. Storage-tier detail per cluster:
+[`~/.claude/cluster_isambard.md`](~/.claude/cluster_isambard.md) ·
+[`~/.claude/cluster_uohpc.md`](~/.claude/cluster_uohpc.md).
 
 **Metadata source.** Klebsiella cohort labels (host / isolation source / AMR / study type /
 sequencing provenance) come from `metadata_v2_all_samples_and_columns.tsv` produced by the
@@ -64,27 +69,22 @@ For every full run: **AUROC, AUPRC, sensitivity, specificity, balanced accuracy,
 
 **For AMR tasks (Tasks 1 and 2), every report MUST additionally be stratified by resistance mechanism — HGT/acquired vs chromosomal point mutation.** Central hypothesis of the programme. Mechanism labels: WHO V2 catalogue (TB), AMRFinderPlus + Kleborate (Kp).
 
-### §0.5a HPC resource requests — be generous, **never under-call**
+### §0.5a HPC resource requests + storage discipline — see the global cluster docs
 
-CSD3 charges wall time used, not wall time requested; CPU cores and memory on
-ampere/icelake nodes are abundant. **Dying mid-job because we under-requested
-is the expensive failure mode.** Always lean toward more — *especially* time.
+**Cluster guidance is now cluster-agnostic and lives at the `~/.claude` level.** Read those before
+running or tuning any `#SBATCH` directive — do not re-derive them here:
 
-- **Time: triple any estimate.** If reasoning says 2 h, request 6 h (or 8 h if
-  the estimate has any uncertainty at all — and it usually does). Over-requesting
-  time costs *nothing*; running out of time kills hours of GPU compute. Never
-  trim the time budget to "look efficient" — there's no prize for it.
-- **CPUs / `--num-workers`: use what the node has.** Ampere allocates ~32 cores
-  per GPU; request `--cpus-per-task=8` (the per-GPU partition default) and set
-  the DataLoader `--num-workers` to match (8). CPU cores are idle if you don't
-  use them; there is no penalty for "asking for more workers."
-- **Memory: be generous.** Single-GPU ampere jobs effectively get ~250 GB
-  regardless of what you request; defaulting to `--mem=128G` or higher is
-  free and harmless. Don't trim memory requests below your *actual* peak.
+- [`~/.claude/CLAUDE.md`](~/.claude/CLAUDE.md) → **"Working on HPC clusters"** — the agnostic
+  rules that hold on every cluster (storage discipline, no-`du`, logs/caches/envs off `$HOME`,
+  code-via-git-not-scp, no login-node compute, be generous with `--time`, keep GPUs saturated).
+- **The user says which cluster each session.** Then read the per-cluster doc for exact
+  accounts, partitions, node sizes, storage tiers + quotas, and gotchas:
+  [`~/.claude/cluster_isambard.md`](~/.claude/cluster_isambard.md) (aarch64 Grace+GH200; `workq`/
+  `brics.u6fp`; `$PROJECTDIR` 200 TiB / `$SCRATCHDIR` 5 TiB / `$HOME` 100 GiB) ·
+  [`~/.claude/cluster_uohpc.md`](~/.claude/cluster_uohpc.md) (CSD3 x86 `icelake`/`ampere`;
+  `FLOTO-*` accounts; RDS `project_k`).
 
-Sources of truth (read these before tuning SLURM directives):
-- A100 / ampere partition: <https://docs.hpc.cam.ac.uk/hpc/user-guide/a100.html>
-- icelake CPU partition: <https://docs.hpc.cam.ac.uk/hpc/user-guide/icelake.html>
+> **As of 27 Jun 2026 CSD3 is down; active work is on Isambard** — currently the sole cluster.
 
 When in doubt: **more**. The cost of asking for more than you need is zero;
 the cost of asking for less is the entire job.
@@ -103,7 +103,7 @@ Task 2 = [src/kleb_ast/](src/kleb_ast/) (`task2/...`),
 Task 3 = [src/kleb_iso_source/](src/kleb_iso_source/) (`task3/...`),
 Task 5 = [src/dp_short_read/](src/dp_short_read/) (`task5/...`),
 Task 6 = [src/predict_hgt/](src/predict_hgt/) (`task6/...`),
-Task 7 = [src/snp_embeddings/](src/snp_embeddings/) (`snp-embeddings`).
+Task 7 = [src/pangena_predict/](src/pangena_predict/) (`pangena_predict`).
 
 **Stay in your task folder.** Confine edits to your own `src/<task>/` package and `tests/<task>/`.
 Touch shared code ([src/tl/](src/tl/)), top-level configs, or root docs only when truly necessary,
@@ -143,17 +143,19 @@ and call it out explicitly so the user can coordinate.
 
 ## HPC connection
 
-```
-Host:      login.hpc.cam.ac.uk
-User:      dca36
-SSH:       ControlMaster auto, ControlPersist 8h (~/.ssh/sockets/)
-Workspace: /home/dca36/workspace/BacPredict
-Python:    always uv run python (never python or python3 directly)
-```
+**Which cluster / login / SSH / storage tiers — see the global cluster docs** (the user says which
+cluster each session): [`~/.claude/cluster_isambard.md`](~/.claude/cluster_isambard.md) (active) and
+[`~/.claude/cluster_uohpc.md`](~/.claude/cluster_uohpc.md) (CSD3, down since 27 Jun 2026), plus the
+agnostic [`~/.claude/CLAUDE.md`](~/.claude/CLAUDE.md) → "Working on HPC clusters".
 
-Run commands on HPC: `ssh dca36@login.hpc.cam.ac.uk "<command>"`.
-
-**Login node usage.** Jobs that complete in under **15 minutes** and stay under **128 GB RAM** (purely CPU — no GPU) can run directly on the login node without SLURM. (The real enforcement is CSD3's *watchdog*, which kills large or long-lived login-node processes; there is no published hard memory figure, so treat 128 GB / 15 min as a safe working ceiling.) Anything heavier (model inference, embedding generation, training, large-data parses) belongs in a SLURM job. Worked example: regenerating combined figures / summary CSVs from already-saved per-drug `eval_scores.npz` (see [src/kleb_ast/scripts/regen_panel_summary.sh](src/kleb_ast/scripts/regen_panel_summary.sh)) — pure matplotlib + small npz reads, finishes in seconds, not worth a queue wait.
+- **Python:** always `uv run python` (never `python`/`python3` directly). On Isambard use an
+  **aarch64** uv/pixi env (fresh solve) — CSD3/laptop solves don't transfer.
+- **Run commands** over ssh (Isambard: `ssh u6fp.aip2.isambard "<command>"`; CSD3: `ssh dca36@login.hpc.cam.ac.uk "<command>"`).
+- **Login-node usage** (both clusters): short (<~5–15 min), single-process, CPU-only orchestration
+  may run inline; anything heavier (model inference, embedding, training, large-data parses) → a
+  SLURM job. On Isambard, login-node processes are additionally *killed* on SSH disconnect — see its
+  doc. Worked example of a fine login-node task: regenerating combined figures / summary CSVs from
+  saved per-drug `eval_scores.npz` (see [src/kleb_ast/scripts/regen_panel_summary.sh](src/kleb_ast/scripts/regen_panel_summary.sh)).
 
 ## Package layout
 
