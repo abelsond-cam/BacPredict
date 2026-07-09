@@ -117,8 +117,12 @@ def _audit_one(args_tuple: tuple) -> dict[str, Any] | None:
     except (OSError, ValueError):
         return None
 
+    n_cds = sum(len(v) for v in cds.values())
     len_hist = Counter()
     n_runs = n_runs_gt_max = n_windows = n_runs_with_rna = max_run = 0
+    # If a >window run were split into RNA bodies vs non-RNA (IGR/other) segments, how many pieces
+    # would STILL exceed the window (rrl-type RNA; long IGR/CRISPR stretches)?
+    rna_pieces_gt_max = nonrna_pieces_gt_max = 0
     # Per-RNA-type tallies: total, adjacent-to-IGR (run has >=_IGR_MARGIN unannotated bp),
     # adjacent-to-another-RNA (run holds >1 RNA), and solo (run is essentially just this RNA).
     rna_total, rna_adj_igr, rna_adj_rna, rna_solo = Counter(), Counter(), Counter(), Counter()
@@ -165,6 +169,17 @@ def _audit_one(args_tuple: tuple) -> dict[str, Any] | None:
             rnas = [(s, e, t) for (s, e, t) in in_run if t in _RNA_TYPES]
             if rnas:
                 n_runs_with_rna += 1
+            # Split analysis (only over-window runs can yield an over-window sub-piece).
+            if rlen > MAX_LEN:
+                rna_iv = sorted((max(g0, s - 1), min(g1, e)) for (s, e, _t) in rnas)  # 0-based, clipped
+                rna_pieces_gt_max += sum(1 for a, b in rna_iv if (b - a) > MAX_LEN)
+                prev = g0                                                             # non-RNA = run minus RNA
+                for a, b in rna_iv:
+                    if a - prev > MAX_LEN:
+                        nonrna_pieces_gt_max += 1
+                    prev = max(prev, b)
+                if g1 - prev > MAX_LEN:
+                    nonrna_pieces_gt_max += 1
             # Unannotated (true IGR) DNA in the run = run length minus all annotated feature coverage.
             annotated = sum(min(g1, e) - max(g0, s - 1) for (s, e, _t) in in_run)
             igr_len = rlen - annotated
@@ -182,8 +197,11 @@ def _audit_one(args_tuple: tuple) -> dict[str, Any] | None:
 
     return {
         "sample": sample_id,
+        "n_cds": n_cds,
         "n_runs": n_runs,
         "n_runs_gt_max": n_runs_gt_max,
+        "rna_pieces_gt_max": rna_pieces_gt_max,
+        "nonrna_pieces_gt_max": nonrna_pieces_gt_max,
         "n_windows": n_windows,
         "n_runs_with_rna": n_runs_with_rna,
         "max_run_len": max_run,
@@ -202,8 +220,11 @@ def _audit_one(args_tuple: tuple) -> dict[str, Any] | None:
 def _aggregate(per_genome: list[dict[str, Any]]) -> dict[str, Any]:
     """Roll per-genome stats into cohort totals + the two headline fractions."""
     n_g = len(per_genome)
+    tot_cds = sum(g["n_cds"] for g in per_genome)
     tot_runs = sum(g["n_runs"] for g in per_genome)
     tot_runs_gt = sum(g["n_runs_gt_max"] for g in per_genome)
+    tot_rna_pieces_gt = sum(g["rna_pieces_gt_max"] for g in per_genome)
+    tot_nonrna_pieces_gt = sum(g["nonrna_pieces_gt_max"] for g in per_genome)
     tot_windows = sum(g["n_windows"] for g in per_genome)
     tot_runs_rna = sum(g["n_runs_with_rna"] for g in per_genome)
     tot_rna = sum(g["n_rna"] for g in per_genome)
@@ -221,10 +242,14 @@ def _aggregate(per_genome: list[dict[str, Any]]) -> dict[str, Any]:
         feature_types.update(g["feature_type_counts"])
     labels = [f"{_LEN_BINS[i]}-{_LEN_BINS[i + 1]}" for i in range(len(_LEN_BINS) - 1)]
     labels[-1] = f">{_LEN_BINS[-2]}"
-    # Per-RNA-type: total, adjacent-to-IGR (+frac), adjacent-to-other-RNA, solo (CDS-flanked, alone).
+    def per_g(x):  # cohort total -> per-genome average
+        return (x / n_g) if n_g else 0.0
+    # Per-RNA-type: total, per-genome average, adjacent-to-IGR (unannotated DNA) (+frac),
+    # adjacent-to-other-RNA (in a run with another RNA), solo (tightly CDS-flanked, alone).
     rna_breakdown = {
         t: {
             "total": rna_total[t],
+            "per_genome": per_g(rna_total[t]),
             "adjacent_to_igr": rna_adj_igr[t],
             "adjacent_to_igr_frac": (rna_adj_igr[t] / rna_total[t]) if rna_total[t] else 0.0,
             "adjacent_to_other_rna": rna_adj_rna[t],
@@ -234,22 +259,30 @@ def _aggregate(per_genome: list[dict[str, Any]]) -> dict[str, Any]:
     }
     return {
         "n_genomes": n_g,
+        "mean_cds_per_genome": per_g(tot_cds),
+        "mean_noncoding_runs_per_genome": per_g(tot_runs),
         "total_noncoding_runs": tot_runs,
         "runs_over_maxlen": tot_runs_gt,
         "runs_over_maxlen_frac": (tot_runs_gt / tot_runs) if tot_runs else 0.0,
+        "mean_runs_over_maxlen_per_genome": per_g(tot_runs_gt),
+        # Split analysis: of the over-window runs, over-window pieces if RNA embedded separately.
+        "mean_rna_pieces_over_maxlen_per_genome": per_g(tot_rna_pieces_gt),
+        "mean_nonrna_pieces_over_maxlen_per_genome": per_g(tot_nonrna_pieces_gt),
+        "rna_pieces_over_maxlen": tot_rna_pieces_gt,
+        "nonrna_pieces_over_maxlen": tot_nonrna_pieces_gt,
         "total_windows": tot_windows,
         "extra_windows_from_long_runs": tot_windows - tot_runs,  # forwards added purely by windowing
         "runs_containing_rna": tot_runs_rna,
         "runs_containing_rna_frac": (tot_runs_rna / tot_runs) if tot_runs else 0.0,
         "total_rna_bodies": tot_rna,
+        "mean_rna_per_genome": per_g(tot_rna),
         "rna_over_maxlen": tot_rna_gt,
         "max_run_len_seen": max((g["max_run_len"] for g in per_genome), default=0),
         "max_rna_len_seen": max((g["max_rna_len"] for g in per_genome), default=0),
         "run_len_hist": {labels[int(k)]: v for k, v in sorted(len_hist.items())},
         "rna_breakdown": rna_breakdown,
         "feature_type_counts": dict(feature_types.most_common()),
-        "mean_runs_per_genome": (tot_runs / n_g) if n_g else 0.0,
-        "mean_rna_per_genome": (tot_rna / n_g) if n_g else 0.0,
+        "feature_per_genome": {k: per_g(v) for k, v in feature_types.most_common()},
     }
 
 
@@ -271,26 +304,34 @@ def run_audit(input_csv: Path, *, n: int | None, workers: int, min_len: int) -> 
 def _print_summary(agg: dict[str, Any]) -> None:
     print("\n=== non-coding channel audit ===")
     print(f"genomes audited           : {agg['n_genomes']:,}")
-    print(f"non-coding runs (total)   : {agg['total_noncoding_runs']:,}  ({agg['mean_runs_per_genome']:.0f}/genome)")
-    print(f"runs > MAX_LEN (windowed) : {agg['runs_over_maxlen']:,}  ({agg['runs_over_maxlen_frac'] * 100:.3f}%)")
+    print(f"coding CDS      /genome   : {agg['mean_cds_per_genome']:.0f}")
+    print(f"non-coding runs /genome   : {agg['mean_noncoding_runs_per_genome']:.0f}  "
+          f"(total {agg['total_noncoding_runs']:,})")
+    print(f"runs > MAX_LEN  /genome   : {agg['mean_runs_over_maxlen_per_genome']:.2f}  "
+          f"({agg['runs_over_maxlen']:,} = {agg['runs_over_maxlen_frac'] * 100:.3f}%)")
+    print("  if split RNA vs non-RNA, pieces STILL > MAX_LEN /genome:")
+    print(f"      RNA-body pieces      : {agg['mean_rna_pieces_over_maxlen_per_genome']:.3f}  "
+          f"({agg['rna_pieces_over_maxlen']:,})")
+    print(f"      non-RNA (IGR) pieces : {agg['mean_nonrna_pieces_over_maxlen_per_genome']:.3f}  "
+          f"({agg['nonrna_pieces_over_maxlen']:,})")
     print(f"extra forwards from windows: {agg['extra_windows_from_long_runs']:,} "
           f"(total windows {agg['total_windows']:,})")
     print(f"longest run seen          : {agg['max_run_len_seen']:,} bp")
     print(f"runs containing an RNA    : {agg['runs_containing_rna']:,}  "
           f"({agg['runs_containing_rna_frac'] * 100:.2f}% of runs)")
-    print(f"RNA bodies (total)        : {agg['total_rna_bodies']:,}  ({agg['mean_rna_per_genome']:.0f}/genome)")
+    print(f"RNA bodies      /genome   : {agg['mean_rna_per_genome']:.0f}  (total {agg['total_rna_bodies']:,})")
     print(f"RNA bodies > MAX_LEN      : {agg['rna_over_maxlen']:,}  (longest {agg['max_rna_len_seen']:,} bp)")
     print("run-length histogram (bp) :")
     for k, v in agg["run_len_hist"].items():
         print(f"    {k:>12} : {v:,}")
-    print("per-RNA-type adjacency    :  (adj-IGR = run has >=30bp unannotated DNA beside the RNA)")
-    print(f"    {'type':>10} {'total':>10} {'adj-IGR':>12} {'adj-RNA':>10} {'solo':>10}")
+    print("per-RNA-type adjacency    :  (adj-IGR = >=30bp UNANNOTATED DNA in run; adj-RNA = another RNA in run)")
+    print(f"    {'type':>10} {'/genome':>8} {'total':>10} {'adj-IGR':>12} {'adj-RNA':>10} {'solo':>10}")
     for t, d in agg["rna_breakdown"].items():
-        print(f"    {t:>10} {d['total']:>10,} {d['adjacent_to_igr']:>10,} "
+        print(f"    {t:>10} {d['per_genome']:>8.1f} {d['total']:>10,} {d['adjacent_to_igr']:>10,} "
               f"({d['adjacent_to_igr_frac'] * 100:4.1f}%) {d['adjacent_to_other_rna']:>10,} {d['solo_cds_flanked']:>10,}")
-    print("all non-CDS feature types :")
-    for k, v in agg["feature_type_counts"].items():
-        print(f"    {k:>16} : {v:,}")
+    print("all non-CDS features/genome:")
+    for k, v in agg["feature_per_genome"].items():
+        print(f"    {k:>16} : {v:6.1f}  ({agg['feature_type_counts'][k]:,})")
 
 
 def main() -> None:
