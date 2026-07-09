@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# GPU — Bacformer gene-token sweep for the driver panel: one forward pass per genome, extract every
+# coding driver gene's contextualised token (genes derived from the per-drug driver CSVs). Output NPZ
+# feeds driver_panel.py's Bacformer column. Runs in the lean gpu venv (has bacformer + transformers).
+#
+#   sbatch --export=ALL,TASK=tb   -J bacformer-panel-tb   src/pangena_predict/scripts/bacformer_gene_panel_vectors.sh
+#   sbatch --export=ALL,TASK=kleb -J bacformer-panel-kleb src/pangena_predict/scripts/bacformer_gene_panel_vectors.sh
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=16
+#SBATCH --time=18:00:00
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+set -uo pipefail
+: "${SCRATCHDIR:?}" "${TASK:=tb}"
+S="$SCRATCHDIR"
+PY="$S/envs/bacpredict-gpu-venv/bin/python"
+export HF_HOME="$S/cache/hf" TORCH_HOME="$S/cache/torch"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
+export TOKENIZERS_PARALLELISM=false PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+case "$TASK" in
+  tb)   DIR=train_tb_ast;   FOLDER=tb; CSVPREFIX=tbprofiler_gene_lr ;;
+  kleb) DIR=train_kleb_ast; FOLDER=kp; CSVPREFIX=kleborate_determinant_lr ;;
+  *) echo "unknown TASK=$TASK (want tb|kleb)"; exit 1 ;;
+esac
+PROC="$S/processed/$DIR"
+VIS="$HOME/BacPredict/src/pangena_predict/docs/visualisations"
+OUT="$PROC/pangena_predict/driver_panel/bacformer_panel_tokens_${FOLDER}.npz"
+
+echo "=== bacformer gene-panel sweep: task=$TASK ==="
+"$PY" "$HOME/BacPredict/src/pangena_predict/bacformer_gene_panel_vectors.py" \
+  --ast-sheet-path "$PROC/binary_ast_with_split.csv" \
+  --parquet-dir "$PROC/protein_sequences" \
+  --esm-store-dir "$PROC/esm" \
+  --csv-dir "$VIS" --folder-prefix "$FOLDER" --csv-prefix "$CSVPREFIX" \
+  --pool-workers "${SLURM_CPUS_PER_TASK:-8}" \
+  --output-npz "$OUT"
+echo "bacformer panel tokens -> $OUT"
