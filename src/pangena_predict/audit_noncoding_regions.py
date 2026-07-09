@@ -55,15 +55,22 @@ def _merge(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
     return out
 
 
-def _parse_gff_lengths_cds_rna(gff_path: Path):
-    """Return ``(contig_len[seqid], cds[seqid]=[(s0,e)], rna[seqid]=[(start1,end1,type)])`` from a GFF.
+# Feature types that describe the contig record itself, not a biological feature inside it.
+_CONTIG_TYPES = frozenset({"region", "databank_entry"})
 
-    ``cds`` intervals are 0-based half-open (to match the extraction run logic); ``rna`` and contig
-    lengths are 1-based inclusive. Contig length comes from ``##sequence-region`` pragmas.
+
+def _parse_gff_lengths_cds_annot(gff_path: Path):
+    """Return ``(contig_len[seqid], cds[seqid]=[(s0,e)], annot[seqid]=[(start1,end1,type)])`` from a GFF.
+
+    ``cds`` intervals are 0-based half-open (to match the extraction run logic). ``annot`` is **every
+    non-CDS, non-contig-record feature** (RNA *and* anything else Bakta emits — CRISPR, oriC, ncRNA
+    regions, …), 1-based inclusive, so we can measure both RNA-vs-IGR composition and what "other"
+    features live in the runs. Contig length comes from ``##sequence-region`` pragmas (``region``
+    feature as fallback).
     """
     contig_len: dict[str, int] = {}
     cds: dict[str, list[tuple[int, int]]] = {}
-    rna: dict[str, list[tuple[int, int, str]]] = {}
+    annot: dict[str, list[tuple[int, int, str]]] = {}
     with _open_text(gff_path) as fh:
         for line in fh:
             if line.startswith("#"):
@@ -88,37 +95,45 @@ def _parse_gff_lengths_cds_rna(gff_path: Path):
                 continue
             if ftype == "CDS":
                 cds.setdefault(seqid, []).append((start - 1, end))
-            elif ftype.lower() in _RNA_TYPES:
-                # region feature also gives contig length as a fallback if pragmas were absent.
-                rna.setdefault(seqid, []).append((start, end, ftype.lower()))
-            elif ftype in {"region", "databank_entry"} and seqid not in contig_len:
-                contig_len[seqid] = end
-    return contig_len, cds, rna
+            elif ftype in _CONTIG_TYPES:
+                if seqid not in contig_len:
+                    contig_len[seqid] = end
+            else:
+                annot.setdefault(seqid, []).append((start, end, ftype.lower()))
+    return contig_len, cds, annot
+
+
+_IGR_MARGIN = 30  # a run counts as "IGR-fused" if this much unannotated DNA flanks its RNA/feature
 
 
 def _audit_one(args_tuple: tuple) -> dict[str, Any] | None:
-    """Audit one genome's non-coding runs + RNA fusion. Returns a small per-genome stats dict."""
+    """Audit one genome: non-coding runs, windowing, and per-RNA-type IGR/other-RNA adjacency."""
     sample_id, gff_path, min_len = args_tuple
     gpath = Path(gff_path)
     if not gpath.exists():
         return None
     try:
-        contig_len, cds, rna = _parse_gff_lengths_cds_rna(gpath)
+        contig_len, cds, annot = _parse_gff_lengths_cds_annot(gpath)
     except (OSError, ValueError):
         return None
 
     len_hist = Counter()
-    n_runs = n_runs_gt_max = 0
-    n_windows = 0                 # total windows across all runs (ceil(len/MAX_LEN))
-    n_runs_with_rna = 0
-    max_run = 0
-    # union of contigs seen in CDS / RNA / lengths
-    seqids = set(contig_len) | set(cds) | set(rna)
+    n_runs = n_runs_gt_max = n_windows = n_runs_with_rna = max_run = 0
+    # Per-RNA-type tallies: total, adjacent-to-IGR (run has >=_IGR_MARGIN unannotated bp),
+    # adjacent-to-another-RNA (run holds >1 RNA), and solo (run is essentially just this RNA).
+    rna_total, rna_adj_igr, rna_adj_rna, rna_solo = Counter(), Counter(), Counter(), Counter()
+    feature_type_counts = Counter()           # every non-CDS feature type (RNA + "other")
+    rna_len_all: list[int] = []
+
+    for feats in annot.values():
+        feature_type_counts.update(t for (_s, _e, t) in feats)
+
+    seqids = set(contig_len) | set(cds) | set(annot)
     for seqid in seqids:
         clen = contig_len.get(seqid)
+        feats = annot.get(seqid, [])
         if clen is None:
-            # No length pragma and no region feature: fall back to the max coord we saw.
-            coords = [e for _, e in cds.get(seqid, [])] + [e for _, e, _ in rna.get(seqid, [])]
+            coords = [e for _, e in cds.get(seqid, [])] + [e for _, e, _ in feats]
             if not coords:
                 continue
             clen = max(coords)
@@ -131,7 +146,7 @@ def _audit_one(args_tuple: tuple) -> dict[str, Any] | None:
             prev = max(prev, e)
         if prev < clen:
             runs.append((prev, clen))
-        rna_here = rna.get(seqid, [])
+
         for g0, g1 in runs:
             rlen = g1 - g0
             if rlen < min_len:
@@ -145,14 +160,26 @@ def _audit_one(args_tuple: tuple) -> dict[str, Any] | None:
             n_windows += -(-rlen // MAX_LEN)  # ceil
             if rlen > MAX_LEN:
                 n_runs_gt_max += 1
-            # RNA contained in this run (run is 0-based half-open g0..g1; rna is 1-based inclusive).
-            contained = [(s, e, t) for (s, e, t) in rna_here if s - 1 >= g0 and e <= g1]
-            if contained:
+            # Features inside this run (run 0-based half-open g0..g1; feats 1-based inclusive).
+            in_run = [(s, e, t) for (s, e, t) in feats if (s - 1) < g1 and e > g0]
+            rnas = [(s, e, t) for (s, e, t) in in_run if t in _RNA_TYPES]
+            if rnas:
                 n_runs_with_rna += 1
+            # Unannotated (true IGR) DNA in the run = run length minus all annotated feature coverage.
+            annotated = sum(min(g1, e) - max(g0, s - 1) for (s, e, _t) in in_run)
+            igr_len = rlen - annotated
+            has_igr = igr_len >= _IGR_MARGIN
+            multi_rna = len(rnas) > 1
+            for (s, e, t) in rnas:
+                rna_total[t] += 1
+                rna_len_all.append(e - s + 1)
+                if has_igr:
+                    rna_adj_igr[t] += 1
+                if multi_rna:
+                    rna_adj_rna[t] += 1
+                if not has_igr and not multi_rna:
+                    rna_solo[t] += 1
 
-    rna_flat = [(s, e, t) for lst in rna.values() for (s, e, t) in lst]
-    rna_len = [e - s + 1 for (s, e, _t) in rna_flat]
-    rna_type_counts = Counter(t for (_s, _e, t) in rna_flat)
     return {
         "sample": sample_id,
         "n_runs": n_runs,
@@ -161,10 +188,14 @@ def _audit_one(args_tuple: tuple) -> dict[str, Any] | None:
         "n_runs_with_rna": n_runs_with_rna,
         "max_run_len": max_run,
         "len_hist": dict(len_hist),
-        "n_rna": len(rna_flat),
-        "n_rna_gt_max": sum(1 for x in rna_len if x > MAX_LEN),
-        "max_rna_len": max(rna_len) if rna_len else 0,
-        "rna_type_counts": dict(rna_type_counts),
+        "n_rna": sum(rna_total.values()),
+        "n_rna_gt_max": sum(1 for x in rna_len_all if x > MAX_LEN),
+        "max_rna_len": max(rna_len_all) if rna_len_all else 0,
+        "rna_total": dict(rna_total),
+        "rna_adj_igr": dict(rna_adj_igr),
+        "rna_adj_rna": dict(rna_adj_rna),
+        "rna_solo": dict(rna_solo),
+        "feature_type_counts": dict(feature_type_counts),
     }
 
 
@@ -178,14 +209,29 @@ def _aggregate(per_genome: list[dict[str, Any]]) -> dict[str, Any]:
     tot_rna = sum(g["n_rna"] for g in per_genome)
     tot_rna_gt = sum(g["n_rna_gt_max"] for g in per_genome)
     len_hist = Counter()
-    rna_types = Counter()
+    rna_total, rna_adj_igr, rna_adj_rna, rna_solo, feature_types = (
+        Counter(), Counter(), Counter(), Counter(), Counter())
     for g in per_genome:
         for k, v in g["len_hist"].items():
             len_hist[int(k)] += v
-        for k, v in g["rna_type_counts"].items():
-            rna_types[k] += v
+        rna_total.update(g["rna_total"])
+        rna_adj_igr.update(g["rna_adj_igr"])
+        rna_adj_rna.update(g["rna_adj_rna"])
+        rna_solo.update(g["rna_solo"])
+        feature_types.update(g["feature_type_counts"])
     labels = [f"{_LEN_BINS[i]}-{_LEN_BINS[i + 1]}" for i in range(len(_LEN_BINS) - 1)]
     labels[-1] = f">{_LEN_BINS[-2]}"
+    # Per-RNA-type: total, adjacent-to-IGR (+frac), adjacent-to-other-RNA, solo (CDS-flanked, alone).
+    rna_breakdown = {
+        t: {
+            "total": rna_total[t],
+            "adjacent_to_igr": rna_adj_igr[t],
+            "adjacent_to_igr_frac": (rna_adj_igr[t] / rna_total[t]) if rna_total[t] else 0.0,
+            "adjacent_to_other_rna": rna_adj_rna[t],
+            "solo_cds_flanked": rna_solo[t],
+        }
+        for t in sorted(rna_total, key=lambda x: -rna_total[x])
+    }
     return {
         "n_genomes": n_g,
         "total_noncoding_runs": tot_runs,
@@ -200,7 +246,8 @@ def _aggregate(per_genome: list[dict[str, Any]]) -> dict[str, Any]:
         "max_run_len_seen": max((g["max_run_len"] for g in per_genome), default=0),
         "max_rna_len_seen": max((g["max_rna_len"] for g in per_genome), default=0),
         "run_len_hist": {labels[int(k)]: v for k, v in sorted(len_hist.items())},
-        "rna_type_counts": dict(rna_types.most_common()),
+        "rna_breakdown": rna_breakdown,
+        "feature_type_counts": dict(feature_types.most_common()),
         "mean_runs_per_genome": (tot_runs / n_g) if n_g else 0.0,
         "mean_rna_per_genome": (tot_rna / n_g) if n_g else 0.0,
     }
@@ -236,9 +283,14 @@ def _print_summary(agg: dict[str, Any]) -> None:
     print("run-length histogram (bp) :")
     for k, v in agg["run_len_hist"].items():
         print(f"    {k:>12} : {v:,}")
-    print("RNA type counts           :")
-    for k, v in agg["rna_type_counts"].items():
-        print(f"    {k:>12} : {v:,}")
+    print("per-RNA-type adjacency    :  (adj-IGR = run has >=30bp unannotated DNA beside the RNA)")
+    print(f"    {'type':>10} {'total':>10} {'adj-IGR':>12} {'adj-RNA':>10} {'solo':>10}")
+    for t, d in agg["rna_breakdown"].items():
+        print(f"    {t:>10} {d['total']:>10,} {d['adjacent_to_igr']:>10,} "
+              f"({d['adjacent_to_igr_frac'] * 100:4.1f}%) {d['adjacent_to_other_rna']:>10,} {d['solo_cds_flanked']:>10,}")
+    print("all non-CDS feature types :")
+    for k, v in agg["feature_type_counts"].items():
+        print(f"    {k:>16} : {v:,}")
 
 
 def main() -> None:

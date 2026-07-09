@@ -35,5 +35,38 @@ def test_audit_counts_runs_windows_and_rna_fusion(tmp_path):
     assert agg["extra_windows_from_long_runs"] == 2
     assert agg["runs_containing_rna"] == 1         # the [201-399] run swallows the rRNA
     assert agg["total_rna_bodies"] == 1
-    assert agg["rna_type_counts"] == {"rrna": 1}
     assert agg["rna_over_maxlen"] == 0
+    # rRNA 250-350 (101 bp) sits in run 201-399 (199 bp) -> ~98 bp of flanking IGR -> adjacent to IGR.
+    rb = agg["rna_breakdown"]["rrna"]
+    assert rb["total"] == 1
+    assert rb["adjacent_to_igr"] == 1 and rb["solo_cds_flanked"] == 0
+    assert rb["adjacent_to_other_rna"] == 0
+    assert agg["feature_type_counts"] == {"rrna": 1}
+
+
+# contig c2: tRNA tightly CDS-flanked (little IGR) = "solo"; plus a CRISPR feature ("other" type).
+GFF_SOLO = (
+    "##gff-version 3\n"
+    "##sequence-region c2 1 1000\n"
+    "c2\tProdigal\tCDS\t1\t100\t.\t+\t0\tID=a\n"
+    "c2\ttRNAscan\ttRNA\t105\t200\t.\t+\t0\tID=t;gene=trnA\n"
+    "c2\tProdigal\tCDS\t205\t400\t.\t+\t0\tID=b\n"
+    "c2\tPILER-CR\tCRISPR\t500\t700\t.\t+\t0\tID=c\n"
+    "##FASTA\n>c2\nACGT\n"
+)
+
+
+def test_audit_solo_rna_and_other_feature_types(tmp_path):
+    gff = tmp_path / "s2.gff3"
+    gff.write_text(GFF_SOLO)
+    csv = tmp_path / "in.csv"
+    pd.DataFrame([{"Sample": "s2", "sr_gff_file": str(gff)}]).to_csv(csv, index=False)
+
+    agg = run_audit(csv, n=None, workers=1, min_len=30)
+
+    # tRNA 105-200 (96 bp) in run 100-204 (104 bp) -> ~8 bp IGR (<30) -> solo, not IGR-adjacent.
+    rb = agg["rna_breakdown"]["trna"]
+    assert rb["total"] == 1 and rb["solo_cds_flanked"] == 1 and rb["adjacent_to_igr"] == 0
+    # The CRISPR array is a non-CDS "other" feature (not RNA) -> shows in the feature tally only.
+    assert agg["feature_type_counts"].get("crispr") == 1
+    assert "crispr" not in agg["rna_breakdown"]
