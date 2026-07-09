@@ -95,18 +95,23 @@ def sweep_gene_tokens(
     return {g: (ids[g], np.vstack(tokens[g])) for g in tokens}
 
 
-def _derive_panel_genes(csv_dir: Path, folder_prefix: str, csv_prefix: str) -> list[str]:
-    """Union of coding (embeddable) driver genes across every per-drug driver CSV in ``csv_dir``."""
+def _derive_panel_genes(csv_dir: Path, folder_prefix: str, csv_prefix: str, csv_suffix: str = "") -> list[str]:
+    """Union of embeddable (coding) driver genes across every per-drug driver CSV in ``csv_dir``.
+
+    Schema-agnostic: gates on ``embeddable`` and excludes ``is_noncoding``/``is_rrna`` (works for both
+    the TB-Profiler and Kp-CARD CSVs), rather than a ``region == coding`` string.
+    """
     genes: set[str] = set()
     for folder in sorted(csv_dir.glob(f"{folder_prefix}_*")):
         drug = folder.name[len(folder_prefix) + 1:]
-        csv = folder / f"{csv_prefix}_{drug}.csv"
+        csv = folder / f"{csv_prefix}_{drug}{csv_suffix}.csv"
         if not csv.exists():
             continue
         df = pd.read_csv(csv)
-        coding = df[(df.get("region", "").astype(str).str.lower() == "coding")
-                    & (df.get("embeddable", False).astype(bool))]
-        genes.update(str(g) for g in coding["gene_name"] if not str(g).startswith("__ALL"))
+        if "embeddable" not in df.columns:
+            continue
+        keep = df["embeddable"].astype(bool) & ~df.get("is_noncoding", False).astype(bool) & ~df.get("is_rrna", False).astype(bool)
+        genes.update(str(g) for g in df.loc[keep, "gene_name"] if not str(g).startswith("__ALL"))
     return sorted(genes)
 
 
@@ -122,11 +127,14 @@ def main() -> None:
     ap.add_argument("--csv-dir", type=Path, default=None, help="driver-CSV dir to derive the coding-gene union from.")
     ap.add_argument("--folder-prefix", default="tb")
     ap.add_argument("--csv-prefix", default="tbprofiler_gene_lr")
+    ap.add_argument("--csv-suffix", default="")
     ap.add_argument("--device", type=str, default="cuda:0")
     ap.add_argument("--pool-workers", type=int, default=8)
     args = ap.parse_args()
 
-    genes = args.genes or (_derive_panel_genes(args.csv_dir, args.folder_prefix, args.csv_prefix) if args.csv_dir else None)
+    genes = args.genes or (
+        _derive_panel_genes(args.csv_dir, args.folder_prefix, args.csv_prefix, args.csv_suffix)
+        if args.csv_dir else None)
     if not genes:
         raise SystemExit("no genes: pass --genes or --csv-dir")
     logger.info("panel genes (%d): %s", len(genes), ", ".join(genes))

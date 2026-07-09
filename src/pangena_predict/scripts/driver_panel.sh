@@ -23,18 +23,19 @@ PY="$S/envs/bacpredict-gpu-venv/bin/python"
 export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 export MPLBACKEND=Agg
 case "$TASK" in
-  tb)   SPECIES=tb; FOLDER=tb; CSVPREFIX=tbprofiler_gene_lr ;;
-  kleb) SPECIES=kp; FOLDER=kp; CSVPREFIX=kleborate_determinant_lr ;;
+  tb)   SPECIES=tb; FOLDER=tb; CSVPREFIX=tbprofiler_gene_lr; CSVSUFFIX=""
+        VIS="$HOME/BacPredict/src/pangena_predict/docs/visualisations" ;;
+  kleb) SPECIES=kp; FOLDER=kp; CSVPREFIX=card_determinant_lr; CSVSUFFIX="_family"
+        VIS="$HOME/BacPredict/src/kleb_ast/docs/visualisations/amr_per_abx" ;;
   *) echo "unknown TASK=$TASK (want tb|kleb)"; exit 1 ;;
 esac
-VIS="$HOME/BacPredict/src/pangena_predict/docs/visualisations"
 OUT="$S/processed/train_${TASK}_ast/pangena_predict/driver_panel"
 NPZ_ARG=""; [ -n "${BACFORMER_NPZ:-}" ] && NPZ_ARG="--bacformer-npz ${BACFORMER_NPZ}"
 
-echo "=== driver panel: species=$SPECIES csv=$VIS/$FOLDER_* npz=${BACFORMER_NPZ:-none} ==="
+echo "=== driver panel: species=$SPECIES csv=$VIS/${FOLDER}_* npz=${BACFORMER_NPZ:-none} ==="
 "$PY" "$HOME/BacPredict/src/pangena_predict/driver_panel.py" \
   --species "$SPECIES" \
-  --csv-dir "$VIS" --folder-prefix "$FOLDER" --csv-prefix "$CSVPREFIX" \
+  --csv-dir "$VIS" --folder-prefix "$FOLDER" --csv-prefix "$CSVPREFIX" --csv-suffix "$CSVSUFFIX" \
   --n-folds 5 --seeds 1,2,3 --pool-workers "${SLURM_CPUS_PER_TASK:-8}" \
   $NPZ_ARG \
   --output "$OUT"

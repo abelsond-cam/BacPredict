@@ -64,12 +64,14 @@ def parse_driver_csv(csv_path: Path) -> tuple[pd.DataFrame, dict | None]:
 
 
 def _is_coding(row: pd.Series) -> bool:
-    """A driver we can score with a protein gene vector: coding region + flagged embeddable."""
-    region = str(row.get("region", "")).lower()
-    embeddable = bool(row.get("embeddable", region == "coding"))
-    is_noncoding = bool(row.get("is_noncoding", False))
-    is_rrna = bool(row.get("is_rrna", False))
-    return embeddable and region == "coding" and not is_noncoding and not is_rrna
+    """A driver we can score with a protein gene vector: flagged ``embeddable``, not promoter/rRNA.
+
+    Schema-agnostic across TB (TB-Profiler: ``region`` coding/non-coding) and Kp (CARD: ``category``
+    acquired_hgt/chromosomal_*). ``embeddable`` is the shared gate; ``is_noncoding``/``is_rrna`` exclude
+    promoters and rRNA (which the baclm non-coding channel handles, not the protein path).
+    """
+    embeddable = bool(row.get("embeddable", str(row.get("region", "")).lower() == "coding"))
+    return embeddable and not bool(row.get("is_noncoding", False)) and not bool(row.get("is_rrna", False))
 
 
 def _score_gene(gene_table, paths: SpeciesPaths, label_map, bacformer_frame, *, n_folds, seeds, pool_workers):
@@ -133,10 +135,12 @@ def run_drug_panel(
     rows = []
     for _, r in drivers.iterrows():
         gene = str(r["gene_name"])
+        n_genomes = r.get("n_genomes_with_variant", r.get("n_genomes_with_determinant", 0))
         row = {
-            "gene": gene, "site": r.get("site", gene), "region": r.get("region", ""),
+            "gene": gene, "site": r.get("site", gene),
+            "region": r.get("region", r.get("category", "")),
             "onehot_auroc": float(r["mut_auroc"]), "onehot_auprc": float(r["mut_auprc"]),
-            "n_genomes_with_variant": int(r.get("n_genomes_with_variant", 0) or 0),
+            "n_genomes_with_variant": int(n_genomes or 0),
             "baclm_auroc": None, "baclm_auprc": None, "esm_auroc": None, "esm_auprc": None,
             "bacformer_auroc": None, "bacformer_auprc": None,
         }
@@ -210,6 +214,7 @@ def main() -> None:
     ap.add_argument("--csv-dir", type=Path, required=True,
                     help="dir with <prefix>_<drug>/*_gene_lr_<drug>.csv driver lists (repo docs/visualisations).")
     ap.add_argument("--csv-prefix", default="tbprofiler_gene_lr", help="driver CSV filename stem (default TB).")
+    ap.add_argument("--csv-suffix", default="", help="driver CSV filename suffix before .csv (Kp: _family).")
     ap.add_argument("--folder-prefix", default="tb", help="per-drug folder prefix (tb_/kp_).")
     ap.add_argument("--drugs", nargs="*", default=None, help="drugs to run (default: all folders present).")
     ap.add_argument("--bacformer-npz", type=Path, default=None, help="optional Bacformer gene-token sweep NPZ.")
@@ -233,7 +238,7 @@ def main() -> None:
     args.output.mkdir(parents=True, exist_ok=True)
     summary = []
     for drug in drugs:
-        csv_path = args.csv_dir / f"{args.folder_prefix}_{drug}" / f"{args.csv_prefix}_{drug}.csv"
+        csv_path = args.csv_dir / f"{args.folder_prefix}_{drug}" / f"{args.csv_prefix}_{drug}{args.csv_suffix}.csv"
         if not csv_path.exists():
             logger.warning("[%s] no CSV at %s — skipping", drug, csv_path)
             continue

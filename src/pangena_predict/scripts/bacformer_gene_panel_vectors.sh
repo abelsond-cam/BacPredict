@@ -23,12 +23,13 @@ export HF_HOME="$S/cache/hf" TORCH_HOME="$S/cache/torch"
 export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 export TOKENIZERS_PARALLELISM=false PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 case "$TASK" in
-  tb)   DIR=train_tb_ast;   FOLDER=tb; CSVPREFIX=tbprofiler_gene_lr ;;
-  kleb) DIR=train_kleb_ast; FOLDER=kp; CSVPREFIX=kleborate_determinant_lr ;;
+  tb)   DIR=train_tb_ast;   FOLDER=tb; CSVPREFIX=tbprofiler_gene_lr; CSVSUFFIX=""
+        VIS="$HOME/BacPredict/src/pangena_predict/docs/visualisations" ;;
+  kleb) DIR=train_kleb_ast; FOLDER=kp; CSVPREFIX=card_determinant_lr; CSVSUFFIX="_family"
+        VIS="$HOME/BacPredict/src/kleb_ast/docs/visualisations/amr_per_abx" ;;
   *) echo "unknown TASK=$TASK (want tb|kleb)"; exit 1 ;;
 esac
 PROC="$S/processed/$DIR"
-VIS="$HOME/BacPredict/src/pangena_predict/docs/visualisations"
 OUT="$PROC/pangena_predict/driver_panel/bacformer_panel_tokens_${FOLDER}.npz"
 
 echo "=== bacformer gene-panel sweep: task=$TASK ==="
@@ -36,7 +37,7 @@ echo "=== bacformer gene-panel sweep: task=$TASK ==="
   --ast-sheet-path "$PROC/binary_ast_with_split.csv" \
   --parquet-dir "$PROC/protein_sequences" \
   --esm-store-dir "$PROC/esm" \
-  --csv-dir "$VIS" --folder-prefix "$FOLDER" --csv-prefix "$CSVPREFIX" \
+  --csv-dir "$VIS" --folder-prefix "$FOLDER" --csv-prefix "$CSVPREFIX" --csv-suffix "$CSVSUFFIX" \
   --pool-workers "${SLURM_CPUS_PER_TASK:-8}" \
   --output-npz "$OUT"
 echo "bacformer panel tokens -> $OUT"
