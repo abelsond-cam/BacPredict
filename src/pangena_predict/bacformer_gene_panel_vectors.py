@@ -20,6 +20,7 @@ import pandas as pd
 import torch
 
 from pangena_predict.bacformer_genome_vectors import _forward_inputs, _load_model
+from pangena_predict.card_gene_locator import build_card_presence, sidecar_dir_available
 from pangena_predict.coding_amr_lr import build_multi_gene_presence
 from pangena_predict.snp_vs_esm_prediction import _real_protein_indices
 from tl.embed.generate_embeddings import bacformer_last_hidden_state
@@ -128,6 +129,8 @@ def main() -> None:
     ap.add_argument("--folder-prefix", default="tb")
     ap.add_argument("--csv-prefix", default="tbprofiler_gene_lr")
     ap.add_argument("--csv-suffix", default="")
+    ap.add_argument("--amr-sidecar-dir", type=Path, default=None,
+                    help="dir of {Sample}_amr.parquet CARD sidecars — locate genes by CARD family (Kp).")
     ap.add_argument("--device", type=str, default="cuda:0")
     ap.add_argument("--pool-workers", type=int, default=8)
     args = ap.parse_args()
@@ -141,7 +144,12 @@ def main() -> None:
 
     # Drug-agnostic: gene tokens are the same regardless of drug, so cover every sample in the split.
     all_ids = sorted(pd.read_csv(args.ast_sheet_path)["Sample"].astype(str).unique())
-    presence = build_multi_gene_presence(all_ids, args.parquet_dir, [(g, ()) for g in genes], pool_workers=args.pool_workers)
+    specs = [(g, ()) for g in genes]
+    if args.amr_sidecar_dir is not None and sidecar_dir_available(args.amr_sidecar_dir, all_ids):
+        logger.info("locating genes by CARD family from sidecars in %s", args.amr_sidecar_dir)
+        presence = build_card_presence(all_ids, args.amr_sidecar_dir, args.parquet_dir, specs, pool_workers=args.pool_workers)
+    else:
+        presence = build_multi_gene_presence(all_ids, args.parquet_dir, specs, pool_workers=args.pool_workers)
     per_sample = _per_sample_genes(presence)
     logger.info("sweeping Bacformer over %d genomes for %d genes on %s", len(per_sample), len(genes), args.device)
 

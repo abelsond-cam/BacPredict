@@ -22,11 +22,14 @@ S="$SCRATCHDIR"
 PY="$S/envs/bacpredict-gpu-venv/bin/python"
 export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 export MPLBACKEND=Agg
+AMR_ARG=""
 case "$TASK" in
   tb)   SPECIES=tb; FOLDER=tb; CSVPREFIX=tbprofiler_gene_lr; CSVSUFFIX=""
         VIS="$HOME/BacPredict/src/pangena_predict/docs/visualisations" ;;
   kleb) SPECIES=kp; FOLDER=kp; CSVPREFIX=card_determinant_lr; CSVSUFFIX="_family"
-        VIS="$HOME/BacPredict/src/kleb_ast/docs/visualisations/amr_per_abx" ;;
+        VIS="$HOME/BacPredict/src/kleb_ast/docs/visualisations/amr_per_abx"
+        # CARD sidecars locate acquired genes Bakta misses; falls back to Bakta names if unpopulated.
+        AMR_ARG="--amr-sidecar-dir $S/processed/train_kleb_ast/amr_annotation" ;;
   *) echo "unknown TASK=$TASK (want tb|kleb)"; exit 1 ;;
 esac
 OUT="$S/processed/train_${TASK}_ast/pangena_predict/driver_panel"
@@ -37,6 +40,6 @@ echo "=== driver panel: species=$SPECIES csv=$VIS/${FOLDER}_* npz=${BACFORMER_NP
   --species "$SPECIES" \
   --csv-dir "$VIS" --folder-prefix "$FOLDER" --csv-prefix "$CSVPREFIX" --csv-suffix "$CSVSUFFIX" \
   --n-folds 5 --seeds 1,2,3 --pool-workers "${SLURM_CPUS_PER_TASK:-8}" \
-  $NPZ_ARG \
+  $NPZ_ARG $AMR_ARG \
   --output "$OUT"
 echo "driver panel -> $OUT"

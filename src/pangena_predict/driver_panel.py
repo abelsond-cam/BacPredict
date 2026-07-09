@@ -27,6 +27,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from pangena_predict.card_gene_locator import build_card_presence, sidecar_dir_available
 from pangena_predict.coding_amr_lr import (
     SpeciesPaths,
     build_multi_gene_presence,
@@ -116,21 +117,35 @@ def run_drug_panel(
     *,
     ast_column: str,
     bacformer_npz=None,
+    card_sidecar_dir: Path | None = None,
     n_folds: int = 5,
     seeds: tuple[int, ...] = (1, 2, 3),
     pool_workers: int = 8,
 ) -> dict:
-    """Build the per-driver [one-hot | baclm | ESM | Bacformer] table for one drug."""
+    """Build the per-driver [one-hot | baclm | ESM | Bacformer] table for one drug.
+
+    Coding driver genes are located either by Bakta ``gene_name`` (default; works for core genes like
+    *rpoB*/*gyrA*) or, when ``card_sidecar_dir`` is given, by CARD ``amr_gene_family`` from the AMR
+    sidecar (needed for acquired Kp genes Bakta under-annotates — AAC(6'), bla_KPC, …).
+    """
     drivers, ceiling = parse_driver_csv(csv_path)
     label_map, *_ = resolve_clean_splits(paths.ast_sheet, ast_column)
     sample_ids = sorted(label_map)
     logger.info("[%s] %d drivers, %d labelled samples (col=%s)", drug, len(drivers), len(sample_ids), ast_column)
 
     coding_genes = sorted({str(r["gene_name"]) for _, r in drivers.iterrows() if _is_coding(r)})
-    presence = build_multi_gene_presence(
-        sample_ids, paths.parquet_dir, [(g, ()) for g in coding_genes],
-        parquet_suffix=paths.parquet_suffix, pool_workers=pool_workers,
-    ) if coding_genes else {}
+    if not coding_genes:
+        presence = {}
+    elif card_sidecar_dir is not None:
+        presence = build_card_presence(
+            sample_ids, card_sidecar_dir, paths.parquet_dir, [(g, ()) for g in coding_genes],
+            parquet_suffix=paths.parquet_suffix, pool_workers=pool_workers,
+        )
+    else:
+        presence = build_multi_gene_presence(
+            sample_ids, paths.parquet_dir, [(g, ()) for g in coding_genes],
+            parquet_suffix=paths.parquet_suffix, pool_workers=pool_workers,
+        )
 
     rows = []
     for _, r in drivers.iterrows():
@@ -218,6 +233,9 @@ def main() -> None:
     ap.add_argument("--folder-prefix", default="tb", help="per-drug folder prefix (tb_/kp_).")
     ap.add_argument("--drugs", nargs="*", default=None, help="drugs to run (default: all folders present).")
     ap.add_argument("--bacformer-npz", type=Path, default=None, help="optional Bacformer gene-token sweep NPZ.")
+    ap.add_argument("--amr-sidecar-dir", type=Path, default=None,
+                    help="dir of {Sample}_amr.parquet CARD sidecars — locate coding drivers by CARD family "
+                    "(Kp acquired genes Bakta misses) instead of Bakta gene_name.")
     ap.add_argument("--n-folds", type=int, default=5)
     ap.add_argument("--seeds", type=str, default="1,2,3")
     ap.add_argument("--pool-workers", type=int, default=8)
@@ -228,6 +246,13 @@ def main() -> None:
     ast_columns = set(pd.read_csv(paths.ast_sheet, nrows=0).columns)
     seeds = tuple(int(s) for s in args.seeds.split(","))
     npz = np.load(args.bacformer_npz) if args.bacformer_npz and args.bacformer_npz.exists() else None
+
+    card_dir = args.amr_sidecar_dir
+    if card_dir is not None:
+        universe = pd.read_csv(paths.ast_sheet)["Sample"].astype(str).tolist()
+        if not sidecar_dir_available(card_dir, universe):
+            logger.warning("AMR sidecar dir %s not populated — falling back to Bakta gene_name locating", card_dir)
+            card_dir = None
 
     # Discover drugs from the folder layout unless an explicit list is given.
     if args.drugs:
@@ -246,8 +271,9 @@ def main() -> None:
         if ast_col is None:
             logger.warning("[%s] no AST column in the cohort — skipping (drivers-only, no labels)", drug)
             continue
-        result = run_drug_panel(drug, csv_path, paths, ast_column=ast_col,
-                                bacformer_npz=npz, n_folds=args.n_folds, seeds=seeds, pool_workers=args.pool_workers)
+        result = run_drug_panel(drug, csv_path, paths, ast_column=ast_col, bacformer_npz=npz,
+                                card_sidecar_dir=card_dir, n_folds=args.n_folds, seeds=seeds,
+                                pool_workers=args.pool_workers)
         result["table"].to_csv(args.output / f"driver_panel_{drug}.csv", index=False)
         plot_drug_panel(result, args.output / f"driver_panel_{drug}.png")
         n_coding = int(result["table"]["baclm_auroc"].notna().sum())
