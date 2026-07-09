@@ -231,8 +231,14 @@ def _promoter_igr_one(sid: str, gff_path: str, pt_path: str, wanted_by_gene: dic
     except (OSError, ValueError):
         return sid, None
     store = torch.load(ppath, map_location="cpu", mmap=True, weights_only=True)
-    ig_emb = store["intergenic_embeddings"]
-    ig_seqid, ig_start, ig_end = store["intergenic_seqid"], store["intergenic_start"], store["intergenic_end"]
+    # 2d re-embed renamed intergenic_* -> noncoding_* (maximal non-CDS runs). Prefer the new key,
+    # fall back to the legacy key so this probe reads both the old and re-embedded stores.
+    if "noncoding_embeddings" in store:
+        ig_emb = store["noncoding_embeddings"]
+        ig_seqid, ig_start, ig_end = store["noncoding_seqid"], store["noncoding_start"], store["noncoding_end"]
+    else:
+        ig_emb = store["intergenic_embeddings"]
+        ig_seqid, ig_start, ig_end = store["intergenic_seqid"], store["intergenic_start"], store["intergenic_end"]
     n_ig = int(ig_emb.shape[0])
     out: dict[str, dict | None] = {}
     for gene, wanted in wanted_by_gene.items():

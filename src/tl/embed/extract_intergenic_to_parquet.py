@@ -7,9 +7,11 @@ The DNA half of the baclm store. Mirrors
 ``{Sample}_intergenic.parquet`` per genome. The GPU baclm job then reads these parquets instead of
 re-extracting on the GPU node — the same CPU/GPU two-stage split the ESM-C pipeline uses.
 
-Each parquet is a single row with list-valued columns: ``intergenic_sequence`` (lowercase DNA
-strings, contig-then-position order) plus parallel ``intergenic_seqid`` / ``intergenic_start`` /
-``intergenic_end`` coordinate lists (1-based inclusive, forward strand).
+Each parquet is a single row with list-valued columns: ``noncoding_sequence`` (lowercase DNA strings
+for the maximal non-CDS runs) + ``noncoding_seqid`` / ``noncoding_start`` / ``noncoding_end``, and the
+per-RNA index ``rna_sequence`` / ``rna_gene_name`` / ``rna_type`` / ``rna_seqid`` / ``rna_start`` /
+``rna_end`` (see :mod:`tl.embed.extract_intergenic_from_gff_fna`). Coordinates are 1-based inclusive,
+forward strand.
 """
 
 import argparse

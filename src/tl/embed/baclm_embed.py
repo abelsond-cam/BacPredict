@@ -23,8 +23,15 @@ base tokenizer directly, bypassing the Python loop. For a homogeneous batch this
 to ``_infer_token_type_ids`` (asserted in the smoke). Not per-residue (deferred) and not fed to
 Bacformer — a standalone store.
 
-Saves `{sample_id}_baclm_embeddings.pt` (bf16): ``protein_embeddings`` [n_cds, 960],
-``intergenic_embeddings`` [n_ig, 960], plus region-count + intergenic-coordinate metadata.
+Saves `{sample_id}_baclm_embeddings.pt` (bf16): ``protein_embeddings`` [n_cds, 960] (unchanged —
+the validated coding channel), ``noncoding_embeddings`` [n_nc, 960] (maximal non-CDS runs),
+``rna_embeddings`` [n_rna, 960] (standalone RNA bodies), plus coordinate + named-RNA-index metadata.
+
+**Long regions are windowed, not truncated (2d).** A non-coding run or RNA body longer than the model
+context is split into non-overlapping ``MAX_LEN``-sized windows, each embedded + mean-pooled, then
+combined by a **token-count-weighted mean** — which equals mean-pooling the whole untruncated region
+(``--window-overlap`` > 0 adds boundary context at the cost of mildly double-counting the overlap).
+Proteins are deliberately left on the plain truncating path so the coding store stays byte-identical.
 """
 
 import argparse
@@ -41,6 +48,7 @@ from transformers import AutoModel, AutoTokenizer, PreTrainedTokenizerFast
 
 BACLM_MODEL_ID = "macwiatrak/baclm-350m-masked"
 MAX_LEN = 2048  # model context length (char-level)
+_WINDOW_CHUNK = MAX_LEN - 2  # content budget per window (leaves room for the bos/eos wrap)
 _MODALITY = {"protein": 0, "dna": 1}  # token_type_ids: protein=0, DNA=1 (special tokens=2)
 
 # Run with an env that has flash-attn built for GH200 (Maciej's shared bacformer env — see
@@ -126,40 +134,126 @@ def mean_pool_embeddings(
     return torch.stack(results)
 
 
+def _windowize(seqs: list[str], chunk: int, overlap: int) -> tuple[list[str], list[int], list[float]]:
+    """Split each sequence into ``chunk``-sized windows for un-truncated embedding.
+
+    Returns a flat list of window substrings, a parallel ``owner`` list (which input sequence each
+    window came from), and a parallel ``weight`` list (window length, for the token-count-weighted
+    pool). A sequence of length ≤ ``chunk`` yields exactly one window equal to itself, so short
+    regions are byte-identical to the non-windowed path. ``overlap`` (0 = non-overlapping tiling)
+    shifts the window start by ``chunk - overlap`` each step.
+    """
+    if overlap < 0 or overlap >= chunk:
+        raise ValueError(f"overlap must be in [0, {chunk}), got {overlap}")
+    step = chunk - overlap
+    windows: list[str] = []
+    owner: list[int] = []
+    weight: list[float] = []
+    for i, s in enumerate(seqs):
+        if len(s) <= chunk:
+            windows.append(s)
+            owner.append(i)
+            weight.append(float(max(len(s), 1)))
+            continue
+        for start in range(0, len(s), step):
+            w = s[start : start + chunk]
+            if not w:
+                break
+            windows.append(w)
+            owner.append(i)
+            weight.append(float(len(w)))
+            if start + chunk >= len(s):
+                break
+    return windows, owner, weight
+
+
+@torch.no_grad()
+def mean_pool_windowed(
+    seqs: list[str], model, tokenizer, device: str, modality: str, batch_size: int,
+    *, chunk: int = _WINDOW_CHUNK, overlap: int = 0,
+) -> torch.Tensor:
+    """Embed sequences with long ones windowed + token-count-weighted-pooled → [n, 960] (bf16, CPU).
+
+    Every window is embedded by :func:`mean_pool_embeddings` (so batching/length-sort/token_type_ids
+    are shared with the protein path), then windows of the same input are combined by a length-weighted
+    mean. With ``overlap=0`` this weighted mean equals mean-pooling the whole untruncated region;
+    sequences ≤ ``chunk`` pass through unchanged. Returns an empty [0, H] tensor for empty input.
+    """
+    hidden = getattr(model.config, "hidden_size", 960)
+    if not seqs:
+        return torch.empty((0, hidden), dtype=torch.bfloat16)
+    windows, owner, weight = _windowize(seqs, chunk, overlap)
+    win_emb = mean_pool_embeddings(windows, model, tokenizer, device, modality, batch_size)  # [n_win, H]
+    out = torch.zeros((len(seqs), win_emb.shape[1]), dtype=torch.float32)
+    wsum = torch.zeros(len(seqs), dtype=torch.float32)
+    win_emb_f = win_emb.to(torch.float32)
+    for k, (o, w) in enumerate(zip(owner, weight, strict=True)):
+        out[o] += win_emb_f[k] * w
+        wsum[o] += w
+    out /= wsum.clamp_min(1.0).unsqueeze(1)
+    return out.to(torch.bfloat16)
+
+
 def _flatten_proteins(protein_parquet: Path) -> list[str]:
     """Read a protein-sequence parquet and flatten its per-contig lists into ESM-C flat order."""
     seq_col = pd.read_parquet(protein_parquet)["protein_sequence"].iloc[0]
     return [p for contig in seq_col for p in contig]
 
 
+def _col(df: pd.DataFrame, name: str, cast) -> list:
+    """Read a single-row parquet list column into native python types (safe-loadable .pt)."""
+    if name not in df.columns:
+        return []
+    return [cast(x) for x in df[name].iloc[0]]
+
+
 def process_genome(sample_id: str, protein_parquet: Path, intergenic_parquet: Path | None,
-                   model, tokenizer, device: str, output_dir: Path, batch_size: int) -> tuple[str, bool, str]:
-    """Embed one genome's proteins + intergenic regions (read from parquet) and save its baclm .pt."""
+                   model, tokenizer, device: str, output_dir: Path, batch_size: int,
+                   *, window_overlap: int = 0) -> tuple[str, bool, str]:
+    """Embed one genome's proteins + non-coding runs + RNA bodies (read from parquet) → baclm .pt.
+
+    Proteins use the plain truncating mean-pool (the coding store is deliberately unchanged); non-coding
+    runs and RNA bodies use the windowed pool so long regions are embedded whole rather than truncated.
+    """
     try:
         proteins = _flatten_proteins(protein_parquet)
+        nc_seqs = nc_seqid = nc_start = nc_end = []
+        rna_seqs = rna_name = rna_type = rna_seqid = rna_start = rna_end = []
         if intergenic_parquet is not None and intergenic_parquet.exists():
-            ig_df = pd.read_parquet(intergenic_parquet)
-            ig_seqs = [str(x) for x in ig_df["intergenic_sequence"].iloc[0]]
-            # Cast coords to native python types — parquet/pandas yields numpy scalars, which
-            # torch.load(weights_only=True) (the torch>=2.6 default) refuses. Keep the .pt safe-loadable.
-            ig_seqid = [str(x) for x in ig_df["intergenic_seqid"].iloc[0]]
-            ig_start = [int(x) for x in ig_df["intergenic_start"].iloc[0]]
-            ig_end = [int(x) for x in ig_df["intergenic_end"].iloc[0]]
-        else:
-            ig_seqs, ig_seqid, ig_start, ig_end = [], [], [], []
+            df = pd.read_parquet(intergenic_parquet)
+            # Cast coords to native python types — parquet yields numpy scalars, which
+            # torch.load(weights_only=True) (the torch>=2.6 default) refuses.
+            nc_seqs = _col(df, "noncoding_sequence", str)
+            nc_seqid = _col(df, "noncoding_seqid", str)
+            nc_start = _col(df, "noncoding_start", int)
+            nc_end = _col(df, "noncoding_end", int)
+            rna_seqs = _col(df, "rna_sequence", str)
+            rna_name = _col(df, "rna_gene_name", str)
+            rna_type = _col(df, "rna_type", str)
+            rna_seqid = _col(df, "rna_seqid", str)
+            rna_start = _col(df, "rna_start", int)
+            rna_end = _col(df, "rna_end", int)
 
         prot_emb = mean_pool_embeddings(proteins, model, tokenizer, device, "protein", batch_size)
-        ig_emb = mean_pool_embeddings(ig_seqs, model, tokenizer, device, "dna", batch_size)
+        nc_emb = mean_pool_windowed(nc_seqs, model, tokenizer, device, "dna", batch_size, overlap=window_overlap)
+        rna_emb = mean_pool_windowed(rna_seqs, model, tokenizer, device, "dna", batch_size, overlap=window_overlap)
 
         torch.save(
             {
-                "protein_embeddings": prot_emb,              # [n_cds, 960] bf16, flat-index order
-                "intergenic_embeddings": ig_emb,             # [n_ig, 960] bf16
+                "protein_embeddings": prot_emb,       # [n_cds, 960] bf16, flat-index order (unchanged)
+                "noncoding_embeddings": nc_emb,        # [n_nc, 960] bf16, maximal non-CDS runs
+                "rna_embeddings": rna_emb,             # [n_rna, 960] bf16, standalone RNA bodies
                 "n_proteins": int(prot_emb.shape[0]),
-                "n_intergenic": int(ig_emb.shape[0]),
-                "intergenic_seqid": ig_seqid,
-                "intergenic_start": ig_start,
-                "intergenic_end": ig_end,
+                "n_noncoding": int(nc_emb.shape[0]),
+                "n_rna": int(rna_emb.shape[0]),
+                "noncoding_seqid": nc_seqid,
+                "noncoding_start": nc_start,
+                "noncoding_end": nc_end,
+                "rna_gene_name": rna_name,
+                "rna_type": rna_type,
+                "rna_seqid": rna_seqid,
+                "rna_start": rna_start,
+                "rna_end": rna_end,
             },
             output_dir / f"{sample_id}_baclm_embeddings.pt",
         )
@@ -184,6 +278,9 @@ def main() -> None:
                     "matrix batch×maxlen² memory-safe at maxlen=2048)")
     ap.add_argument("--start-idx", type=int, default=None, help="array slice start (over sorted parquet list)")
     ap.add_argument("--end-idx", type=int, default=None, help="array slice end")
+    ap.add_argument("--window-overlap", type=int, default=0,
+                    help="overlap (chars) between windows of a long non-coding/RNA region. 0 (default) = "
+                    "non-overlapping tiling, whose token-weighted pool equals mean-pooling the whole region.")
     args = ap.parse_args()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -225,7 +322,7 @@ def main() -> None:
         intergenic_parquet = args.intergenic_dir / f"{sample_id}_intergenic.parquet"
         _, ok, _ = process_genome(
             sample_id, protein_parquet, intergenic_parquet, model, tokenizer,
-            args.device, args.output_dir, args.batch_size,
+            args.device, args.output_dir, args.batch_size, window_overlap=args.window_overlap,
         )
         n_ok += ok
         n_fail += not ok
