@@ -1,0 +1,263 @@
+"""Genome-wide audit of the baclm non-coding channel (Stage 2 step 4 — the architecture question).
+
+Under the 2d rule (only ``CDS`` occupies), each non-coding region is the **maximal contiguous non-CDS
+run**, so an RNA gene (rRNA/tRNA/tmRNA/ncRNA) and the intergenic DNA beside it are embedded as **one**
+960-d vector. This module quantifies, across the whole cohort, two things that decide how we treat the
+channel:
+
+1. **Windowing load** — how many non-coding runs (and RNA bodies) exceed the model context (``MAX_LEN``
+   = 2048 char), i.e. how many get windowed rather than fitting in one forward. This is the number to
+   take to the baclm developers before fixing the window-pool scheme.
+2. **IGR↔RNA fusion** — how often a non-coding run actually *contains* an RNA (so baclm fuses RNA+IGR),
+   and how "contaminated" each RNA's run is by flanking IGR. If most RNA sit in runs that are almost
+   entirely the RNA body, a separate RNA channel buys little; if they are routinely fused with long
+   IGR, a separate channel (embedding the RNA body alone) is worth it.
+
+Fast + label-free: parses the Bakta GFF only (CDS + RNA features + the ``##sequence-region`` contig
+lengths) — no FASTA load — and mirrors :func:`tl.embed.extract_intergenic_from_gff_fna`'s run logic
+(``min_len`` gap filter, only-CDS-occupying) so the run set is identical to what gets embedded.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+from collections import Counter
+from multiprocessing import Pool, cpu_count
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+
+from tl.embed.extract_proteins_from_gff_fna import _open_text
+
+logger = logging.getLogger(__name__)
+
+MAX_LEN = 2048  # baclm char-level context; a region longer than this must be windowed.
+_RNA_TYPES = frozenset(
+    {"rrna", "trna", "tmrna", "ncrna", "ncrna_gene", "antisense_rna", "rnase_p_rna", "srp_rna", "riboswitch"}
+)
+# Run-length histogram edges (bp). Last bin is the >MAX_LEN tail.
+_LEN_BINS = [0, 100, 300, 1000, 2048, 4096, 8192, 1_000_000_000]
+
+
+def _merge(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    if not intervals:
+        return []
+    intervals.sort()
+    out = [intervals[0]]
+    for s, e in intervals[1:]:
+        if s <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], e))
+        else:
+            out.append((s, e))
+    return out
+
+
+def _parse_gff_lengths_cds_rna(gff_path: Path):
+    """Return ``(contig_len[seqid], cds[seqid]=[(s0,e)], rna[seqid]=[(start1,end1,type)])`` from a GFF.
+
+    ``cds`` intervals are 0-based half-open (to match the extraction run logic); ``rna`` and contig
+    lengths are 1-based inclusive. Contig length comes from ``##sequence-region`` pragmas.
+    """
+    contig_len: dict[str, int] = {}
+    cds: dict[str, list[tuple[int, int]]] = {}
+    rna: dict[str, list[tuple[int, int, str]]] = {}
+    with _open_text(gff_path) as fh:
+        for line in fh:
+            if line.startswith("#"):
+                if line.startswith("##sequence-region"):
+                    p = line.split()
+                    if len(p) >= 4:
+                        try:
+                            contig_len[p[1]] = int(p[3])
+                        except ValueError:
+                            pass
+                elif line.startswith("##FASTA"):
+                    break
+                continue
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) < 9:
+                continue
+            ftype = parts[2]
+            seqid = parts[0]
+            try:
+                start, end = int(parts[3]), int(parts[4])
+            except ValueError:
+                continue
+            if ftype == "CDS":
+                cds.setdefault(seqid, []).append((start - 1, end))
+            elif ftype.lower() in _RNA_TYPES:
+                # region feature also gives contig length as a fallback if pragmas were absent.
+                rna.setdefault(seqid, []).append((start, end, ftype.lower()))
+            elif ftype in {"region", "databank_entry"} and seqid not in contig_len:
+                contig_len[seqid] = end
+    return contig_len, cds, rna
+
+
+def _audit_one(args_tuple: tuple) -> dict[str, Any] | None:
+    """Audit one genome's non-coding runs + RNA fusion. Returns a small per-genome stats dict."""
+    sample_id, gff_path, min_len = args_tuple
+    gpath = Path(gff_path)
+    if not gpath.exists():
+        return None
+    try:
+        contig_len, cds, rna = _parse_gff_lengths_cds_rna(gpath)
+    except (OSError, ValueError):
+        return None
+
+    len_hist = Counter()
+    n_runs = n_runs_gt_max = 0
+    n_windows = 0                 # total windows across all runs (ceil(len/MAX_LEN))
+    n_runs_with_rna = 0
+    max_run = 0
+    # union of contigs seen in CDS / RNA / lengths
+    seqids = set(contig_len) | set(cds) | set(rna)
+    for seqid in seqids:
+        clen = contig_len.get(seqid)
+        if clen is None:
+            # No length pragma and no region feature: fall back to the max coord we saw.
+            coords = [e for _, e in cds.get(seqid, [])] + [e for _, e, _ in rna.get(seqid, [])]
+            if not coords:
+                continue
+            clen = max(coords)
+        merged = _merge(cds.get(seqid, []))
+        runs: list[tuple[int, int]] = []
+        prev = 0
+        for s, e in merged:
+            if s > prev:
+                runs.append((prev, s))
+            prev = max(prev, e)
+        if prev < clen:
+            runs.append((prev, clen))
+        rna_here = rna.get(seqid, [])
+        for g0, g1 in runs:
+            rlen = g1 - g0
+            if rlen < min_len:
+                continue
+            n_runs += 1
+            max_run = max(max_run, rlen)
+            for i in range(len(_LEN_BINS) - 1):
+                if _LEN_BINS[i] <= rlen < _LEN_BINS[i + 1]:
+                    len_hist[i] += 1
+                    break
+            n_windows += -(-rlen // MAX_LEN)  # ceil
+            if rlen > MAX_LEN:
+                n_runs_gt_max += 1
+            # RNA contained in this run (run is 0-based half-open g0..g1; rna is 1-based inclusive).
+            contained = [(s, e, t) for (s, e, t) in rna_here if s - 1 >= g0 and e <= g1]
+            if contained:
+                n_runs_with_rna += 1
+
+    rna_flat = [(s, e, t) for lst in rna.values() for (s, e, t) in lst]
+    rna_len = [e - s + 1 for (s, e, _t) in rna_flat]
+    rna_type_counts = Counter(t for (_s, _e, t) in rna_flat)
+    return {
+        "sample": sample_id,
+        "n_runs": n_runs,
+        "n_runs_gt_max": n_runs_gt_max,
+        "n_windows": n_windows,
+        "n_runs_with_rna": n_runs_with_rna,
+        "max_run_len": max_run,
+        "len_hist": dict(len_hist),
+        "n_rna": len(rna_flat),
+        "n_rna_gt_max": sum(1 for x in rna_len if x > MAX_LEN),
+        "max_rna_len": max(rna_len) if rna_len else 0,
+        "rna_type_counts": dict(rna_type_counts),
+    }
+
+
+def _aggregate(per_genome: list[dict[str, Any]]) -> dict[str, Any]:
+    """Roll per-genome stats into cohort totals + the two headline fractions."""
+    n_g = len(per_genome)
+    tot_runs = sum(g["n_runs"] for g in per_genome)
+    tot_runs_gt = sum(g["n_runs_gt_max"] for g in per_genome)
+    tot_windows = sum(g["n_windows"] for g in per_genome)
+    tot_runs_rna = sum(g["n_runs_with_rna"] for g in per_genome)
+    tot_rna = sum(g["n_rna"] for g in per_genome)
+    tot_rna_gt = sum(g["n_rna_gt_max"] for g in per_genome)
+    len_hist = Counter()
+    rna_types = Counter()
+    for g in per_genome:
+        for k, v in g["len_hist"].items():
+            len_hist[int(k)] += v
+        for k, v in g["rna_type_counts"].items():
+            rna_types[k] += v
+    labels = [f"{_LEN_BINS[i]}-{_LEN_BINS[i + 1]}" for i in range(len(_LEN_BINS) - 1)]
+    labels[-1] = f">{_LEN_BINS[-2]}"
+    return {
+        "n_genomes": n_g,
+        "total_noncoding_runs": tot_runs,
+        "runs_over_maxlen": tot_runs_gt,
+        "runs_over_maxlen_frac": (tot_runs_gt / tot_runs) if tot_runs else 0.0,
+        "total_windows": tot_windows,
+        "extra_windows_from_long_runs": tot_windows - tot_runs,  # forwards added purely by windowing
+        "runs_containing_rna": tot_runs_rna,
+        "runs_containing_rna_frac": (tot_runs_rna / tot_runs) if tot_runs else 0.0,
+        "total_rna_bodies": tot_rna,
+        "rna_over_maxlen": tot_rna_gt,
+        "max_run_len_seen": max((g["max_run_len"] for g in per_genome), default=0),
+        "max_rna_len_seen": max((g["max_rna_len"] for g in per_genome), default=0),
+        "run_len_hist": {labels[int(k)]: v for k, v in sorted(len_hist.items())},
+        "rna_type_counts": dict(rna_types.most_common()),
+        "mean_runs_per_genome": (tot_runs / n_g) if n_g else 0.0,
+        "mean_rna_per_genome": (tot_rna / n_g) if n_g else 0.0,
+    }
+
+
+def run_audit(input_csv: Path, *, n: int | None, workers: int, min_len: int) -> dict[str, Any]:
+    """Audit every genome in ``input_csv`` (cols ``Sample``/``sr_gff_file``); return aggregate stats."""
+    df = pd.read_csv(input_csv).dropna(subset=["Sample", "sr_gff_file"])
+    df["Sample"] = df["Sample"].astype(str)
+    if n:
+        df = df.head(n)
+    tasks = [(r["Sample"], str(r["sr_gff_file"]), min_len) for _, r in df.iterrows()]
+    nw = min(workers, cpu_count(), len(tasks)) or 1
+    logger.info("auditing %d genomes with %d workers", len(tasks), nw)
+    with Pool(processes=nw) as pool:
+        per_genome = [g for g in pool.imap_unordered(_audit_one, tasks, chunksize=16) if g is not None]
+    logger.info("audited %d/%d genomes (rest missing GFF)", len(per_genome), len(tasks))
+    return _aggregate(per_genome)
+
+
+def _print_summary(agg: dict[str, Any]) -> None:
+    print("\n=== non-coding channel audit ===")
+    print(f"genomes audited           : {agg['n_genomes']:,}")
+    print(f"non-coding runs (total)   : {agg['total_noncoding_runs']:,}  ({agg['mean_runs_per_genome']:.0f}/genome)")
+    print(f"runs > MAX_LEN (windowed) : {agg['runs_over_maxlen']:,}  ({agg['runs_over_maxlen_frac'] * 100:.3f}%)")
+    print(f"extra forwards from windows: {agg['extra_windows_from_long_runs']:,} "
+          f"(total windows {agg['total_windows']:,})")
+    print(f"longest run seen          : {agg['max_run_len_seen']:,} bp")
+    print(f"runs containing an RNA    : {agg['runs_containing_rna']:,}  "
+          f"({agg['runs_containing_rna_frac'] * 100:.2f}% of runs)")
+    print(f"RNA bodies (total)        : {agg['total_rna_bodies']:,}  ({agg['mean_rna_per_genome']:.0f}/genome)")
+    print(f"RNA bodies > MAX_LEN      : {agg['rna_over_maxlen']:,}  (longest {agg['max_rna_len_seen']:,} bp)")
+    print("run-length histogram (bp) :")
+    for k, v in agg["run_len_hist"].items():
+        print(f"    {k:>12} : {v:,}")
+    print("RNA type counts           :")
+    for k, v in agg["rna_type_counts"].items():
+        print(f"    {k:>12} : {v:,}")
+
+
+def main() -> None:
+    """CLI: audit the non-coding channel over an embedding-input CSV and write a JSON + summary."""
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+    ap = argparse.ArgumentParser(description="Audit baclm non-coding runs + RNA fusion (GFF-only, fast).")
+    ap.add_argument("--input-csv", type=Path, required=True, help="CSV with Sample + sr_gff_file columns")
+    ap.add_argument("--output", type=Path, required=True, help="output JSON path")
+    ap.add_argument("--n", type=int, default=None, help="limit number of genomes (sampling)")
+    ap.add_argument("--workers", type=int, default=32)
+    ap.add_argument("--min-len", type=int, default=30, help="mirror the extraction gap filter")
+    args = ap.parse_args()
+
+    agg = run_audit(args.input_csv, n=args.n, workers=args.workers, min_len=args.min_len)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(agg, indent=2))
+    _print_summary(agg)
+    print(f"\nJSON -> {args.output}")
+
+
+if __name__ == "__main__":
+    main()
