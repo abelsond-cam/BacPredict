@@ -38,6 +38,9 @@ MAX_LEN = 2048  # baclm char-level context; a region longer than this must be wi
 _RNA_TYPES = frozenset(
     {"rrna", "trna", "tmrna", "ncrna", "ncrna_gene", "antisense_rna", "rnase_p_rna", "srp_rna", "riboswitch"}
 )
+# Feature types we report the fusion breakdown for — RNA plus the other non-CDS features that share the
+# runs, so we can ask "should CRISPR / oriC / regulatory be embedded separately from the rest?".
+_FOCUS_TYPES = _RNA_TYPES | {"crispr", "crispr-repeat", "crispr-spacer", "oric", "orit", "regulatory_region"}
 # Run-length histogram edges (bp). Last bin is the >MAX_LEN tail.
 _LEN_BINS = [0, 100, 300, 1000, 2048, 4096, 8192, 1_000_000_000]
 
@@ -123,9 +126,11 @@ def _audit_one(args_tuple: tuple) -> dict[str, Any] | None:
     # If a >window run were split into RNA bodies vs non-RNA (IGR/other) segments, how many pieces
     # would STILL exceed the window (rrl-type RNA; long IGR/CRISPR stretches)?
     rna_pieces_gt_max = nonrna_pieces_gt_max = 0
-    # Per-RNA-type tallies: total, adjacent-to-IGR (run has >=_IGR_MARGIN unannotated bp),
-    # adjacent-to-another-RNA (run holds >1 RNA), and solo (run is essentially just this RNA).
-    rna_total, rna_adj_igr, rna_adj_rna, rna_solo = Counter(), Counter(), Counter(), Counter()
+    # Per-focus-type fusion tallies (RNA + CRISPR + oriC + regulatory + ...): total, adjacent-to-IGR
+    # (run has >=_IGR_MARGIN unannotated bp), adjacent-to-another-feature (run holds >1 annotated
+    # feature), solo (alone in its run). Plus an RNA-only adj-another-RNA count (operon signal).
+    foc_total, foc_adj_igr, foc_adj_other, foc_solo, rna_adj_rna = (
+        Counter(), Counter(), Counter(), Counter(), Counter())
     feature_type_counts = Counter()           # every non-CDS feature type (RNA + "other")
     rna_len_all: list[int] = []
 
@@ -182,18 +187,22 @@ def _audit_one(args_tuple: tuple) -> dict[str, Any] | None:
                     nonrna_pieces_gt_max += 1
             # Unannotated (true IGR) DNA in the run = run length minus all annotated feature coverage.
             annotated = sum(min(g1, e) - max(g0, s - 1) for (s, e, _t) in in_run)
-            igr_len = rlen - annotated
-            has_igr = igr_len >= _IGR_MARGIN
-            multi_rna = len(rnas) > 1
-            for (s, e, t) in rnas:
-                rna_total[t] += 1
-                rna_len_all.append(e - s + 1)
-                if has_igr:
-                    rna_adj_igr[t] += 1
-                if multi_rna:
-                    rna_adj_rna[t] += 1
-                if not has_igr and not multi_rna:
-                    rna_solo[t] += 1
+            has_igr = (rlen - annotated) >= _IGR_MARGIN     # fused with real intergenic DNA
+            has_other = len(in_run) > 1                     # another annotated feature in the run
+            multi_rna = len(rnas) > 1                       # another RNA in the run (operon signal)
+            for (s, e, t) in in_run:
+                if t in _FOCUS_TYPES:
+                    foc_total[t] += 1
+                    if has_igr:
+                        foc_adj_igr[t] += 1
+                    if has_other:
+                        foc_adj_other[t] += 1
+                    if not has_igr and not has_other:
+                        foc_solo[t] += 1
+                if t in _RNA_TYPES:
+                    rna_len_all.append(e - s + 1)
+                    if multi_rna:
+                        rna_adj_rna[t] += 1
 
     return {
         "sample": sample_id,
@@ -206,13 +215,14 @@ def _audit_one(args_tuple: tuple) -> dict[str, Any] | None:
         "n_runs_with_rna": n_runs_with_rna,
         "max_run_len": max_run,
         "len_hist": dict(len_hist),
-        "n_rna": sum(rna_total.values()),
+        "n_rna": sum(v for t, v in foc_total.items() if t in _RNA_TYPES),
         "n_rna_gt_max": sum(1 for x in rna_len_all if x > MAX_LEN),
         "max_rna_len": max(rna_len_all) if rna_len_all else 0,
-        "rna_total": dict(rna_total),
-        "rna_adj_igr": dict(rna_adj_igr),
+        "foc_total": dict(foc_total),
+        "foc_adj_igr": dict(foc_adj_igr),
+        "foc_adj_other": dict(foc_adj_other),
+        "foc_solo": dict(foc_solo),
         "rna_adj_rna": dict(rna_adj_rna),
-        "rna_solo": dict(rna_solo),
         "feature_type_counts": dict(feature_type_counts),
     }
 
@@ -230,32 +240,35 @@ def _aggregate(per_genome: list[dict[str, Any]]) -> dict[str, Any]:
     tot_rna = sum(g["n_rna"] for g in per_genome)
     tot_rna_gt = sum(g["n_rna_gt_max"] for g in per_genome)
     len_hist = Counter()
-    rna_total, rna_adj_igr, rna_adj_rna, rna_solo, feature_types = (
-        Counter(), Counter(), Counter(), Counter(), Counter())
+    foc_total, foc_adj_igr, foc_adj_other, foc_solo, rna_adj_rna, feature_types = (
+        Counter(), Counter(), Counter(), Counter(), Counter(), Counter())
     for g in per_genome:
         for k, v in g["len_hist"].items():
             len_hist[int(k)] += v
-        rna_total.update(g["rna_total"])
-        rna_adj_igr.update(g["rna_adj_igr"])
+        foc_total.update(g["foc_total"])
+        foc_adj_igr.update(g["foc_adj_igr"])
+        foc_adj_other.update(g["foc_adj_other"])
+        foc_solo.update(g["foc_solo"])
         rna_adj_rna.update(g["rna_adj_rna"])
-        rna_solo.update(g["rna_solo"])
         feature_types.update(g["feature_type_counts"])
     labels = [f"{_LEN_BINS[i]}-{_LEN_BINS[i + 1]}" for i in range(len(_LEN_BINS) - 1)]
     labels[-1] = f">{_LEN_BINS[-2]}"
     def per_g(x):  # cohort total -> per-genome average
         return (x / n_g) if n_g else 0.0
-    # Per-RNA-type: total, per-genome average, adjacent-to-IGR (unannotated DNA) (+frac),
-    # adjacent-to-other-RNA (in a run with another RNA), solo (tightly CDS-flanked, alone).
-    rna_breakdown = {
+    # Per-focus-type fusion breakdown (RNA + CRISPR + oriC + regulatory + ...): total, per-genome,
+    # adjacent-to-IGR (unannotated DNA in the run) (+frac), adjacent-to-another-annotated-feature,
+    # solo (alone in its run). adjacent_to_other_rna is populated for RNA types only (operon signal).
+    feature_breakdown = {
         t: {
-            "total": rna_total[t],
-            "per_genome": per_g(rna_total[t]),
-            "adjacent_to_igr": rna_adj_igr[t],
-            "adjacent_to_igr_frac": (rna_adj_igr[t] / rna_total[t]) if rna_total[t] else 0.0,
-            "adjacent_to_other_rna": rna_adj_rna[t],
-            "solo_cds_flanked": rna_solo[t],
+            "total": foc_total[t],
+            "per_genome": per_g(foc_total[t]),
+            "adjacent_to_igr": foc_adj_igr[t],
+            "adjacent_to_igr_frac": (foc_adj_igr[t] / foc_total[t]) if foc_total[t] else 0.0,
+            "adjacent_to_other_feature": foc_adj_other[t],
+            "adjacent_to_other_rna": rna_adj_rna[t] if t in _RNA_TYPES else None,
+            "solo_in_run": foc_solo[t],
         }
-        for t in sorted(rna_total, key=lambda x: -rna_total[x])
+        for t in sorted(foc_total, key=lambda x: -foc_total[x])
     }
     return {
         "n_genomes": n_g,
@@ -280,7 +293,7 @@ def _aggregate(per_genome: list[dict[str, Any]]) -> dict[str, Any]:
         "max_run_len_seen": max((g["max_run_len"] for g in per_genome), default=0),
         "max_rna_len_seen": max((g["max_rna_len"] for g in per_genome), default=0),
         "run_len_hist": {labels[int(k)]: v for k, v in sorted(len_hist.items())},
-        "rna_breakdown": rna_breakdown,
+        "feature_breakdown": feature_breakdown,
         "feature_type_counts": dict(feature_types.most_common()),
         "feature_per_genome": {k: per_g(v) for k, v in feature_types.most_common()},
     }
@@ -324,11 +337,14 @@ def _print_summary(agg: dict[str, Any]) -> None:
     print("run-length histogram (bp) :")
     for k, v in agg["run_len_hist"].items():
         print(f"    {k:>12} : {v:,}")
-    print("per-RNA-type adjacency    :  (adj-IGR = >=30bp UNANNOTATED DNA in run; adj-RNA = another RNA in run)")
-    print(f"    {'type':>10} {'/genome':>8} {'total':>10} {'adj-IGR':>12} {'adj-RNA':>10} {'solo':>10}")
-    for t, d in agg["rna_breakdown"].items():
-        print(f"    {t:>10} {d['per_genome']:>8.1f} {d['total']:>10,} {d['adjacent_to_igr']:>10,} "
-              f"({d['adjacent_to_igr_frac'] * 100:4.1f}%) {d['adjacent_to_other_rna']:>10,} {d['solo_cds_flanked']:>10,}")
+    print("feature fusion breakdown  :  (adj-IGR = >=30bp UNANNOTATED DNA in run; adj-feat = another "
+          "annotated feature in run; adj-RNA = another RNA [RNA rows only])")
+    print(f"    {'type':>18} {'/genome':>8} {'total':>11} {'adj-IGR':>13} {'adj-feat':>10} {'adj-RNA':>10} {'solo':>9}")
+    for t, d in agg["feature_breakdown"].items():
+        adj_rna = f"{d['adjacent_to_other_rna']:,}" if d["adjacent_to_other_rna"] is not None else "-"
+        print(f"    {t:>18} {d['per_genome']:>8.1f} {d['total']:>11,} {d['adjacent_to_igr']:>11,} "
+              f"({d['adjacent_to_igr_frac'] * 100:4.1f}%) {d['adjacent_to_other_feature']:>10,} {adj_rna:>10} "
+              f"{d['solo_in_run']:>9,}")
     print("all non-CDS features/genome:")
     for k, v in agg["feature_per_genome"].items():
         print(f"    {k:>16} : {v:6.1f}  ({agg['feature_type_counts'][k]:,})")

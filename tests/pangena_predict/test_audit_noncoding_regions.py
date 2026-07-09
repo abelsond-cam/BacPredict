@@ -41,9 +41,9 @@ def test_audit_counts_runs_windows_and_rna_fusion(tmp_path):
     assert agg["total_rna_bodies"] == 1
     assert agg["rna_over_maxlen"] == 0
     # rRNA 250-350 (101 bp) sits in run 201-399 (199 bp) -> ~98 bp of flanking IGR -> adjacent to IGR.
-    rb = agg["rna_breakdown"]["rrna"]
+    rb = agg["feature_breakdown"]["rrna"]
     assert rb["total"] == 1
-    assert rb["adjacent_to_igr"] == 1 and rb["solo_cds_flanked"] == 0
+    assert rb["adjacent_to_igr"] == 1 and rb["solo_in_run"] == 0
     assert rb["adjacent_to_other_rna"] == 0
     assert agg["feature_type_counts"] == {"rrna": 1}
 
@@ -69,11 +69,12 @@ def test_audit_solo_rna_and_other_feature_types(tmp_path):
     agg = run_audit(csv, n=None, workers=1, min_len=30)
 
     # tRNA 105-200 (96 bp) in run 100-204 (104 bp) -> ~8 bp IGR (<30) -> solo, not IGR-adjacent.
-    rb = agg["rna_breakdown"]["trna"]
-    assert rb["total"] == 1 and rb["solo_cds_flanked"] == 1 and rb["adjacent_to_igr"] == 0
-    # The CRISPR array is a non-CDS "other" feature (not RNA) -> shows in the feature tally only.
+    rb = agg["feature_breakdown"]["trna"]
+    assert rb["total"] == 1 and rb["solo_in_run"] == 1 and rb["adjacent_to_igr"] == 0
+    # The CRISPR array is now in the fusion breakdown too (its own run, 400-1000 span) + feature tally.
     assert agg["feature_type_counts"].get("crispr") == 1
-    assert "crispr" not in agg["rna_breakdown"]
+    cr = agg["feature_breakdown"]["crispr"]
+    assert cr["total"] == 1 and cr["adjacent_to_other_rna"] is None  # non-RNA -> no adj-RNA
 
 
 # contig c3: a run over the window whose rRNA body (rrl-like, 3101 bp) itself exceeds the window,
