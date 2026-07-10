@@ -111,7 +111,7 @@ def test_build_panels_filtered_zeroes_low_auroc_gene(tmp_path: Path, monkeypatch
     def fake_read(sid, esm_dir, parquet_dir):
         return (gene_names, emb_by_id[sid]) if sid in emb_by_id else None
 
-    monkeypatch.setattr(bplr, "_read_genome", fake_read)
+    monkeypatch.setattr(bplr, "read_genome", fake_read)
 
     filtered_dir, unfiltered_dir = tmp_path / "filtered", tmp_path / "unfiltered"
     filtered_dir.mkdir()

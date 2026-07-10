@@ -14,7 +14,7 @@ gene annotations — read from the FT cache manifest):
 - **FT-LR**  — LR on the gene's fine-tuned Bacformer embedding (loaded from the FT cache).
 
 Both are fit identically — zero-imputed over the full eval holdout, out-of-fold k-fold
-(:func:`pangena_predict.build_per_gene_lr_store._fit_one_gene_imputed`) — so the two AUROCs are directly
+(:func:`pangena_predict.build_per_gene_lr_store.fit_one_gene_imputed`) — so the two AUROCs are directly
 comparable on the same samples. Writes ``esm_vs_ft_per_gene_<drug>.csv``
 (gene_name, esm_lr_auroc, ft_lr_auroc, delta_ft_minus_esm, prevalence, n_carriers_*). CPU only — no forward
 pass (the FT embeddings are already cached by ``cache_ft_bacformer_gene_embeddings.py``).
@@ -30,7 +30,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from pangena_predict.build_per_gene_lr_store import _fit_one_gene_imputed, _read_genome
+from pangena_predict.build_per_gene_lr_store import fit_one_gene_imputed, read_genome
 from pangena_predict.snp_vs_esm_prediction import resolve_clean_splits
 
 logger = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ def collect_esm_vectors(
     vecs: dict[str, list[np.ndarray]] = {g: [] for g in top_genes}
     n_skipped = 0
     for k, sid in enumerate(eval_ids, 1):
-        read = _read_genome(sid, esm_dir, parquet_dir)
+        read = read_genome(sid, esm_dir, parquet_dir)
         if read is None:
             n_skipped += 1
             continue
@@ -105,14 +105,14 @@ def run(
         ftz = np.load(ftp, allow_pickle=True)
         ft_ids = [str(s) for s in ftz["sample_ids"]]
         ft_vec = ftz["vectors"]
-        ft_fit = _fit_one_gene_imputed(ft_ids, ft_vec, eval_ids, y_eval, ft_vec.shape[1],
+        ft_fit = fit_one_gene_imputed(ft_ids, ft_vec, eval_ids, y_eval, ft_vec.shape[1],
                                        n_folds=n_folds, seed=seed)
 
         e_ids = esm_ids.get(g, [])
         esm_fit = None
         if e_ids:
             e_vec = np.vstack(esm_vecs[g])
-            esm_fit = _fit_one_gene_imputed(e_ids, e_vec, eval_ids, y_eval, e_vec.shape[1],
+            esm_fit = fit_one_gene_imputed(e_ids, e_vec, eval_ids, y_eval, e_vec.shape[1],
                                             n_folds=n_folds, seed=seed)
 
         # frozen Bacformer token (same top gene, base backbone) — gives ESM → frozen → FT for lineage genes
@@ -121,7 +121,7 @@ def run(
         if frp is not None and frp.exists():
             frz = np.load(frp, allow_pickle=True)
             fr_vec = frz["vectors"]
-            frozen_fit = _fit_one_gene_imputed([str(s) for s in frz["sample_ids"]], fr_vec, eval_ids, y_eval,
+            frozen_fit = fit_one_gene_imputed([str(s) for s in frz["sample_ids"]], fr_vec, eval_ids, y_eval,
                                                fr_vec.shape[1], n_folds=n_folds, seed=seed)
             frozen_au = float(frozen_fit["auroc"]) if frozen_fit else float("nan")
 

@@ -32,9 +32,9 @@ import numpy as np
 import pandas as pd
 import torch
 
-from pangena_predict.bacformer_genome_vectors import _forward_inputs, _load_model
+from pangena_predict.bacformer_genome_vectors import forward_inputs, load_model
 from pangena_predict.locate_gene import flatten_proteins
-from pangena_predict.snp_vs_esm_prediction import _real_protein_indices, resolve_clean_splits
+from pangena_predict.snp_vs_esm_prediction import real_protein_indices, resolve_clean_splits
 from tl.embed.generate_embeddings import bacformer_last_hidden_state
 
 logger = logging.getLogger(__name__)
@@ -80,7 +80,7 @@ def run(
         all_ids = all_ids[:max_samples]
     logger.info("Forwarding %d eval genomes for %s (grain=%s)", len(all_ids), drug, grain)
 
-    model = _load_model(device, mode="finetuned", checkpoint=checkpoint)
+    model = load_model(device, mode="finetuned", checkpoint=checkpoint)
     model_dtype = next(model.parameters()).dtype
 
     mean_ids: list[str] = []
@@ -101,13 +101,13 @@ def run(
             continue
         gene_names = [r["gene_name"] for r in flatten_proteins(pd.read_parquet(pq))]
         store = torch.load(pt, map_location="cpu")
-        real_idx = _real_protein_indices(store, store["protein_embeddings"].shape[1])
+        real_idx = real_protein_indices(store, store["protein_embeddings"].shape[1])
         n_real = int(real_idx.numel())
         if n_real > len(gene_names):
             skips["misaligned"] = skips.get("misaligned", 0) + 1
             continue
 
-        inputs = _forward_inputs(store, device, model_dtype)
+        inputs = forward_inputs(store, device, model_dtype)
         lhs = bacformer_last_hidden_state(model, inputs)
         lhs = lhs[0] if lhs.dim() == 3 else lhs
         if not length_checked:

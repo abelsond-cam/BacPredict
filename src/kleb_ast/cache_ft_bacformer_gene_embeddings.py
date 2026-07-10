@@ -14,8 +14,8 @@ Why top-N and not "all > 0.6": the pervasive lineage signal means 600–1700 gen
 "all" would be ~26 GB/drug. Top-N (default 50, AUROC > 0.6 floor) is generous over the ~20 a multi-gene
 concat would use and keeps the store ~1 GB/drug.
 
-Reuses the pangena_predict forward helpers (``_load_model`` / ``_forward_inputs`` finetuned backbone,
-``_real_protein_indices``, ``flatten_proteins``, ``bacformer_last_hidden_state``). GPU; one drug per run.
+Reuses the pangena_predict forward helpers (``load_model`` / ``forward_inputs`` finetuned backbone,
+``real_protein_indices``, ``flatten_proteins``, ``bacformer_last_hidden_state``). GPU; one drug per run.
 """
 
 from __future__ import annotations
@@ -31,9 +31,9 @@ import numpy as np
 import pandas as pd
 import torch
 
-from pangena_predict.bacformer_genome_vectors import _forward_inputs, _load_model
+from pangena_predict.bacformer_genome_vectors import forward_inputs, load_model
 from pangena_predict.locate_gene import flatten_proteins
-from pangena_predict.snp_vs_esm_prediction import _real_protein_indices, resolve_clean_splits
+from pangena_predict.snp_vs_esm_prediction import real_protein_indices, resolve_clean_splits
 from tl.embed.generate_embeddings import bacformer_last_hidden_state
 
 logger = logging.getLogger(__name__)
@@ -89,7 +89,7 @@ def run(
 
     # mode="frozen" forwards the base backbone (no checkpoint) — to cache frozen tokens for the same top
     # genes, so the per-gene plot can show ESM → frozen → fine-tuned for non-AMR lineage genes too.
-    model = _load_model(device, mode=mode, checkpoint=checkpoint if mode == "finetuned" else None)
+    model = load_model(device, mode=mode, checkpoint=checkpoint if mode == "finetuned" else None)
     model_dtype = next(model.parameters()).dtype
 
     mean_ids: list[str] = []
@@ -107,7 +107,7 @@ def run(
             continue
         gene_names = [r["gene_name"] for r in flatten_proteins(pd.read_parquet(pq))]
         store = torch.load(pt, map_location="cpu")
-        real_idx = _real_protein_indices(store, store["protein_embeddings"].shape[1])
+        real_idx = real_protein_indices(store, store["protein_embeddings"].shape[1])
         n_real = int(real_idx.numel())
         if n_real > len(gene_names):
             skips["misaligned"] = skips.get("misaligned", 0) + 1
@@ -115,7 +115,7 @@ def run(
         gene_names = gene_names[:n_real]
         counts = Counter(g for g in gene_names if g in top_set)
 
-        inputs = _forward_inputs(store, device, model_dtype)
+        inputs = forward_inputs(store, device, model_dtype)
         lhs = bacformer_last_hidden_state(model, inputs)
         lhs = lhs[0] if lhs.dim() == 3 else lhs
         if not length_checked:

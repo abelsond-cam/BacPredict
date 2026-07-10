@@ -117,7 +117,7 @@ def resolve_clean_splits(
 # ---------------------------------------------------------------------------
 
 
-def _real_protein_indices(store: dict, n_rows: int) -> torch.Tensor:
+def real_protein_indices(store: dict, n_rows: int) -> torch.Tensor:
     """Raw row indices of the real proteins (flat order) in a stored ``.pt``.
 
     Two store layouts exist:
@@ -158,7 +158,7 @@ def _read_pooled_one(
     # whole [1, n_proteins, dim] tensor into RAM (otherwise ~15 MB × ~38k OOMs).
     store = torch.load(pt_path, map_location="cpu", mmap=True)
     prot_emb = store["protein_embeddings"][0]
-    real_idx = _real_protein_indices(store, prot_emb.shape[0])
+    real_idx = real_protein_indices(store, prot_emb.shape[0])
     # Guard against silent flat-order misalignment: the real-protein row count must
     # match the parquet's flat protein count, or the rpoB index is meaningless.
     if n_expected is not None and real_idx.numel() != n_expected:

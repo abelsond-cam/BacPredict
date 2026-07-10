@@ -53,7 +53,7 @@ from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 
 from pangena_predict.locate_gene import flatten_proteins
-from pangena_predict.snp_vs_esm_prediction import LOGREG_KW, _real_protein_indices
+from pangena_predict.snp_vs_esm_prediction import LOGREG_KW, real_protein_indices
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -138,7 +138,7 @@ def subsample_balanced(
     return picked
 
 
-def _read_genome(sample_id: str, esm_dir: Path, parquet_dir: Path) -> tuple[list[str | None], np.ndarray] | None:
+def read_genome(sample_id: str, esm_dir: Path, parquet_dir: Path) -> tuple[list[str | None], np.ndarray] | None:
     """Return ``(gene_names[:n_real], embedding[n_real, dim])`` aligned in flat order, or ``None``.
 
     The embedding store caps each genome at its first ``max_n_proteins`` proteins in flat order;
@@ -154,7 +154,7 @@ def _read_genome(sample_id: str, esm_dir: Path, parquet_dir: Path) -> tuple[list
 
     store = torch.load(pt, map_location="cpu", mmap=True)
     prot_emb = store["protein_embeddings"][0]
-    real_idx = _real_protein_indices(store, prot_emb.shape[0])
+    real_idx = real_protein_indices(store, prot_emb.shape[0])
     n_real = int(real_idx.numel())
     if n_real > len(gene_names):
         return None
@@ -222,7 +222,7 @@ def assemble_gene_matrices(
     read_ids: list[str] = []
     n_skipped = 0
     for k, sid in enumerate(train_ids, 1):
-        read = _read_genome(sid, esm_dir, parquet_dir)
+        read = read_genome(sid, esm_dir, parquet_dir)
         if read is None:
             n_skipped += 1
             continue
@@ -247,7 +247,7 @@ def assemble_gene_matrices(
 # ---------------------------------------------------------------------------
 
 
-def _fit_one_gene(ids: list[str], x: np.ndarray, y: np.ndarray, *, n_folds: int, seed: int) -> dict | None:
+def fit_one_gene(ids: list[str], x: np.ndarray, y: np.ndarray, *, n_folds: int, seed: int) -> dict | None:
     """Fit one gene's out-of-fold + full LR; ``None`` if its train labels are single-class."""
     n_pos = int(y.sum())
     if n_pos == 0 or n_pos == len(y):
@@ -273,7 +273,7 @@ def _fit_one_gene(ids: list[str], x: np.ndarray, y: np.ndarray, *, n_folds: int,
     }
 
 
-def _fit_one_gene_imputed(
+def fit_one_gene_imputed(
     present_ids: list[str], x_present: np.ndarray, all_ids: list[str], y_all: np.ndarray, dim: int,
     *, n_folds: int, seed: int,
 ) -> dict | None:
@@ -289,7 +289,7 @@ def _fit_one_gene_imputed(
     rows = [pos[s] for s in present_ids if s in pos]
     if rows:
         x[rows] = x_present[: len(rows)]
-    return _fit_one_gene(list(all_ids), x, y_all, n_folds=n_folds, seed=seed)
+    return fit_one_gene(list(all_ids), x, y_all, n_folds=n_folds, seed=seed)
 
 
 def fit_per_gene(
@@ -320,14 +320,14 @@ def fit_per_gene(
         y_all = np.array([label_map[s] for s in all_ids], dtype=int)
         dim = next(iter(gene_matrices.values()))[1].shape[1]
         results = Parallel(n_jobs=n_jobs)(
-            delayed(_fit_one_gene_imputed)(
+            delayed(fit_one_gene_imputed)(
                 gene_matrices[g][0], gene_matrices[g][1], all_ids, y_all, dim, n_folds=n_folds, seed=seed)
             for g in genes
         )
     else:
         ys = {g: np.array([label_map[s] for s in gene_matrices[g][0]], dtype=int) for g in genes}
         results = Parallel(n_jobs=n_jobs)(
-            delayed(_fit_one_gene)(gene_matrices[g][0], gene_matrices[g][1], ys[g], n_folds=n_folds, seed=seed)
+            delayed(fit_one_gene)(gene_matrices[g][0], gene_matrices[g][1], ys[g], n_folds=n_folds, seed=seed)
             for g in genes
         )
     fitted = {g: r for g, r in zip(genes, results, strict=True) if r is not None}
@@ -418,7 +418,7 @@ def build_panels(
     std_filtered, std_unfiltered = _Standardizer1D(), _Standardizer1D()
     n_written = 0
     for k, sid in enumerate(all_ids, 1):
-        read = _read_genome(sid, esm_dir, parquet_dir)
+        read = read_genome(sid, esm_dir, parquet_dir)
         if read is None:
             continue
         gene_names, emb = read

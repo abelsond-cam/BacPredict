@@ -19,10 +19,10 @@ import numpy as np
 import pandas as pd
 import torch
 
-from pangena_predict.bacformer_genome_vectors import _forward_inputs, _load_model
+from pangena_predict.bacformer_genome_vectors import forward_inputs, load_model
 from pangena_predict.card_gene_locator import build_card_presence, sidecar_dir_available
 from pangena_predict.coding_amr_lr import build_multi_gene_presence
-from pangena_predict.snp_vs_esm_prediction import _real_protein_indices
+from pangena_predict.snp_vs_esm_prediction import real_protein_indices
 from tl.embed.generate_embeddings import bacformer_last_hidden_state
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ def sweep_gene_tokens(
     real-protein count fails the flat-order guard are skipped (per gene). A day-one length assertion
     confirms ``last_hidden_state`` aligns 1:1 with the input rows before any token is trusted.
     """
-    model = _load_model(device, mode="frozen", checkpoint=None)
+    model = load_model(device, mode="frozen", checkpoint=None)
     model_dtype = next(model.parameters()).dtype
     tokens: dict[str, list[np.ndarray]] = {}
     ids: dict[str, list[str]] = {}
@@ -66,13 +66,13 @@ def sweep_gene_tokens(
             continue
         store = torch.load(pt_path, map_location="cpu")
         input_len = store["protein_embeddings"].shape[1]
-        real_idx = _real_protein_indices(store, input_len)
+        real_idx = real_protein_indices(store, input_len)
         # Any gene whose recorded n_proteins disagrees with this store is unsafe to index.
         usable = {g: fi for g, (fi, n_exp) in genes.items() if real_idx.numel() == n_exp and fi < real_idx.numel()}
         if not usable:
             skips["count_mismatch_or_oor"] = skips.get("count_mismatch_or_oor", 0) + 1
             continue
-        inputs = _forward_inputs(store, device, model_dtype)
+        inputs = forward_inputs(store, device, model_dtype)
         lhs = bacformer_last_hidden_state(model, inputs)
         lhs = lhs[0] if lhs.dim() == 3 else lhs
         if not length_checked:

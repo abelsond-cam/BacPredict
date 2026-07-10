@@ -30,7 +30,7 @@ import pandas as pd
 from sklearn.metrics import average_precision_score
 
 from kleb_ast.per_gene_lr_from_annotation import MIN_CARRIERS, collect_reliable_amr
-from pangena_predict.build_per_gene_lr_store import _fit_one_gene, _fit_one_gene_imputed
+from pangena_predict.build_per_gene_lr_store import fit_one_gene, fit_one_gene_imputed
 from pangena_predict.snp_vs_esm_prediction import resolve_clean_splits
 
 logger = logging.getLogger(__name__)
@@ -113,16 +113,16 @@ def run(
         if len(ent["ids"]) < MIN_CARRIERS or label not in san_of:
             continue
         esm_x = np.vstack(ent["vecs"]).astype(np.float32)
-        esm_fit = _fit_one_gene_imputed(ent["ids"], esm_x, read_ids, y_read, esm_x.shape[1],
+        esm_fit = fit_one_gene_imputed(ent["ids"], esm_x, read_ids, y_read, esm_x.shape[1],
                                         n_folds=n_folds, seed=seed)
         ft_ids, ft_vec = load_ft_gene(ft_cache_dir, san_of[label])
-        ft_fit = _fit_one_gene_imputed(ft_ids, ft_vec, all_ids, y_all, ft_vec.shape[1],
+        ft_fit = fit_one_gene_imputed(ft_ids, ft_vec, all_ids, y_all, ft_vec.shape[1],
                                        n_folds=n_folds, seed=seed)
         # frozen Bacformer per-gene LR (same imputed k-fold, FT-mean universe) — from the frozen token cache
         fr_fit = None
         if frozen_cache_dir is not None and (frozen_cache_dir / "frozen_amr_emb" / f"{san_of[label]}.npz").exists():
             fr_ids, fr_vec = load_frozen_gene(frozen_cache_dir, san_of[label])
-            fr_fit = _fit_one_gene_imputed(fr_ids, fr_vec, all_ids, y_all, fr_vec.shape[1],
+            fr_fit = fit_one_gene_imputed(fr_ids, fr_vec, all_ids, y_all, fr_vec.shape[1],
                                            n_folds=n_folds, seed=seed)
         esm_au, esm_ap = _fit_metrics(esm_fit, read_ids, y_read)
         ft_au, ft_ap = _fit_metrics(ft_fit, all_ids, y_all)
@@ -142,7 +142,7 @@ def run(
     # 2) concat: mean-only, mean ⊕ best ESM gene, mean ⊕ best FT gene (best by each one's reliable LR).
     def _score(x: np.ndarray) -> tuple[float, float]:
         """(AUROC, AUPRC) of the zero-imputed k-fold LR; AUPRC from the fit's out-of-fold probabilities."""
-        fit = _fit_one_gene(all_ids, x.astype(np.float32), y_all, n_folds=n_folds, seed=seed)
+        fit = fit_one_gene(all_ids, x.astype(np.float32), y_all, n_folds=n_folds, seed=seed)
         if not fit:
             return float("nan"), float("nan")
         p = np.array([fit["oof_prob"].get(s, np.nan) for s in all_ids])

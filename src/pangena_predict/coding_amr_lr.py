@@ -16,7 +16,7 @@ same protein row in each. The only new code here is the baclm reader: baclm's ``
 ``protein_embeddings`` as a plain ``[n_cds, 960]`` matrix (one row per CDS in flat order, **no** batch
 dim / attention mask / special tokens), so its row selection is a direct ``[flat_index]`` — unlike the
 ESM store, which interleaves/pads and needs
-:func:`pangena_predict.snp_vs_esm_prediction._real_protein_indices`.
+:func:`pangena_predict.snp_vs_esm_prediction.real_protein_indices`.
 
 CPU-only (sklearn LR over precomputed embeddings) — Stage-A smoke (``--n 10``) runs on a login node;
 the full cohort is a CPU sbatch (tens of thousands of single-row mmap reads; use ``--pool-workers``).

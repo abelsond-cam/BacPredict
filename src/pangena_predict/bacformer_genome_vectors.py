@@ -38,7 +38,7 @@ import numpy as np
 import torch
 
 from pangena_predict.locate_gene import build_gene_presence_table
-from pangena_predict.snp_vs_esm_prediction import _real_protein_indices, resolve_clean_splits
+from pangena_predict.snp_vs_esm_prediction import real_protein_indices, resolve_clean_splits
 from tl.embed.generate_embeddings import bacformer_last_hidden_state, load_bacformer_model
 from tl.train.evaluate import resolve_checkpoint_dir
 
@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
-def _forward_inputs(store: dict, device: str, model_dtype: torch.dtype) -> dict:
+def forward_inputs(store: dict, device: str, model_dtype: torch.dtype) -> dict:
     """Build the Bacformer forward kwargs from a stored ``.pt`` (bundle or plain).
 
     Mirrors the casts the deployed evaluator uses: float embeddings/masks → the
@@ -97,7 +97,7 @@ def load_finetuned_bacformer_backbone(checkpoint: Path, device: str) -> torch.nn
     return backbone.to(device).eval()
 
 
-def _load_model(device: str, *, mode: str, checkpoint: Path | None) -> torch.nn.Module:
+def load_model(device: str, *, mode: str, checkpoint: Path | None) -> torch.nn.Module:
     """The frozen base model (``mode="frozen"``) or a fine-tuned checkpoint backbone (``"finetuned"``)."""
     if mode == "finetuned":
         if checkpoint is None:
@@ -137,7 +137,7 @@ def _extract_gene_token_and_mean(
             continue
         store = torch.load(pt_path, map_location="cpu")
         input_len = store["protein_embeddings"].shape[1]
-        real_idx = _real_protein_indices(store, input_len)
+        real_idx = real_protein_indices(store, input_len)
         n_expected = int(row["n_proteins"])
         if real_idx.numel() != n_expected:
             skips["count_mismatch"] = skips.get("count_mismatch", 0) + 1
@@ -147,7 +147,7 @@ def _extract_gene_token_and_mean(
             skips["out_of_range"] = skips.get("out_of_range", 0) + 1
             continue
 
-        inputs = _forward_inputs(store, device, model_dtype)
+        inputs = forward_inputs(store, device, model_dtype)
         lhs = bacformer_last_hidden_state(model, inputs)
         lhs = lhs[0] if lhs.dim() == 3 else lhs
         if not length_checked:
@@ -189,7 +189,7 @@ def compute_bacformer_vectors(
     ``checkpoint`` backbone (the deployed ~0.905 mean-pool model — A.1.i). Samples whose ``.pt`` is
     missing or whose real-protein count fails the flat-order guard are skipped.
     """
-    model = _load_model(device, mode=mode, checkpoint=checkpoint)
+    model = load_model(device, mode=mode, checkpoint=checkpoint)
     return _extract_gene_token_and_mean(model, gene_table, esm_store_dir, device=device, pt_suffix=pt_suffix)
 
 

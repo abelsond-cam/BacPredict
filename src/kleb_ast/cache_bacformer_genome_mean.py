@@ -9,7 +9,7 @@ Computing it once over the whole Kp cohort lets every per-drug concat probe + la
 Parquet-free: unlike :mod:`pangena_predict.bacformer_genome_vectors` (which also extracts a gene token at
 a gene's flat index, needing the protein parquet and a single-copy filter), the genome mean needs only
 the ESM-C store's real-protein rows — so this covers *every* Kp genome, with no gene-presence filter.
-Reuses the shared forward helpers (``_load_model`` / ``_forward_inputs`` / ``_real_protein_indices`` /
+Reuses the shared forward helpers (``load_model`` / ``forward_inputs`` / ``real_protein_indices`` /
 ``bacformer_last_hidden_state``) so the model load, dtype casts, and flat-order guard match the deployed
 evaluator exactly. Output NPZ ``{sample_ids, mean_vectors}`` is the ``--bacformer-vectors`` contract.
 """
@@ -24,8 +24,8 @@ import numpy as np
 import pandas as pd
 import torch
 
-from pangena_predict.bacformer_genome_vectors import _forward_inputs, _load_model
-from pangena_predict.snp_vs_esm_prediction import _real_protein_indices
+from pangena_predict.bacformer_genome_vectors import forward_inputs, load_model
+from pangena_predict.snp_vs_esm_prediction import real_protein_indices
 from tl.embed.generate_embeddings import bacformer_last_hidden_state
 
 logger = logging.getLogger(__name__)
@@ -48,11 +48,11 @@ def compute_genome_means(
 ) -> tuple[np.ndarray, list[str]]:
     """Frozen Bacformer genome-mean per genome → ``(mean_matrix [N, dim], kept_sample_ids)``.
 
-    One forward pass per genome; the mean is over the real-protein rows (``_real_protein_indices``).
+    One forward pass per genome; the mean is over the real-protein rows (``real_protein_indices``).
     A day-one guard asserts ``last_hidden_state`` aligns 1:1 with the input rows. Genomes whose ``.pt``
     is missing or has no real proteins are skipped (counted in the warning).
     """
-    model = _load_model(device, mode="frozen", checkpoint=None)
+    model = load_model(device, mode="frozen", checkpoint=None)
     model_dtype = next(model.parameters()).dtype
 
     means: list[np.ndarray] = []
@@ -66,12 +66,12 @@ def compute_genome_means(
             continue
         store = torch.load(pt_path, map_location="cpu")
         input_len = store["protein_embeddings"].shape[1]
-        real_idx = _real_protein_indices(store, input_len)
+        real_idx = real_protein_indices(store, input_len)
         if real_idx.numel() == 0:
             skips["no_real_proteins"] = skips.get("no_real_proteins", 0) + 1
             continue
 
-        inputs = _forward_inputs(store, device, model_dtype)
+        inputs = forward_inputs(store, device, model_dtype)
         lhs = bacformer_last_hidden_state(model, inputs)
         lhs = lhs[0] if lhs.dim() == 3 else lhs
         if not length_checked:
