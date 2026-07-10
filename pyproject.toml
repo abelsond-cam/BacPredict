@@ -105,7 +105,10 @@ packages = [
   "src/tb_ast",
   "src/kleb_ast",
   "src/kleb_iso_source",
-  "src/predict_hgt",
+  "src/pangena_predict",
+  "src/bac_pyseer",
+  "src/gene_array_lasso",
+  "src/dp_short_read",
 ]
 
 [tool.uv.sources]

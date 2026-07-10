@@ -1,6 +1,6 @@
 # API
 
-The `bacpredict` distribution is split into five top-level packages: one shared toolbox umbrella (`tl`, containing `tl.embed`, `tl.genome_download`, `tl.train`) plus four task-scoped packages (`tb_ast`, `kleb_ast`, `kleb_iso_source`, `predict_hgt`). Task packages depend on `tl.*`; `tl.*` does not depend on task packages.
+The `bacpredict` distribution is split into a shared toolbox umbrella (`tl`, containing `tl.embed`, `tl.genome_download`, `tl.train`) plus task-scoped packages (`tb_ast`, `kleb_ast`, `kleb_iso_source`, `pangena_predict`). Task packages depend on `tl.*`; `tl.*` does not depend on task packages.
 
 Tasks 4 (mixed-assembly detection) and 5 (DefensePredictor on short reads) are deferred — see `ToDo.md`; their task packages will be added when work resumes.
 
@@ -68,7 +68,6 @@ Tasks 4 (mixed-assembly detection) and 5 (DefensePredictor on short reads) are d
     train_amr
     prepare_esmc_embeddings_and_labels_to_finetune_amr
     preprocess_ebi_amr_records
-    convert_ast_data
     add_paths_gff_fna_to_metadata
     add_bakta_gbff_downloaded_flag
     find_missing_embeddings
@@ -91,6 +90,3 @@ Tasks 4 (mixed-assembly detection) and 5 (DefensePredictor on short reads) are d
     isolation_source_cli_parsing
 ```
 
-## Task: `predictHGT` (`predict_hgt`)
-
-Empty Python package — diagnostic, no entrypoints yet. See [src/predict_hgt/CLAUDE.md](../src/predict_hgt/CLAUDE.md) for the plan.

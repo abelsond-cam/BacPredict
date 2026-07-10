@@ -124,7 +124,7 @@ the task [CLAUDE.md](src/pangena_predict/CLAUDE.md); approved plan in
   head-line; optional reference-AUROC assertion),
   [rpob_genotype.py](src/pangena_predict/rpob_genotype.py) (RRDR allele + **rpoB-copy QC** +
   provenance docstring), [locate_gene.py](src/pangena_predict/locate_gene.py),
-  [frozen_bacformer_rpob_vectors.py](src/pangena_predict/frozen_bacformer_rpob_vectors.py) (2b GPU),
+  [bacformer_genome_vectors.py](src/pangena_predict/bacformer_genome_vectors.py) (2b GPU),
   [geometry_probe.py](src/pangena_predict/geometry_probe.py) (3b),
   [reference_gene/rpoB_H37Rv.faa](src/pangena_predict/reference_gene/rpoB_H37Rv.faa),
   scripts `run_snp_vs_esm_prediction.sh` + `smoke_geometry_probe.sh`. Shared touch:

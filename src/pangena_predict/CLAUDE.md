@@ -2,7 +2,7 @@
 
 **Status: active diagnostic.** Branch `dev`. This file is the **operational reference** for an agent
 picking up the work — paths, models, the file map, and current state. The **results, AUROCs,
-conclusions, and open questions live in [`PROGRESS_REPORT.md`](PROGRESS_REPORT.md)** (the shareable
+conclusions, and open questions live in [`PROGRESS_REPORT.md`](docs/_archive/PROGRESS_REPORT.md)** (the shareable
 write-up). Global conventions: root [CLAUDE.md](../../CLAUDE.md) §0. Cross-task tracker:
 [ToDo.md](../../ToDo.md). Approved plan: `~/.claude/plans/i-d-like-to-start-crystalline-allen.md`.
 
@@ -26,7 +26,7 @@ open problem is the **read-out**, not the embedding.
 
 Three label-blind, read-only **attention diagnostics** are in flight over the 1,000-genome manifest,
 to separate Bacformer's *internal* attention (attends *rpoB*) from the prediction *head's* pooling
-(untested) — see `PROGRESS_REPORT.md` §6 for D1/D2/D3 and the architecture decision they feed.
+(untested) — see [`PROGRESS_REPORT.md`](docs/_archive/PROGRESS_REPORT.md) §6 for D1/D2/D3 and the architecture decision they feed.
 After them: pick the read-out fix (multi-head pool / surprisal panel / top-K-attended-gene head).
 
 ## Models
