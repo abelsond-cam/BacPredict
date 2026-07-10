@@ -179,7 +179,7 @@ def build_gene_presence_table(
 ) -> pd.DataFrame:
     """Per-genome single-copy flat index of ``gene`` — the generic, any-gene presence table.
 
-    The gene-agnostic analogue of :func:`pangena_predict.rpob_genotype.build_genotype_table`, without
+    The gene-agnostic analogue of the archived rpoB genotyper's ``build_genotype_table``, without
     the rpoB-specific RRDR allele calling: for each sample, flatten its proteins and keep the genomes
     where ``gene`` (case-insensitive, plus ``aliases``) appears **exactly once** (single-copy). Genomes
     where the gene is absent or multi-copy are skipped and counted (optionally logged to

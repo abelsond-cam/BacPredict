@@ -45,10 +45,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from pangena_predict.bacformer_genome_vectors import compute_bacformer_vectors
+from pangena_predict.bacformer_genome_vectors import RIFAMPIN_COLUMN, compute_bacformer_vectors
 from pangena_predict.kfold_probe import FeatureSpec, run_kfold_probe, summarise_kfold
 from pangena_predict.locate_gene import build_gene_presence_table
-from pangena_predict.rpob_genotype import RIFAMPIN_COLUMN
 from pangena_predict.snp_vs_esm_prediction import (
     fit_score_step,
     load_bacformer_vectors,

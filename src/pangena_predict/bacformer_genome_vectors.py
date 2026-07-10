@@ -38,10 +38,12 @@ import numpy as np
 import torch
 
 from pangena_predict.locate_gene import build_gene_presence_table
-from pangena_predict.rpob_genotype import RIFAMPIN_COLUMN
 from pangena_predict.snp_vs_esm_prediction import _real_protein_indices, resolve_clean_splits
 from tl.embed.generate_embeddings import bacformer_last_hidden_state, load_bacformer_model
 from tl.train.evaluate import resolve_checkpoint_dir
+
+# Default cohort drug (TB rpoB/rifampicin). Superseded by OrganismConfig in a later refactor step.
+RIFAMPIN_COLUMN = "rifampin"
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

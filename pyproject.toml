@@ -150,6 +150,8 @@ matrix.deps.env-vars = [
 line-length = 120
 src = [ "src" ]
 extend-include = [ "*.ipynb" ]
+# Frozen concluded strands — a snapshot of what was run, not maintained code.
+extend-exclude = [ "**/_archive/**" ]
 
 format.docstring-code-format = true
 
@@ -200,7 +202,7 @@ source = [
   "tb_ast",
   "kleb_ast",
   "kleb_iso_source",
-  "predict_hgt",
+  "pangena_predict",
 ]
 patch = [ "subprocess" ]
 omit = [
