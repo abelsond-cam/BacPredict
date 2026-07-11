@@ -6,7 +6,7 @@ causal protein — e.g. an *rpoB* RRDR point mutation — into the ~4,000 others
 the genome. The Task-7 diagnostic localised the TB-AST defect to exactly this
 step: the frozen *rpoB*-token AUROC (0.953) collapses to 0.788 once mean-pooled,
 and fine-tuning the mean-pool head recovers only to 0.905
-(``src/pangena_predict/docs/PROGRESS_REPORT.md``).
+(``src/bacpredict/_archive/tb_snp_diagnostic/... (archived)``).
 
 This module swaps that mean for a learned **gated-attention multiple-instance
 -learning (MIL) pool** (Ilse, Tomczak & Welling, 2018), so the genome

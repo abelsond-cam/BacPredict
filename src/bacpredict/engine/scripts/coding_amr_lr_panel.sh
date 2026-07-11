@@ -3,8 +3,8 @@
 # coding regions with the information ESM holds. CPU-only (sklearn LR over precomputed 960-vectors);
 # the cost is ~38k single-row mmap .pt reads per gene, parallelised by --pool-workers.
 #
-#   sbatch --export=ALL,TASK=tb   -J coding-amr-tb   src/pangena_predict/scripts/coding_amr_lr_panel.sh
-#   sbatch --export=ALL,TASK=kleb -J coding-amr-kleb src/pangena_predict/scripts/coding_amr_lr_panel.sh
+#   sbatch --export=ALL,TASK=tb   -J coding-amr-tb   src/bacpredict/engine/scripts/coding_amr_lr_panel.sh
+#   sbatch --export=ALL,TASK=kleb -J coding-amr-kleb src/bacpredict/engine/scripts/coding_amr_lr_panel.sh
 #SBATCH --partition=workq
 #SBATCH --account=brics.u6fp
 #SBATCH --qos=normal
@@ -31,7 +31,7 @@ esac
 OUT="$S/processed/train_${TASK}_ast/pangena_predict/coding_amr_lr/panel_${SPECIES}_${SLURM_JOB_ID:-local}.json"
 
 echo "=== coding_amr_lr panel: species=$SPECIES workers=${SLURM_CPUS_PER_TASK:-8} ==="
-"$PY" "$HOME/BacPredict/src/pangena_predict/coding_amr_lr.py" \
+"$PY" "$HOME/BacPredict/src/bacpredict/engine/gene_lr/coding_amr_lr.py" \
   --species "$SPECIES" --panel --n-folds 5 --seeds 1,2,3 \
   --pool-workers "${SLURM_CPUS_PER_TASK:-8}" \
   --output "$OUT"

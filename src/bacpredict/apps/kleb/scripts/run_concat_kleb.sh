@@ -2,7 +2,7 @@
 # Kp concat probe — ESM-C top-gene vector (auto-picked from the per-gene ranking) (+) Bacformer
 # genome-mean -> logistic regression, scored on the canonical eval fold + a k-fold x m-seed harness.
 #
-# The Kp port of src/pangena_predict/scripts/run_concat_kfold_frozen.sh (same module,
+# The Kp port of src/bacpredict/engine/scripts/run_concat_kfold_frozen.sh (same module,
 # pangena_predict.concatenate_bacformer_genome_esm_protein_emb). CPU-only: the Bacformer genome-mean is
 # loaded from the cached frozen NPZ (bacformer_frozen_genome_mean.npz, 6838 x 960) via --bacformer-vectors,
 # and --gene-from-ranking reads the top out-of-fold-AUROC gene from each drug's per_gene_lr_<drug>.csv.
@@ -69,7 +69,7 @@ echo "Ranking: $RANK   NPZ: $NPZ"
 echo "Out:     $OUT/concat_frozen_${DRUG}_${SLURM_ARRAY_JOB_ID}.json"
 echo "========================================================================"
 
-uv run python src/pangena_predict/concatenate_bacformer_genome_esm_protein_emb.py \
+uv run python src/bacpredict/engine/concat/concatenate_bacformer_genome_esm_protein_emb.py \
     --ast-sheet-path "$SHEET" \
     --parquet-dir "$PARQUET" \
     --esm-store-dir "$EMB" \

@@ -4,8 +4,8 @@
 # the SAME rows to the ESM and baclm LRs (paired Δ). Distinguishes "baclm gap closes with data"
 # (data-hungry embedding) from "baclm has a lower ceiling" (persistent gap). CPU-only.
 #
-#   sbatch --export=ALL,TASK=tb   -J coding-ladder-tb   src/pangena_predict/scripts/coding_amr_ladder.sh
-#   sbatch --export=ALL,TASK=kleb -J coding-ladder-kleb src/pangena_predict/scripts/coding_amr_ladder.sh
+#   sbatch --export=ALL,TASK=tb   -J coding-ladder-tb   src/bacpredict/engine/scripts/coding_amr_ladder.sh
+#   sbatch --export=ALL,TASK=kleb -J coding-ladder-kleb src/bacpredict/engine/scripts/coding_amr_ladder.sh
 #SBATCH --partition=workq
 #SBATCH --account=brics.u6fp
 #SBATCH --qos=normal
@@ -38,7 +38,7 @@ FINE_UNTIL="${FINE_UNTIL:-6000}"
 OUT="$S/processed/train_${TASK}_ast/pangena_predict/coding_amr_lr/ladder_${SPECIES}_${SLURM_JOB_ID:-local}.json"
 
 echo "=== coding_amr_lr ladder: species=$SPECIES step=$STEP fine_until=$FINE_UNTIL workers=${SLURM_CPUS_PER_TASK:-8} ==="
-"$PY" "$HOME/BacPredict/src/pangena_predict/coding_amr_lr.py" \
+"$PY" "$HOME/BacPredict/src/bacpredict/engine/gene_lr/coding_amr_lr.py" \
   --species "$SPECIES" --panel --ladder \
   --ladder-step "$STEP" --ladder-fine-until "$FINE_UNTIL" \
   --seeds 1,2,3 --plot \

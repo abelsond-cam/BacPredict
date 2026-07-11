@@ -12,7 +12,7 @@
 # (For the FINE-TUNED mean this cached-NPZ k-fold would be LEAKY — the backbone trained on the genomes'
 #  labels; see run_concat_ft_mean.sh. Use it only on the frozen mean, as here.)
 #
-# Usage:  sbatch src/pangena_predict/scripts/run_concat_kfold_frozen.sh
+# Usage:  sbatch src/bacpredict/engine/scripts/run_concat_kfold_frozen.sh
 #
 #SBATCH --job-name=concat_kfold_frozen
 #SBATCH --output=concat_kfold_frozen_%j.out
@@ -56,7 +56,7 @@ echo "Output JSON: $OUT_JSON"
 echo "Job ID:      $SLURM_JOB_ID"
 echo "========================================================================"
 
-uv run python src/pangena_predict/concatenate_bacformer_genome_esm_protein_emb.py \
+uv run python src/bacpredict/engine/concat/concatenate_bacformer_genome_esm_protein_emb.py \
     --ast-sheet-path "$SHEET" \
     --parquet-dir "$PARQUET_DIR" \
     --esm-store-dir "$ESM_STORE_DIR" \

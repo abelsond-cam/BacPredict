@@ -17,7 +17,7 @@
 # (eval AUROC 0.9768, job 30602029) on the IDENTICAL split, then read out the D1 head-pool
 # probe: does the gate now route to rpoB.
 #
-# Build the panel store first: src/pangena_predict/scripts/build_per_gene_lr_panel_store.sh
+# Build the panel store first: src/bacpredict/engine/scripts/build_per_gene_lr_panel_store.sh
 #
 # mode (1st positional arg, default filtered):
 #   none        : gated-MIL, NO panel, backbone FROZEN          -> same-split baseline

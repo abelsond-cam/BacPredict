@@ -73,7 +73,7 @@ if [[ -f "$OUT/per_gene_lr_${DRUG}.csv" ]]; then
 fi
 mkdir -p "$OUT"
 
-uv run python src/pangena_predict/build_per_gene_lr_store.py \
+uv run python src/bacpredict/engine/gene_lr/build_per_gene_lr_store.py \
     --split-csv "$SHEET" \
     --drug "$DRUG" \
     --parquet-dir "$PARQUET" \

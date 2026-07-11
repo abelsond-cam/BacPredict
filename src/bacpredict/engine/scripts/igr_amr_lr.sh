@@ -4,7 +4,7 @@
 # baclm intergenic_embeddings row, and runs the AUROC-vs-training-size ladder against the drug label.
 # Folds in the build-quality audit (CDS-flanked vs RNA-abutting, truncation). CPU-only.
 #
-#   sbatch --export=ALL,TASK=tb   -J igr-amr-tb   src/pangena_predict/scripts/igr_amr_lr.sh
+#   sbatch --export=ALL,TASK=tb   -J igr-amr-tb   src/bacpredict/engine/scripts/igr_amr_lr.sh
 #SBATCH --partition=workq
 #SBATCH --account=brics.u6fp
 #SBATCH --qos=normal
@@ -33,7 +33,7 @@ FINE_UNTIL="${FINE_UNTIL:-6000}"
 OUT="$S/processed/train_${TASK}_ast/pangena_predict/igr_amr_lr/promoter_${SPECIES}_${SLURM_JOB_ID:-local}.json"
 
 echo "=== igr_amr_lr promoter: species=$SPECIES step=$STEP fine_until=$FINE_UNTIL workers=${SLURM_CPUS_PER_TASK:-8} ==="
-"$PY" "$HOME/BacPredict/src/pangena_predict/igr_amr_lr.py" \
+"$PY" "$HOME/BacPredict/src/bacpredict/engine/gene_lr/igr_amr_lr.py" \
   --species "$SPECIES" \
   --ladder-step "$STEP" --ladder-fine-until "$FINE_UNTIL" \
   --seeds 1,2,3 --plot \

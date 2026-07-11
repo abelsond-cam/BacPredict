@@ -4,7 +4,7 @@
 # coding drivers' baclm + ESM (+ Bacformer, if --bacformer-npz points at a sweep) vs the drug label,
 # leaving non-coding / rRNA rows blank (one-hot only). CPU-only (NO --gres; --mem required).
 #
-#   sbatch --export=ALL,TASK=tb   -J driver-panel-tb   src/pangena_predict/scripts/driver_panel.sh
+#   sbatch --export=ALL,TASK=tb   -J driver-panel-tb   src/bacpredict/engine/scripts/driver_panel.sh
 #   # optional: BACFORMER_NPZ=/path/to/panel_tokens.npz to fill the Bacformer column
 #SBATCH --partition=workq
 #SBATCH --account=brics.u6fp
@@ -25,7 +25,7 @@ export MPLBACKEND=Agg
 AMR_ARG=""
 case "$TASK" in
   tb)   SPECIES=tb; FOLDER=tb; CSVPREFIX=tbprofiler_gene_lr; CSVSUFFIX=""
-        VIS="$HOME/BacPredict/src/pangena_predict/docs/visualisations" ;;
+        VIS="$HOME/BacPredict/src/bacpredict/docs/visualisations" ;;
   kleb) SPECIES=kp; FOLDER=kp; CSVPREFIX=card_determinant_lr; CSVSUFFIX="_family"
         VIS="$HOME/BacPredict/src/kleb_ast/docs/visualisations/amr_per_abx"
         # CARD sidecars locate acquired genes Bakta misses; falls back to Bakta names if unpopulated.
@@ -36,7 +36,7 @@ OUT="$S/processed/train_${TASK}_ast/pangena_predict/driver_panel"
 NPZ_ARG=""; [ -n "${BACFORMER_NPZ:-}" ] && NPZ_ARG="--bacformer-npz ${BACFORMER_NPZ}"
 
 echo "=== driver panel: species=$SPECIES csv=$VIS/${FOLDER}_* npz=${BACFORMER_NPZ:-none} ==="
-"$PY" "$HOME/BacPredict/src/pangena_predict/driver_panel.py" \
+"$PY" "$HOME/BacPredict/src/bacpredict/engine/plots/driver_panel.py" \
   --species "$SPECIES" \
   --csv-dir "$VIS" --folder-prefix "$FOLDER" --csv-prefix "$CSVPREFIX" --csv-suffix "$CSVSUFFIX" \
   --n-folds 5 --seeds 1,2,3 --pool-workers "${SLURM_CPUS_PER_TASK:-8}" \

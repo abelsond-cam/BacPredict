@@ -30,7 +30,7 @@
 set -uo pipefail
 # Run from node-local scratch (NOT the pixi dir): tb-profiler drops intermediate .paf/.vcf files in CWD,
 # which would litter the repo and collide across 200 tasks. Locate the env via --manifest-path instead.
-MANIFEST=/home/dca36/workspace/BacPredict/src/pangena_predict/tbprofiler/pixi.toml
+MANIFEST=/home/dca36/workspace/BacPredict/src/bacpredict/apps/tb/tbprofiler/pixi.toml
 WORK=${TMPDIR:-/tmp}/tbp_work_${SLURM_ARRAY_TASK_ID:-0}
 mkdir -p "$WORK" && cd "$WORK"
 

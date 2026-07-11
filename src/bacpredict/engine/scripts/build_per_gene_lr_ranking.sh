@@ -14,7 +14,7 @@
 # its own random class-balanced 2000-genome subsample (--max-train-genomes; full-cohort fit is I/O-heavy,
 # population correction deferred) over the FULL cohort split, fits ~2k per-gene LRs, NO per-sample panels.
 #
-# Usage:  sbatch src/pangena_predict/scripts/build_per_gene_lr_ranking.sh
+# Usage:  sbatch src/bacpredict/engine/scripts/build_per_gene_lr_ranking.sh
 #
 #SBATCH --job-name=per_gene_lr_ranking
 #SBATCH --output=per_gene_lr_ranking_%A_%a.out
@@ -62,7 +62,7 @@ echo "Job ID:  ${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 echo "========================================================================"
 mkdir -p "$OUT"
 
-uv run python src/pangena_predict/build_per_gene_lr_store.py \
+uv run python src/bacpredict/engine/gene_lr/build_per_gene_lr_store.py \
     --split-csv "$SHEET" \
     --drug "$DRUG" \
     --parquet-dir "$PARQUET" \

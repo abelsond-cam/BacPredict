@@ -13,7 +13,7 @@
 # NOT re-embedded), ~0.3 s/genome → ~2-3 GPU-h over the genotyped cohort. Caches the FT rpoB-token +
 # mean NPZ so the k-fold significance pass can rerun on CPU (see the tail comment).
 #
-# Usage:  sbatch src/pangena_predict/scripts/run_concat_ft_mean.sh
+# Usage:  sbatch src/bacpredict/engine/scripts/run_concat_ft_mean.sh
 #
 #SBATCH --job-name=concat_ft_mean
 #SBATCH --output=concat_ft_mean_%j.out
@@ -66,7 +66,7 @@ echo "FT NPZ cache: $SAVE_NPZ"
 echo "Job ID:      $SLURM_JOB_ID"
 echo "========================================================================"
 
-uv run python src/pangena_predict/concatenate_bacformer_genome_esm_protein_emb.py \
+uv run python src/bacpredict/engine/concat/concatenate_bacformer_genome_esm_protein_emb.py \
     --ast-sheet-path "$SHEET" \
     --parquet-dir "$PARQUET_DIR" \
     --esm-store-dir "$ESM_STORE_DIR" \

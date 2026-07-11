@@ -14,7 +14,7 @@
 # If a full-cohort frozen-Bacformer mean-vectors NPZ already exists, pass it as BAC_NPZ below and
 # switch the directives to a CPU partition — the whole probe then runs without a GPU.
 #
-# Usage:  sbatch src/pangena_predict/scripts/run_concat_rpob_mean.sh
+# Usage:  sbatch src/bacpredict/engine/scripts/run_concat_rpob_mean.sh
 #
 #SBATCH --job-name=concat_rpob_mean
 #SBATCH --output=concat_rpob_mean_%j.out
@@ -71,7 +71,7 @@ else
     echo "Computing frozen-Bacformer mean on GPU; caching to $SAVE_NPZ"
 fi
 
-uv run python src/pangena_predict/concatenate_bacformer_genome_esm_protein_emb.py \
+uv run python src/bacpredict/engine/concat/concatenate_bacformer_genome_esm_protein_emb.py \
     --ast-sheet-path "$SHEET" \
     --parquet-dir "$PARQUET_DIR" \
     --esm-store-dir "$ESM_STORE_DIR" \

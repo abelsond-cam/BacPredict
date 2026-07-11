@@ -3,8 +3,8 @@
 # coding driver gene's contextualised token (genes derived from the per-drug driver CSVs). Output NPZ
 # feeds driver_panel.py's Bacformer column. Runs in the lean gpu venv (has bacformer + transformers).
 #
-#   sbatch --export=ALL,TASK=tb   -J bacformer-panel-tb   src/pangena_predict/scripts/bacformer_gene_panel_vectors.sh
-#   sbatch --export=ALL,TASK=kleb -J bacformer-panel-kleb src/pangena_predict/scripts/bacformer_gene_panel_vectors.sh
+#   sbatch --export=ALL,TASK=tb   -J bacformer-panel-tb   src/bacpredict/engine/scripts/bacformer_gene_panel_vectors.sh
+#   sbatch --export=ALL,TASK=kleb -J bacformer-panel-kleb src/bacpredict/engine/scripts/bacformer_gene_panel_vectors.sh
 #SBATCH --partition=workq
 #SBATCH --account=brics.u6fp
 #SBATCH --qos=normal
@@ -25,7 +25,7 @@ export TOKENIZERS_PARALLELISM=false PYTORCH_CUDA_ALLOC_CONF=expandable_segments:
 AMR_ARG=""
 case "$TASK" in
   tb)   DIR=train_tb_ast;   FOLDER=tb; CSVPREFIX=tbprofiler_gene_lr; CSVSUFFIX=""
-        VIS="$HOME/BacPredict/src/pangena_predict/docs/visualisations" ;;
+        VIS="$HOME/BacPredict/src/bacpredict/docs/visualisations" ;;
   kleb) DIR=train_kleb_ast; FOLDER=kp; CSVPREFIX=card_determinant_lr; CSVSUFFIX="_family"
         VIS="$HOME/BacPredict/src/kleb_ast/docs/visualisations/amr_per_abx"
         AMR_ARG="--amr-sidecar-dir $S/processed/train_kleb_ast/amr_annotation" ;;
@@ -35,7 +35,7 @@ PROC="$S/processed/$DIR"
 OUT="$PROC/pangena_predict/driver_panel/bacformer_panel_tokens_${FOLDER}.npz"
 
 echo "=== bacformer gene-panel sweep: task=$TASK ==="
-"$PY" "$HOME/BacPredict/src/pangena_predict/bacformer_gene_panel_vectors.py" \
+"$PY" "$HOME/BacPredict/src/bacpredict/engine/concat/bacformer_gene_panel_vectors.py" \
   --ast-sheet-path "$PROC/binary_ast_with_split.csv" \
   --parquet-dir "$PROC/protein_sequences" \
   --esm-store-dir "$PROC/esm" \

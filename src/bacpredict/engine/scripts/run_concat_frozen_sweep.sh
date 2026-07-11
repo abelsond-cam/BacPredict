@@ -12,7 +12,7 @@
 # separate per-drug GPU pass (run_concat_ft_sweep.sh) — frozen ≈ FT for rifampin (0.975 vs 0.977), so
 # this frozen sweep is the generalisation backbone and the FT pass is the refinement.
 #
-# Usage:  sbatch --dependency=afterok:<ranking_jobid> src/pangena_predict/scripts/run_concat_frozen_sweep.sh
+# Usage:  sbatch --dependency=afterok:<ranking_jobid> src/bacpredict/engine/scripts/run_concat_frozen_sweep.sh
 #
 #SBATCH --job-name=concat_frozen_sweep
 #SBATCH --output=concat_frozen_sweep_%A_%a.out
@@ -69,7 +69,7 @@ echo "Frozen NPZ: $BAC_NPZ"
 echo "Out JSON: $OUT_JSON"
 echo "========================================================================"
 
-uv run python src/pangena_predict/concatenate_bacformer_genome_esm_protein_emb.py \
+uv run python src/bacpredict/engine/concat/concatenate_bacformer_genome_esm_protein_emb.py \
     --ast-sheet-path "$SHEET" \
     --parquet-dir "$PARQUET_DIR" \
     --esm-store-dir "$ESM_STORE_DIR" \

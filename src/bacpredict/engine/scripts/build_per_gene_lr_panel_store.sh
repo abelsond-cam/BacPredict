@@ -19,7 +19,7 @@
 # panel stores: filtered/ (out-of-fold train AUROC > 0.8) and unfiltered/ (all core genes).
 # Leakage check to read in build_summary.json: rpoB out-of-fold AUROC ~0.95-0.97, NOT 1.0.
 #
-#   sbatch src/pangena_predict/scripts/build_per_gene_lr_panel_store.sh
+#   sbatch src/bacpredict/engine/scripts/build_per_gene_lr_panel_store.sh
 #
 # In-memory footprint ~ n_train x n_core x 960 floats (~8 GB for the 1000-genome manifest);
 # the full ~38k cohort would need gene-batching (see the module docstring).
@@ -42,7 +42,7 @@ OUT=$RDS/tb_per_gene_lr_panel
 echo "Per-gene LR store build — sheet=$SHEET  out=$OUT"
 mkdir -p "$OUT"
 
-uv run python src/pangena_predict/build_per_gene_lr_store.py \
+uv run python src/bacpredict/engine/gene_lr/build_per_gene_lr_store.py \
     --split-csv "$SHEET" \
     --drug rifampin \
     --parquet-dir "$PARQUET" \

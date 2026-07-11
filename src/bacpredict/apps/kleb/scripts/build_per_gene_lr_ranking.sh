@@ -1,7 +1,7 @@
 #!/bin/bash
 # Kp per-gene ESM-C LR ranking — "does this gene's own ESM-C vector predict resistance?"
 #
-# The Kp port of src/pangena_predict/scripts/build_per_gene_lr_ranking.sh (same module,
+# The Kp port of src/bacpredict/engine/scripts/build_per_gene_lr_ranking.sh (same module,
 # pangena_predict.build_per_gene_lr_store; only the paths + drug list change). For every gene present in
 # >=10% of genomes (core + accessory) it fits a stand-alone out-of-fold LogisticRegression on that gene's
 # 960-d ESM-C protein vector -> the drug label, and ranks genes by their out-of-fold train AUROC. The top
@@ -73,7 +73,7 @@ if [[ -f "$OUT/per_gene_lr_${DRUG}.csv" ]]; then
 fi
 mkdir -p "$OUT"
 
-uv run python src/pangena_predict/build_per_gene_lr_store.py \
+uv run python src/bacpredict/engine/gene_lr/build_per_gene_lr_store.py \
     --split-csv "$SHEET" \
     --drug "$DRUG" \
     --parquet-dir "$PARQUET" \

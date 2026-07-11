@@ -7,7 +7,7 @@
 # evaluate is meaningless (ablation sanity auto-skipped on a smoke) — we only check it runs and writes
 # the JSON with mean_variant="finetuned". The contrast vs the frozen smoke is the FT-backbone load.
 #
-# Usage (on the HPC login node):  bash src/pangena_predict/scripts/smoke_concat_ft_mean.sh
+# Usage (on the HPC login node):  bash src/bacpredict/engine/scripts/smoke_concat_ft_mean.sh
 set -euo pipefail
 
 cd /home/dca36/workspace/BacPredict
@@ -27,7 +27,7 @@ if [[ -z "$CKPT" ]]; then
 fi
 echo "Fine-tuned checkpoint: $CKPT"
 
-uv run python src/pangena_predict/concatenate_bacformer_genome_esm_protein_emb.py \
+uv run python src/bacpredict/engine/concat/concatenate_bacformer_genome_esm_protein_emb.py \
     --ast-sheet-path "$RDS/binary_ast_with_split.csv" \
     --parquet-dir "$RDS/tb_protein_sequences" \
     --esm-store-dir "$RDS/tb_esm_embeddings" \
