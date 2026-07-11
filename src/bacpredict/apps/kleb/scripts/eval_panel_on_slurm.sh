@@ -51,7 +51,7 @@ for d in $PANEL; do
     continue
   fi
   echo "=== evaluating $d ==="
-  uv run python src/tl/train/evaluate.py \
+  uv run python src/bacpredict/engine/finetune/evaluate.py \
     --checkpoint "$CK" --drug "$d" --task kleb_ast \
     --n-folds 5 --fold 0 --seed 1 --evaluate-seed 1 \
     --prevalence-label "resistance rate" \
@@ -65,7 +65,7 @@ for d in $PANEL; do
   NPZ=$FT/klebsiella_pneumoniae_${d}_lr_0.00015_finetuned_fold00_seed1/eval_scores.npz
   [ -f "$NPZ" ] && ARGS+=("${d}=$NPZ")
 done
-uv run python src/tl/train/evaluate.py --combine "${ARGS[@]}" \
+uv run python src/bacpredict/engine/finetune/evaluate.py --combine "${ARGS[@]}" \
   --prevalence-label "resistance rate" \
   --combine-out "$BASE/eval_roc_pr_grid_full_panel.png" \
   --bar-out "$BASE/eval_auroc_bar.png" \

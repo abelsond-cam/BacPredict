@@ -19,7 +19,7 @@ echo "Starting genome embeddings generation at $(date)"
 echo "Using 32 parallel workers"
 echo ""
 
-uv run python src/tl/embed/genome_assemblies_from_bacformer_embeddings.py \
+uv run python src/bacpredict/engine/embedding/genome_assemblies_from_bacformer_embeddings.py \
     --workers 32
 
 EXIT_CODE=$?

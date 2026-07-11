@@ -14,10 +14,10 @@
 # Script to run ESM-C embedding generation on HPC with GPU (single-job).
 # Pass --bacformer-embeddings to also produce Bacformer contextualised outputs.
 # Usage:
-#   sbatch src/tl/embed/scripts/run_embeddings.sh --n 10                  # Test with 10 files
-#   sbatch src/tl/embed/scripts/run_embeddings.sh                         # ESM-C only, all files
-#   sbatch src/tl/embed/scripts/run_embeddings.sh --skip-existing         # Resume
-#   sbatch src/tl/embed/scripts/run_embeddings.sh --bacformer-embeddings  # Add Bacformer outputs
+#   sbatch src/bacpredict/engine/embedding/scripts/run_embeddings.sh --n 10                  # Test with 10 files
+#   sbatch src/bacpredict/engine/embedding/scripts/run_embeddings.sh                         # ESM-C only, all files
+#   sbatch src/bacpredict/engine/embedding/scripts/run_embeddings.sh --skip-existing         # Resume
+#   sbatch src/bacpredict/engine/embedding/scripts/run_embeddings.sh --bacformer-embeddings  # Add Bacformer outputs
 
 # Load required modules
 module purge
@@ -57,7 +57,7 @@ if ! command -v uv &> /dev/null; then
     # Try to use existing virtual environment
     if [ -d ".venv" ]; then
         source .venv/bin/activate
-        python src/tl/embed/generate_embeddings.py "$@"
+        python src/bacpredict/engine/embedding/generate_embeddings.py "$@"
     else
         echo "ERROR: No .venv found and uv not available"
         exit 1
@@ -65,7 +65,7 @@ if ! command -v uv &> /dev/null; then
 else
     echo "Using uv: $(which uv)"
     # Run the Python script with all passed arguments
-    uv run python src/tl/embed/generate_embeddings.py "$@"
+    uv run python src/bacpredict/engine/embedding/generate_embeddings.py "$@"
 fi
 
 echo "=========================================="

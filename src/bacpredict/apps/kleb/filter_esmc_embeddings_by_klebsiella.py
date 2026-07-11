@@ -214,14 +214,14 @@ def main():
     parser.add_argument(
         "--data-dir",
         type=str,
-        default="/projects/public/u5ah/data/genomes/atb/esmc-large",
-        help="Directory containing raw ESMC parquet files (default: /projects/public/u5ah/data/genomes/atb/esmc-large)",
+        required=True,
+        help="Directory containing the raw ESMC parquet files to filter.",
     )
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="/home/u5ah/dca36.u5ah/Workspace/BacPredict/data/esmc_embeddings",
-        help="Directory to write filtered parquet files (default: ~/Workspace/BacPredict/data/esmc_embeddings)",
+        required=True,
+        help="Directory to write the KPSC-filtered parquet files.",
     )
     parser.add_argument(
         "--processes", type=int, default=10, help="Number of parallel processes; 0 or 1 for sequential (default: 10)"

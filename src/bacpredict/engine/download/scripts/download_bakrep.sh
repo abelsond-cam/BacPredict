@@ -114,7 +114,7 @@ SKIP_ARG=""
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running Python collect (micromamba bakrep_download)..." >&2
 # Execute the python script inside micromamba environment named "bakrep_download", which has pandas installed.
 # It is equivilent to micromamba activate bakrep_download and then running the script.
-micromamba run -n bakrep_download python /home/dca36/workspace/BacPredict/src/tl/genome_download/scripts/collect_bakrep_samples.py \
+micromamba run -n bakrep_download python /home/dca36/workspace/BacPredict/src/bacpredict/engine/download/scripts/collect_bakrep_samples.py \
     --metadata "$TSV_FILE" \
     --n "$N" \
     --filetype "$FILE_TYPE" \
@@ -205,7 +205,7 @@ echo "============================================"
 
 MISSING_OUTPUT="${OUTPUT_DIR}/missing_samples_$(date +%Y%m%d_%H%M%S).txt"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running Python update-flags (micromamba bakrep_download)..." >&2
-micromamba run -n bakrep_download python /home/dca36/workspace/BacPredict/src/tl/genome_download/scripts/collect_bakrep_samples.py \
+micromamba run -n bakrep_download python /home/dca36/workspace/BacPredict/src/bacpredict/engine/download/scripts/collect_bakrep_samples.py \
     --metadata "$TSV_FILE" \
     --output-dir "$OUTPUT_DIR" \
     --filetype "$FILE_TYPE" \

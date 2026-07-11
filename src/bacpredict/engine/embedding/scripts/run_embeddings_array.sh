@@ -17,7 +17,7 @@
 # to also produce Bacformer contextualised outputs.
 #
 # Usage:
-#   sbatch src/tl/embed/scripts/run_embeddings_array.sh
+#   sbatch src/bacpredict/engine/embedding/scripts/run_embeddings_array.sh
 
 # Load required modules
 module purge
@@ -96,7 +96,7 @@ if ! command -v uv &> /dev/null; then
     # Try to use existing virtual environment
     if [ -d ".venv" ]; then
         source .venv/bin/activate
-        python src/tl/embed/generate_embeddings.py \
+        python src/bacpredict/engine/embedding/generate_embeddings.py \
             --skip-existing \
             --start-idx $START_IDX \
             --end-idx $END_IDX
@@ -107,7 +107,7 @@ if ! command -v uv &> /dev/null; then
 else
     echo "Using uv: $(which uv)"
     # Run the Python script with array job parameters
-    uv run python src/tl/embed/generate_embeddings.py \
+    uv run python src/bacpredict/engine/embedding/generate_embeddings.py \
         --skip-existing \
         --start-idx $START_IDX \
         --end-idx $END_IDX

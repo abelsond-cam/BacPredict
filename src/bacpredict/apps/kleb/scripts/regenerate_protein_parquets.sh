@@ -55,7 +55,7 @@ PY
 # 2) Regenerate the parquets. --keep-internal-stop reproduces the original protein order (the embeddings
 #    were made before the internal-stop skip was added; without this the parquet is off by ~3 proteins
 #    and the n_proteins guard would skip every genome). --skip-existing makes it resumable.
-uv run python src/tl/embed/preprocess_assemblies_to_protein_sequences.py \
+uv run python src/bacpredict/engine/embedding/preprocess_assemblies_to_protein_sequences.py \
     --input-csv "$D/processed/protein_parquet_regen_input.csv" \
     --output-dir "$D/processed/klebsiella_protein_sequences" \
     --keep-internal-stop --skip-existing --workers 38

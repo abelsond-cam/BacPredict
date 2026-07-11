@@ -42,7 +42,7 @@ echo "=========================================="
 
 echo "Using uv: $(which uv)"
 # Run the Python script with all passed arguments ($@) passed as arguments to the script
-uv run python src/tl/embed/preprocess_assemblies_to_protein_sequences.py "$@"
+uv run python src/bacpredict/engine/embedding/preprocess_assemblies_to_protein_sequences.py "$@"
 
 echo "=========================================="
 echo "End time: $(date)"

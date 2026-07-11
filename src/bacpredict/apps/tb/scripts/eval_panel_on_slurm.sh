@@ -57,7 +57,7 @@ for d in $PANEL; do
     continue
   fi
   echo "=== evaluating $d ($CK) ==="
-  uv run python src/tl/train/evaluate.py \
+  uv run python src/bacpredict/engine/finetune/evaluate.py \
     --checkpoint "$CK" --drug "$d" --task tb_ast \
     --prevalence-label "resistance rate" \
     --ast-sheet-path "$SHEET" --embeddings-dir "$EMB" --num-workers 4 \
@@ -71,7 +71,7 @@ for d in $PANEL; do
   [ -n "$NPZ" ] && [ -f "$NPZ" ] && ARGS+=("${d}=$NPZ")
 done
 if [ ${#ARGS[@]} -gt 0 ]; then
-  uv run python src/tl/train/evaluate.py --combine "${ARGS[@]}" \
+  uv run python src/bacpredict/engine/finetune/evaluate.py --combine "${ARGS[@]}" \
     --prevalence-label "resistance rate" \
     --combine-out "$BASE/eval_roc_pr_grid_full_panel.png" \
     --bar-out "$BASE/eval_auroc_bar.png" \

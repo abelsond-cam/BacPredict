@@ -125,7 +125,7 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S')] Log directory:    $LOG_DIR" >&2
 
 # Collect accessions and write batch files
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running Python collect (micromamba ncbi-datasets)..." >&2
-micromamba run -n ncbi-datasets python /home/dca36/workspace/BacPredict/src/tl/genome_download/scripts/collect_ncbi_datasets_samples.py \
+micromamba run -n ncbi-datasets python /home/dca36/workspace/BacPredict/src/bacpredict/engine/download/scripts/collect_ncbi_datasets_samples.py \
     --metadata "$TSV_FILE" \
     --n "$N" \
     --batch-dir "$BATCH_DIR" \
@@ -231,7 +231,7 @@ if [ "$OUTPUT_DIR" = "$DEFAULT_NCBI_GFF_DIR" ]; then
     echo "============================================"
     echo "Flattening ncbi_gff3 directory (moving genomic.gff files to top level)..."
     echo "============================================"
-    micromamba run -n ncbi-datasets python /home/dca36/workspace/BacPredict/src/tl/genome_download/scripts/flatten_ncbi_gff3.py
+    micromamba run -n ncbi-datasets python /home/dca36/workspace/BacPredict/src/bacpredict/engine/download/scripts/flatten_ncbi_gff3.py
 else
     echo ""
     echo "NOTE: Skipping automatic flattening because OUTPUT_DIR ($OUTPUT_DIR)"

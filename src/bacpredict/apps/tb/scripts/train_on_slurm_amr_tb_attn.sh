@@ -15,7 +15,7 @@
 # Stage C (§0.2) for the attention-pool genome head — single split, 1 fold x 1 seed.
 # Identical data / split / hyperparameters to train_on_slurm_amr_tb_stage_c.sh, but
 # --pooling attention swaps the stock mask-mean genome head for a gated-attention MIL
-# pool (src/tl/train/attention_pool.py) over the contig-aware BacformerLarge backbone.
+# pool (src/bacpredict/engine/finetune/attention_pool.py) over the contig-aware BacformerLarge backbone.
 # train_amr.py reads train/validate/evaluate from binary_ast_with_split.csv
 # (split_source="csv") and writes the §0.4 results.json on the evaluate holdout.
 #

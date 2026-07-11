@@ -83,7 +83,7 @@ if [ $END_IDX -gt $TOTAL_FILES ]; then END_IDX=$TOTAL_FILES; fi
 echo "Tasks: $NTASKS  Chunk: $CHUNK_SIZE  Indices: $START_IDX..$END_IDX"
 echo "=========================================="
 
-uv run python src/tl/embed/generate_embeddings.py \
+uv run python src/bacpredict/engine/embedding/generate_embeddings.py \
     --input-dir "$TB_INPUT_DIR" \
     --esm-dir "$TB_ESM_DIR" \
     --skip-existing \

@@ -28,7 +28,7 @@ for d in $PANEL; do
 done
 echo "Combining ${#ARGS[@]} drugs..."
 
-uv run python src/tl/train/evaluate.py --combine "${ARGS[@]}" \
+uv run python src/bacpredict/engine/finetune/evaluate.py --combine "${ARGS[@]}" \
   --prevalence-label "resistance rate" \
   --combine-out "$BASE/eval_roc_pr_grid_full_panel.png" \
   --bar-out "$BASE/eval_auroc_bar.png" \
