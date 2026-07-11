@@ -6,17 +6,26 @@ Guidance for Claude Code working in this repository. Per-task detail lives in ea
 
 ## Project purpose
 
-Fine-tune [Bacformer](https://github.com/amina-BS/bacformer) on bacterial genome embeddings to predict downstream phenotypes. The repo hosts **seven parallel experiments**, each in its own task folder with its own `CLAUDE.md` and SLURM scripts:
+Fine-tune [Bacformer](https://github.com/amina-BS/bacformer) on bacterial genome embeddings to predict downstream phenotypes.
 
-| Task | Folder | Status |
+> **⚠️ Consolidated layout (2026-07).** The former parallel task folders (`tb_ast`, `kleb_ast`,
+> `pangena_predict`, `tl`) were merged into **one engine + thin per-organism apps** under
+> `src/bacpredict/`. See [`src/bacpredict/docs/`](src/bacpredict/docs/) for the pipeline overview. The
+> retired [`~/.claude/plans/the-cambridge-hpc-and-dreamy-thacker.md`] plan drove the move.
+
+| Area | Folder | Notes |
 |---|---|---|
-| 1. AST in *M. tuberculosis* | [src/tb_ast/](src/tb_ast/) | Active |
-| 2. AST in *Klebsiella pneumoniae* | [src/kleb_ast/](src/kleb_ast/) | Active |
-| 3. Isolation source in *Klebsiella* | [src/kleb_iso_source/](src/kleb_iso_source/) | Active |
-| 6. `predictHGT` embedding diagnostic | [src/predict_hgt/](src/predict_hgt/) | Diagnostic, can run in parallel |
-| 7. Pangenome-embedding AMR/phenotype prediction (baclm IGR/RNA + genes; grew out of the TB SNP-signal-loss diagnostic) | [src/pangena_predict/](src/pangena_predict/) | Active |
+| **Engine** (organism-agnostic pipeline) | [src/bacpredict/engine/](src/bacpredict/engine/) | stages `labels` · `download` · `embedding` · `finetune` · `gene_lr` · `concat` · `catalogue` · `plots` |
+| **App: TB AST** | [src/bacpredict/apps/tb/](src/bacpredict/apps/tb/) | WHO/TB-Profiler adapter, tbprofiler pixi, download helpers |
+| **App: Kp AST** | [src/bacpredict/apps/kleb/](src/bacpredict/apps/kleb/) | CARD + Kleborate adapters, AMR sidecar pipeline, metadata curation, epi plotter |
+| **Archived** (concluded TB SNP diagnostic) | [src/bacpredict/_archive/](src/bacpredict/_archive/) | excluded from wheel/ruff/pytest |
+| Isolation source in *Klebsiella* | [src/kleb_iso_source/](src/kleb_iso_source/) | separate package (uses the engine) |
+| Pyseer GWAS | [src/bac_pyseer/](src/bac_pyseer/) | separate package |
+| gene_array_lasso | [src/gene_array_lasso/](src/gene_array_lasso/) | separate package |
 
-Task 4 (mixed-assembly detection) and Task 5 (DefensePredictor on short reads) are deferred — condensed plans live in [ToDo.md](ToDo.md). Recreate as `src/admixture/` and `src/dp_short_read/` when work actually starts.
+Task 4 (mixed-assembly detection) and Task 5 (DefensePredictor on short reads) are deferred — condensed plans live in [ToDo.md](ToDo.md). `dp_short_read` exists as a stub; recreate `src/admixture/` when Task 4 starts.
+
+The single AMR trainer is `bacpredict.engine.finetune.finetune_amr` (run `python -m …`, `--task tb_ast|kleb_ast`; both organisms train in **bf16**).
 
 This root file holds only global conventions and shared-infra docs. **Per-task plans, status, and running notes live in each task folder's `CLAUDE.md`.** The cross-task live tracker (current state + remaining milestones per task) is [ToDo.md](ToDo.md). Three to four agents run concurrently, one per active task (see §0.5).
 
@@ -98,14 +107,15 @@ the cost of asking for less is the entire job.
 > entangle another agent's live, uncommitted work. When in doubt, **stop and ask the user** —
 > a question is always cheaper than a recovery.
 
-Active task → branch map: Task 1 = [src/tb_ast/](src/tb_ast/) (`task1/...`),
-Task 2 = [src/kleb_ast/](src/kleb_ast/) (`task2/...`),
-Task 3 = [src/kleb_iso_source/](src/kleb_iso_source/) (`task3/...`),
-Task 5 = [src/dp_short_read/](src/dp_short_read/) (`task5/...`),
-Task 6 = [src/predict_hgt/](src/predict_hgt/) (`task6/...`),
-Task 7 = [src/pangena_predict/](src/pangena_predict/) (`pangena_predict`).
+Active area → folder map: TB AST = [src/bacpredict/apps/tb/](src/bacpredict/apps/tb/),
+Kp AST = [src/bacpredict/apps/kleb/](src/bacpredict/apps/kleb/),
+shared engine = [src/bacpredict/engine/](src/bacpredict/engine/),
+isolation source = [src/kleb_iso_source/](src/kleb_iso_source/),
+GWAS = [src/bac_pyseer/](src/bac_pyseer/). (Task 6 `predict_hgt` retired; the TB SNP diagnostic is
+archived under `src/bacpredict/_archive/`.)
 
-**Stay in your task folder.** Confine edits to your own `src/<task>/` package and `tests/<task>/`.
+**Editing the shared engine affects every organism** — call it out when you touch `src/bacpredict/engine/`.
+App-only changes stay within `src/bacpredict/apps/<organism>/` and its tests.
 Touch shared code ([src/tl/](src/tl/)), top-level configs, or root docs only when truly necessary,
 and call it out explicitly so the user can coordinate.
 
