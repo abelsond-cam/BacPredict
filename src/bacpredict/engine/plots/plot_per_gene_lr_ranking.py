@@ -22,17 +22,15 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.colors import to_rgba
 
+from bacpredict.engine.plots.labels import display_name
+
 PICK_COLOUR = "#7e3f9e"   # purple — ESM single-gene (the family colour, consistent across plots)
 OTHER_COLOUR = "#9aa3ad"  # muted grey — the rest of the ranking
 WHO_LINE_COLOUR = "#d62728"  # red — the WHO one-hot family (the reference line)
 
 # AST column name (US) → display / directory name (the proper drug name used for tb_<drug>/ dirs).
-DRUG_DISPLAY = {"rifampin": "rifampicin"}
 
 
-def display_name(drug: str) -> str:
-    """The proper drug name used in titles and the per-drug ``tb_<drug>/`` visualisation dir."""
-    return DRUG_DISPLAY.get(drug, drug)
 
 
 def plot_ranking(csv_path: Path, out_path: Path, *, drug: str | None = None, top_n: int = 10,

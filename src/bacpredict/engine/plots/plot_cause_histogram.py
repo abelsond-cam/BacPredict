@@ -26,6 +26,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from bacpredict.engine.plots.labels import display_name
+
 # WHO one-hot is the red family (consistent across plots). The top embeddable gene is the "pick" we
 # could inject; rRNA / un-embeddable causes are the same red but hatched (real cause, can't be embedded).
 ROYAL_RED = "#c0392b"       # duller "royal" red — the WHO one-hot family colour
@@ -41,12 +43,8 @@ CATEGORY_LABEL = {
     "other": "coding, not in our embeddings",
 }
 ALL_KEY = "__ALL_WHO_one_hot__"
-DRUG_DISPLAY = {"rifampin": "rifampicin"}
 
 
-def display_name(drug: str) -> str:
-    """Proper drug name for titles / the ``tb_<drug>/`` dir."""
-    return DRUG_DISPLAY.get(drug, drug)
 
 
 def _category(row) -> str:

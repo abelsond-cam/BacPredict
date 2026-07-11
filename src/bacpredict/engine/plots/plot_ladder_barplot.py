@@ -21,6 +21,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from bacpredict.engine.plots.labels import display_name
+
 # Family → colour (the user's scheme).
 # Family palette encodes the one-hot → single-gene → combined progression:
 #   WHO one-hot = red, ESM single-gene = purple, combined = royal-blue (purple+blue blend), Bacformer = blue.
@@ -37,12 +39,8 @@ FAMILY_LABEL = {
     "mix": "concat (Bacformer ⊕ ESM)",
 }
 WHO_CEILING_COLOUR = "#c0392b"  # faint red line = full WHO one-hot ceiling (combined prediction)
-DRUG_DISPLAY = {"rifampin": "rifampicin"}
 
 
-def display_name(drug: str) -> str:
-    """Proper drug name for titles / the ``tb_<drug>/`` dir."""
-    return DRUG_DISPLAY.get(drug, drug)
 
 # How each method reads out the genome — drawn as bracketed groups separated by vertical dividers.
 GROUP_LABEL = {
