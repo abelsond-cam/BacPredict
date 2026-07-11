@@ -102,10 +102,7 @@ allow-direct-references = true
 [tool.hatch.build.targets.wheel]
 packages = [
   "src/bacpredict",
-  "src/tb_ast",
-  "src/kleb_ast",
   "src/kleb_iso_source",
-  "src/pangena_predict",
   "src/bac_pyseer",
   "src/gene_array_lasso",
   "src/dp_short_read",
@@ -198,11 +195,8 @@ addopts = [
 
 [tool.coverage.run]
 source = [
-  "tl",
-  "tb_ast",
-  "kleb_ast",
+  "bacpredict",
   "kleb_iso_source",
-  "pangena_predict",
 ]
 patch = [ "subprocess" ]
 omit = [

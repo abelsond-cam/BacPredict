@@ -1,6 +1,6 @@
 """Per-drug histogram: per-gene ESM-C LR vs fine-tuned Bacformer LR (the concat-ingredient head-to-head).
 
-Reads ``esm_vs_ft_per_gene_<drug>.csv`` (from :mod:`kleb_ast.per_gene_esm_vs_ft_lr`) and draws, for the
+Reads ``esm_vs_ft_per_gene_<drug>.csv`` (from :mod:`bacpredict.apps.kleb.per_gene_esm_vs_ft_lr`) and draws, for the
 top-N genes (by ESM-LR), two bars per gene — **ESM-LR (purple)** and **Bacformer-FT-LR (indigo)** — on the
 same axes, with a chance line and (optionally) the Kleborate determinant ceiling. Where the indigo bar
 clears the purple, the fine-tuned Bacformer per-gene representation predicts resistance better than the raw
@@ -33,7 +33,7 @@ RES_HATCH = "xxx"             # cross-hatch marks a known resistance gene
 # each tagged "mutation" (chromosomal point-mutation / loss) or "acquired" (HGT gene). Anchored so e.g.
 # ``tet(`` catches tet(A)/tet(D), ``bla`` catches every blaXXX. Relocated here from the retired
 # ``causal_gene_esm_scorecard`` (this legacy plot is its only consumer); the authoritative causal-gene
-# source for the current CARD Plot #1 is :func:`kleb_ast.card_label.causal_genes_for_drug`.
+# source for the current CARD Plot #1 is :func:`bacpredict.apps.kleb.card_label.causal_genes_for_drug`.
 _FQ = [("^gyrA$", "mutation"), ("^parC$", "mutation"), ("^gyrB$", "mutation"), ("^parE$", "mutation"),
        ("^qnr", "acquired"), ("^oqxA$", "acquired"), ("^oqxB$", "acquired"), (r"^aac\(6'\)-Ib", "acquired")]
 _COLISTIN = [("^pmrA$", "mutation"), ("^pmrB$", "mutation"), ("^phoP$", "mutation"), ("^phoQ$", "mutation"),

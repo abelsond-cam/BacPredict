@@ -2,7 +2,7 @@
 
 One bar pair per antibiotic, two rows (top AUROC, bottom AUPRC):
 
-- **CARD one-hot ceiling** (red) — ``__ALL_CARD__`` from :mod:`kleb_ast.card_determinant_lr`, a linear head
+- **CARD one-hot ceiling** (red) — ``__ALL_CARD__`` from :mod:`bacpredict.apps.kleb.card_determinant_lr`, a linear head
   over a one-hot of *all* the drug's CARD determinants (the determinant-knowledge ceiling on our calls);
 - **best Bacformer** (indigo) — the strongest deployable Bacformer read-out for the drug: the higher of the
   FT genome-mean and the FT mean ⊕ best-gene concats (usually FT mean ⊕ FT gene, occasionally another).

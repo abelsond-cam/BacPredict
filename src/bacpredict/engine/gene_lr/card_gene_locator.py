@@ -2,7 +2,7 @@
 
 Bakta under-annotates acquired AMR genes (AAC(6'), ArmA, bla_KPC, …), so the driver panel cannot find
 them by Bakta ``gene_name`` the way it finds core genes like *rpoB*/*gyrA*. Kleborate/CARD *can*: the
-sidecar ``{Sample}_amr.parquet`` written by :mod:`kleb_ast.annotate_amr_sidecar` re-identifies every AMR
+sidecar ``{Sample}_amr.parquet`` written by :mod:`bacpredict.apps.kleb.annotate_amr_sidecar` re-identifies every AMR
 gene by ``minimap2`` of the vendored CARD refs against the assembly and records, **per hit**, the
 **flat protein index** (the row into ``{Sample}_esm_embeddings.pt`` / baclm ``protein_embeddings``) plus
 its ``amr_gene_family`` — built against the *same* assembly the protein parquet came from, with a

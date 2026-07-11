@@ -1,4 +1,4 @@
-"""Tests for the chromosomal mut/WT one-hot split (:mod:`kleb_ast.card_determinant_lr`).
+"""Tests for the chromosomal mut/WT one-hot split (:mod:`bacpredict.apps.kleb.card_determinant_lr`).
 
 The split fixes the degenerate gene-presence one-hot for intrinsic point-mutation genes (gyrA/parC/…):
 the gene is present in ~every genome, so only the **mutant** (sourced from Kleborate's mutation columns)
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from kleb_ast.card_determinant_lr import (
+from bacpredict.apps.kleb.card_determinant_lr import (
     _base_gene,
     _category,
     _is_causal,

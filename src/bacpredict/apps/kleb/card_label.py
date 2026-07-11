@@ -1,7 +1,7 @@
 """CARD-merged AMR labels + per-drug causal-gene lookup — the label-migration core.
 
 Phases 1–2 attached an authoritative **CARD allele / gene-family** label to every AMR protein in the
-``{Sample}_amr.parquet`` sidecars (:mod:`kleb_ast.annotate_amr_sidecar`), where CARD is the gold standard
+``{Sample}_amr.parquet`` sidecars (:mod:`bacpredict.apps.kleb.annotate_amr_sidecar`), where CARD is the gold standard
 and Bakta the historical (lossy) labeller. Downstream we migrate to a single **"CARD" label**:
 
     CARD family/allele where a minimap call qualifies, else the Bakta ``gene_name``.

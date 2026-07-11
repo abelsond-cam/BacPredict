@@ -1,7 +1,7 @@
 """Per-drug Kp cause histogram: Kleborate determinant LR by mechanism class (HGT vs chromosomal).
 
 The Kp analogue of ``bacpredict.engine.plots.plot_cause_histogram``. Reads a per-drug ceiling table
-(``kp_<drug>/kleborate_determinant_lr_<drug>.csv`` from :mod:`kleb_ast.kleborate_determinant_lr`) and
+(``kp_<drug>/kleborate_determinant_lr_<drug>.csv`` from :mod:`bacpredict.apps.kleb.kleborate_determinant_lr`) and
 draws one bar per Kleborate determinant column, ascending (highest on the right, to match the ladder),
 all in **one CARD red**. The HGT-vs-chromosomal split — the programme's central axis — is carried by the
 **x-label colour** (matching the per-gene esm-vs-ft plot):
@@ -50,7 +50,7 @@ def plot_cause(csv_path: Path, out_path: Path, *, drug: str, bacformer_auroc: fl
 
     ``source_name`` ("Kleborate" / "CARD") drives the ceiling-row key (``__ALL_<source_name>__``, unless
     ``all_key`` overrides), the title and the y-label — so the same plotter renders the CARD one-hot
-    histogram (:mod:`kleb_ast.card_determinant_lr`) and the Kleborate one. ``bacformer_auroc`` /
+    histogram (:mod:`bacpredict.apps.kleb.card_determinant_lr`) and the Kleborate one. ``bacformer_auroc`` /
     ``bacformer_label`` draw the **best** Bacformer read-out (FT mean, single FT gene, or concat) so the
     line shows Bacformer clearing the catalogue ceiling. On ``grain="allele"`` (many narrow bars) the
     in-bar value labels are dropped and the x-tick labels halved.

@@ -1,20 +1,22 @@
-"""GPU — cache the **frozen** Bacformer genome-mean + per-AMR-gene contextualised tokens (reliable carriers).
+"""GPU — cache a drug's fine-tuned Bacformer genome-mean + per-AMR-gene contextualised tokens (reliable).
 
-The ``mode="frozen"`` counterpart of :mod:`kleb_ast.cache_ft_amr_proteins`. Identical extraction — one forward
-per eval genome, keyed off the CARD/Kleborate ``{Sample}_amr.parquet`` sidecars — but through the **base**
-``macwiatrak/bacformer-large-masked-complete-genomes`` backbone (no fine-tuned checkpoint), so the per-gene
-token is the *frozen* Bacformer representation. This is the missing ingredient for Plot #5
-(:mod:`kleb_ast.gene_ingredient_concat`): is the **frozen-Bacformer gene**, the **frozen-ESM gene**, or the
-**fine-tuned-Bacformer gene** the better block to concat onto a genome mean?
+The reliable-label counterpart of :mod:`bacpredict.apps.kleb.cache_ft_bacformer_gene_embeddings`. Where that selected
+genes by Bakta ``gene_name`` and the per-gene ESM ranking, this keys off the **CARD/Kleborate AMR
+sidecars** (:mod:`bacpredict.apps.kleb.annotate_amr_sidecar`): one FT forward per genome, and for every AMR protein the
+sidecar identifies (by ``flat_index``) we save the **fine-tuned Bacformer contextualised token**
+``last_hidden_state[flat_index]`` — grouped by AMR gene-family. So the FT side of the per-gene ESM-vs-FT
+head-to-head (and the concat) is computed on the *reliable* carrier sets, not Bakta's.
 
 Saved per drug to ``<out>/<drug>/``:
 
-- ``frozen_genome_mean_<drug>.npz`` — {sample_ids, mean_vectors}: the frozen mask-mean over real proteins.
-- ``frozen_amr_emb/<gene>.npz`` — {sample_ids, vectors, bakta_match}: per AMR gene (family or allele,
-  per ``--grain``), its frozen token for each single-copy carrier.
-- ``frozen_amr_gene_manifest_<drug>.csv`` — gene, sanitized, amr_source, n_carriers, n_bakta.
+- ``ft_genome_mean_<drug>.npz`` — {sample_ids, mean_vectors}: the mask-mean over real proteins (the
+  deployed pool), reused as the concat's genome context.
+- ``ft_amr_emb/<family>.npz`` — {sample_ids, vectors, bakta_match}: per AMR gene-family, its FT token for
+  each single-copy carrier, plus whether Bakta also named that protein (for the reliable-vs-Bakta split).
+- ``amr_gene_manifest_<drug>.csv`` — family, sanitized, amr_source, n_carriers, n_bakta.
 
-Eval-holdout only (matches the FT cache's scope so the two are directly comparable). GPU; one drug per run.
+Eval-holdout only (the FT-unseen, honest scope). Reuses the pangena_predict forward helpers. GPU; one drug
+per run. The CPU consumer (:mod:`bacpredict.apps.kleb.reliable_ft_concat`) reads these to compute reliable FT-LR + concat.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -33,10 +36,26 @@ from bacpredict.engine.concat.bacformer_genome_vectors import forward_inputs, lo
 from bacpredict.engine.embedding.generate_embeddings import bacformer_last_hidden_state
 from bacpredict.engine.gene_lr.locate_gene import flatten_proteins
 from bacpredict.engine.gene_lr.snp_vs_esm_prediction import real_protein_indices, resolve_clean_splits
-from kleb_ast.cache_ft_amr_proteins import _bakta_matches, _sanitize
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+_NORM = re.compile(r"[^a-z0-9]")
+
+
+def _sanitize(gene: str) -> str:
+    """Filesystem-safe gene token (tet(A) -> tet_A_, CTX-M -> CTX_M)."""
+    return re.sub(r"[^A-Za-z0-9]", "_", str(gene))
+
+
+def _bakta_matches(bakta_gene_name, amr_gene_family: str, amr_allele: str) -> bool:
+    """Mirror of the Phase-2a Bakta-name match (does Bakta plausibly name this CARD family?)."""
+    g = _NORM.sub("", str(bakta_gene_name).lower()) if bakta_gene_name is not None else ""
+    if not g or g == "nan":
+        return False
+    fam = _NORM.sub("", str(amr_gene_family).lower())
+    allele = _NORM.sub("", str(amr_allele).lower())
+    return bool(fam) and (fam in g or g in fam or g in allele)
 
 
 def run(
@@ -46,21 +65,22 @@ def run(
     parquet_dir: Path,
     esm_store_dir: Path,
     sidecar_dir: Path,
+    checkpoint: Path,
     out_dir: Path,
     grain: str,
     device: str,
     pt_suffix: str = "_esm_embeddings.pt",
     max_samples: int | None = None,
 ) -> None:
-    """Forward each eval genome through the **frozen** backbone; save the genome-mean + per-AMR-gene tokens."""
+    """Forward each eval genome through the FT backbone; save the genome-mean + per-AMR-family FT tokens."""
     label_col = "amr_gene_family" if grain == "family" else "amr_allele"
     _lm, _train, _val, evaluate_ids, _info = resolve_clean_splits(ast_sheet, drug)
     all_ids = list(evaluate_ids)
     if max_samples is not None:
         all_ids = all_ids[:max_samples]
-    logger.info("Forwarding %d eval genomes for %s (grain=%s, FROZEN backbone)", len(all_ids), drug, grain)
+    logger.info("Forwarding %d eval genomes for %s (grain=%s)", len(all_ids), drug, grain)
 
-    model = load_model(device, mode="frozen", checkpoint=None)
+    model = load_model(device, mode="finetuned", checkpoint=checkpoint)
     model_dtype = next(model.parameters()).dtype
 
     mean_ids: list[str] = []
@@ -117,7 +137,7 @@ def run(
                 _bakta_matches(r.get("bakta_gene_name"), str(r.get("amr_gene_family")), str(r.get("amr_allele"))))
             gene_source.setdefault(label, str(r["amr_source"]))
         if k % 200 == 0:
-            logger.info("  forward: %d/%d genomes (kept mean=%d, genes=%d)",
+            logger.info("  forward: %d/%d genomes (kept mean=%d, families=%d)",
                         k, len(all_ids), len(mean_ids), len(gene_ids))
 
     if skips:
@@ -127,11 +147,11 @@ def run(
 
     out_dir = out_dir / drug
     out_dir.mkdir(parents=True, exist_ok=True)
-    mean_npz = out_dir / f"frozen_genome_mean_{drug}.npz"
+    mean_npz = out_dir / f"ft_genome_mean_{drug}.npz"
     np.savez(mean_npz, sample_ids=np.array(mean_ids), mean_vectors=np.vstack(mean_vecs).astype(np.float32))
-    logger.info("Wrote frozen genome-mean (%d genomes) -> %s", len(mean_ids), mean_npz)
+    logger.info("Wrote FT genome-mean (%d genomes) -> %s", len(mean_ids), mean_npz)
 
-    gene_dir = out_dir / "frozen_amr_emb"
+    gene_dir = out_dir / "ft_amr_emb"
     gene_dir.mkdir(parents=True, exist_ok=True)
     manifest = []
     for label in gene_ids:
@@ -142,12 +162,12 @@ def run(
         manifest.append({"gene_family": label, "sanitized": san, "amr_source": gene_source[label],
                          "n_carriers": len(gene_ids[label]), "n_bakta": int(sum(gene_bakta[label]))})
     pd.DataFrame(manifest).sort_values("n_carriers", ascending=False).to_csv(
-        out_dir / f"frozen_amr_gene_manifest_{drug}.csv", index=False)
-    (out_dir / f"frozen_cache_summary_{drug}.json").write_text(json.dumps({
-        "drug": drug, "mode": "frozen", "n_genomes": len(mean_ids),
-        "n_genes": len(manifest), "grain": grain,
+        out_dir / f"amr_gene_manifest_{drug}.csv", index=False)
+    (out_dir / f"cache_summary_{drug}.json").write_text(json.dumps({
+        "drug": drug, "checkpoint": str(checkpoint), "n_genomes": len(mean_ids),
+        "n_families": len(manifest), "grain": grain,
     }, indent=2))
-    logger.info("Wrote %d per-gene frozen token stores -> %s", len(manifest), gene_dir)
+    logger.info("Wrote %d per-family FT token stores -> %s", len(manifest), gene_dir)
 
 
 def main() -> None:
@@ -160,6 +180,8 @@ def main() -> None:
     p.add_argument("--parquet-dir", type=Path, default=rds / "processed" / "klebsiella_protein_sequences")
     p.add_argument("--esm-store-dir", type=Path, default=rds / "processed" / "klebsiella_esm_embeddings")
     p.add_argument("--sidecar-dir", type=Path, default=rds / "processed" / "train_kleb_ast" / "amr_annotation")
+    p.add_argument("--bacformer-checkpoint", type=Path, required=True,
+                   help="The drug's deployed FT AMR checkpoint dir (the FT backbone forward).")
     p.add_argument("--out-dir", type=Path, required=True)
     p.add_argument("--grain", choices=["family", "allele"], default="family")
     p.add_argument("--device", type=str, default="cuda:0")
@@ -167,8 +189,9 @@ def main() -> None:
     args = p.parse_args()
     run(
         ast_sheet=args.ast_sheet_path, drug=args.drug, parquet_dir=args.parquet_dir,
-        esm_store_dir=args.esm_store_dir, sidecar_dir=args.sidecar_dir, out_dir=args.out_dir,
-        grain=args.grain, device=args.device, max_samples=args.max_samples,
+        esm_store_dir=args.esm_store_dir, sidecar_dir=args.sidecar_dir,
+        checkpoint=args.bacformer_checkpoint, out_dir=args.out_dir, grain=args.grain,
+        device=args.device, max_samples=args.max_samples,
     )
 
 

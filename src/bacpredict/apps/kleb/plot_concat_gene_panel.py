@@ -1,6 +1,6 @@
 """Per-drug line plot: concat-panel AUROC vs panel size — FT-gene panel vs ESM-gene panel.
 
-Reads ``concat_panel_<drug>.csv`` (from :mod:`kleb_ast.concat_gene_panel_kleb`) and draws AUROC against
+Reads ``concat_panel_<drug>.csv`` (from :mod:`bacpredict.apps.kleb.concat_gene_panel_kleb`) and draws AUROC against
 the number of concatenated genes k, one line for the **FT panel** (top-k by ``ft_lr_auroc``, indigo) and
 one for the **ESM panel** (top-k by ``esm_lr_auroc``, purple), both anchored at k=0 on the **mean-only**
 baseline (a horizontal grey line). Where the indigo line sits above the purple, an FT-gene panel is the

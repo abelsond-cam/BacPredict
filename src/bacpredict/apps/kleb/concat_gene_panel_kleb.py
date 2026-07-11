@@ -1,6 +1,6 @@
 """Panel concat: Bacformer-FT genome-mean ⊕ top-k per-gene embeddings → LR (Kp AST).
 
-The per-gene head-to-head (:mod:`kleb_ast.per_gene_esm_vs_ft_lr`) showed the fine-tuned Bacformer
+The per-gene head-to-head (:mod:`bacpredict.apps.kleb.per_gene_esm_vs_ft_lr`) showed the fine-tuned Bacformer
 per-gene embedding predicts resistance far better than raw ESM-C — the FT token has *learned the gene*.
 This module asks the deployable follow-on: does concatenating the **best FT gene**, then a **panel** of
 the top-k FT genes, onto the genome-mean lift prediction above the mean alone — and does an FT-gene

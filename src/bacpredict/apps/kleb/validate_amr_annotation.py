@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from kleb_ast.kleborate_determinant_lr import COLUMN_SCHEMA, tokenize_cell
+from bacpredict.apps.kleb.kleborate_determinant_lr import COLUMN_SCHEMA, tokenize_cell
 
 RDS_ROOT = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw")
 DEFAULT_SIDECAR_DIR = RDS_ROOT / "david" / "processed" / "train_kleb_ast" / "amr_annotation"

@@ -1,6 +1,6 @@
 """Plot #3 — the CARD read-out ladder: mean → +best unsupervised gene → concat, vs the CARD one-hot ceiling.
 
-The label-migrated, reliable-carrier version of :mod:`kleb_ast.build_kleb_ladder`. For one drug it draws a
+The label-migrated, reliable-carrier version of :mod:`bacpredict.apps.kleb.build_kleb_ladder`. For one drug it draws a
 single AUROC ladder (the reliable artifacts are AUROC-only) from the committed reliable-CARD numbers:
 
 ============================  ========  ===========================================================
@@ -15,7 +15,7 @@ concat: FT mean ⊕ FT gene     mix_ft    summary ``ft_concat_best_ft_auroc``
 ============================  ========  ===========================================================
 
 with the **``__ALL_CARD__``** one-hot ceiling (Plot #2) drawn as a reference line. The unsupervised "best
-gene" name is annotated and flagged ``causal`` / ``context`` via :func:`kleb_ast.card_label.
+gene" name is annotated and flagged ``causal`` / ``context`` via :func:`bacpredict.apps.kleb.card_label.
 causal_genes_for_drug` — for several drugs the selector grabs a porin/lineage context proxy (OmpK/PmrB),
 *not* the causal mechanism, which is the headline that motivates the sparse-lasso next step. Login/CPU.
 """
@@ -32,7 +32,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from kleb_ast.card_label import causal_genes_for_drug
+from bacpredict.apps.kleb.card_label import causal_genes_for_drug
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

@@ -13,7 +13,7 @@ Per Kleborate resistance class we report, over the **acquired** AMR calls CARD m
   the fraction of CARD's carriers Kleborate also has (``kleborate_agree_pct``). ≈100% by construction (both
   CARD-derived) — a sanity check that CARD isn't over-calling, not a contrast.
 
-Reuses :mod:`kleb_ast.validate_amr_annotation` carrier logic. Pure pandas over the sidecar dir + metadata_v2;
+Reuses :mod:`bacpredict.apps.kleb.validate_amr_annotation` carrier logic. Pure pandas over the sidecar dir + metadata_v2;
 writes ``card_vs_kleborate_vs_bakta_pickup.csv`` + a markdown table. Light CPU.
 """
 
@@ -25,8 +25,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from kleb_ast.kleborate_determinant_lr import tokenize_cell
-from kleb_ast.validate_amr_annotation import (
+from bacpredict.apps.kleb.kleborate_determinant_lr import tokenize_cell
+from bacpredict.apps.kleb.validate_amr_annotation import (
     DEFAULT_METADATA,
     DEFAULT_SIDECAR_DIR,
     _norm_allele,

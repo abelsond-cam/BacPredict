@@ -1,6 +1,6 @@
 """Reliable-label ESM-vs-FT head-to-head + FT-mean ⊕ best-gene concat (CPU, no forward pass).
 
-Consumes Phase-2b's FT token cache (:mod:`kleb_ast.cache_ft_amr_proteins`) + the ESM store to produce, on
+Consumes Phase-2b's FT token cache (:mod:`bacpredict.apps.kleb.cache_ft_amr_proteins`) + the ESM store to produce, on
 the **reliable CARD/Kleborate AMR labels**, the two deliverables the Bakta-labelled pipeline produced
 unreliably:
 
@@ -15,7 +15,7 @@ unreliably:
    ``reliable_concat_<drug>.csv`` (the FT + concat best-embedding number for the Kp summary panel's third
    bar). Same zero-imputed k-fold LR as the per-gene fits, so all AUROCs are comparable.
 
-Reuses :func:`kleb_ast.per_gene_lr_from_annotation.collect_reliable_amr` for the ESM side (one pass over the
+Reuses :func:`bacpredict.apps.kleb.per_gene_lr_from_annotation.collect_reliable_amr` for the ESM side (one pass over the
 eval genomes) and the FT vectors straight from the cache. Login/CPU.
 """
 
@@ -29,9 +29,9 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import average_precision_score
 
+from bacpredict.apps.kleb.per_gene_lr_from_annotation import MIN_CARRIERS, collect_reliable_amr
 from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_one_gene, fit_one_gene_imputed
 from bacpredict.engine.gene_lr.snp_vs_esm_prediction import resolve_clean_splits
-from kleb_ast.per_gene_lr_from_annotation import MIN_CARRIERS, collect_reliable_amr
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

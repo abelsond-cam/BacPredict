@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from kleb_ast.validate_amr_annotation import DEFAULT_SIDECAR_DIR, load_sidecars
+from bacpredict.apps.kleb.validate_amr_annotation import DEFAULT_SIDECAR_DIR, load_sidecars
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

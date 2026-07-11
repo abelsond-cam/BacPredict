@@ -1,6 +1,6 @@
 """Plot #1 — per-gene ESM-C LR vs fine-tuned Bacformer LR over the merged CARD/Bakta universe, causal-hatched.
 
-The corrected, label-migrated version of :mod:`kleb_ast.plot_per_gene_esm_vs_ft`. Gene identity now comes
+The corrected, label-migrated version of :mod:`bacpredict.apps.kleb.plot_per_gene_esm_vs_ft`. Gene identity now comes
 from **CARD** (acquired alleles + chromosomal QRDR/porin/MgrB-PmrB refs) where a minimap call qualifies, and
 from **Bakta** ``gene_name`` otherwise — so every AMR gene's carrier set is reliable while the non-AMR
 ("lineage") genes keep their Bakta names. For one drug we draw, per gene, two bars: the raw **ESM-C**
@@ -10,7 +10,7 @@ same zero-imputed out-of-fold k-fold.
 The plot makes two things visible at once:
 
 - **the head-to-head** (does FT beat raw ESM per gene — the concat-ingredient question), and
-- **where the signal sits**: every gene *known to be causal for the drug* (:func:`kleb_ast.card_label.
+- **where the signal sits**: every gene *known to be causal for the drug* (:func:`bacpredict.apps.kleb.card_label.
   causal_genes_for_drug`) is **cross-hatched**, and x-labels are coloured by source (acquired = red,
   chromosomal = blue, non-AMR Bakta = grey). FT pulling *non-causal* lineage genes up alongside the hatched
   causal ones is the lasso motivation — the unsupervised "best gene" grabs context, not mechanism.
@@ -35,7 +35,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.patches import Patch
 
-from kleb_ast.card_label import causal_genes_for_drug
+from bacpredict.apps.kleb.card_label import causal_genes_for_drug
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

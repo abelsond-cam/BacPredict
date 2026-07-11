@@ -1,4 +1,4 @@
-"""Tests for the CARD/Bakta per-class pickup grouping (:mod:`kleb_ast.amr_pickup_table`).
+"""Tests for the CARD/Bakta per-class pickup grouping (:mod:`bacpredict.apps.kleb.amr_pickup_table`).
 
 Exercises the pure pandas logic on a synthetic sidecar frame — no HPC sidecars or metadata needed.
 """
@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from kleb_ast.amr_pickup_table import _bakta_family_match, card_bakta_by_class, to_markdown
+from bacpredict.apps.kleb.amr_pickup_table import _bakta_family_match, card_bakta_by_class, to_markdown
 
 
 def _sidecar(rows: list[dict]) -> pd.DataFrame:

@@ -1,6 +1,6 @@
 """Plot #2 data — per-CARD-gene one-hot LR + the ``__ALL_CARD__`` ceiling (our calls, not metadata columns).
 
-The CARD analogue of :mod:`kleb_ast.kleborate_determinant_lr`. Where that one-hot-encodes Kleborate's
+The CARD analogue of :mod:`bacpredict.apps.kleb.kleborate_determinant_lr`. Where that one-hot-encodes Kleborate's
 determinant *columns* from ``metadata_v2``, this one-hot-encodes **our own CARD gene/allele presence** from
 the ``{Sample}_amr.parquet`` sidecars and scores ``presence → drug label`` through the same k-fold × m-seed
 harness (:func:`bacpredict.engine.gene_lr.kfold_probe.run_kfold_probe`). Per drug it emits, at family **and** allele
@@ -12,7 +12,7 @@ grain:
 - the full per-drug one-hot together — row ``__ALL_CARD__``, the catalogue ceiling.
 
 This is the *one-hot* (presence/absence) counterpart of Plot #1's per-gene *ESM-embedding* LR: same gene
-universe, different feature. Renders with the shared cause histogram (:mod:`kleb_ast.
+universe, different feature. Renders with the shared cause histogram (:mod:`bacpredict.apps.kleb.
 plot_kleborate_cause_histogram`, ``source_name="CARD"``). sklearn over a sparse binary matrix — a short CPU
 job (reads the combined sidecar store, no GPU).
 """
@@ -27,15 +27,15 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from kleb_ast.build_amr_calls_store import load_calls
-from kleb_ast.card_label import causal_genes_for_drug, determinant_genes_for_drug
-from kleb_ast.kleborate_determinant_lr import (
+from bacpredict.apps.kleb.build_amr_calls_store import load_calls
+from bacpredict.apps.kleb.card_label import causal_genes_for_drug, determinant_genes_for_drug
+from bacpredict.apps.kleb.kleborate_determinant_lr import (
     MIN_DETERMINANT_GENOMES,
     _score,
     load_labels,
     tokenize_cell,
 )
-from kleb_ast.validate_amr_annotation import DEFAULT_METADATA, DEFAULT_SIDECAR_DIR
+from bacpredict.apps.kleb.validate_amr_annotation import DEFAULT_METADATA, DEFAULT_SIDECAR_DIR
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

@@ -1,6 +1,6 @@
 """Aggregate the per-drug ``reliable_concat_<drug>.csv`` into one cross-drug summary (AUROC + AUPRC).
 
-The reliable FT-mean ⊕ best-gene concat (:mod:`kleb_ast.reliable_ft_concat`) writes one CSV per drug under
+The reliable FT-mean ⊕ best-gene concat (:mod:`bacpredict.apps.kleb.reliable_ft_concat`) writes one CSV per drug under
 ``<root>/<drug>/reliable_concat_<drug>.csv`` (rows: ``mean_only`` / ``mean+best_esm_gene`` /
 ``mean+best_ft_gene``). This pivots them to one row per drug — the summary the ladder (Plot #3) and the
 combined panel (Plot #4) read — making the previously ad-hoc summary reproducible. Login/CPU.

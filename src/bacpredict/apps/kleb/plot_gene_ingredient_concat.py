@@ -1,6 +1,6 @@
 """Plot #5 figure — which gene block is the better concat ingredient, across the drug panel.
 
-Reads the per-drug ``gene_ingredient_concat_<drug>.csv`` (from :mod:`kleb_ast.gene_ingredient_concat`) and
+Reads the per-drug ``gene_ingredient_concat_<drug>.csv`` (from :mod:`bacpredict.apps.kleb.gene_ingredient_concat`) and
 draws two views of the *ingredient* question (holding the genome-mean context fixed):
 
 1. a **summary panel** — per drug, the ``ft_mean ⊕ <ingredient>`` AUROC for the three gene ingredients

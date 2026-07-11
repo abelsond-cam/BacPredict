@@ -12,7 +12,7 @@ ladder):
 (each gene picked unsupervised by its *own* per-gene LR), plus the two mean-only baselines → 8 rows in
 ``gene_ingredient_concat_<drug>.csv`` (config, mean, ingredient, gene, auroc, delta_vs_its_mean). The ESM
 block comes from the store (``emb[flat_index]``), the frozen block from
-:mod:`kleb_ast.cache_frozen_amr_proteins`, the FT block from :mod:`kleb_ast.cache_ft_amr_proteins`. CPU.
+:mod:`bacpredict.apps.kleb.cache_frozen_amr_proteins`, the FT block from :mod:`bacpredict.apps.kleb.cache_ft_amr_proteins`. CPU.
 """
 
 from __future__ import annotations
@@ -24,10 +24,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from bacpredict.apps.kleb.per_gene_lr_from_annotation import MIN_CARRIERS, collect_reliable_amr
+from bacpredict.apps.kleb.reliable_ft_concat import _impute_block, load_ft_gene, load_ft_mean
 from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_one_gene, fit_one_gene_imputed
 from bacpredict.engine.gene_lr.snp_vs_esm_prediction import resolve_clean_splits
-from kleb_ast.per_gene_lr_from_annotation import MIN_CARRIERS, collect_reliable_amr
-from kleb_ast.reliable_ft_concat import _impute_block, load_ft_gene, load_ft_mean
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

@@ -1,10 +1,10 @@
 """Per-gene ESM-LR on reliable Kleborate/CARD AMR labels — does correct identification change the story?
 
-The earlier per-gene analysis (:mod:`kleb_ast.per_gene_esm_vs_ft_lr`) keyed carriers on **Bakta**
+The earlier per-gene analysis (:mod:`bacpredict.apps.kleb.per_gene_esm_vs_ft_lr`) keyed carriers on **Bakta**
 ``gene_name``. Bakta misses or mislabels ~29% of acquired AMR genes (cohort validation), so those
 acquired-gene AUROCs were biased by missing carriers and wrong proteins. Now that every AMR protein has an
 authoritative **CARD allele / gene-family** label (the ``{Sample}_amr.parquet`` sidecars from
-:mod:`kleb_ast.annotate_amr_sidecar`), re-run the per-gene ESM-C logistic regression on the **reliable**
+:mod:`bacpredict.apps.kleb.annotate_amr_sidecar`), re-run the per-gene ESM-C logistic regression on the **reliable**
 carrier sets and ask, per AMR gene: *does fixing the carrier identity change its ESM-LR resistance signal?*
 
 The comparison is self-contained — both fits use the **same** ESM-C source (``emb[flat_index]``, the exact
@@ -19,7 +19,7 @@ LR (:func:`bacpredict.engine.gene_lr.build_per_gene_lr_store.fit_one_gene_impute
 ``reliable_per_gene_esm_lr_<drug>.csv`` (gene_family, amr_source, n_carriers_reliable, n_carriers_bakta,
 carrier_recovery, prevalence, esm_lr_auroc_reliable, esm_lr_auroc_bakta, delta_auroc). CPU only, no forward
 pass. The FT side (does the *fine-tuned* token learn the gene) is the GPU follow-on
-(:mod:`kleb_ast.cache_ft_amr_proteins`).
+(:mod:`bacpredict.apps.kleb.cache_ft_amr_proteins`).
 """
 
 from __future__ import annotations

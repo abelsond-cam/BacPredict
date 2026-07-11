@@ -5,12 +5,12 @@ from pathlib import Path
 import pandas as pd
 import torch
 
-from bacpredict.engine.finetune.datasets import LabelInjectingFileDataset
-from bacpredict.engine.finetune.split_utils import add_splits
-from kleb_ast.prepare_esmc_embeddings_and_labels_to_finetune_amr import (
+from bacpredict.apps.kleb.prepare_esmc_embeddings_and_labels_to_finetune_amr import (
     get_antibiotic_columns,
 )
-from kleb_ast.train_amr import PyTorchFileDataset
+from bacpredict.apps.kleb.train_amr import PyTorchFileDataset
+from bacpredict.engine.finetune.datasets import LabelInjectingFileDataset
+from bacpredict.engine.finetune.split_utils import add_splits
 
 
 def _write_embedding(path: Path, n_proteins: int = 6) -> None:
@@ -19,7 +19,7 @@ def _write_embedding(path: Path, n_proteins: int = 6) -> None:
 
 def test_pt_pipeline_imports():
     """Verify all pipeline modules can be imported."""
-    from kleb_ast import (
+    from bacpredict.apps.kleb import (
         prepare_esmc_embeddings_and_labels_to_finetune_amr,
         train_amr,
     )

@@ -1,4 +1,4 @@
-"""Tests for the CARD label-migration core (:mod:`kleb_ast.card_label`).
+"""Tests for the CARD label-migration core (:mod:`bacpredict.apps.kleb.card_label`).
 
 The causal-lookup cases pin the plan's verification contract (ciprofloxacin / meropenem / colistin /
 trimethoprim-sulfamethoxazole). They read the vendored ``CARD_AMR_clustered.csv``; the whole module is
@@ -10,7 +10,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from kleb_ast.card_label import (
+from bacpredict.apps.kleb.card_label import (
     _DRUG_CAUSAL,
     _DRUG_DETERMINANT,
     DEFAULT_CARD_CSV,
@@ -75,7 +75,7 @@ def test_causal_bad_grain_raises() -> None:
 def test_drug_causal_keys_match_drug_columns() -> None:
     """The causal + determinant specs cover exactly the drugs the ceiling map covers (no drift)."""
     pytest.importorskip("bacpredict.engine.gene_lr.kfold_probe")  # DRUG_COLUMNS import pulls the probe harness
-    from kleb_ast.kleborate_determinant_lr import DRUG_COLUMNS
+    from bacpredict.apps.kleb.kleborate_determinant_lr import DRUG_COLUMNS
 
     assert set(_DRUG_CAUSAL) == set(DRUG_COLUMNS)
     assert set(_DRUG_DETERMINANT) == set(DRUG_COLUMNS)

@@ -11,7 +11,7 @@ import json
 import pandas as pd
 import pytest
 
-from kleb_ast.kleborate_determinant_lr import (
+from bacpredict.apps.kleb.kleborate_determinant_lr import (
     ALL_KEY,
     build_determinant_onehot,
     run,
