@@ -12,7 +12,7 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-from tl.train.split_utils import add_splits
+from bacpredict.engine.finetune.split_utils import add_splits
 
 AST_CSV_DEFAULT = Path(
     "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/binary_ast.csv"

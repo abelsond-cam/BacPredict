@@ -1,4 +1,4 @@
-"""Tests for tl.train.predict (predict_proba).
+"""Tests for bacpredict.engine.finetune.predict (predict_proba).
 
 The heavy inference path is exercised end-to-end by the evaluator tests + the
 SLURM job; these tests cover the surface contract (empty input, type/shape,
@@ -8,7 +8,7 @@ delegation to run_inference preserves order).
 import numpy as np
 import pytest
 
-from tl.train import predict as predict_module
+from bacpredict.engine.finetune import predict as predict_module
 
 
 def test_predict_proba_empty_returns_empty_array():

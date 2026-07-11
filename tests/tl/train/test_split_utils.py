@@ -3,7 +3,7 @@
 import pandas as pd
 import pytest
 
-from tl.train.split_utils import add_splits, generate_kfold_splits
+from bacpredict.engine.finetune.split_utils import add_splits, generate_kfold_splits
 
 
 def _make_df(n: int) -> pd.DataFrame:

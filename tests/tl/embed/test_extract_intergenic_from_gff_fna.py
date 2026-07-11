@@ -7,7 +7,7 @@ index — the two properties the re-embed depends on (``rrs`` locatable; IGR+RNA
 
 from __future__ import annotations
 
-from tl.embed.extract_intergenic_from_gff_fna import extract_intergenic_from_gff_fna
+from bacpredict.engine.embedding.extract_intergenic_from_gff_fna import extract_intergenic_from_gff_fna
 
 # contig c1, 1-based inclusive:
 #   CDS   100-200 (+)

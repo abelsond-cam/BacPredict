@@ -9,13 +9,13 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
+from bacpredict.engine.finetune.split_utils import add_splits
 from kleb_iso_source.isolation_source_cli_parsing import (
     resolve_isolation_column,
     sanitize_pair_name,
     slugify_isolation_source_token,
     validate_and_resolve_tokens,
 )
-from tl.train.split_utils import add_splits
 
 EMBEDDINGS_DIR_DEFAULT = Path(
     "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/klebsiella_esm_embeddings"

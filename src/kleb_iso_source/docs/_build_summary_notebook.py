@@ -251,7 +251,7 @@ CELLS = [
         "from sklearn.preprocessing import OneHotEncoder",
         "from sklearn.metrics import roc_curve, auc",
         "import matplotlib.pyplot as plt",
-        "from tl.train.linear_baselines import (",
+        "from bacpredict.engine.finetune.linear_baselines import (",
         "    FEATURE_BLOCKS, FEATURE_SET_RECIPES,",
         "    _build_design_matrix, _materialise_blocks, _load_metadata_subset,",
         ")",

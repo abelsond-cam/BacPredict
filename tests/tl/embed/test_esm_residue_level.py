@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from tl.embed.esm_residue_level import apply_point_mutation, production_mean_pool
+from bacpredict.engine.embedding.esm_residue_level import apply_point_mutation, production_mean_pool
 
 
 def test_production_mean_pool_is_exact_mean():

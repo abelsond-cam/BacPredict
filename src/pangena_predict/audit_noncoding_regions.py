@@ -14,7 +14,7 @@ channel:
    IGR, a separate channel (embedding the RNA body alone) is worth it.
 
 Fast + label-free: parses the Bakta GFF only (CDS + RNA features + the ``##sequence-region`` contig
-lengths) — no FASTA load — and mirrors :func:`tl.embed.extract_intergenic_from_gff_fna`'s run logic
+lengths) — no FASTA load — and mirrors :func:`bacpredict.engine.embedding.extract_intergenic_from_gff_fna`'s run logic
 (``min_len`` gap filter, only-CDS-occupying) so the run set is identical to what gets embedded.
 """
 
@@ -30,7 +30,7 @@ from typing import Any
 
 import pandas as pd
 
-from tl.embed.extract_proteins_from_gff_fna import _open_text
+from bacpredict.engine.embedding.extract_proteins_from_gff_fna import _open_text
 
 logger = logging.getLogger(__name__)
 

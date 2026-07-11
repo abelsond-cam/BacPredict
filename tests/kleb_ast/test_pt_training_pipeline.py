@@ -5,12 +5,12 @@ from pathlib import Path
 import pandas as pd
 import torch
 
+from bacpredict.engine.finetune.datasets import LabelInjectingFileDataset
+from bacpredict.engine.finetune.split_utils import add_splits
 from kleb_ast.prepare_esmc_embeddings_and_labels_to_finetune_amr import (
     get_antibiotic_columns,
 )
 from kleb_ast.train_amr import PyTorchFileDataset
-from tl.train.datasets import LabelInjectingFileDataset
-from tl.train.split_utils import add_splits
 
 
 def _write_embedding(path: Path, n_proteins: int = 6) -> None:
@@ -114,7 +114,7 @@ def test_label_injecting_dataset_label_values(tmp_path):
 
 def test_kfold_validate_sets_non_overlapping():
     """Fold 0 and fold 4 validation sets are disjoint (each sample validates exactly once)."""
-    from tl.train.split_utils import generate_kfold_splits
+    from bacpredict.engine.finetune.split_utils import generate_kfold_splits
 
     df = pd.DataFrame({"Sample": [f"S{i:03d}" for i in range(50)], "drug": [i % 2 for i in range(50)]})
     _, folds = generate_kfold_splits(df, n_folds=5, seed=1)
@@ -125,7 +125,7 @@ def test_kfold_validate_sets_non_overlapping():
 
 def test_kfold_evaluate_stable_between_fold_and_seed():
     """Evaluate set is identical for fold=0/seed=1 and fold=3/seed=2 with same evaluate_seed."""
-    from tl.train.split_utils import generate_kfold_splits
+    from bacpredict.engine.finetune.split_utils import generate_kfold_splits
 
     df = pd.DataFrame({"Sample": [f"S{i:03d}" for i in range(50)], "drug": [i % 2 for i in range(50)]})
     eval1, _ = generate_kfold_splits(df, n_folds=5, seed=1, evaluate_seed=42)
@@ -135,7 +135,7 @@ def test_kfold_evaluate_stable_between_fold_and_seed():
 
 def test_kfold_legacy_csv_mode_preserved(tmp_path):
     """With n_folds=None, train_val_eval column from CSV is used (backward compat)."""
-    from tl.train.split_utils import add_splits
+    from bacpredict.engine.finetune.split_utils import add_splits
 
     sample_ids = ["S001", "S002", "S003", "S004", "S005"]
     embeddings_dir = tmp_path / "embeddings"

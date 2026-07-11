@@ -21,8 +21,8 @@ import torch
 from torch.utils.data import DataLoader
 from transformers import AutoModelForSequenceClassification
 
-from tl.train.datasets import LabelInjectingFileDataset
-from tl.train.evaluate import collate_fn, resolve_checkpoint_dir, run_inference
+from bacpredict.engine.finetune.datasets import LabelInjectingFileDataset
+from bacpredict.engine.finetune.evaluate import collate_fn, resolve_checkpoint_dir, run_inference
 
 
 def predict_proba(

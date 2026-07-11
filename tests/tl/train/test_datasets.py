@@ -6,7 +6,7 @@ import pytest
 import torch
 from torch.utils.data import DataLoader
 
-from tl.train.datasets import LabelInjectingFileDataset
+from bacpredict.engine.finetune.datasets import LabelInjectingFileDataset
 
 
 def _write_embedding(path: Path, n_proteins: int = 5, embed_dim: int = 8, with_contig: bool = True) -> None:

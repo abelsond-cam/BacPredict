@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from tl.embed.extract_proteins_from_gff_fna import (
+from bacpredict.engine.embedding.extract_proteins_from_gff_fna import (
     _assign_hits_to_cds,
     _parse_amr_paf,
     _resolve_card_label,

@@ -21,14 +21,14 @@ from transformers import (
     TrainingArguments,
 )
 
-from tl.train.metrics import (
+from bacpredict.engine.finetune.datasets import LabelInjectingFileDataset
+from bacpredict.engine.finetune.metrics import (
     build_results_payload,
     compute_full_metrics,
     compute_metrics_binary_genome_pred,
     write_results_json,
 )
-from tl.train.datasets import LabelInjectingFileDataset
-from tl.train.split_utils import generate_kfold_splits
+from bacpredict.engine.finetune.split_utils import generate_kfold_splits
 
 EMBEDDINGS_DIR_DEFAULT = Path(
     "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/klebsiella_esm_embeddings"

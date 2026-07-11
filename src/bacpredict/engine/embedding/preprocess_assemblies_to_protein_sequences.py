@@ -24,7 +24,7 @@ import pandas as pd
 from bacformer.pp import preprocess_genome_assembly
 from tqdm import tqdm
 
-from tl.embed.extract_proteins_from_gff_fna import (
+from bacpredict.engine.embedding.extract_proteins_from_gff_fna import (
     extract_proteins_from_gff_fna,
     is_gbff_path,
     is_gff_path,

@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 import torch
 
+from bacpredict.engine.finetune.split_utils import add_splits
 from kleb_ast.prepare_esmc_embeddings_and_labels_to_finetune_amr import (
     load_ast_sheet,
     validate_embeddings_and_prune,
@@ -13,7 +14,6 @@ from kleb_ast.prepare_esmc_embeddings_and_labels_to_finetune_amr import (
 from kleb_ast.prepare_esmc_embeddings_and_labels_to_finetune_amr import (
     write_split_files as write_split_files_amr,
 )
-from tl.train.split_utils import add_splits
 
 
 def _write_embedding(path: Path, n_proteins: int = 4) -> None:

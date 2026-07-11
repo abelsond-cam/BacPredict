@@ -35,9 +35,9 @@ import numpy as np
 import pandas as pd
 import torch
 
+from bacpredict.engine.embedding.extract_proteins_from_gff_fna import _open_text
 from pangena_predict.coding_amr_lr import ladder_over_frames
 from pangena_predict.snp_vs_esm_prediction import resolve_clean_splits
-from tl.embed.extract_proteins_from_gff_fna import _open_text
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

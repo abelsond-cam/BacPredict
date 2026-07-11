@@ -101,7 +101,7 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = [
-  "src/tl",
+  "src/bacpredict",
   "src/tb_ast",
   "src/kleb_ast",
   "src/kleb_iso_source",

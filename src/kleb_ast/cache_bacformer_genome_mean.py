@@ -24,9 +24,9 @@ import numpy as np
 import pandas as pd
 import torch
 
+from bacpredict.engine.embedding.generate_embeddings import bacformer_last_hidden_state
 from pangena_predict.bacformer_genome_vectors import forward_inputs, load_model
 from pangena_predict.snp_vs_esm_prediction import real_protein_indices
-from tl.embed.generate_embeddings import bacformer_last_hidden_state
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

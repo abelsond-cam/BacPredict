@@ -1,7 +1,7 @@
 """Extract intergenic (non-coding) DNA regions to per-sample parquet (CPU-only).
 
 The DNA half of the baclm store. Mirrors
-:mod:`tl.embed.preprocess_assemblies_to_protein_sequences` (the protein half): a
+:mod:`bacpredict.engine.embedding.preprocess_assemblies_to_protein_sequences` (the protein half): a
 ``multiprocessing.Pool`` runs :func:`extract_intergenic_from_gff_fna` over every
 ``(Sample, sr_assembly_file, sr_gff_file)`` row of the embedding-input CSV and writes one
 ``{Sample}_intergenic.parquet`` per genome. The GPU baclm job then reads these parquets instead of
@@ -10,7 +10,7 @@ re-extracting on the GPU node — the same CPU/GPU two-stage split the ESM-C pip
 Each parquet is a single row with list-valued columns: ``noncoding_sequence`` (lowercase DNA strings
 for the maximal non-CDS runs) + ``noncoding_seqid`` / ``noncoding_start`` / ``noncoding_end``, and the
 per-RNA index ``rna_sequence`` / ``rna_gene_name`` / ``rna_type`` / ``rna_seqid`` / ``rna_start`` /
-``rna_end`` (see :mod:`tl.embed.extract_intergenic_from_gff_fna`). Coordinates are 1-based inclusive,
+``rna_end`` (see :mod:`bacpredict.engine.embedding.extract_intergenic_from_gff_fna`). Coordinates are 1-based inclusive,
 forward strand.
 """
 
@@ -25,7 +25,7 @@ from pathlib import Path
 import pandas as pd
 from tqdm import tqdm
 
-from tl.embed.extract_intergenic_from_gff_fna import extract_intergenic_from_gff_fna
+from bacpredict.engine.embedding.extract_intergenic_from_gff_fna import extract_intergenic_from_gff_fna
 
 logging.basicConfig(
     level=logging.INFO,

@@ -1,4 +1,4 @@
-"""Tests for tl.train.metrics (compute_full_metrics, HF wrapper, JSON write)."""
+"""Tests for bacpredict.engine.finetune.metrics (compute_full_metrics, HF wrapper, JSON write)."""
 
 import json
 from pathlib import Path
@@ -8,7 +8,7 @@ import pytest
 import torch
 from transformers import EvalPrediction
 
-from tl.train.metrics import (
+from bacpredict.engine.finetune.metrics import (
     REQUIRED_METRICS_KEYS,
     REQUIRED_TOP_LEVEL_KEYS,
     build_results_payload,

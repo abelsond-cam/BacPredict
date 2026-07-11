@@ -12,7 +12,7 @@ was scored on, across a *nested sequence* of feature blocks:
 
 plus their concatenations (``country+sublineage``, …, all-of-the-above) so the
 **nested ΔAUROC** of each added block is directly comparable. Reuses
-``tl.train.metrics.compute_full_metrics`` for §0.4 metrics (AUROC, AUPRC,
+``bacpredict.engine.finetune.metrics.compute_full_metrics`` for §0.4 metrics (AUROC, AUPRC,
 sensitivity, specificity, balanced accuracy, F1, confusion, calibration).
 
 Output: a single JSON file with one entry per feature-set recipe; optionally
@@ -25,7 +25,7 @@ rule, virulence-locus schema, and acquired-AMR token splitting.
 
 Usage::
 
-    uv run python -m tl.train.linear_baselines \\
+    uv run python -m bacpredict.engine.finetune.linear_baselines \\
         --sheet-path <cohort>/binary_<pair>_with_split.csv \\
         --label-column blood_vs_faeces_label \\
         --metadata-file /home/.../metadata_v2_all_samples_and_columns.tsv \\
@@ -63,7 +63,7 @@ from bac_kleborate.parsing import (
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import OneHotEncoder
 
-from tl.train.metrics import compute_full_metrics
+from bacpredict.engine.finetune.metrics import compute_full_metrics
 
 DEFAULT_METADATA = Path(
     "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/final/metadata_v2_all_samples_and_columns.tsv"

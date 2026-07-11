@@ -30,7 +30,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from tl.embed.extract_proteins_from_gff_fna import _load_fna, _open_text, _parse_gff_attributes
+from bacpredict.engine.embedding.extract_proteins_from_gff_fna import _load_fna, _open_text, _parse_gff_attributes
 
 logger = logging.getLogger(__name__)
 

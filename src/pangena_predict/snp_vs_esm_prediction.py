@@ -6,7 +6,7 @@ ESM-C 960-vector out of the (mmap'd) embedding store in flat-protein order, load
 Bacformer gene-token / genome-mean NPZ, and fit-and-score one
 ``sklearn.LogisticRegression`` probe on TRAIN → EVALUATE against the *same* holdout
 the deployed Bacformer model used (``binary_ast_with_split.csv`` via
-:func:`tl.train.evaluate.resolve_holdouts`), so every number sits in one comparable
+:func:`bacpredict.engine.finetune.evaluate.resolve_holdouts`), so every number sits in one comparable
 table. The ``validate`` split only picks the Youden operating point.
 
 Gene-agnostic: the pooled vector is recovered by selecting the real-protein rows of
@@ -30,8 +30,8 @@ import torch
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-from tl.train.evaluate import resolve_holdouts
-from tl.train.metrics import compute_full_metrics, youden_threshold
+from bacpredict.engine.finetune.evaluate import resolve_holdouts
+from bacpredict.engine.finetune.metrics import compute_full_metrics, youden_threshold
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ def resolve_clean_splits(
     """Resolve the canonical train/validate/evaluate ids + a clean 0/1 label map.
 
     The evaluate/validate ids come straight from
-    :func:`tl.train.evaluate.resolve_holdouts` (CSV mode) — the *identical* holdout
+    :func:`bacpredict.engine.finetune.evaluate.resolve_holdouts` (CSV mode) — the *identical* holdout
     the deployed Bacformer model scored on. Train ids are the labelled remainder.
     Ambiguous (non-0/1, e.g. 0.5 intermediate) labels are dropped from all splits.
 

@@ -37,10 +37,10 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from bacpredict.engine.embedding.generate_embeddings import bacformer_last_hidden_state, load_bacformer_model
+from bacpredict.engine.finetune.evaluate import resolve_checkpoint_dir
 from pangena_predict.locate_gene import build_gene_presence_table
 from pangena_predict.snp_vs_esm_prediction import real_protein_indices, resolve_clean_splits
-from tl.embed.generate_embeddings import bacformer_last_hidden_state, load_bacformer_model
-from tl.train.evaluate import resolve_checkpoint_dir
 
 # Default cohort drug (TB rpoB/rifampicin). Superseded by OrganismConfig in a later refactor step.
 RIFAMPIN_COLUMN = "rifampin"
@@ -79,7 +79,7 @@ def load_finetuned_bacformer_backbone(checkpoint: Path, device: str) -> torch.nn
     The deployed AST model is a ``BacformerForGenomeClassification`` (backbone ``.bacformer`` — a
     ``BacformerModel`` — plus a classification head). For the fine-tuned genome mean we want the
     backbone's ``last_hidden_state`` (the same pool the head averages), with the *fine-tuned* weights.
-    Loads exactly as :mod:`tl.train.evaluate` does (``trust_remote_code``, ``torch_dtype="auto"``,
+    Loads exactly as :mod:`bacpredict.engine.finetune.evaluate` does (``trust_remote_code``, ``torch_dtype="auto"``,
     ``.float()`` on CPU so Stage-A smokes work), resolves the best ``checkpoint-*`` subdir, and returns
     ``model.bacformer``.
     """

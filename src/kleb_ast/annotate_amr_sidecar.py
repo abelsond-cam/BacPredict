@@ -4,7 +4,7 @@ Bakta under-annotates acquired AMR genes for several classes, so keying our per-
 the Bakta ``gene_name`` mislabels / drops carriers. This driver re-identifies AMR genes the way
 Kleborate does — ``minimap2`` of the vendored CARD acquired-allele refs (+ the chromosomal QRDR /
 OmpK / MgrB-PmrB refs) against each genome assembly (see
-:func:`tl.embed.extract_proteins_from_gff_fna.annotate_amr_calls`) — and writes, **per sample**, a
+:func:`bacpredict.engine.embedding.extract_proteins_from_gff_fna.annotate_amr_calls`) — and writes, **per sample**, a
 small ``{Sample}_amr.parquet`` whose rows are the AMR calls keyed by **flat protein index** (the row
 into ``{Sample}_esm_embeddings.pt``). No protein parquet is rewritten and **no genome is re-embedded**.
 
@@ -38,8 +38,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from bacpredict.engine.embedding.extract_proteins_from_gff_fna import extract_proteins_from_gff_fna
 from pangena_predict.locate_gene import flatten_proteins
-from tl.embed.extract_proteins_from_gff_fna import extract_proteins_from_gff_fna
 
 RDS_ROOT = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw")
 # metadata_v2 stores sr_assembly_file / sr_gff_file *relative to the project_k root* (e.g.

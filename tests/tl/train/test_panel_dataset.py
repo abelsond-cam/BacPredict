@@ -14,7 +14,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from tl.train.datasets import PanelInjectingFileDataset  # noqa: E402 - after importorskip
+from bacpredict.engine.finetune.datasets import PanelInjectingFileDataset  # noqa: E402 - after importorskip
 
 PANEL_COLUMNS = [
     "max_surprisal", "top2_surprisal", "top3_surprisal", "top10_surprisal",

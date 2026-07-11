@@ -1,7 +1,7 @@
 """Recover a target gene's flat protein index + sequence from a sample's parquet.
 
 The per-sample ``{sample_id}_protein_sequences.parquet`` (written by
-:mod:`tl.embed.preprocess_assemblies_to_protein_sequences`) stores the protein
+:mod:`bacpredict.engine.embedding.preprocess_assemblies_to_protein_sequences`) stores the protein
 annotation as *lists-of-lists*: one inner list per contig, in ``contig_idx``
 order. The ESM-C embedding store drops the per-protein labels, so to pull a
 single gene's pooled vector back out of ``{sample_id}_esm_embeddings.pt`` we have

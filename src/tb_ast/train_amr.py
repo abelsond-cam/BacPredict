@@ -24,15 +24,15 @@ from transformers import (
     TrainingArguments,
 )
 
-from tl.train.attention_pool import BacformerAttnPoolForGenomeClassification
-from tl.train.datasets import LabelInjectingFileDataset, PanelInjectingFileDataset
-from tl.train.metrics import (
+from bacpredict.engine.finetune.attention_pool import BacformerAttnPoolForGenomeClassification
+from bacpredict.engine.finetune.datasets import LabelInjectingFileDataset, PanelInjectingFileDataset
+from bacpredict.engine.finetune.metrics import (
     build_results_payload,
     compute_full_metrics,
     compute_metrics_binary_genome_pred,
     write_results_json,
 )
-from tl.train.split_utils import generate_kfold_splits
+from bacpredict.engine.finetune.split_utils import generate_kfold_splits
 
 EMBEDDINGS_DIR_DEFAULT = Path(
     "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/tb_esm_embeddings"

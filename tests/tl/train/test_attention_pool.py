@@ -13,7 +13,7 @@ import pytest
 torch = pytest.importorskip("torch")
 nn = torch.nn
 
-from tl.train.attention_pool import (  # noqa: E402 - after importorskip
+from bacpredict.engine.finetune.attention_pool import (  # noqa: E402 - after importorskip
     BacformerAttnPoolForGenomeClassification,
     GatedAttentionMILPool,
 )

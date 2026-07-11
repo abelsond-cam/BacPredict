@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from tl.embed import baclm_embed
+from bacpredict.engine.embedding import baclm_embed
 
 CHUNK = baclm_embed._WINDOW_CHUNK  # 2046
 

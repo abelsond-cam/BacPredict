@@ -35,6 +35,7 @@ import numpy as np
 import pandas as pd
 import torch
 
+from bacpredict.engine.finetune.split_utils import generate_kfold_splits
 from pangena_predict.kfold_probe import FeatureSpec, run_kfold_probe, summarise_kfold
 from pangena_predict.locate_gene import build_gene_presence_table, flatten_proteins
 from pangena_predict.snp_vs_esm_prediction import (
@@ -42,7 +43,6 @@ from pangena_predict.snp_vs_esm_prediction import (
     load_pooled_gene_vectors,
     resolve_clean_splits,
 )
-from tl.train.split_utils import generate_kfold_splits
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

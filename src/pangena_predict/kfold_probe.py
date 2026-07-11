@@ -3,7 +3,7 @@
 At the top of the localization ladder the inter-method AUROC deltas are small (concat 0.975 vs
 ESM-rpoB 0.971 vs one-hot 0.960). A single canonical split can not tell whether those orderings are
 real. This harness reruns any set of **pre-aligned** feature frames through the repo's canonical
-k-fold (:func:`tl.train.split_utils.generate_kfold_splits` — a fixed evaluate holdout pinned by
+k-fold (:func:`bacpredict.engine.finetune.split_utils.generate_kfold_splits` — a fixed evaluate holdout pinned by
 ``evaluate_seed``, validation folds rotated by ``seed``) for several seeds, scores every ``(fold,
 seed)`` on the one fixed evaluate holdout with :func:`pangena_predict.snp_vs_esm_prediction.fit_score_step`,
 and reports **mean ± sd** per frame plus **paired** per-run AUROC deltas between frames (the honest
@@ -28,8 +28,8 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from bacpredict.engine.finetune.split_utils import generate_kfold_splits
 from pangena_predict.snp_vs_esm_prediction import fit_score_step
-from tl.train.split_utils import generate_kfold_splits
 
 logger = logging.getLogger(__name__)
 

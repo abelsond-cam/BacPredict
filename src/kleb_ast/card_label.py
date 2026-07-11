@@ -49,7 +49,7 @@ def _default_card_csv() -> Path:
 
 DEFAULT_CARD_CSV = _default_card_csv()
 
-# Chromosomal display gene-families — mirror tl.embed.extract_proteins_from_gff_fna._CHROMOSOMAL_GENE_META.
+# Chromosomal display gene-families — mirror bacpredict.engine.embedding.extract_proteins_from_gff_fna._CHROMOSOMAL_GENE_META.
 # These are the exact amr_gene_family / amr_allele strings a chromosomal sidecar call carries (the same
 # string at both grains, since the extractor sets allele == family for chromosomal refs).
 _PORINS = ("OmpK35", "OmpK36")

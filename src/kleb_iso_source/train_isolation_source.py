@@ -22,13 +22,13 @@ from transformers import (
     TrainingArguments,
 )
 
+from bacpredict.engine.finetune.datasets import LabelInjectingFileDataset
+from bacpredict.engine.finetune.metrics import build_results_payload, compute_full_metrics, write_results_json
+from bacpredict.engine.finetune.split_utils import generate_kfold_splits
 from kleb_iso_source.isolation_source_cli_parsing import (
     sanitize_pair_name,
     slugify_isolation_source_token,
 )
-from tl.train.datasets import LabelInjectingFileDataset
-from tl.train.metrics import build_results_payload, compute_full_metrics, write_results_json
-from tl.train.split_utils import generate_kfold_splits
 
 PROCESSED_DIR = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed")
 PROCESSED_BASE_DIR_DEFAULT = PROCESSED_DIR / "train_iso_source"

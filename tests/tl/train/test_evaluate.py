@@ -1,11 +1,11 @@
-"""Tests for the shared evaluator (tl.train.evaluate) — plotting + holdout reconstruction."""
+"""Tests for the shared evaluator (bacpredict.engine.finetune.evaluate) — plotting + holdout reconstruction."""
 
 import numpy as np
 import pandas as pd
 import pytest
 import torch
 
-from tl.train.evaluate import (
+from bacpredict.engine.finetune.evaluate import (
     collate_fn,
     plot_auroc_bar,
     plot_roc_pr_grid,
@@ -13,7 +13,7 @@ from tl.train.evaluate import (
     resolve_evaluate_ids,
     resolve_holdouts,
 )
-from tl.train.split_utils import generate_kfold_splits
+from bacpredict.engine.finetune.split_utils import generate_kfold_splits
 
 
 def _scores(n=40, seed=0):

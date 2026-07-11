@@ -40,9 +40,14 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 from transformers import AutoModelForSequenceClassification
 
-from tl.train.datasets import LabelInjectingFileDataset
-from tl.train.metrics import build_results_payload, compute_full_metrics, write_results_json, youden_threshold
-from tl.train.split_utils import generate_kfold_splits
+from bacpredict.engine.finetune.datasets import LabelInjectingFileDataset
+from bacpredict.engine.finetune.metrics import (
+    build_results_payload,
+    compute_full_metrics,
+    write_results_json,
+    youden_threshold,
+)
+from bacpredict.engine.finetune.split_utils import generate_kfold_splits
 
 # The file-based dataset + DataLoader workers open many .pt files; the default
 # file_descriptor sharing strategy exhausts FDs on large evaluate splits

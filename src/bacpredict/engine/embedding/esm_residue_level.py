@@ -1,7 +1,7 @@
 """Residue-level ESM-C (ESM++) operations shared by the ``pangena_predict`` task.
 
 This is the shared home for *per-residue* ESM-C work — the opposite end from the
-production embedding path (:mod:`tl.embed.generate_embeddings`), which only ever
+production embedding path (:mod:`bacpredict.engine.embedding.generate_embeddings`), which only ever
 keeps the mean-pooled protein vector.
 
 Step 3a (masked-marginal LLR) needs the masked-LM head and masked-marginal

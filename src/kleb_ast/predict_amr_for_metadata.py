@@ -2,7 +2,7 @@
 
 Reads the v2 metadata TSV, filters to ``kpsc_final_list == True``, drops samples
 whose ESM-C embedding file is missing on disk, runs Bacformer inference using
-the drug's fine-tuned checkpoint via :func:`tl.train.predict.predict_proba`,
+the drug's fine-tuned checkpoint via :func:`bacpredict.engine.finetune.predict.predict_proba`,
 applies the per-drug **Youden's J** threshold (read from the checkpoint dir's
 ``eval_results.json``), and writes a per-drug parquet with columns:
 
@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from tl.train.predict import predict_proba
+from bacpredict.engine.finetune.predict import predict_proba
 
 
 def _load_youden_threshold(checkpoint_dir: Path, drug: str) -> float:
