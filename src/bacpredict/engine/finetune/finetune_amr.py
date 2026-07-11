@@ -1,11 +1,10 @@
-"""
-Train Bacformer AMR model on M. tuberculosis.
+"""Fine-tune Bacformer for AMR — the single trainer shared by every organism (TB, Kp, …).
 
-Labels are injected at load time from the split CSV; no pre-built per-experiment
-``.pt`` copies are required. Pass ``--embeddings-dir`` pointing at the TB
-``tb_esm_embeddings/`` directory.
-
-Note: the TB binary_ast.csv uses US drug spellings — ``rifampin`` (not ``rifampicin``).
+Labels are injected at load time from the split CSV; no pre-built per-experiment ``.pt`` copies are
+required. Pass ``--embeddings-dir`` at the organism's ESM-C store and ``--task`` (e.g. ``tb_ast`` /
+``kleb_ast``) to label ``results.json``. The model trains in **bf16** master weights (the deployed AST
+setting) — do Stage-A smokes on GPU. Drug column names are organism-specific (TB uses US spellings,
+e.g. ``rifampin``).
 """
 import json
 import os
@@ -40,76 +39,6 @@ EMBEDDINGS_DIR_DEFAULT = Path(
 AST_SHEET_PATH_DEFAULT = Path(
     "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/binary_ast_with_split.csv"
 )
-
-
-############################################################## PyTorchFileDataset ##############################################################
-class PyTorchFileDataset(torch.utils.data.Dataset):
-    """PyTorch Dataset that loads pytorch (.pt) files directly for AMR training."""
-
-    def __init__(
-        self,
-        file_paths: list[Path],
-        drug: str,
-    ):
-        """
-        Initialize dataset.
-
-        Args:
-            file_paths: List of paths to pytorch (.pt) files named {sample_id}_with_ast.pt.
-            drug: Drug column name for the label.
-        """
-        self.file_paths = file_paths
-        self.drug = drug
-
-    def __len__(self) -> int:
-        return len(self.file_paths)
-
-    def __getitem__(self, idx: int) -> dict:
-        file_path = self.file_paths[idx]
-        data = torch.load(file_path, map_location="cpu", weights_only=False)
-
-        # Skip if missing label for this drug
-        if self.drug not in data or pd.isna(data[self.drug]):
-            raise ValueError(f"Sample {data.get('Sample', 'unknown')} has no label for drug {self.drug}")
-
-        label_val = data[self.drug]
-        if isinstance(label_val, torch.Tensor):
-            label_val = label_val.item()
-        elif hasattr(label_val, "item"):
-            label_val = label_val.item()
-        label_val = int(label_val)
-
-        prot_embeddings = data.get("prot_embeddings", data.get("protein_embeddings"))
-        if prot_embeddings is None:
-            raise KeyError(
-                f"Sample {data.get('Sample', 'unknown')} is missing 'prot_embeddings'/'protein_embeddings'."
-            )
-
-        # Bacformer Large expects [batch, seq, dim]; ensure 3D
-        if prot_embeddings.dim() == 2:
-            prot_embeddings = prot_embeddings.unsqueeze(0)
-
-        seq_len = prot_embeddings.shape[1]
-        sample: dict[str, torch.Tensor] = {
-            "protein_embeddings": prot_embeddings,
-            "labels": torch.tensor(label_val, dtype=torch.float32),
-        }
-
-        # Bacformer Large uses attention_mask and contig_ids (no special_tokens_mask).
-        # Synthesize when missing: all ones for attention, zeros for contig (single contig).
-        am = data["attention_mask"] if "attention_mask" in data else None
-        if am is not None and am.dim() == 1:
-            am = am.unsqueeze(0)
-        sample["attention_mask"] = am if am is not None else torch.ones(1, seq_len, dtype=torch.float32)
-        contig_src = data.get("contig_idx", data.get("contig_ids", data.get("token_type_ids")))
-        if contig_src is not None:
-            sample["contig_ids"] = (
-                contig_src.unsqueeze(0) if contig_src.dim() == 1 else contig_src
-            )
-        else:
-            sample["contig_ids"] = torch.zeros(1, seq_len, dtype=torch.long)
-
-        return sample
 
 
 ############################################################## Panel-aware trainer ##############################################################
@@ -153,6 +82,7 @@ def run(
     embeddings_dir: str,
     output_dir: str,
     ast_sheet_path: str,
+    task: str = "ast",
     lr: float = 0.00015,
     batch_size: int = 1,
     grad_accumulation_steps: int = 8,
@@ -331,8 +261,9 @@ def run(
         print(f"WARNING: Could not inspect sample: {e}")
 
     # Load model (AutoModelForSequenceClassification loads BacformerLargeForGenomeClassification via auto_map).
-    # dtype="auto" lets HF pick precision per device — bf16 on GPU, fp32 on CPU — so Stage A
-    # CPU smoke tests stay viable.
+    # The model is cast to bf16 master weights below — the proven, gold-standard setting for the deployed
+    # AST models (Kp finetune AUROC 0.99); both organisms train identically. (bf16 weights mean CPU Stage-A
+    # smokes don't run — do Stage A on GPU.)
     # On resume, load weights from the checkpoint directly (avoids a wasted base-model pull
     # before the trainer would overwrite them anyway).
     load_from = resume_from_checkpoint or model_name_or_path
@@ -362,11 +293,14 @@ def run(
             problem_type="binary_classification",
             return_dict=True,
             trust_remote_code=True,
-            dtype="auto",
         )
         if freeze_encoder:
             for param in bacformer_model.bacformer.parameters():
                 param.requires_grad = False
+
+    # bf16 master weights for both organisms (the deployed AST setting). Cast after construction so it
+    # applies uniformly to the stock head and the attention-pool wrapper.
+    bacformer_model = bacformer_model.to(torch.bfloat16)
 
     print("Nr of parameters:", sum(p.numel() for p in bacformer_model.parameters()))
     print("Nr of trainable:", sum(p.numel() for p in bacformer_model.parameters() if p.requires_grad))
@@ -467,7 +401,7 @@ def run(
         y_true = labels.cpu().numpy()
         metrics_block = compute_full_metrics(y_true, y_prob)
         payload = build_results_payload(
-            task="tb_ast",
+            task=task,
             drug=drug,
             model_name_or_path=model_name_or_path,
             checkpoint_dir=str(Path(output_dir).resolve()),
@@ -505,6 +439,8 @@ class ArgumentParser(Tap):
     train_data_dir: str | None = None
     val_data_dir: str | None = None
     output_dir: str = "/tmp/train-output/"
+    task: str = "ast"
+    """Organism/task label recorded in results.json (e.g. 'tb_ast' or 'kleb_ast')."""
     batch_size: int = 1
     grad_accumulation_steps: int = 8
     lr: float = 0.00015
@@ -549,6 +485,7 @@ if __name__ == "__main__":
         embeddings_dir=args.embeddings_dir,
         output_dir=args.output_dir,
         ast_sheet_path=args.ast_sheet_path,
+        task=args.task,
         lr=args.lr,
         batch_size=args.batch_size,
         grad_accumulation_steps=args.grad_accumulation_steps,

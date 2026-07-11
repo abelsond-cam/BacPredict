@@ -5,10 +5,9 @@ from pathlib import Path
 import pandas as pd
 import torch
 
-from bacpredict.apps.kleb.prepare_esmc_embeddings_and_labels_to_finetune_amr import (
+from bacpredict.engine.finetune.build_split_csv import (
     get_antibiotic_columns,
 )
-from bacpredict.apps.kleb.train_amr import PyTorchFileDataset
 from bacpredict.engine.finetune.datasets import LabelInjectingFileDataset
 from bacpredict.engine.finetune.split_utils import add_splits
 
@@ -18,17 +17,8 @@ def _write_embedding(path: Path, n_proteins: int = 6) -> None:
 
 
 def test_pt_pipeline_imports():
-    """Verify all pipeline modules can be imported."""
-    from bacpredict.apps.kleb import (
-        prepare_esmc_embeddings_and_labels_to_finetune_amr,
-        train_amr,
-    )
-
-
-def test_pt_file_dataset_empty():
-    """PyTorchFileDataset with empty file list has length 0."""
-    ds = PyTorchFileDataset(file_paths=[], drug="ceftriaxone")
-    assert len(ds) == 0
+    """Verify the shared trainer + split-prep modules import."""
+    from bacpredict.engine.finetune import build_split_csv, finetune_amr  # noqa: F401
 
 
 def test_add_splits():

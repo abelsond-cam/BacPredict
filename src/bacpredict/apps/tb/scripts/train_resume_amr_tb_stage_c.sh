@@ -67,7 +67,7 @@ echo "run dir:      $RUN_DIR"
 echo "resume from:  $LATEST"
 echo "Job ID:       $SLURM_JOB_ID  Node: $SLURMD_NODENAME  GPU: $CUDA_VISIBLE_DEVICES"
 
-uv run python src/tb_ast/train_amr.py \
+uv run python -m bacpredict.engine.finetune.finetune_amr --task tb_ast \
     --embeddings-dir $BASE/tb_esm_embeddings \
     --ast-sheet-path $BASE/binary_ast_with_split.csv \
     --lr $lr \

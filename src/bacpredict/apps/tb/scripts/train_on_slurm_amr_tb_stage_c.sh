@@ -49,7 +49,7 @@ echo "Node: $SLURMD_NODENAME, GPU: $CUDA_VISIBLE_DEVICES"
 
 embeddings_dir="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/tb_esm_embeddings"
 
-uv run python src/tb_ast/train_amr.py \
+uv run python -m bacpredict.engine.finetune.finetune_amr --task tb_ast \
 --embeddings-dir $embeddings_dir \
 --ast-sheet-path /home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/binary_ast_with_split.csv \
 --lr $lr \

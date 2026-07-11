@@ -42,7 +42,7 @@ export TRANSFORMERS_VERBOSITY=info
 echo "TB attention-pool smoke (GPU, n=10, drug=rifampin, mode=$mode)"
 echo "Job ID: $SLURM_JOB_ID  Node: $SLURMD_NODENAME  GPU: $CUDA_VISIBLE_DEVICES"
 
-uv run python src/tb_ast/train_amr.py \
+uv run python -m bacpredict.engine.finetune.finetune_amr --task tb_ast \
     --drug rifampin \
     --pooling attention \
     --attn-dim 128 \

@@ -6,11 +6,11 @@ import pandas as pd
 import pytest
 import torch
 
-from bacpredict.apps.kleb.prepare_esmc_embeddings_and_labels_to_finetune_amr import (
+from bacpredict.engine.finetune.build_split_csv import (
     load_ast_sheet,
     validate_embeddings_and_prune,
 )
-from bacpredict.apps.kleb.prepare_esmc_embeddings_and_labels_to_finetune_amr import (
+from bacpredict.engine.finetune.build_split_csv import (
     write_split_files as write_split_files_amr,
 )
 from bacpredict.engine.finetune.split_utils import add_splits

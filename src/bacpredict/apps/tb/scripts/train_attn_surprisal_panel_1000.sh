@@ -53,7 +53,7 @@ echo "TB 1000-genome surprisal-panel run — mode=$mode  job=$SLURM_JOB_ID  node
 echo "sheet=$SHEET"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || true
 
-uv run python src/tb_ast/train_amr.py \
+uv run python -m bacpredict.engine.finetune.finetune_amr --task tb_ast \
     --drug rifampin \
     --pooling attention \
     --attn-dim 128 \

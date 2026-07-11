@@ -47,7 +47,7 @@ STORE_DIR=$RDS/tb_surprisal_panel
 echo "TB surprisal-panel smoke (GPU, n=10, drug=rifampin, panel-mode=$mode)"
 echo "Job ID: $SLURM_JOB_ID  Node: $SLURMD_NODENAME  GPU: $CUDA_VISIBLE_DEVICES"
 
-uv run python src/tb_ast/train_amr.py \
+uv run python -m bacpredict.engine.finetune.finetune_amr --task tb_ast \
     --drug rifampin \
     --pooling attention \
     --attn-dim 128 \

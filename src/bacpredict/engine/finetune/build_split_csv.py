@@ -1,9 +1,9 @@
-"""
-Prepare ESMc embeddings and TB AST labels as pytorch (.pt) files for finetuning.
+"""Build the train/validate/evaluate split CSV for AMR fine-tuning — shared by every organism.
 
-Creates train/val/eval splits (70/10/20) from ESM embeddings and TB binary_ast.csv.
-Samples without embedding files are pruned automatically. Outputs are ready for
-Bacformer fine-tuning on TB.
+Creates the 70/10/20 split over unique samples from an organism's ESM embeddings + binary AST sheet,
+pruning samples with no embedding file. Organism-specific paths are passed on the CLI (the defaults
+are TB-flavoured placeholders). By default writes only the split CSV; ``--write-pt-files`` also
+materialises the legacy per-sample ``.pt`` copies.
 """
 import argparse
 from pathlib import Path
