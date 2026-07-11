@@ -27,7 +27,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -35,6 +34,7 @@ import numpy as np
 import pandas as pd
 import torch
 
+from bacpredict.engine.config import StorePaths, store_paths
 from bacpredict.engine.finetune.split_utils import generate_kfold_splits
 from bacpredict.engine.gene_lr.kfold_probe import FeatureSpec, run_kfold_probe, summarise_kfold
 from bacpredict.engine.gene_lr.locate_gene import build_gene_presence_table, flatten_proteins
@@ -84,30 +84,10 @@ PANEL: dict[str, list[GeneTarget]] = {
 }
 
 
-@dataclass
-class SpeciesPaths:
-    """Per-species store locations (Isambard ``$SCRATCHDIR`` defaults; override on the CLI)."""
-
-    ast_sheet: Path
-    esm_dir: Path
-    baclm_dir: Path
-    parquet_dir: Path
-    esm_suffix: str = "_esm_embeddings.pt"
-    baclm_suffix: str = "_baclm_embeddings.pt"
-    parquet_suffix: str = "_protein_sequences.parquet"
-
-
-def default_paths(species: str) -> SpeciesPaths:
-    """Isambard ``$SCRATCHDIR`` defaults for a species (``tb`` → ``train_tb_ast`` etc.)."""
-    scratch = os.environ.get("SCRATCHDIR", "")
-    task = {"tb": "train_tb_ast", "kp": "train_kleb_ast"}[species]
-    root = Path(scratch) / "processed" / task
-    return SpeciesPaths(
-        ast_sheet=root / "binary_ast_with_split.csv",
-        esm_dir=root / "esm",
-        baclm_dir=root / "baclm",
-        parquet_dir=root / "protein_sequences",
-    )
+# Store paths + the species→task resolver now live in the shared organism config
+# (``StorePaths`` / ``store_paths``). Kept as aliases here for call-site compatibility.
+SpeciesPaths = StorePaths
+default_paths = store_paths
 
 
 # ---------------------------------------------------------------------------

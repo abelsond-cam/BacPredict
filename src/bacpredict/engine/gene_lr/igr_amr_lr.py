@@ -27,7 +27,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,6 +34,7 @@ import numpy as np
 import pandas as pd
 import torch
 
+from bacpredict.engine.config import store_paths
 from bacpredict.engine.embedding.extract_proteins_from_gff_fna import _open_text
 from bacpredict.engine.gene_lr.coding_amr_lr import ladder_over_frames
 from bacpredict.engine.gene_lr.snp_vs_esm_prediction import resolve_clean_splits
@@ -78,26 +78,9 @@ IGR_PANEL: dict[str, list[IgrTarget]] = {
 }
 
 
-@dataclass
-class IgrPaths:
-    """Per-species store locations for the IGR probe (Isambard ``$SCRATCHDIR`` defaults)."""
-
-    ast_sheet: Path
-    input_csv: Path  # Sample -> sr_gff_file
-    baclm_dir: Path
-    baclm_suffix: str = "_baclm_embeddings.pt"
-
-
-def default_paths(species: str) -> IgrPaths:
-    """Isambard ``$SCRATCHDIR`` defaults for a species (``tb`` → ``train_tb_ast``)."""
-    scratch = os.environ.get("SCRATCHDIR", "")
-    task = {"tb": "train_tb_ast", "kp": "train_kleb_ast"}[species]
-    root = Path(scratch) / "processed" / task
-    return IgrPaths(
-        ast_sheet=root / "binary_ast_with_split.csv",
-        input_csv=root / "embedding_input.csv",
-        baclm_dir=root / "baclm",
-    )
+# Store paths + the species→task resolver come from the shared organism config.
+# ``StorePaths`` is a superset of the fields this probe reads (ast_sheet, input_csv, baclm_*).
+default_paths = store_paths
 
 
 # ---------------------------------------------------------------------------
