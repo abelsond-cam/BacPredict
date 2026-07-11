@@ -34,32 +34,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from bacpredict.engine.concat.concat_ingredients import impute_block, load_ft_mean
 from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_one_gene, read_genome
 from bacpredict.engine.gene_lr.snp_vs_esm_prediction import resolve_clean_splits
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-
-
-def _impute_block(present_ids: list[str], present_vecs: np.ndarray, all_ids: list[str], dim: int) -> np.ndarray:
-    """A ``[len(all_ids), dim]`` block: the gene's real vector where carried single-copy, else a 0-vector."""
-    pos = {s: i for i, s in enumerate(all_ids)}
-    block = np.zeros((len(all_ids), dim), dtype=np.float32)
-    rows = [pos[s] for s in present_ids if s in pos]
-    if rows:
-        block[rows] = present_vecs[: len(rows)]
-    return block
-
-
-def load_ft_mean(ft_cache_dir: Path, drug: str, label_map: dict[str, int]) -> tuple[list[str], np.ndarray]:
-    """FT genome-mean over the eval holdout → ``(all_ids, mean_block[len(all_ids), dim])``, labelled only."""
-    npz = np.load(ft_cache_dir / f"ft_genome_mean_{drug}.npz", allow_pickle=True)
-    ids = [str(s) for s in npz["sample_ids"]]
-    vecs = npz["mean_vectors"]
-    pos = {s: i for i, s in enumerate(ids)}
-    all_ids = [s for s in ids if s in label_map]
-    mean_block = np.vstack([vecs[pos[s]] for s in all_ids]).astype(np.float32)
-    return all_ids, mean_block
 
 
 def collect_esm_blocks(
@@ -139,12 +119,12 @@ def run(
             logger.warning("no FT npz for %s — dropping from the FT panel", g)
             continue
         z = np.load(ftp, allow_pickle=True)
-        ft_blocks[g] = _impute_block([str(s) for s in z["sample_ids"]], z["vectors"], all_ids, dim)
+        ft_blocks[g] = impute_block([str(s) for s in z["sample_ids"]], z["vectors"], all_ids, dim)
     ft_order = [g for g in ft_order if g in ft_blocks]
 
     # ESM gene blocks — one pass over the holdout genomes, then zero-impute.
     esm_present = collect_esm_blocks(all_ids, set(esm_order), esm_dir, parquet_dir)
-    esm_blocks = {g: _impute_block(ids, vecs, all_ids, dim) for g, (ids, vecs) in esm_present.items()}
+    esm_blocks = {g: impute_block(ids, vecs, all_ids, dim) for g, (ids, vecs) in esm_present.items()}
     esm_order = [g for g in esm_order if g in esm_blocks]
 
     def _score(x: np.ndarray) -> dict | None:

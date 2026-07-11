@@ -25,7 +25,7 @@ import numpy as np
 import pandas as pd
 
 from bacpredict.apps.kleb.per_gene_lr_from_annotation import MIN_CARRIERS, collect_reliable_amr
-from bacpredict.apps.kleb.reliable_ft_concat import _impute_block, load_ft_gene, load_ft_mean
+from bacpredict.engine.concat.concat_ingredients import impute_block, load_frozen_gene, load_ft_gene, load_ft_mean
 from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_one_gene, fit_one_gene_imputed
 from bacpredict.engine.gene_lr.snp_vs_esm_prediction import resolve_clean_splits
 
@@ -41,12 +41,6 @@ def load_frozen_mean(frozen_dir: Path, drug: str, label_map: dict[str, int]) -> 
     pos = {s: i for i, s in enumerate(ids)}
     all_ids = [s for s in ids if s in label_map]
     return all_ids, np.vstack([vecs[pos[s]] for s in all_ids]).astype(np.float32)
-
-
-def load_frozen_gene(frozen_dir: Path, sanitized: str) -> tuple[list[str], np.ndarray]:
-    """One gene's frozen Bacformer tokens → ``(carrier_ids, vectors)``."""
-    z = np.load(frozen_dir / "frozen_amr_emb" / f"{sanitized}.npz", allow_pickle=True)
-    return [str(s) for s in z["sample_ids"]], z["vectors"]
 
 
 def _best_gene(blocks: dict[str, tuple[list[str], np.ndarray]], universe: list[str],
@@ -118,7 +112,7 @@ def run(*, ast_sheet: Path, drug: str, ft_cache_dir: Path, frozen_cache_dir: Pat
             if gene is None:
                 continue
             ids, vecs = blk[gene]
-            gblock = _impute_block(ids, vecs.astype(np.float32), universe, vecs.shape[1])
+            gblock = impute_block(ids, vecs.astype(np.float32), universe, vecs.shape[1])
             rows.append({"config": f"{mname}+{iname}_gene", "mean": mname, "ingredient": iname,
                          "gene": gene, "auroc": _score(np.hstack([mblock, gblock]))})
 

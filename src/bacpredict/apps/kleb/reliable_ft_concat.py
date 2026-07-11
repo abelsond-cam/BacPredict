@@ -30,43 +30,12 @@ import pandas as pd
 from sklearn.metrics import average_precision_score
 
 from bacpredict.apps.kleb.per_gene_lr_from_annotation import MIN_CARRIERS, collect_reliable_amr
+from bacpredict.engine.concat.concat_ingredients import impute_block, load_frozen_gene, load_ft_gene, load_ft_mean
 from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_one_gene, fit_one_gene_imputed
 from bacpredict.engine.gene_lr.snp_vs_esm_prediction import resolve_clean_splits
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-
-
-def _impute_block(present_ids: list[str], present_vecs: np.ndarray, all_ids: list[str], dim: int) -> np.ndarray:
-    """``[len(all_ids), dim]`` block: the gene's real vector where carried single-copy, else a 0-vector."""
-    pos = {s: i for i, s in enumerate(all_ids)}
-    block = np.zeros((len(all_ids), dim), dtype=np.float32)
-    rows = [pos[s] for s in present_ids if s in pos]
-    if rows:
-        block[rows] = present_vecs[: len(rows)]
-    return block
-
-
-def load_ft_mean(ft_cache_dir: Path, drug: str, label_map: dict[str, int]) -> tuple[list[str], np.ndarray]:
-    """FT genome-mean over the eval holdout → ``(all_ids, mean_block)`` restricted to labelled genomes."""
-    npz = np.load(ft_cache_dir / f"ft_genome_mean_{drug}.npz", allow_pickle=True)
-    ids = [str(s) for s in npz["sample_ids"]]
-    vecs = npz["mean_vectors"]
-    pos = {s: i for i, s in enumerate(ids)}
-    all_ids = [s for s in ids if s in label_map]
-    return all_ids, np.vstack([vecs[pos[s]] for s in all_ids]).astype(np.float32)
-
-
-def load_ft_gene(ft_cache_dir: Path, sanitized: str) -> tuple[list[str], np.ndarray]:
-    """One family's FT tokens from the cache → ``(carrier_ids, vectors)``."""
-    z = np.load(ft_cache_dir / "ft_amr_emb" / f"{sanitized}.npz", allow_pickle=True)
-    return [str(s) for s in z["sample_ids"]], z["vectors"]
-
-
-def load_frozen_gene(frozen_cache_dir: Path, sanitized: str) -> tuple[list[str], np.ndarray]:
-    """One family's *frozen* Bacformer tokens from the cache → ``(carrier_ids, vectors)``."""
-    z = np.load(frozen_cache_dir / "frozen_amr_emb" / f"{sanitized}.npz", allow_pickle=True)
-    return [str(s) for s in z["sample_ids"]], z["vectors"]
 
 
 def _fit_metrics(fit: dict | None, ids: list[str], y: np.ndarray) -> tuple[float, float]:
@@ -155,14 +124,14 @@ def run(
     if not scored.empty:
         best_esm = scored.sort_values("esm_lr_auroc", ascending=False).iloc[0]["gene_family"]
         best_ft = scored.sort_values("ft_lr_auroc", ascending=False).iloc[0]["gene_family"]
-        esm_block = _impute_block(by_label[best_esm]["ids"],
+        esm_block = impute_block(by_label[best_esm]["ids"],
                                   np.vstack(by_label[best_esm]["vecs"]).astype(np.float32), all_ids, dim)
         x_esm = np.hstack([mean_block, esm_block])
         e_au, e_ap = _score(x_esm)
         crows.append({"config": "mean+best_esm_gene", "gene": best_esm,
                       "n_features": x_esm.shape[1], "auroc": e_au, "auprc": e_ap})
         ft_ids, ft_vec = load_ft_gene(ft_cache_dir, san_of[best_ft])
-        ft_block = _impute_block(ft_ids, ft_vec, all_ids, ft_vec.shape[1])
+        ft_block = impute_block(ft_ids, ft_vec, all_ids, ft_vec.shape[1])
         x_ft = np.hstack([mean_block, ft_block])
         f_au, f_ap = _score(x_ft)
         crows.append({"config": "mean+best_ft_gene", "gene": best_ft,
@@ -173,7 +142,7 @@ def run(
             fr_npz = frozen_cache_dir / "frozen_amr_emb" / f"{san_of[best_frozen]}.npz"
             if fr_npz.exists():
                 fr_ids, fr_vec = load_frozen_gene(frozen_cache_dir, san_of[best_frozen])
-                x_fr = np.hstack([mean_block, _impute_block(fr_ids, fr_vec, all_ids, fr_vec.shape[1])])
+                x_fr = np.hstack([mean_block, impute_block(fr_ids, fr_vec, all_ids, fr_vec.shape[1])])
                 fz_au, fz_ap = _score(x_fr)
                 crows.append({"config": "mean+best_frozen_gene", "gene": best_frozen,
                               "n_features": x_fr.shape[1], "auroc": fz_au, "auprc": fz_ap})
