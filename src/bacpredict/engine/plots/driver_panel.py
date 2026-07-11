@@ -14,7 +14,7 @@ the same k-fold LR harness (``run_kfold_probe``, so the numbers are comparable t
   gaps and backfill them later.
 
 Emits a per-drug table CSV + a grouped column chart (AUROC and AUPRC). CPU except the optional Bacformer
-gene-token vectors, which are precomputed on GPU by :mod:`pangena_predict.bacformer_gene_panel_vectors`.
+gene-token vectors, which are precomputed on GPU by :mod:`bacpredict.engine.concat.bacformer_gene_panel_vectors`.
 """
 
 from __future__ import annotations
@@ -27,15 +27,15 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from pangena_predict.card_gene_locator import build_card_presence, sidecar_dir_available
-from pangena_predict.coding_amr_lr import (
+from bacpredict.engine.gene_lr.card_gene_locator import build_card_presence, sidecar_dir_available
+from bacpredict.engine.gene_lr.coding_amr_lr import (
     SpeciesPaths,
     build_multi_gene_presence,
     default_paths,
     load_baclm_gene_vectors,
 )
-from pangena_predict.kfold_probe import FeatureSpec, run_kfold_probe
-from pangena_predict.snp_vs_esm_prediction import load_pooled_gene_vectors, resolve_clean_splits
+from bacpredict.engine.gene_lr.kfold_probe import FeatureSpec, run_kfold_probe
+from bacpredict.engine.gene_lr.snp_vs_esm_prediction import load_pooled_gene_vectors, resolve_clean_splits
 
 logger = logging.getLogger(__name__)
 

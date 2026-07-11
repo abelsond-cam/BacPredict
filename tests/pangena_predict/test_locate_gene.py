@@ -1,4 +1,4 @@
-"""Unit tests for the generic gene presence table (``pangena_predict.locate_gene``).
+"""Unit tests for the generic gene presence table (``bacpredict.engine.gene_lr.locate_gene``).
 
 Build small nested ``*_protein_sequences.parquet`` files (lists-of-lists per contig, as
 ``flatten_proteins`` expects) and check ``build_gene_presence_table``: single-copy genomes are kept
@@ -14,7 +14,7 @@ import pytest
 
 pytest.importorskip("pyarrow")
 
-from pangena_predict.locate_gene import build_gene_presence_table
+from bacpredict.engine.gene_lr.locate_gene import build_gene_presence_table
 
 SUFFIX = "_protein_sequences.parquet"
 

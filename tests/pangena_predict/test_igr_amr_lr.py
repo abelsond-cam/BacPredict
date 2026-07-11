@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from pangena_predict.igr_amr_lr import (
+from bacpredict.engine.gene_lr.igr_amr_lr import (
     IgrTarget,
     _parse_gff,
     build_promoter_frames,

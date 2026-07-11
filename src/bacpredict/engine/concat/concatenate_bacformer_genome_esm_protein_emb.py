@@ -11,12 +11,12 @@ vector is a viable read-out that needs no attention head.
 Two axes, both parameters (default = the rifampicin/rpoB setup that hit 0.975):
 
 - **gene** (``--gene``, default ``rpoB``) — any single-copy gene, located generically via
-  :func:`pangena_predict.locate_gene.build_gene_presence_table` (no rpoB-specific genotyping).
+  :func:`bacpredict.engine.gene_lr.locate_gene.build_gene_presence_table` (no rpoB-specific genotyping).
 - **Bacformer mean variant** — **frozen** base model (default) or **fine-tuned** backbone of a deployed
   AMR checkpoint (``--bacformer-checkpoint``; the ~0.905 mean-pool model — A.1.i).
 
 Three steps, all scored on the **same canonical evaluate fold** (``binary_ast_with_split.csv`` via
-:func:`pangena_predict.snp_vs_esm_prediction.resolve_clean_splits`) over the **same sample
+:func:`bacpredict.engine.gene_lr.snp_vs_esm_prediction.resolve_clean_splits`) over the **same sample
 intersection**, so the numbers are directly comparable:
 
 ============================  ===============================================  ======
@@ -45,10 +45,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from pangena_predict.bacformer_genome_vectors import RIFAMPIN_COLUMN, compute_bacformer_vectors
-from pangena_predict.kfold_probe import FeatureSpec, run_kfold_probe, summarise_kfold
-from pangena_predict.locate_gene import build_gene_presence_table
-from pangena_predict.snp_vs_esm_prediction import (
+from bacpredict.engine.concat.bacformer_genome_vectors import RIFAMPIN_COLUMN, compute_bacformer_vectors
+from bacpredict.engine.gene_lr.kfold_probe import FeatureSpec, run_kfold_probe, summarise_kfold
+from bacpredict.engine.gene_lr.locate_gene import build_gene_presence_table
+from bacpredict.engine.gene_lr.snp_vs_esm_prediction import (
     fit_score_step,
     load_bacformer_vectors,
     load_pooled_gene_vectors,

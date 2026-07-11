@@ -74,7 +74,7 @@ def test_causal_bad_grain_raises() -> None:
 
 def test_drug_causal_keys_match_drug_columns() -> None:
     """The causal + determinant specs cover exactly the drugs the ceiling map covers (no drift)."""
-    pytest.importorskip("pangena_predict.kfold_probe")  # DRUG_COLUMNS import pulls the probe harness
+    pytest.importorskip("bacpredict.engine.gene_lr.kfold_probe")  # DRUG_COLUMNS import pulls the probe harness
     from kleb_ast.kleborate_determinant_lr import DRUG_COLUMNS
 
     assert set(_DRUG_CAUSAL) == set(DRUG_COLUMNS)

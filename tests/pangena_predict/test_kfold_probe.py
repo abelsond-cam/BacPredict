@@ -1,4 +1,4 @@
-"""Unit tests for the k-fold × m-seed harness (``pangena_predict.kfold_probe``).
+"""Unit tests for the k-fold × m-seed harness (``bacpredict.engine.gene_lr.kfold_probe``).
 
 Cover the harness contract on synthetic feature frames (no HPC data, no ``.pt``): the run count, the
 fixed evaluate holdout (pinned by ``evaluate_seed``, identical across seeds), the universe = frame
@@ -15,7 +15,7 @@ import pytest
 pytest.importorskip("sklearn")
 pytest.importorskip("torch")
 
-from pangena_predict.kfold_probe import FeatureSpec, run_kfold_probe
+from bacpredict.engine.gene_lr.kfold_probe import FeatureSpec, run_kfold_probe
 
 N = 80
 DIM = 4

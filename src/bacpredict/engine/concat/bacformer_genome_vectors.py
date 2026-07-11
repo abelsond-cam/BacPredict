@@ -14,14 +14,14 @@ Two **modes** (``--bacformer-checkpoint`` selects):
 - **fine-tuned** — the backbone of a deployed AMR checkpoint (the 0.905 mean-pool model), via
   ``load_finetuned_bacformer_backbone``.
 
-Both feed linear probes in :mod:`pangena_predict.snp_vs_esm_prediction` (``bacformer_gene_token`` /
+Both feed linear probes in :mod:`bacpredict.engine.gene_lr.snp_vs_esm_prediction` (``bacformer_gene_token`` /
 ``bacformer_mean``) and the concat driver
-:mod:`pangena_predict.concatenate_bacformer_genome_esm_protein_emb` (genome mean ⊕ ESM gene vector).
+:mod:`bacpredict.engine.concat.concatenate_bacformer_genome_esm_protein_emb` (genome mean ⊕ ESM gene vector).
 
 Indexing
 --------
 The gene token sits at the flat-protein index from the gene-presence table
-(:func:`pangena_predict.locate_gene.build_gene_presence_table`): the real proteins of the stored
+(:func:`bacpredict.engine.gene_lr.locate_gene.build_gene_presence_table`): the real proteins of the stored
 ``.pt`` in flat order (``special_tokens_mask == 4`` for the Bacformer-input bundle, or
 ``attention_mask == 1`` for the plain per-protein TB store). The genome mean averages over those same
 real-protein rows. A **day-one assertion** confirms ``last_hidden_state`` aligns 1:1 with the input
@@ -39,8 +39,8 @@ import torch
 
 from bacpredict.engine.embedding.generate_embeddings import bacformer_last_hidden_state, load_bacformer_model
 from bacpredict.engine.finetune.evaluate import resolve_checkpoint_dir
-from pangena_predict.locate_gene import build_gene_presence_table
-from pangena_predict.snp_vs_esm_prediction import real_protein_indices, resolve_clean_splits
+from bacpredict.engine.gene_lr.locate_gene import build_gene_presence_table
+from bacpredict.engine.gene_lr.snp_vs_esm_prediction import real_protein_indices, resolve_clean_splits
 
 # Default cohort drug (TB rpoB/rifampicin). Superseded by OrganismConfig in a later refactor step.
 RIFAMPIN_COLUMN = "rifampin"
@@ -119,7 +119,7 @@ def _extract_gene_token_and_mean(
     """Run ``model`` forward per genome → contextualised gene token + genome mean.
 
     ``gene_table`` is indexed by Sample and carries ``gene_flat_index`` + ``n_proteins`` (from
-    :func:`pangena_predict.locate_gene.build_gene_presence_table`). Returns ``(token [N, dim],
+    :func:`bacpredict.engine.gene_lr.locate_gene.build_gene_presence_table`). Returns ``(token [N, dim],
     mean [N, dim], sample_ids)`` from one forward pass each, with the day-one length guard and the
     missing/misaligned-genome skips. The genome mean is gene-agnostic; only the token uses the index.
     """

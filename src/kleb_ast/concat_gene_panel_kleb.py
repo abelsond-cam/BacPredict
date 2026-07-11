@@ -16,7 +16,7 @@ The two panels rank their genes by the **matching** per-gene LR AUROC, read from
 ``esm_vs_ft_per_gene_<drug>.csv``: the **FT panel = top-k by ``ft_lr_auroc``**, the **ESM panel = top-k by
 ``esm_lr_auroc``**. Each gene block is zero-imputed for non-carriers (so the LR sees presence/absence),
 concatenated with the always-present genome-mean, and scored with the **same zero-imputed out-of-fold
-k-fold LR** (:func:`pangena_predict.build_per_gene_lr_store.fit_one_gene`) the per-gene comparison used —
+k-fold LR** (:func:`bacpredict.engine.gene_lr.build_per_gene_lr_store.fit_one_gene`) the per-gene comparison used —
 so every AUROC here is directly comparable to the histogram numbers.
 
 Configs per drug: ``mean_only`` · ``ft_top{k}`` · ``esm_top{k}`` for k in ``--panel-sizes`` (default 1 3 5
@@ -34,8 +34,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from pangena_predict.build_per_gene_lr_store import fit_one_gene, read_genome
-from pangena_predict.snp_vs_esm_prediction import resolve_clean_splits
+from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_one_gene, read_genome
+from bacpredict.engine.gene_lr.snp_vs_esm_prediction import resolve_clean_splits
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

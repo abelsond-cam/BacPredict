@@ -13,7 +13,7 @@ import pytest
 pytest.importorskip("pandas")
 import pandas as pd
 
-import pangena_predict.concatenate_bacformer_genome_esm_protein_emb as concat
+import bacpredict.engine.concat.concatenate_bacformer_genome_esm_protein_emb as concat
 
 
 def _write_ranking(path: Path, rows: list[tuple[str, float]], drug: str = "rifampin") -> None:

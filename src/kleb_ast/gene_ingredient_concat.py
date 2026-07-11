@@ -24,10 +24,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_one_gene, fit_one_gene_imputed
+from bacpredict.engine.gene_lr.snp_vs_esm_prediction import resolve_clean_splits
 from kleb_ast.per_gene_lr_from_annotation import MIN_CARRIERS, collect_reliable_amr
 from kleb_ast.reliable_ft_concat import _impute_block, load_ft_gene, load_ft_mean
-from pangena_predict.build_per_gene_lr_store import fit_one_gene, fit_one_gene_imputed
-from pangena_predict.snp_vs_esm_prediction import resolve_clean_splits
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

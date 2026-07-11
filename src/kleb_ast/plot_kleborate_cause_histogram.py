@@ -1,6 +1,6 @@
 """Per-drug Kp cause histogram: Kleborate determinant LR by mechanism class (HGT vs chromosomal).
 
-The Kp analogue of ``pangena_predict.plot_cause_histogram``. Reads a per-drug ceiling table
+The Kp analogue of ``bacpredict.engine.plots.plot_cause_histogram``. Reads a per-drug ceiling table
 (``kp_<drug>/kleborate_determinant_lr_<drug>.csv`` from :mod:`kleb_ast.kleborate_determinant_lr`) and
 draws one bar per Kleborate determinant column, ascending (highest on the right, to match the ladder),
 all in **one CARD red**. The HGT-vs-chromosomal split — the programme's central axis — is carried by the

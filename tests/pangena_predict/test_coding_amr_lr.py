@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from pangena_predict.coding_amr_lr import (
+from bacpredict.engine.gene_lr.coding_amr_lr import (
     GeneTarget,
     SpeciesPaths,
     _baclm_minus_esm,
@@ -22,7 +22,7 @@ from pangena_predict.coding_amr_lr import (
     run_gene_comparison,
     run_gene_ladder,
 )
-from pangena_predict.locate_gene import build_gene_presence_table
+from bacpredict.engine.gene_lr.locate_gene import build_gene_presence_table
 
 GENES = ["geneA", "rpoB", "geneC", "geneD"]  # rpoB at flat_index 1
 RPOB = 1

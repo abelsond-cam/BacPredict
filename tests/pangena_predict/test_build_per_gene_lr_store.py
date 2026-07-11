@@ -1,4 +1,4 @@
-"""Unit tests for the per-gene LR panel builder (``pangena_predict.build_per_gene_lr_store``).
+"""Unit tests for the per-gene LR panel builder (``bacpredict.engine.gene_lr.build_per_gene_lr_store``).
 
 Cover the leakage-safe out-of-fold fitting, the ``_prob_for`` train-vs-unseen routing, and the
 one-pass filtered/unfiltered panel writer (synthetic genomes via a monkeypatched reader — no HPC
@@ -15,7 +15,7 @@ import pytest
 
 pytest.importorskip("sklearn")
 
-import pangena_predict.build_per_gene_lr_store as bplr
+import bacpredict.engine.gene_lr.build_per_gene_lr_store as bplr
 
 DIM = 6
 

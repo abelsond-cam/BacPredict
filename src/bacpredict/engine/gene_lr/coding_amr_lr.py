@@ -3,7 +3,7 @@
 A like-for-like, per-gene logistic-regression probe. For a target gene + drug it pulls each
 sample's pooled gene 960-vector from **both** the ESM-C store and the baclm store and scores them
 head-to-head through the canonical k=5 × s=3 harness
-(:func:`pangena_predict.kfold_probe.run_kfold_probe`): within-fold CV AUROC mean ± sd on a fixed
+(:func:`bacpredict.engine.gene_lr.kfold_probe.run_kfold_probe`): within-fold CV AUROC mean ± sd on a fixed
 evaluate holdout, plus the **paired** ``baclm − ESM`` delta run-for-run.
 
 Why first: baclm's coding channel reusing ESM's information is the precondition for trusting its
@@ -11,12 +11,12 @@ Why first: baclm's coding channel reusing ESM's information is the precondition 
 work is on solid ground; if not, the embedding — not the read-out — is the problem.
 
 Both stores are 960-dim and share the same ``*_protein_sequences.parquet`` flat order, so a gene's
-``gene_flat_index`` (from :func:`pangena_predict.locate_gene.build_gene_presence_table`) indexes the
+``gene_flat_index`` (from :func:`bacpredict.engine.gene_lr.locate_gene.build_gene_presence_table`) indexes the
 same protein row in each. The only new code here is the baclm reader: baclm's ``.pt`` holds
 ``protein_embeddings`` as a plain ``[n_cds, 960]`` matrix (one row per CDS in flat order, **no** batch
 dim / attention mask / special tokens), so its row selection is a direct ``[flat_index]`` — unlike the
 ESM store, which interleaves/pads and needs
-:func:`pangena_predict.snp_vs_esm_prediction.real_protein_indices`.
+:func:`bacpredict.engine.gene_lr.snp_vs_esm_prediction.real_protein_indices`.
 
 CPU-only (sklearn LR over precomputed embeddings) — Stage-A smoke (``--n 10``) runs on a login node;
 the full cohort is a CPU sbatch (tens of thousands of single-row mmap reads; use ``--pool-workers``).
@@ -36,9 +36,9 @@ import pandas as pd
 import torch
 
 from bacpredict.engine.finetune.split_utils import generate_kfold_splits
-from pangena_predict.kfold_probe import FeatureSpec, run_kfold_probe, summarise_kfold
-from pangena_predict.locate_gene import build_gene_presence_table, flatten_proteins
-from pangena_predict.snp_vs_esm_prediction import (
+from bacpredict.engine.gene_lr.kfold_probe import FeatureSpec, run_kfold_probe, summarise_kfold
+from bacpredict.engine.gene_lr.locate_gene import build_gene_presence_table, flatten_proteins
+from bacpredict.engine.gene_lr.snp_vs_esm_prediction import (
     fit_score_step,
     load_pooled_gene_vectors,
     resolve_clean_splits,

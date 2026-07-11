@@ -15,7 +15,7 @@ protein vector ESM-C embedded), differing only in the carrier set:
   the old Bakta-keyed analysis would have found). The difference is the carriers Bakta missed/mislabelled.
 
 For one drug, over the canonical **evaluate holdout**, per AMR gene-family: zero-imputed out-of-fold k-fold
-LR (:func:`pangena_predict.build_per_gene_lr_store.fit_one_gene_imputed`) on each carrier set →
+LR (:func:`bacpredict.engine.gene_lr.build_per_gene_lr_store.fit_one_gene_imputed`) on each carrier set →
 ``reliable_per_gene_esm_lr_<drug>.csv`` (gene_family, amr_source, n_carriers_reliable, n_carriers_bakta,
 carrier_recovery, prevalence, esm_lr_auroc_reliable, esm_lr_auroc_bakta, delta_auroc). CPU only, no forward
 pass. The FT side (does the *fine-tuned* token learn the gene) is the GPU follow-on
@@ -33,8 +33,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from pangena_predict.build_per_gene_lr_store import fit_one_gene_imputed, read_genome
-from pangena_predict.snp_vs_esm_prediction import resolve_clean_splits
+from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_one_gene_imputed, read_genome
+from bacpredict.engine.gene_lr.snp_vs_esm_prediction import resolve_clean_splits
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

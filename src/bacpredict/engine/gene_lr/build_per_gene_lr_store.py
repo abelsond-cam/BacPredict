@@ -52,8 +52,8 @@ from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 
-from pangena_predict.locate_gene import flatten_proteins
-from pangena_predict.snp_vs_esm_prediction import LOGREG_KW, real_protein_indices
+from bacpredict.engine.gene_lr.locate_gene import flatten_proteins
+from bacpredict.engine.gene_lr.snp_vs_esm_prediction import LOGREG_KW, real_protein_indices
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

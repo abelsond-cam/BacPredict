@@ -29,11 +29,11 @@ import numpy as np
 import pandas as pd
 import torch
 
+from bacpredict.engine.concat.bacformer_genome_vectors import forward_inputs, load_model
 from bacpredict.engine.embedding.generate_embeddings import bacformer_last_hidden_state
+from bacpredict.engine.gene_lr.locate_gene import flatten_proteins
+from bacpredict.engine.gene_lr.snp_vs_esm_prediction import real_protein_indices, resolve_clean_splits
 from kleb_ast.cache_ft_amr_proteins import _bakta_matches, _sanitize
-from pangena_predict.bacformer_genome_vectors import forward_inputs, load_model
-from pangena_predict.locate_gene import flatten_proteins
-from pangena_predict.snp_vs_esm_prediction import real_protein_indices, resolve_clean_splits
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

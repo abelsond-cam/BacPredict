@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from pangena_predict.card_gene_locator import build_card_presence, sidecar_dir_available
+from bacpredict.engine.gene_lr.card_gene_locator import build_card_presence, sidecar_dir_available
 
 
 def _write_sidecar(path, rows):

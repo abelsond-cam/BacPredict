@@ -47,7 +47,7 @@ import torch
 from scipy import sparse
 from tqdm import tqdm
 
-from pangena_predict.locate_gene import flatten_proteins
+from bacpredict.engine.gene_lr.locate_gene import flatten_proteins
 
 RDS_ROOT = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david")
 ESM_DIR_DEFAULT = RDS_ROOT / "processed" / "klebsiella_esm_embeddings"

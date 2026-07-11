@@ -95,7 +95,7 @@ class PanelInjectingFileDataset(LabelInjectingFileDataset):
     no cap, so an oversized genome's panel is *longer* than its embedding. ``__getitem__`` keeps
     the panel's first ``n_proteins`` rows in that case (same flat order) and raises only when the
     panel is *shorter* than the embedding (a genuine misalignment) — mirroring the count-guard in
-    ``pangena_predict.snp_vs_esm_prediction`` while tolerating the protein cap.
+    ``bacpredict.engine.gene_lr.snp_vs_esm_prediction`` while tolerating the protein cap.
 
     Parameters
     ----------

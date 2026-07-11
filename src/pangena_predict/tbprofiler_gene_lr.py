@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from pangena_predict.kfold_probe import FeatureSpec, run_kfold_probe
+from bacpredict.engine.gene_lr.kfold_probe import FeatureSpec, run_kfold_probe
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

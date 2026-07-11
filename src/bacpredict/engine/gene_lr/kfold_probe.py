@@ -5,7 +5,7 @@ ESM-rpoB 0.971 vs one-hot 0.960). A single canonical split can not tell whether 
 real. This harness reruns any set of **pre-aligned** feature frames through the repo's canonical
 k-fold (:func:`bacpredict.engine.finetune.split_utils.generate_kfold_splits` — a fixed evaluate holdout pinned by
 ``evaluate_seed``, validation folds rotated by ``seed``) for several seeds, scores every ``(fold,
-seed)`` on the one fixed evaluate holdout with :func:`pangena_predict.snp_vs_esm_prediction.fit_score_step`,
+seed)`` on the one fixed evaluate holdout with :func:`bacpredict.engine.gene_lr.snp_vs_esm_prediction.fit_score_step`,
 and reports **mean ± sd** per frame plus **paired** per-run AUROC deltas between frames (the honest
 test of "does A beat B" — same train rows, same evaluate rows, so the delta is paired).
 
@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 
 from bacpredict.engine.finetune.split_utils import generate_kfold_splits
-from pangena_predict.snp_vs_esm_prediction import fit_score_step
+from bacpredict.engine.gene_lr.snp_vs_esm_prediction import fit_score_step
 
 logger = logging.getLogger(__name__)
 

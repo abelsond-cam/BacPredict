@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from pangena_predict.audit_noncoding_regions import run_audit
+from bacpredict.engine.labels.audit_noncoding_regions import run_audit
 
 # contig c1 length 6000; CDS 100-200 & 400-500; rRNA 250-350 (inside the middle gap).
 # only-CDS-occupying runs (min_len 30): [1-99]=99, [201-399]=199 (has rRNA), [501-6000]=5500 (windowed).

@@ -9,7 +9,7 @@ its ``amr_gene_family`` — built against the *same* assembly the protein parque
 flat-order validation guard.
 
 This module turns those sidecars into the **same presence-table schema** that
-:func:`pangena_predict.coding_amr_lr.build_multi_gene_presence` produces (a ``DataFrame`` per gene,
+:func:`bacpredict.engine.gene_lr.coding_amr_lr.build_multi_gene_presence` produces (a ``DataFrame`` per gene,
 indexed by ``Sample``, with ``gene_flat_index`` / ``n_proteins`` / ``gene_name`` / ``annotation``) — so
 ``load_baclm_gene_vectors`` / ``load_pooled_gene_vectors`` and the Bacformer sweep consume it unchanged.
 The only difference from the Bakta path is *how the flat index is found* (CARD family match, not gene
@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from pangena_predict.locate_gene import flatten_proteins
+from bacpredict.engine.gene_lr.locate_gene import flatten_proteins
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ def build_card_presence(
 
     ``family_specs`` is a list of ``(amr_gene_family, aliases_tuple)`` (aliases let a CSV label map onto
     the sidecar's family string). Returns ``dict[family] → DataFrame`` with the same columns as
-    :func:`pangena_predict.coding_amr_lr.build_multi_gene_presence`, indexed by ``Sample`` (single-copy).
+    :func:`bacpredict.engine.gene_lr.coding_amr_lr.build_multi_gene_presence`, indexed by ``Sample`` (single-copy).
     """
     wanted_by_family = {f: frozenset([f.lower(), *(a.lower() for a in aliases)]) for f, aliases in family_specs}
     amr_sidecar_dir, parquet_dir = Path(amr_sidecar_dir), Path(parquet_dir)

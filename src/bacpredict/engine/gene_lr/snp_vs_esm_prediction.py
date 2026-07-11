@@ -12,7 +12,7 @@ table. The ``validate`` split only picks the Youden operating point.
 Gene-agnostic: the pooled vector is recovered by selecting the real-protein rows of
 the stored ``.pt`` (``special_tokens_mask == 4`` for the Bacformer-input bundle, or
 ``attention_mask == 1`` for the plain per-protein store) in flat order, then indexing
-by the gene's flat index from :mod:`pangena_predict.locate_gene`.
+by the gene's flat index from :mod:`bacpredict.engine.gene_lr.locate_gene`.
 
 The rpoB/rifampicin localization-*ladder* driver that these primitives were first
 written for is a concluded diagnostic; it now lives in
@@ -128,7 +128,7 @@ def real_protein_indices(store: dict, n_rows: int) -> torch.Tensor:
       ``attention_mask`` marking real vs padding.
 
     Returns the raw indices of the real-protein rows, in flat order, matching
-    :func:`pangena_predict.locate_gene.flatten_proteins`. Working with indices (not
+    :func:`bacpredict.engine.gene_lr.locate_gene.flatten_proteins`. Working with indices (not
     a boolean-masked copy) lets the caller read a single row out of an mmap'd
     tensor instead of materialising the whole ``[T, dim]`` block.
     """
@@ -180,7 +180,7 @@ def load_pooled_gene_vectors(
     """Pull each sample's pooled ESM-C **gene** 960-vector out of the embedding store.
 
     Generic over the gene: ``flat_index_col`` names the column holding the gene's flat protein index
-    (``"gene_flat_index"`` from :func:`pangena_predict.locate_gene.build_gene_presence_table`, or
+    (``"gene_flat_index"`` from :func:`bacpredict.engine.gene_lr.locate_gene.build_gene_presence_table`, or
     ``"rpob_flat_index"`` from the rpoB genotype table). Lazy by construction — each ``.pt`` is mmap'd
     and only the single gene row is materialised. Returns a DataFrame of the recovered vectors indexed
     by Sample (samples whose ``.pt`` is missing or whose index fails the guards are dropped).
@@ -231,7 +231,7 @@ def load_bacformer_vectors(path: str | Path, key: str = "gene_token_vectors") ->
 
     Expects an ``.npz`` with ``sample_ids`` (str array) plus ``gene_token_vectors`` and
     ``mean_vectors`` ([N, 960] each), as produced by
-    :mod:`pangena_predict.bacformer_genome_vectors`. ``key`` selects which (``"gene_token_vectors"``
+    :mod:`bacpredict.engine.concat.bacformer_genome_vectors`. ``key`` selects which (``"gene_token_vectors"``
     for the contextualised gene token, ``"mean_vectors"`` for the genome mean). A token request
     back-compat-resolves to whichever token alias the NPZ carries (legacy ``"rpob_vectors"`` /
     ``"vectors"``).

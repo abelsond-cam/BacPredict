@@ -3,7 +3,7 @@
 For a target *flanking gene* + drug this locates the intergenic region **immediately 5′ of the gene**
 (the promoter), pulls that region's baclm ``intergenic_embeddings`` row, and scores it against the drug
 label through the same learning-curve harness as the coding probe
-(:func:`pangena_predict.coding_amr_lr.ladder_over_frames`, k-seed × training-size sweep on a fixed
+(:func:`bacpredict.engine.gene_lr.coding_amr_lr.ladder_over_frames`, k-seed × training-size sweep on a fixed
 evaluate holdout). Only baclm has a non-coding channel — ESM/Bacformer are protein models — so this is
 a baclm-only, vs-chance read: is there promoter-mutation signal an LR can pick up?
 
@@ -36,8 +36,8 @@ import pandas as pd
 import torch
 
 from bacpredict.engine.embedding.extract_proteins_from_gff_fna import _open_text
-from pangena_predict.coding_amr_lr import ladder_over_frames
-from pangena_predict.snp_vs_esm_prediction import resolve_clean_splits
+from bacpredict.engine.gene_lr.coding_amr_lr import ladder_over_frames
+from bacpredict.engine.gene_lr.snp_vs_esm_prediction import resolve_clean_splits
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
