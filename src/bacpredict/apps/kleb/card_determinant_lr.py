@@ -31,11 +31,11 @@ from bacpredict.apps.kleb.build_amr_calls_store import load_calls
 from bacpredict.apps.kleb.card_label import causal_genes_for_drug, determinant_genes_for_drug
 from bacpredict.apps.kleb.kleborate_determinant_lr import (
     MIN_DETERMINANT_GENOMES,
-    _score,
     load_labels,
     tokenize_cell,
 )
 from bacpredict.apps.kleb.validate_amr_annotation import DEFAULT_METADATA, DEFAULT_SIDECAR_DIR
+from bacpredict.engine.catalogue.base import score_onehot_frame
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -175,7 +175,7 @@ def score_drug(calls: pd.DataFrame, ast_sheet: Path, drug: str, *, grain: str,
                                        + [g for g in keep.index if _is_causal(g, causal)]))
     rows = []
     for gene in display_genes:
-        agg = _score(oh[[gene]], label_map, seeds)
+        agg = score_onehot_frame(oh[[gene]], label_map, seeds)
         if agg is None:
             continue
         cat = _category(gene)
@@ -187,7 +187,7 @@ def score_drug(calls: pd.DataFrame, ast_sheet: Path, drug: str, *, grain: str,
             "embeddable": cat in _EMBEDDABLE, "is_causal": _is_causal(gene, causal),
             "is_rrna": False, "is_noncoding": cat not in _EMBEDDABLE,
         })
-    full = _score(oh, label_map, seeds)
+    full = score_onehot_frame(oh, label_map, seeds)
     if full is not None:
         rows.append({
             "gene_name": ALL_KEY, "site": ALL_KEY, "category": "all",

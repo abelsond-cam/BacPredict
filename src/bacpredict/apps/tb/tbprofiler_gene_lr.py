@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from bacpredict.engine.gene_lr.kfold_probe import FeatureSpec, run_kfold_probe
+from bacpredict.engine.catalogue.base import score_onehot_frame
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -56,15 +56,6 @@ def _gene_onehot(sub: pd.DataFrame, labelled: list[str]) -> pd.DataFrame:
     return oh.reindex(labelled).fillna(0).astype(int)
 
 
-def _score(frame: pd.DataFrame, label_map: dict[str, int], seeds: tuple[int, ...]) -> dict | None:
-    """k-fold AUROC mean/sd for one binary feature frame (or None if degenerate)."""
-    if frame.shape[1] == 0 or frame.sum().sum() == 0:
-        return None
-    kf = run_kfold_probe({"f": FeatureSpec(frame, kind="numeric", standardise=False)},
-                         label_map, n_folds=5, seeds=seeds, evaluate_seed=1, evaluate_fraction=0.20)
-    return kf["frames"]["f"]["aggregate"]  # full aggregate (auroc + auprc + ...)
-
-
 def run(variants_parquet: Path, ast_sheet: Path, esm_rank_dir: Path, out_dir: Path,
         drugs: list[str], seeds: tuple[int, ...] = (1, 2, 3)) -> None:
     """Per drug: per-gene WHO-mutation LR (incl. rRNA) + the full one-hot, vs the ESM-embeddable set."""
@@ -93,7 +84,7 @@ def run(variants_parquet: Path, ast_sheet: Path, esm_rank_dir: Path, out_dir: Pa
             n_genomes = g["Sample"].nunique()
             if n_genomes < MIN_VARIANT_GENOMES:
                 continue
-            agg = _score(_gene_onehot(g, labelled), label_map, seeds)
+            agg = score_onehot_frame(_gene_onehot(g, labelled), label_map, seeds)
             if agg is None:
                 continue
             noncoding = region == "non-coding"
@@ -109,7 +100,7 @@ def run(variants_parquet: Path, ast_sheet: Path, esm_rank_dir: Path, out_dir: Pa
                 "is_rrna": gene in RRNA_GENES, "is_noncoding": noncoding,
             })
 
-        full = _score(_gene_onehot(dv, labelled), label_map, seeds)
+        full = score_onehot_frame(_gene_onehot(dv, labelled), label_map, seeds)
         if full is not None:
             rows.append({"gene_name": "__ALL_WHO_one_hot__", "region": "all", "site": "__ALL_WHO_one_hot__",
                          "mut_auroc": full["auroc"]["mean"], "mut_auroc_sd": full["auroc"]["sd"],

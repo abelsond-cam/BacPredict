@@ -37,7 +37,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from bacpredict.engine.gene_lr.kfold_probe import FeatureSpec, run_kfold_probe
+from bacpredict.engine.catalogue.base import score_onehot_frame
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -205,15 +205,6 @@ def build_determinant_onehot(meta_labelled: pd.DataFrame, columns: list[str],
     return oh.reindex(universe).fillna(0).astype(int)
 
 
-def _score(frame: pd.DataFrame, label_map: dict[str, int], seeds: tuple[int, ...]) -> dict | None:
-    """k-fold aggregate (AUROC/AUPRC mean±sd …) for one binary feature frame, or ``None`` if degenerate."""
-    if frame.shape[1] == 0 or int(frame.to_numpy().sum()) == 0:
-        return None
-    kf = run_kfold_probe({"f": FeatureSpec(frame, kind="numeric", standardise=False)},
-                         label_map, n_folds=5, seeds=seeds, evaluate_seed=1, evaluate_fraction=0.20)
-    return kf["frames"]["f"]["aggregate"]
-
-
 def _columns_for(frame: pd.DataFrame, column: str) -> list[str]:
     """The one-hot feature names belonging to one Kleborate ``column`` (prefix ``"<column>:"``)."""
     return [f for f in frame.columns if f.split(":", 1)[0] == column]
@@ -255,7 +246,7 @@ def run(metadata: Path, ast_sheet: Path, out_dir: Path, drugs: list[str],
             n_genomes = int((sub.sum(axis=1) > 0).sum())
             if n_genomes < MIN_DETERMINANT_GENOMES:
                 continue
-            agg = _score(sub, label_map, seeds)
+            agg = score_onehot_frame(sub, label_map, seeds)
             if agg is None:
                 continue
             category, embeddable = COLUMN_SCHEMA.get(col, ("other", False))
@@ -269,7 +260,7 @@ def run(metadata: Path, ast_sheet: Path, out_dir: Path, drugs: list[str],
                 "is_rrna": False, "is_noncoding": not embeddable,
             })
 
-        full = _score(oh, label_map, seeds)
+        full = score_onehot_frame(oh, label_map, seeds)
         if full is not None:
             rows.append({
                 "gene_name": ALL_KEY, "site": ALL_KEY, "category": "all",
