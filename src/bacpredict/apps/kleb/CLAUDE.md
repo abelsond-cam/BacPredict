@@ -1,6 +1,23 @@
-# Task 2 — AST in *Klebsiella pneumoniae*
+# Task 2 — AST in *Klebsiella pneumoniae* (`apps/kleb`)
 
-This is one of the task folders under `src/`. See the root [CLAUDE.md](../../CLAUDE.md) for §0 global conventions (base model, three-stage protocol, paths, reporting requirements). Cross-task status lives in [ToDo.md](../../ToDo.md).
+> **⚠️ Post-consolidation note (2026-07).** This package moved from `src/kleb_ast/` to
+> `src/bacpredict/apps/kleb/` in the engine consolidation. The organism-agnostic pipeline now lives in
+> `src/bacpredict/engine/` (stages: `labels`, `download`, `embedding`, `finetune`, `gene_lr`, `concat`,
+> `catalogue`, `plots`); this folder holds only Kp specifics (CARD/Kleborate adapters, the AMR sidecar
+> pipeline, metadata curation, the epidemiology plotter). **Fine-tuning is now the single shared trainer**
+> `bacpredict.engine.finetune.finetune_amr` (invoke `python -m …`, `--task kleb_ast`); the old
+> `kleb_ast/train_amr.py` + `prepare_esmc_…` are gone (merged into the engine). Both organisms train in
+> **bf16**. Many file/import references in the sections below predate the move — trust the engine layout.
+>
+> **Catalogue policy (REVISED — reverses the "Kleborate ceiling" section below).** **CARD is the DEFAULT
+> Kp determinant ceiling** (`card_determinant_lr`): it resolves to *specific mutations*, which Kleborate's
+> per-isolate calls cannot, and CARD is *also* the acquired-gene **locator** (`card_gene_locator` supplies
+> the flat protein index of blaKPC/armA/… that Bakta under-annotates — you cannot embed a gene you cannot
+> locate). **Kleborate (`kleborate_determinant_lr`) is retained as a comparator** for readers who treat it
+> as the gold standard. Both ceiling runners share `engine.catalogue.base.score_onehot_frame`. (Memory
+> `kleborate-ceiling-vs-amr-tools` updated to match.)
+
+See the root [CLAUDE.md](../../../CLAUDE.md) for §0 global conventions (base model, three-stage protocol, paths, reporting requirements). Cross-task status lives in [ToDo.md](../../../ToDo.md).
 
 ## Aim
 

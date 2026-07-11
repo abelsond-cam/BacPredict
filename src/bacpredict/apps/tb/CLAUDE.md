@@ -1,6 +1,18 @@
-# Task 1 — AST in *M. tuberculosis*
+# Task 1 — AST in *M. tuberculosis* (`apps/tb`)
 
-This is one of the task folders under `src/`. See the root [CLAUDE.md](../../CLAUDE.md) for §0 global conventions (base model, three-stage protocol, paths, reporting requirements). Cross-task status lives in [ToDo.md](../../ToDo.md).
+> **⚠️ Post-consolidation note (2026-07).** This package moved from `src/tb_ast/` to
+> `src/bacpredict/apps/tb/` in the engine consolidation. The organism-agnostic pipeline now lives in
+> `src/bacpredict/engine/` (stages `labels`/`download`/`embedding`/`finetune`/`gene_lr`/`concat`/
+> `catalogue`/`plots`); this folder holds only TB specifics (the WHO/TB-Profiler catalogue adapter
+> `tbprofiler_gene_lr`, `parse_tbprofiler_calls`, the `tbprofiler/` pixi env, download/input helpers).
+> **Fine-tuning is now the single shared trainer** `bacpredict.engine.finetune.finetune_amr` (invoke
+> `python -m …`, `--task tb_ast`); the old `tb_ast/train_amr.py` is gone (it *became* the engine trainer).
+> **TB now trains in bf16** (was fp32 `dtype="auto"`) — matching Kp's proven setting; the existing TB
+> fp32 checkpoints are superseded and TB is re-run under bf16 when a cluster returns. The rpoB / surprisal /
+> attention read-out diagnostic is concluded and archived at `engine/_archive/tb_snp_diagnostic/`. Several
+> file/import references below predate the move — trust the engine layout.
+
+See the root [CLAUDE.md](../../../CLAUDE.md) for §0 global conventions (base model, three-stage protocol, paths, reporting requirements). Cross-task status lives in [ToDo.md](../../../ToDo.md).
 
 ## Aim
 
