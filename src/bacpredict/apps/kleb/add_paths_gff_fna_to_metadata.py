@@ -15,25 +15,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-DATA_DIR = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/")
-
-METADATA_F = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/final/metadata_v2_all_samples_and_columns.tsv"
-)
-
-ASSEMBLY_LIST_F = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/raw/assemblies_file_list.txt"
-)
-NCBI_GFF_LIST_F = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/raw/ncbi_gff.txt"
-)
-KLEBSIELLA_GFF_LIST_F = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/raw/klebsiella_gff.txt"
-)
-
-ASSEMBLY_TSV_F = ASSEMBLY_LIST_F.with_suffix(".tsv")
-NCBI_GFF_TSV_F = NCBI_GFF_LIST_F.with_suffix(".tsv")
-KLEBSIELLA_GFF_TSV_F = KLEBSIELLA_GFF_LIST_F.with_suffix(".tsv")
+from bacpredict.engine.config import final_root, raw_root
 
 
 def _normalize_sample_for_lookup(s: str) -> str:
@@ -131,8 +113,19 @@ def _summarise_matches(total_files: int, used_count: int, label: str) -> None:
 
 
 def run(metadata_path: Path | None = None) -> None:
-    """Load .txt path lists, parse Sample, write TSVs, add paths to metadata, overwrite file."""
-    meta_path = Path(metadata_path) if metadata_path is not None else METADATA_F
+    """Load .txt path lists, parse Sample, write TSVs, add paths to metadata, overwrite file.
+
+    With no ``metadata_path`` the metadata TSV defaults to
+    ``<data-root>/final/metadata_v2_all_samples_and_columns.tsv`` and the three input path lists to
+    ``<data-root>/raw/{assemblies_file_list,ncbi_gff,klebsiella_gff}.txt``.
+    """
+    meta_path = Path(metadata_path) if metadata_path is not None else (
+        final_root() / "metadata_v2_all_samples_and_columns.tsv"
+    )
+    raw = raw_root()
+    assembly_list_f = raw / "assemblies_file_list.txt"
+    ncbi_gff_list_f = raw / "ncbi_gff.txt"
+    klebsiella_gff_list_f = raw / "klebsiella_gff.txt"
 
     print(f"Metadata file: {meta_path}")
     if not meta_path.exists():
@@ -141,22 +134,22 @@ def run(metadata_path: Path | None = None) -> None:
 
     print("\nParsing path lists and writing TSVs...")
     _, assembly_dict = _load_and_parse_txt(
-        ASSEMBLY_LIST_F,
+        assembly_list_f,
         _parse_assemblies,
         "Assemblies",
-        ASSEMBLY_TSV_F,
+        assembly_list_f.with_suffix(".tsv"),
     )
     _, ncbi_dict = _load_and_parse_txt(
-        NCBI_GFF_LIST_F,
+        ncbi_gff_list_f,
         _parse_ncbi_gff,
         "NCBI GFF",
-        NCBI_GFF_TSV_F,
+        ncbi_gff_list_f.with_suffix(".tsv"),
     )
     _, kleb_dict = _load_and_parse_txt(
-        KLEBSIELLA_GFF_LIST_F,
+        klebsiella_gff_list_f,
         _parse_klebsiella_gff,
         "Klebsiella GFF",
-        KLEBSIELLA_GFF_TSV_F,
+        klebsiella_gff_list_f.with_suffix(".tsv"),
     )
 
     print("\n" + "=" * 80)

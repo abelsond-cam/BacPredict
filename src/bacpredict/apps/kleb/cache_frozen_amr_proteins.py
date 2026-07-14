@@ -31,6 +31,7 @@ import torch
 
 from bacpredict.apps.kleb.cache_ft_amr_proteins import _bakta_matches, _sanitize
 from bacpredict.engine.concat.bacformer_genome_vectors import forward_inputs, load_model
+from bacpredict.engine.config import KP, resolve_data_root
 from bacpredict.engine.embedding.generate_embeddings import bacformer_last_hidden_state
 from bacpredict.engine.gene_lr.locate_gene import flatten_proteins
 from bacpredict.engine.gene_lr.snp_vs_esm_prediction import real_protein_indices, resolve_clean_splits
@@ -152,22 +153,28 @@ def run(
 
 def main() -> None:
     """CLI entry point."""
-    rds = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david")
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--ast-sheet-path", type=Path,
-                   default=rds / "processed" / "train_kleb_ast" / "binary_ast_with_split.csv")
+    p.add_argument("--ast-sheet-path", type=Path, default=None,
+                   help="default: <data-root>/processed/train_kleb_ast/binary_ast_with_split.csv.")
     p.add_argument("--drug", type=str, required=True)
-    p.add_argument("--parquet-dir", type=Path, default=rds / "processed" / "klebsiella_protein_sequences")
-    p.add_argument("--esm-store-dir", type=Path, default=rds / "processed" / "klebsiella_esm_embeddings")
-    p.add_argument("--sidecar-dir", type=Path, default=rds / "processed" / "train_kleb_ast" / "amr_annotation")
+    p.add_argument("--parquet-dir", type=Path, default=None,
+                   help="default: <data-root>/processed/klebsiella_protein_sequences.")
+    p.add_argument("--esm-store-dir", type=Path, default=None,
+                   help="default: <data-root>/processed/klebsiella_esm_embeddings.")
+    p.add_argument("--sidecar-dir", type=Path, default=None,
+                   help="default: <data-root>/processed/train_kleb_ast/amr_annotation.")
     p.add_argument("--out-dir", type=Path, required=True)
     p.add_argument("--grain", choices=["family", "allele"], default="family")
     p.add_argument("--device", type=str, default="cuda:0")
     p.add_argument("--max-samples", type=int, default=None, help="Cap genomes (smoke).")
     args = p.parse_args()
+    ast_sheet = args.ast_sheet_path or KP.data_root() / "binary_ast_with_split.csv"
+    parquet_dir = args.parquet_dir or resolve_data_root() / "processed" / "klebsiella_protein_sequences"
+    esm_store_dir = args.esm_store_dir or resolve_data_root() / "processed" / "klebsiella_esm_embeddings"
+    sidecar_dir = args.sidecar_dir or KP.data_root() / "amr_annotation"
     run(
-        ast_sheet=args.ast_sheet_path, drug=args.drug, parquet_dir=args.parquet_dir,
-        esm_store_dir=args.esm_store_dir, sidecar_dir=args.sidecar_dir, out_dir=args.out_dir,
+        ast_sheet=ast_sheet, drug=args.drug, parquet_dir=parquet_dir,
+        esm_store_dir=esm_store_dir, sidecar_dir=sidecar_dir, out_dir=args.out_dir,
         grain=args.grain, device=args.device, max_samples=args.max_samples,
     )
 

@@ -38,6 +38,7 @@ from pathlib import Path
 import pandas as pd
 
 from bacpredict.engine.catalogue.base import score_onehot_frame
+from bacpredict.engine.config import KP, final_root
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -288,22 +289,23 @@ def run(metadata: Path, ast_sheet: Path, out_dir: Path, drugs: list[str],
 
 def main() -> None:
     """CLI entry point."""
-    rds = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david")
     here = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--metadata", type=Path,
-                        default=rds / "final" / "metadata_v2_all_samples_and_columns.tsv",
-                        help="metadata_v2_all_samples_and_columns.tsv (Kleborate determinant columns).")
-    parser.add_argument("--ast-sheet", type=Path,
-                        default=rds / "processed" / "train_kleb_ast" / "binary_ast_with_split.csv",
-                        help="Kp binary_ast_with_split.csv (Sample + lowercase drug columns).")
+    parser.add_argument("--metadata", type=Path, default=None,
+                        help="metadata_v2_all_samples_and_columns.tsv with Kleborate determinant columns "
+                             "(default: <data-root>/final/metadata_v2_all_samples_and_columns.tsv).")
+    parser.add_argument("--ast-sheet", type=Path, default=None,
+                        help="Kp binary_ast_with_split.csv, Sample + lowercase drug columns "
+                             "(default: <data-root>/processed/train_kleb_ast/binary_ast_with_split.csv).")
     parser.add_argument("--out-dir", type=Path, default=here / "docs" / "visualisations",
                         help="Per-drug CSVs go to <out-dir>/kp_<drug>/kleborate_determinant_lr_<drug>.csv.")
     parser.add_argument("--drugs", type=str, nargs="+", default=DEFAULT_DRUGS,
                         help=f"AST drug columns to score (default weak-first: {DEFAULT_DRUGS}).")
     parser.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])
     args = parser.parse_args()
-    run(args.metadata, args.ast_sheet, args.out_dir, args.drugs, tuple(args.seeds))
+    metadata = args.metadata or final_root() / "metadata_v2_all_samples_and_columns.tsv"
+    ast_sheet = args.ast_sheet or KP.data_root() / "binary_ast_with_split.csv"
+    run(metadata, ast_sheet, args.out_dir, args.drugs, tuple(args.seeds))
 
 
 if __name__ == "__main__":

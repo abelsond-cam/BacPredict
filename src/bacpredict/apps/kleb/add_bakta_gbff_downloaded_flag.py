@@ -12,8 +12,7 @@ from pathlib import Path
 
 import pandas as pd
 
-RDS_ROOT = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw")
-GBFF_DIR = RDS_ROOT / "david" / "raw" / "klebsiella_gbff"
+from bacpredict.engine.config import final_root, raw_root
 
 
 def collect_gbff_samples(gbff_dir: Path) -> set[str]:
@@ -99,14 +98,16 @@ def main():
     parser.add_argument(
         "--metadata",
         type=Path,
-        default="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/final/metadata_v2_all_samples_and_columns.tsv",
-        help="Path to metadata TSV file",
+        default=None,
+        help="Path to metadata TSV file "
+        "(default: <data-root>/final/metadata_v2_all_samples_and_columns.tsv)",
     )
     parser.add_argument(
         "--gbff-dir",
         type=Path,
-        default=GBFF_DIR,
-        help=f"Directory to search for .bakta.gbff.gz files (default: {GBFF_DIR})",
+        default=None,
+        help="Directory to search for .bakta.gbff.gz files "
+        "(default: <data-root>/raw/klebsiella_gbff)",
     )
     parser.add_argument(
         "--output",
@@ -119,23 +120,25 @@ def main():
         action="store_true",
         help="Print counts only, do not write output",
     )
-    
+
     args = parser.parse_args()
-    
+    metadata = args.metadata or final_root() / "metadata_v2_all_samples_and_columns.tsv"
+    gbff_dir = args.gbff_dir or raw_root() / "klebsiella_gbff"
+
     # Validate inputs
-    if not args.metadata.exists():
-        print(f"ERROR: Metadata file not found: {args.metadata}", file=sys.stderr)
+    if not metadata.exists():
+        print(f"ERROR: Metadata file not found: {metadata}", file=sys.stderr)
         sys.exit(1)
-    
-    if not args.gbff_dir.exists():
-        print(f"ERROR: GBFF directory not found: {args.gbff_dir}", file=sys.stderr)
+
+    if not gbff_dir.exists():
+        print(f"ERROR: GBFF directory not found: {gbff_dir}", file=sys.stderr)
         sys.exit(1)
-    
+
     # Collect sample IDs with gbff files
-    samples_with_files = collect_gbff_samples(args.gbff_dir)
-    
+    samples_with_files = collect_gbff_samples(gbff_dir)
+
     # Add flag to metadata
-    add_flag_to_metadata(args.metadata, samples_with_files, args.output, args.dry_run)
+    add_flag_to_metadata(metadata, samples_with_files, args.output, args.dry_run)
 
 
 if __name__ == "__main__":

@@ -31,6 +31,7 @@ from sklearn.metrics import average_precision_score
 
 from bacpredict.apps.kleb.per_gene_lr_from_annotation import MIN_CARRIERS, collect_reliable_amr
 from bacpredict.engine.concat.concat_ingredients import impute_block, load_frozen_gene, load_ft_gene, load_ft_mean
+from bacpredict.engine.config import KP, resolve_data_root
 from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_one_gene, fit_one_gene_imputed
 from bacpredict.engine.gene_lr.snp_vs_esm_prediction import resolve_clean_splits
 
@@ -155,26 +156,33 @@ def run(
 
 def main() -> None:
     """CLI entry point."""
-    rds = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david")
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--ast-sheet-path", type=Path,
-                   default=rds / "processed" / "train_kleb_ast" / "binary_ast_with_split.csv")
+    p.add_argument("--ast-sheet-path", type=Path, default=None,
+                   help="AST split sheet (default: <data-root>/processed/train_kleb_ast/binary_ast_with_split.csv).")
     p.add_argument("--drug", type=str, required=True)
     p.add_argument("--ft-cache-dir", type=Path, required=True,
                    help="ft_amr_cache/<drug>/ from cache_ft_amr_proteins (ft_genome_mean + ft_amr_emb/ + manifest).")
     p.add_argument("--frozen-cache-dir", type=Path, default=None,
                    help="frozen_amr_cache/<drug>/ from cache_frozen_amr_proteins — adds per-gene frozen LR (else skipped).")
-    p.add_argument("--esm-store-dir", type=Path, default=rds / "processed" / "klebsiella_esm_embeddings")
-    p.add_argument("--parquet-dir", type=Path, default=rds / "processed" / "klebsiella_protein_sequences")
-    p.add_argument("--sidecar-dir", type=Path, default=rds / "processed" / "train_kleb_ast" / "amr_annotation")
+    p.add_argument("--esm-store-dir", type=Path, default=None,
+                   help="ESM embedding store (default: <data-root>/processed/klebsiella_esm_embeddings).")
+    p.add_argument("--parquet-dir", type=Path, default=None,
+                   help="Protein-sequence parquet store (default: <data-root>/processed/"
+                   "klebsiella_protein_sequences).")
+    p.add_argument("--sidecar-dir", type=Path, default=None,
+                   help="CARD AMR-call sidecar dir (default: <data-root>/processed/train_kleb_ast/amr_annotation).")
     p.add_argument("--out-dir", type=Path, required=True)
     p.add_argument("--grain", choices=["family", "allele"], default="family")
     p.add_argument("--n-folds", type=int, default=5)
     p.add_argument("--seed", type=int, default=1)
     args = p.parse_args()
+    ast_sheet = args.ast_sheet_path or KP.data_root() / "binary_ast_with_split.csv"
+    esm_dir = args.esm_store_dir or resolve_data_root() / "processed" / "klebsiella_esm_embeddings"
+    parquet_dir = args.parquet_dir or resolve_data_root() / "processed" / "klebsiella_protein_sequences"
+    sidecar_dir = args.sidecar_dir or KP.data_root() / "amr_annotation"
     run(
-        ast_sheet=args.ast_sheet_path, drug=args.drug, ft_cache_dir=args.ft_cache_dir,
-        esm_dir=args.esm_store_dir, parquet_dir=args.parquet_dir, sidecar_dir=args.sidecar_dir,
+        ast_sheet=ast_sheet, drug=args.drug, ft_cache_dir=args.ft_cache_dir,
+        esm_dir=esm_dir, parquet_dir=parquet_dir, sidecar_dir=sidecar_dir,
         out_dir=args.out_dir, frozen_cache_dir=args.frozen_cache_dir, grain=args.grain,
         n_folds=args.n_folds, seed=args.seed,
     )

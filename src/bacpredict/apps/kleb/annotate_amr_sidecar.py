@@ -38,17 +38,10 @@ from pathlib import Path
 
 import pandas as pd
 
+from bacpredict.engine.config import KP, final_root, resolve_data_root
 from bacpredict.engine.embedding.extract_proteins_from_gff_fna import extract_proteins_from_gff_fna
 from bacpredict.engine.gene_lr.locate_gene import flatten_proteins
 
-RDS_ROOT = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw")
-# metadata_v2 stores sr_assembly_file / sr_gff_file *relative to the project_k root* (e.g.
-# "seb/assemblies_2/.../X.fa.gz", "david/raw/.../X.bakta.gff3.gz"); resolve them against this.
-PROJECT_K_ROOT = RDS_ROOT
-DEFAULT_AST_SHEET = RDS_ROOT / "david" / "processed" / "train_kleb_ast" / "binary_ast_with_split.csv"
-DEFAULT_METADATA = RDS_ROOT / "david" / "final" / "metadata_v2_all_samples_and_columns.tsv"
-DEFAULT_PROTEIN_DIR = RDS_ROOT / "david" / "processed" / "klebsiella_protein_sequences"
-DEFAULT_OUT_DIR = RDS_ROOT / "david" / "processed" / "train_kleb_ast" / "amr_annotation"
 # Vendored Kleborate KpSC AMR refs live in the sibling BacHGT repo (read-only).
 DEFAULT_AMR_REF_DIR = Path(
     "/home/dca36/workspace/BacHGT/src/bac_kleborate/refs/kleb_amr/inputs"
@@ -194,10 +187,17 @@ def run(
     start: int,
     count: int | None,
     samples: list[str] | None,
-    path_root: Path = PROJECT_K_ROOT,
+    path_root: Path | None = None,
     dry_run: bool = False,
 ) -> None:
-    """Build the worklist, annotate each genome in parallel, write per-sample sidecars."""
+    """Build the worklist, annotate each genome in parallel, write per-sample sidecars.
+
+    ``path_root`` roots relative ``sr_assembly_file`` / ``sr_gff_file`` paths (stored relative to the
+    project_k root, the parent of ``david/``); defaults to ``resolve_data_root().parent``.
+    """
+    # metadata_v2 stores sr_assembly_file / sr_gff_file *relative to the project_k root* (e.g.
+    # "seb/assemblies_2/.../X.fa.gz", "david/raw/.../X.bakta.gff3.gz"); resolve them against this.
+    path_root = path_root or resolve_data_root().parent
     work = build_worklist(ast_sheet, metadata, protein_dir, path_root)
     if dry_run:
         logger.info("dry-run: worklist size = %d (chunk it with --start/--count for the array)", len(work))
@@ -237,13 +237,18 @@ def run(
 def main() -> None:
     """CLI entry point."""
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--ast-sheet", type=Path, default=DEFAULT_AST_SHEET)
-    p.add_argument("--metadata", type=Path, default=DEFAULT_METADATA)
-    p.add_argument("--protein-dir", type=Path, default=DEFAULT_PROTEIN_DIR)
+    p.add_argument("--ast-sheet", type=Path, default=None,
+                   help="AST split sheet (default: <data-root>/processed/train_kleb_ast/binary_ast_with_split.csv).")
+    p.add_argument("--metadata", type=Path, default=None,
+                   help="metadata_v2 TSV (default: <data-root>/final/metadata_v2_all_samples_and_columns.tsv).")
+    p.add_argument("--protein-dir", type=Path, default=None,
+                   help="Protein-parquet dir (default: <data-root>/processed/klebsiella_protein_sequences).")
     p.add_argument("--amr-ref-dir", type=Path, default=DEFAULT_AMR_REF_DIR)
-    p.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
-    p.add_argument("--path-root", type=Path, default=PROJECT_K_ROOT,
-                   help="Root for resolving relative sr_assembly_file/sr_gff_file (project_k root).")
+    p.add_argument("--out-dir", type=Path, default=None,
+                   help="Sidecar output dir (default: <data-root>/processed/train_kleb_ast/amr_annotation).")
+    p.add_argument("--path-root", type=Path, default=None,
+                   help="Root for resolving relative sr_assembly_file/sr_gff_file (the project_k root, "
+                   "parent of david/; default: <data-root>'s parent).")
     p.add_argument("--minimap2-bin", type=str, default="minimap2")
     p.add_argument("--threads", type=int, default=4, help="minimap2 threads per genome.")
     p.add_argument("--workers", type=int, default=16, help="parallel genome workers.")
@@ -255,9 +260,13 @@ def main() -> None:
     p.add_argument("--dry-run", action="store_true",
                    help="Build + log the worklist size, then exit (use to size the SLURM array).")
     args = p.parse_args()
+    ast_sheet = args.ast_sheet or KP.data_root() / "binary_ast_with_split.csv"
+    metadata = args.metadata or final_root() / "metadata_v2_all_samples_and_columns.tsv"
+    protein_dir = args.protein_dir or resolve_data_root() / "processed" / "klebsiella_protein_sequences"
+    out_dir = args.out_dir or KP.data_root() / "amr_annotation"
     run(
-        ast_sheet=args.ast_sheet, metadata=args.metadata, protein_dir=args.protein_dir,
-        amr_ref_dir=args.amr_ref_dir, out_dir=args.out_dir, minimap2_bin=args.minimap2_bin,
+        ast_sheet=ast_sheet, metadata=metadata, protein_dir=protein_dir,
+        amr_ref_dir=args.amr_ref_dir, out_dir=out_dir, minimap2_bin=args.minimap2_bin,
         threads=args.threads, workers=args.workers, skip_existing=args.skip_existing,
         start=args.start, count=args.count, samples=args.samples, path_root=args.path_root,
         dry_run=args.dry_run,

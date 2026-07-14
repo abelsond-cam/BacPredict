@@ -14,11 +14,10 @@ import argparse
 import sys
 from pathlib import Path
 
+from bacpredict.engine.config import raw_root
 from bacpredict.engine.labels.parse_ebi_ast_to_binary import parse_ebi_ast_to_binary as process_klebsiella_ast_data
 
-DEFAULT_INPUT = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/raw/klebsiella_ebi_amr_records_20260216.csv"
-)
+DEFAULT_INPUT_LEAF = "klebsiella_ebi_amr_records_20260216.csv"
 
 
 def main():
@@ -29,8 +28,9 @@ def main():
     parser.add_argument(
         "--input",
         type=Path,
-        default=DEFAULT_INPUT,
-        help=f"Path to EBI AMR CSV file (default: {DEFAULT_INPUT})",
+        default=None,
+        help="Path to EBI AMR CSV file "
+             f"(default: <data-root>/raw/{DEFAULT_INPUT_LEAF})",
     )
     parser.add_argument(
         "--min-antibiotic-count",
@@ -40,7 +40,7 @@ def main():
     )
     args = parser.parse_args()
 
-    input_file = args.input
+    input_file = args.input or raw_root() / DEFAULT_INPUT_LEAF
 
     print("=" * 80)
     print("EBI AMR RECORDS PREPROCESSING")

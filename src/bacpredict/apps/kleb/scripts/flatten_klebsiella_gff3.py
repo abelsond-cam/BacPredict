@@ -2,9 +2,8 @@
 """
 Flatten bakta GFF3 batch-run directories by moving result files up one level.
 
-Starting from the top directory
-    /home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/raw/klebsiella_gff3
-this script will:
+Starting from the top directory (default ``<data-root>/raw/klebsiella_gff3``,
+overridable with ``--top-dir``) this script will:
 
 - Recurse through all nested subdirectories.
 - Find all files ending with `.bakta.gff3.gz`.
@@ -19,14 +18,14 @@ Directories that never contained a matching file are left as-is, even if empty.
 
 from __future__ import annotations
 
+import argparse
 import shutil
 from pathlib import Path
 
 from tqdm import tqdm
 
-TOP_DIR = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/raw/klebsiella_gff3"
-)
+from bacpredict.engine.config import raw_root
+
 PATTERN = "*.bakta.gff3.gz"
 
 
@@ -92,7 +91,13 @@ def flatten_bakta_gff3(top: Path) -> None:
 
 
 def main() -> None:
-    flatten_bakta_gff3(TOP_DIR)
+    """CLI entry point."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--top-dir", type=Path, default=None,
+                        help="Directory to flatten (default: <data-root>/raw/klebsiella_gff3).")
+    args = parser.parse_args()
+    top_dir = args.top_dir or raw_root() / "klebsiella_gff3"
+    flatten_bakta_gff3(top_dir)
 
 
 if __name__ == "__main__":

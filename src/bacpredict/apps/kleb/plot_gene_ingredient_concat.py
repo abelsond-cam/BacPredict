@@ -28,6 +28,8 @@ import numpy as np
 import pandas as pd
 from matplotlib.patches import Patch
 
+from bacpredict.engine.config import KP
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -112,14 +114,15 @@ def run(concat_root: Path, out_dir: Path) -> None:
 
 def main() -> None:
     """CLI entry point."""
-    rds = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david")
     here = Path(__file__).resolve().parent
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--concat-root", type=Path,
-                   default=rds / "processed" / "train_kleb_ast" / "pangena_predict" / "gene_ingredient_concat")
+    p.add_argument("--concat-root", type=Path, default=None,
+                   help="Root holding per-drug gene_ingredient_concat CSVs (default: <data-root>/processed/"
+                   "train_kleb_ast/pangena_predict/gene_ingredient_concat).")
     p.add_argument("--out-dir", type=Path, default=here / "docs" / "visualisations" / "amr_per_abx" / "ingredient")
     args = p.parse_args()
-    run(args.concat_root, args.out_dir)
+    concat_root = args.concat_root or KP.data_root() / "pangena_predict" / "gene_ingredient_concat"
+    run(concat_root, args.out_dir)
 
 
 if __name__ == "__main__":

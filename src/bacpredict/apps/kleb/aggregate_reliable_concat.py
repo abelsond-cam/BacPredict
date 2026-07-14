@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from bacpredict.engine.config import KP
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -68,16 +70,16 @@ def run(root: Path, out_csv: Path) -> None:
 
 def main() -> None:
     """CLI entry point."""
-    rds = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david")
     here = Path(__file__).resolve().parent
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--root", type=Path,
-                   default=rds / "processed" / "train_kleb_ast" / "pangena_predict" / "reliable_ft_concat",
-                   help="Dir holding <drug>/reliable_concat_<drug>.csv (the reliable_ft_concat OUT root).")
+    p.add_argument("--root", type=Path, default=None,
+                   help="Dir holding <drug>/reliable_concat_<drug>.csv (the reliable_ft_concat OUT root; "
+                   "default: <data-root>/processed/train_kleb_ast/pangena_predict/reliable_ft_concat).")
     p.add_argument("--out-csv", type=Path,
                    default=here / "docs" / "visualisations" / "reliable_amr" / "kp_reliable_concat_summary.csv")
     args = p.parse_args()
-    run(args.root, args.out_csv)
+    root = args.root or KP.data_root() / "pangena_predict" / "reliable_ft_concat"
+    run(root, args.out_csv)
 
 
 if __name__ == "__main__":

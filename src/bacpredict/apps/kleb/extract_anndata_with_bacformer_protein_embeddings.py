@@ -31,10 +31,7 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-RDS_ROOT = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw")
-METADATA_FILE = RDS_ROOT / "david" / "final" / "metadata_v2_all_samples_and_columns.tsv"
-BACFORMER_EMBEDDINGS_DIR = RDS_ROOT / "david" / "processed" / "klebsiella_bacformer_embeddings"
-ANNDATA_DIR = RDS_ROOT / "david" / "processed" / "klebsiella_anndata"
+from bacpredict.engine.config import final_root, resolve_data_root
 
 # Configure logging
 logging.basicConfig(
@@ -324,13 +321,31 @@ def main():
         default=["Clonal group", "Sublineage", "K_locus", "K_type"],
         help="Metadata columns to include in obs (default: Clonal group, Sublineage, K_locus, K_type)",
     )
+    parser.add_argument(
+        "--metadata",
+        type=Path,
+        default=None,
+        help="Metadata TSV (default: <data-root>/final/metadata_v2_all_samples_and_columns.tsv)",
+    )
+    parser.add_argument(
+        "--embeddings-dir",
+        type=Path,
+        default=None,
+        help="Bacformer embeddings dir (default: <data-root>/processed/klebsiella_bacformer_embeddings)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Output .h5ad dir (default: <data-root>/processed/klebsiella_anndata)",
+    )
 
     args = parser.parse_args()
 
-    # Setup paths
-    metadata_file = METADATA_FILE
-    embeddings_dir = BACFORMER_EMBEDDINGS_DIR
-    output_dir = ANNDATA_DIR
+    # Setup paths (resolve lazily against the cluster data root)
+    metadata_file = args.metadata or final_root() / "metadata_v2_all_samples_and_columns.tsv"
+    embeddings_dir = args.embeddings_dir or resolve_data_root() / "processed" / "klebsiella_bacformer_embeddings"
+    output_dir = args.output_dir or resolve_data_root() / "processed" / "klebsiella_anndata"
 
     # Create output directory if needed
     output_dir.mkdir(parents=True, exist_ok=True)

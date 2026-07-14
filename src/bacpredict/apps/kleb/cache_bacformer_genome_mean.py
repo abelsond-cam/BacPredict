@@ -25,6 +25,7 @@ import pandas as pd
 import torch
 
 from bacpredict.engine.concat.bacformer_genome_vectors import forward_inputs, load_model
+from bacpredict.engine.config import KP, resolve_data_root
 from bacpredict.engine.embedding.generate_embeddings import bacformer_last_hidden_state
 from bacpredict.engine.gene_lr.snp_vs_esm_prediction import real_protein_indices
 
@@ -94,33 +95,36 @@ def compute_genome_means(
 
 def main() -> None:
     """CLI entry point."""
-    rds = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david")
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--ast-sheet-path", type=Path,
-                        default=rds / "processed" / "train_kleb_ast" / "binary_ast_with_split.csv",
-                        help="binary_ast_with_split.csv — defines the cohort (all unique Samples).")
-    parser.add_argument("--esm-store-dir", type=Path, default=rds / "processed" / "klebsiella_esm_embeddings",
-                        help="Dir of {sample}_esm_embeddings.pt.")
-    parser.add_argument("--output-npz", type=Path,
-                        default=rds / "processed" / "train_kleb_ast" / "bacformer_frozen_genome_mean.npz",
-                        help="NPZ to write {sample_ids, mean_vectors} (the --bacformer-vectors contract).")
+    parser.add_argument("--ast-sheet-path", type=Path, default=None,
+                        help="binary_ast_with_split.csv — defines the cohort (all unique Samples); "
+                        "default: <data-root>/processed/train_kleb_ast/binary_ast_with_split.csv.")
+    parser.add_argument("--esm-store-dir", type=Path, default=None,
+                        help="Dir of {sample}_esm_embeddings.pt "
+                        "(default: <data-root>/processed/klebsiella_esm_embeddings).")
+    parser.add_argument("--output-npz", type=Path, default=None,
+                        help="NPZ to write {sample_ids, mean_vectors} (the --bacformer-vectors contract); "
+                        "default: <data-root>/processed/train_kleb_ast/bacformer_frozen_genome_mean.npz.")
     parser.add_argument("--device", type=str, default="cuda:0", help="Torch device (default cuda:0; cpu for smoke).")
     parser.add_argument("--max-samples", type=int, default=None, help="Cap the cohort (smoke; default: all).")
     args = parser.parse_args()
+    ast_sheet_path = args.ast_sheet_path or KP.data_root() / "binary_ast_with_split.csv"
+    esm_store_dir = args.esm_store_dir or resolve_data_root() / "processed" / "klebsiella_esm_embeddings"
+    output_npz = args.output_npz or KP.data_root() / "bacformer_frozen_genome_mean.npz"
 
-    sample_ids = load_sample_ids(args.ast_sheet_path)
+    sample_ids = load_sample_ids(ast_sheet_path)
     if args.max_samples is not None:
         sample_ids = sample_ids[: args.max_samples]
     logger.info("Caching frozen Bacformer genome-mean over %d Kp genomes on %s", len(sample_ids), args.device)
 
-    mean_mat, kept = compute_genome_means(sample_ids, args.esm_store_dir, device=args.device)
+    mean_mat, kept = compute_genome_means(sample_ids, esm_store_dir, device=args.device)
     if not kept:
         raise RuntimeError("No genome-mean vectors recovered — check esm-store-dir / .pt suffix.")
 
-    args.output_npz.parent.mkdir(parents=True, exist_ok=True)
-    np.savez(args.output_npz, sample_ids=np.array(kept), mean_vectors=mean_mat)
+    output_npz.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(output_npz, sample_ids=np.array(kept), mean_vectors=mean_mat)
     logger.info("Wrote %d frozen Bacformer genome-mean vectors (dim=%d) to %s",
-                len(kept), mean_mat.shape[1] if mean_mat.size else 0, args.output_npz)
+                len(kept), mean_mat.shape[1] if mean_mat.size else 0, output_npz)
 
 
 if __name__ == "__main__":

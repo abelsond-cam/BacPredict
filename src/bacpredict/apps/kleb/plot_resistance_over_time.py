@@ -46,6 +46,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from bacpredict.engine.config import KP
+
 # Drug classes for the composite headline figure (surveillance R rate over time).
 # Aztreonam (monobactam) sits with the beta-lactams (same general path).
 # Cefoxitin (cephamycin) is grouped under "Other" — its resistance in Kp is
@@ -787,8 +789,9 @@ def main() -> None:
     )
     p.add_argument(
         "--out-dir",
-        default="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_kleb_ast/predicting_AST_over_time",
-        help="Output directory for per-drug PNGs.",
+        default=None,
+        help="Output directory for per-drug PNGs "
+             "(default: <data-root>/processed/train_kleb_ast/predicting_AST_over_time).",
     )
     p.add_argument(
         "--min-date", type=str, default="2004",
@@ -1019,7 +1022,7 @@ def main() -> None:
             "pass --group-column to point to a present column."
         )
 
-    out_dir = Path(args.out_dir)
+    out_dir = Path(args.out_dir) if args.out_dir else KP.data_root() / "predicting_AST_over_time"
 
     if args.composite:
         out_path = out_dir / "composite_surveillance_classes.png"
