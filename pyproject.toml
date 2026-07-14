@@ -102,6 +102,7 @@ allow-direct-references = true
 [tool.hatch.build.targets.wheel]
 packages = [
   "src/bacpredict",
+  "src/amr_over_time",
   "src/kleb_iso_source",
   "src/bac_pyseer",
   "src/gene_array_lasso",
@@ -196,6 +197,7 @@ addopts = [
 [tool.coverage.run]
 source = [
   "bacpredict",
+  "amr_over_time",
   "kleb_iso_source",
 ]
 patch = [ "subprocess" ]

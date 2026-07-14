@@ -17,8 +17,9 @@ Fine-tune [Bacformer](https://github.com/amina-BS/bacformer) on bacterial genome
 |---|---|---|
 | **Engine** (organism-agnostic pipeline) | [src/bacpredict/engine/](src/bacpredict/engine/) | stages `labels` · `download` · `embedding` · `finetune` · `gene_lr` · `concat` · `catalogue` · `plots` |
 | **App: TB AST** | [src/bacpredict/apps/tb/](src/bacpredict/apps/tb/) | WHO/TB-Profiler adapter, tbprofiler pixi, download helpers |
-| **App: Kp AST** | [src/bacpredict/apps/kleb/](src/bacpredict/apps/kleb/) | CARD + Kleborate adapters, AMR sidecar pipeline, metadata curation, epi plotter |
+| **App: Kp AST** | [src/bacpredict/apps/kleb/](src/bacpredict/apps/kleb/) | CARD + Kleborate adapters, AMR sidecar pipeline, metadata curation |
 | **Archived** (concluded TB SNP diagnostic) | [src/bacpredict/_archive/](src/bacpredict/_archive/) | excluded from wheel/ruff/pytest |
+| AST-over-time (predict across ~80k → resistance trends) | [src/amr_over_time/](src/amr_over_time/) | separate package (uses the engine); **the primary `metadata_v2` consumer** — the core now only touches the Kleborate-comparator + CARD mut/WT slice. Ran; results mixed. |
 | Isolation source in *Klebsiella* | [src/kleb_iso_source/](src/kleb_iso_source/) | separate package (uses the engine) |
 | Pyseer GWAS | [src/bac_pyseer/](src/bac_pyseer/) | separate package |
 | gene_array_lasso | [src/gene_array_lasso/](src/gene_array_lasso/) | separate package |

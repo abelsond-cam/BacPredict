@@ -23,9 +23,9 @@
 #
 # The downstream BacHGT merge step joins these into the v2 metadata table.
 #
-# Submit:   sbatch src/bacpredict/apps/kleb/scripts/predict_amr_panel_on_slurm.sh
+# Submit:   sbatch src/amr_over_time/scripts/predict_amr_panel_on_slurm.sh
 # Re-run one drug only (e.g. cipro = index 3):
-#           sbatch --array=3 src/bacpredict/apps/kleb/scripts/predict_amr_panel_on_slurm.sh
+#           sbatch --array=3 src/amr_over_time/scripts/predict_amr_panel_on_slurm.sh
 
 set -uo pipefail
 
@@ -109,7 +109,7 @@ if [ -n "${N_SAMPLES:-}" ]; then
 fi
 echo "Using NUM_WORKERS=$NUM_WORKERS"
 
-if ! "$PY" -m bacpredict.apps.kleb.predict_amr_for_metadata \
+if ! "$PY" -m amr_over_time.predict_amr_for_metadata \
   --drug "$d" \
   --checkpoint "$CK" \
   --metadata-tsv "$METADATA" \
