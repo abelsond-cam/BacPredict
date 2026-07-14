@@ -52,15 +52,21 @@ Folds × seeds (≥5 each) are an **advanced final step**, only for external pub
 
 ### §0.3 Paths
 
-Cluster-dependent data root (the layout `raw/<task>/`, `processed/<task>/`, `final/` is the same
-on both — only the root differs):
+Cluster-dependent working-data root (layout `raw/<task>/`, `processed/<task>/`, `final/` is the same
+on both — only the root differs). Code resolves the root via one env var,
+`bacpredict.engine.config.resolve_data_root()` (`--data-root` arg → `$BACPREDICT_DATA_ROOT` →
+`$SCRATCHDIR` → CSD3 path → error); individual input/output paths stay CLI-overridable.
 
-- **Isambard (active):** root `$PROJECTDIR/david/` = `/projects/u6fp/david/`
+- **Isambard (active):** root **`$SCRATCHDIR`** = `/scratch/u6fp/dca36.u6fp` (single root; model
+  weights are the exception — `HF_HOME`/`TORCH_HOME` sit on `$PROJECTDIR/david/cache/`).
 - **CSD3/UoHPC (down since 27 Jun 2026):** root `/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/`
 - Raw data: `<root>/raw/<task>/` · Processed: `<root>/processed/<task>/` · Curated: `<root>/final/`
 - Local dev: `/Users/davidabelson/developer/BacPredict/`
 
-Per-task data paths live in each task's `CLAUDE.md`. Storage-tier detail per cluster:
+**Per-cluster data maps** (actual store locations, counts, env, SBATCH — the lookup for filling any
+`--input`/`--output`): [`src/bacpredict/docs/ISAMBARD_DATA.md`](src/bacpredict/docs/ISAMBARD_DATA.md)
+(live-verified) · [`src/bacpredict/docs/HPC_DATA.md`](src/bacpredict/docs/HPC_DATA.md) (seeded from
+docs; verify on CSD3's return). Storage-tier detail per cluster:
 [`~/.claude/cluster_isambard.md`](~/.claude/cluster_isambard.md) ·
 [`~/.claude/cluster_uohpc.md`](~/.claude/cluster_uohpc.md).
 
