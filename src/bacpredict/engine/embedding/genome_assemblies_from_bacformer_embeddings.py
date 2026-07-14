@@ -37,8 +37,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants
-INPUT_DIR = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/klebsiella_bacformer_embeddings")
-OUTPUT_PATH = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/klebsiella_genome_embeddings.pq")
 EXPECTED_EMBEDDING_DIM = 960
 
 
@@ -119,31 +117,49 @@ def main():
         default=cpu_count() - 1,
         help=f"Number of parallel worker processes (default: {cpu_count() - 1})",
     )
+    parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=None,
+        required=True,
+        help="Directory of *_bacformer_embeddings.pt files to mean-pool "
+        "(e.g. $BACPREDICT_DATA_ROOT/processed/train_kleb_ast/bacformer).",
+    )
+    parser.add_argument(
+        "--output-path",
+        type=Path,
+        default=None,
+        required=True,
+        help="Output parquet path for the genome-embedding matrix "
+        "(e.g. $BACPREDICT_DATA_ROOT/processed/train_kleb_ast/genome_embeddings.pq).",
+    )
 
     args = parser.parse_args()
+    input_dir = args.input_dir
+    output_path = args.output_path
 
     # Log configuration
     logger.info("=" * 80)
     logger.info(f"STARTING GENOME EMBEDDINGS GENERATION: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 80)
-    logger.info(f"Input directory: {INPUT_DIR}")
-    logger.info(f"Output path: {OUTPUT_PATH}")
+    logger.info(f"Input directory: {input_dir}")
+    logger.info(f"Output path: {output_path}")
     logger.info(f"Workers: {args.workers}")
 
     # Verify input directory exists
-    if not INPUT_DIR.exists():
-        logger.error(f"Input directory does not exist: {INPUT_DIR}")
+    if not input_dir.exists():
+        logger.error(f"Input directory does not exist: {input_dir}")
         sys.exit(1)
 
     # Find all .pt files
-    pt_files = find_bacformer_embedding_files(INPUT_DIR, limit=args.n)
+    pt_files = find_bacformer_embedding_files(input_dir, limit=args.n)
 
     if not pt_files:
-        logger.error(f"No *_bacformer_embeddings.pt files found in {INPUT_DIR}")
+        logger.error(f"No *_bacformer_embeddings.pt files found in {input_dir}")
         sys.exit(1)
 
     # Create output directory if needed
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Process files in parallel
     logger.info("=" * 80)
@@ -216,11 +232,11 @@ def main():
     logger.info(f"Index (sample_ids): {len(df.index)} entries")
 
     # Save to parquet
-    df.to_parquet(OUTPUT_PATH, engine="pyarrow", compression="snappy", index=True)
-    logger.info(f"Successfully saved to: {OUTPUT_PATH}")
+    df.to_parquet(output_path, engine="pyarrow", compression="snappy", index=True)
+    logger.info(f"Successfully saved to: {output_path}")
 
     # Verify saved file
-    file_size_mb = OUTPUT_PATH.stat().st_size / (1024 * 1024)
+    file_size_mb = output_path.stat().st_size / (1024 * 1024)
     logger.info(f"Output file size: {file_size_mb:.2f} MB")
 
     logger.info("=" * 80)

@@ -37,9 +37,7 @@ from pathlib import Path
 
 import pandas as pd
 
-RDS_ROOT = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw")
-DEFAULT_METADATA_FILE = RDS_ROOT / "david" / "final" / "metadata_v2_all_samples_and_columns.tsv"
-DEFAULT_GBFF_DIR = RDS_ROOT / "david" / "raw" / "klebsiella_gbff"
+from bacpredict.engine.config import final_root, raw_root
 
 
 def _downloaded_column(filetype: str) -> str:
@@ -261,8 +259,8 @@ def main() -> None:
     parser.add_argument(
         "--metadata",
         type=Path,
-        default=DEFAULT_METADATA_FILE,
-        help="Path to metadata TSV",
+        default=None,
+        help="Path to metadata TSV (default: <data-root>/final/metadata_v2_all_samples_and_columns.tsv)",
     )
     parser.add_argument(
         "--n",
@@ -303,8 +301,9 @@ def main() -> None:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=DEFAULT_GBFF_DIR,
-        help="Directory containing .bakta.gbff.gz or .bakta.gff3.gz files (for flag updates)",
+        default=None,
+        help="Directory containing .bakta.gbff.gz or .bakta.gff3.gz files (for flag updates; "
+        "default: <data-root>/raw/klebsiella_gbff)",
     )
     parser.add_argument(
         "--missing-output",
@@ -315,6 +314,9 @@ def main() -> None:
 
     args = parser.parse_args()
     args.skip_existing = not args.no_skip_existing
+    # Resolve store defaults lazily (never at import) so --help works with no cluster env set.
+    args.metadata = args.metadata or final_root() / "metadata_v2_all_samples_and_columns.tsv"
+    args.output_dir = args.output_dir or raw_root() / "klebsiella_gbff"
 
     # Determine if we should run collection
     run_collection = args.batch_dir is not None or args.output is not None

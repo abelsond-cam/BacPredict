@@ -25,17 +25,14 @@ import re
 import numpy as np
 import pandas as pd
 
-# NB: these DEFAULT_* point at the (now-down) CSD3 Klebsiella cohort and exist only as CLI fallbacks —
-# always pass --input/--output-dir for TB or any Isambard cohort.
-BASE_DIR = pathlib.Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david")
-RAW_SUB = "raw"
-PROCESSED_SUB = "processed"
-VIS_SUB = "results_visualisations"
-FILE_LEAF = "klebsiella_ebi_amr_records_20260216.csv"
+from bacpredict.engine.config import KP, raw_root, resolve_data_root
 
-DEFAULT_INPUT = BASE_DIR / RAW_SUB / FILE_LEAF
-DEFAULT_OUTPUT_DIR = BASE_DIR / PROCESSED_SUB / "train_kleb_ast"
-DEFAULT_VIZ_DIR = BASE_DIR / VIS_SUB
+# Fallback leaf names for the Klebsiella cohort. The data ROOT is resolved lazily (never at import)
+# so --help works with no cluster env set; always pass --input/--output-dir for TB or any Isambard
+# cohort. Resolved defaults: input = <data-root>/raw/<FILE_LEAF>, output = <data-root>/processed/
+# train_kleb_ast, viz = <data-root>/results_visualisations.
+FILE_LEAF = "klebsiella_ebi_amr_records_20260216.csv"
+VIS_SUB = "results_visualisations"
 
 
 def read_ast_data(mic_data_path=None):
@@ -52,7 +49,7 @@ def read_ast_data(mic_data_path=None):
         DataFrame containing AST data
     """
     if mic_data_path is None:
-        mic_data_path = DEFAULT_INPUT
+        mic_data_path = raw_root() / FILE_LEAF
     return pd.read_csv(mic_data_path)
 
 
@@ -759,7 +756,7 @@ def parse_ebi_ast_to_binary(
     Parameters
     ----------
     input_file : Path or str, optional
-        Path to input CSV file. If None, uses ``DEFAULT_INPUT``.
+        Path to input CSV file. If None, uses ``<data-root>/raw/<FILE_LEAF>``.
     min_antibiotic_count : int, default=1000
         Minimum number of measurements required to keep an antibiotic.
         Ignored when ``top_n`` is supplied.
@@ -770,9 +767,9 @@ def parse_ebi_ast_to_binary(
         If set, keep only the top-N most-tested antibiotics (overrides ``min_antibiotic_count``).
     output_dir : Path or str, optional
         Directory for CSV outputs (metadata, binary_ast, regression_log_mic).
-        Defaults to ``DEFAULT_OUTPUT_DIR``.
+        Defaults to ``<data-root>/processed/train_kleb_ast``.
     viz_dir : Path or str, optional
-        Directory for antibiogram PNG outputs. Defaults to ``DEFAULT_VIZ_DIR``.
+        Directory for antibiogram PNG outputs. Defaults to ``<data-root>/results_visualisations``.
     antibiogram_min_samples : int, default=2000
         Minimum tests for an antibiotic to be displayed in the antibiogram.
         Does not affect the saved pivot tables or stats CSV — only the figure.
@@ -782,8 +779,8 @@ def parse_ebi_ast_to_binary(
     dict
         Dictionary containing all output dataframes and paths
     """
-    output_dir = pathlib.Path(output_dir) if output_dir is not None else DEFAULT_OUTPUT_DIR
-    viz_dir = pathlib.Path(viz_dir) if viz_dir is not None else DEFAULT_VIZ_DIR
+    output_dir = pathlib.Path(output_dir) if output_dir is not None else KP.data_root()
+    viz_dir = pathlib.Path(viz_dir) if viz_dir is not None else resolve_data_root() / VIS_SUB
     print("=" * 80)
     print("EBI AST → BINARY RESISTANCE PIPELINE (organism-agnostic)")
     print("=" * 80)
@@ -1012,7 +1009,7 @@ def main():
         "--input",
         type=pathlib.Path,
         default=None,
-        help=f"Path to AST CSV file (default: {DEFAULT_INPUT})",
+        help=f"Path to AST CSV file (default: <data-root>/raw/{FILE_LEAF})",
     )
     parser.add_argument(
         "--min-antibiotic-count",
@@ -1031,13 +1028,14 @@ def main():
         "--output-dir",
         type=pathlib.Path,
         default=None,
-        help=f"Directory for CSV outputs (metadata, binary_ast, regression_log_mic). Default: {DEFAULT_OUTPUT_DIR}",
+        help="Directory for CSV outputs (metadata, binary_ast, regression_log_mic). "
+        "Default: <data-root>/processed/train_kleb_ast",
     )
     parser.add_argument(
         "--viz-dir",
         type=pathlib.Path,
         default=None,
-        help=f"Directory for antibiogram PNGs. Default: {DEFAULT_VIZ_DIR}",
+        help="Directory for antibiogram PNGs. Default: <data-root>/results_visualisations",
     )
     parser.add_argument(
         "--reporting-size",

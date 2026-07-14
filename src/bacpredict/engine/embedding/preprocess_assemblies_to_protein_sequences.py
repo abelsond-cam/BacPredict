@@ -24,15 +24,12 @@ import pandas as pd
 from bacformer.pp import preprocess_genome_assembly
 from tqdm import tqdm
 
+from bacpredict.engine.config import KP
 from bacpredict.engine.embedding.extract_proteins_from_gff_fna import (
     extract_proteins_from_gff_fna,
     is_gbff_path,
     is_gff_path,
 )
-
-RDS_ROOT = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw")
-PROTEIN_SEQUENCES_DIR = RDS_ROOT / "david" / "processed" / "klebsiella_protein_sequences"
-INPUT_CSV_DEFAULT = RDS_ROOT / "david" / "processed" / "missing_embeddings_kpsc.csv"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -138,14 +135,16 @@ def main():
     parser.add_argument(
         "--input-csv",
         type=Path,
-        default=INPUT_CSV_DEFAULT,
-        help="CSV with columns Sample, sr_assembly_file, sr_gff_file (default: missing_embeddings_kpsc.csv).",
+        default=None,
+        help="CSV with columns Sample, sr_assembly_file, sr_gff_file "
+        "(default: <data-root>/processed/train_kleb_ast/missing_embeddings_kpsc.csv).",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=PROTEIN_SEQUENCES_DIR,
-        help="Where to write {Sample}_protein_sequences.parquet files.",
+        default=None,
+        help="Where to write {Sample}_protein_sequences.parquet files "
+        "(default: <data-root>/processed/train_kleb_ast/protein_sequences).",
     )
     parser.add_argument("--n", type=int, default=None, help="Limit number of samples (for testing)")
     parser.add_argument(
@@ -163,13 +162,14 @@ def main():
 
     args = parser.parse_args()
 
-    output_dir = args.output_dir
+    input_csv = args.input_csv or KP.data_root() / "missing_embeddings_kpsc.csv"
+    output_dir = args.output_dir or KP.data_root() / "protein_sequences"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info("=" * 60)
     logger.info("PHASE 1: Setup")
     logger.info("=" * 60)
-    logger.info(f"Input CSV: {args.input_csv}")
+    logger.info(f"Input CSV: {input_csv}")
     logger.info(f"Output directory: {output_dir}")
     logger.info(f"Workers requested: {args.workers}")
     sys.stdout.flush()
@@ -177,11 +177,11 @@ def main():
     logger.info("")
     logger.info("PHASE 2: Loading input CSV")
     sys.stdout.flush()
-    df = load_input_csv(args.input_csv, limit=args.n)
-    logger.info(f"Loaded {len(df)} rows from {args.input_csv}")
+    df = load_input_csv(input_csv, limit=args.n)
+    logger.info(f"Loaded {len(df)} rows from {input_csv}")
 
     if df.empty:
-        logger.error(f"No rows in {args.input_csv}")
+        logger.error(f"No rows in {input_csv}")
         sys.exit(1)
 
     logger.info("")

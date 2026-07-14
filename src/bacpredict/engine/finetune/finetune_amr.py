@@ -23,6 +23,7 @@ from transformers import (
     TrainingArguments,
 )
 
+from bacpredict.engine.config import organism
 from bacpredict.engine.finetune.attention_pool import BacformerAttnPoolForGenomeClassification
 from bacpredict.engine.finetune.datasets import LabelInjectingFileDataset, PanelInjectingFileDataset
 from bacpredict.engine.finetune.metrics import (
@@ -33,12 +34,8 @@ from bacpredict.engine.finetune.metrics import (
 )
 from bacpredict.engine.finetune.split_utils import generate_kfold_splits
 
-EMBEDDINGS_DIR_DEFAULT = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/tb_esm_embeddings"
-)
-AST_SHEET_PATH_DEFAULT = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/binary_ast_with_split.csv"
-)
+# Maps the --task label to its OrganismConfig key, so store paths default off the chosen task.
+_TASK_TO_ORGANISM = {"tb_ast": "tb", "kleb_ast": "kp"}
 
 
 ############################################################## Panel-aware trainer ##############################################################
@@ -434,13 +431,14 @@ class ArgumentParser(Tap):
         super().__init__(underscores_to_dashes=True)
 
     model_name_or_path: str = "macwiatrak/bacformer-large-masked-complete-genomes"
-    embeddings_dir: str = str(EMBEDDINGS_DIR_DEFAULT)
+    embeddings_dir: str | None = None
+    """ESM-C store (default: <data-root>/processed/train_<task>/esm, keyed off --task)."""
     # deprecated — kept for backward compat; ignored if present
     train_data_dir: str | None = None
     val_data_dir: str | None = None
     output_dir: str = "/tmp/train-output/"
-    task: str = "ast"
-    """Organism/task label recorded in results.json (e.g. 'tb_ast' or 'kleb_ast')."""
+    task: str = "tb_ast"
+    """Organism/task label recorded in results.json and keying the default store paths ('tb_ast' or 'kleb_ast')."""
     batch_size: int = 1
     grad_accumulation_steps: int = 8
     lr: float = 0.00015
@@ -459,7 +457,8 @@ class ArgumentParser(Tap):
     """panel_standardization.json with train-only mean/std (required when --panel-mode != none)."""
     logging_steps: int = 10
     n_samples: int = 10000
-    ast_sheet_path: str = str(AST_SHEET_PATH_DEFAULT)
+    ast_sheet_path: str | None = None
+    """Split sheet (default: <data-root>/processed/train_<task>/binary_ast_with_split.csv, keyed off --task)."""
     seed: int = 1
     max_steps: int = 100000
     early_stopping_patience: int = 30
@@ -478,13 +477,20 @@ class ArgumentParser(Tap):
 
 if __name__ == "__main__":
     args = ArgumentParser().parse_args()
-    print("Running TB AMR finetuning with dynamic label injection")
+    print("Running AMR finetuning with dynamic label injection")
     print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    # Default the organism stores off --task; explicit --embeddings-dir/--ast-sheet-path win
+    # (the root is resolved only when a path is actually missing).
+    def _store() -> Path:
+        return organism(_TASK_TO_ORGANISM[args.task]).data_root()
+
+    embeddings_dir = args.embeddings_dir or str(_store() / "esm")
+    ast_sheet_path = args.ast_sheet_path or str(_store() / "binary_ast_with_split.csv")
     run(
         model_name_or_path=args.model_name_or_path,
-        embeddings_dir=args.embeddings_dir,
+        embeddings_dir=embeddings_dir,
         output_dir=args.output_dir,
-        ast_sheet_path=args.ast_sheet_path,
+        ast_sheet_path=ast_sheet_path,
         task=args.task,
         lr=args.lr,
         batch_size=args.batch_size,

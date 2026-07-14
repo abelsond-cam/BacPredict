@@ -1,9 +1,10 @@
 """Build the train/validate/evaluate split CSV for AMR fine-tuning — shared by every organism.
 
 Creates the 70/10/20 split over unique samples from an organism's ESM embeddings + binary AST sheet,
-pruning samples with no embedding file. Organism-specific paths are passed on the CLI (the defaults
-are TB-flavoured placeholders). By default writes only the split CSV; ``--write-pt-files`` also
-materialises the legacy per-sample ``.pt`` copies.
+pruning samples with no embedding file. Organism-specific paths default off ``--task`` (``tb_ast`` /
+``kleb_ast``) via the engine config's per-organism data root, and stay overridable on the CLI. By
+default writes only the split CSV; ``--write-pt-files`` also materialises the legacy per-sample
+``.pt`` copies.
 """
 import argparse
 from pathlib import Path
@@ -12,17 +13,10 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
+from bacpredict.engine.config import organism
 from bacpredict.engine.finetune.split_utils import add_splits
 
-AST_CSV_DEFAULT = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/binary_ast.csv"
-)
-EMBEDDINGS_DIR_DEFAULT = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/tb_esm_embeddings"
-)
-OUTPUT_BASE_DEFAULT = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/ast_training"
-)
+_TASK_TO_ORGANISM = {"tb_ast": "tb", "kleb_ast": "kp"}
 
 
 def load_ast_sheet(ast_csv: Path) -> pd.DataFrame:
@@ -142,22 +136,30 @@ def main() -> None:
         "Integrated pruning: samples without embedding files are removed from the AST sheet."
     )
     parser.add_argument(
+        "--task",
+        choices=sorted(_TASK_TO_ORGANISM),
+        default="tb_ast",
+        help="Organism/task keying the default store paths (default: tb_ast).",
+    )
+    parser.add_argument(
         "--ast-csv",
         type=Path,
-        default=AST_CSV_DEFAULT,
-        help="Path to TB binary_ast.csv",
+        default=None,
+        help="Path to binary_ast.csv (default: <data-root>/processed/train_<task>/binary_ast.csv).",
     )
     parser.add_argument(
         "--embeddings-dir",
         type=Path,
-        default=EMBEDDINGS_DIR_DEFAULT,
-        help="Directory containing pytorch (.pt) files named {Sample}_esm_embeddings.pt.",
+        default=None,
+        help="Directory of {Sample}_esm_embeddings.pt files "
+        "(default: <data-root>/processed/train_<task>/esm).",
     )
     parser.add_argument(
         "--output-base",
         type=Path,
-        default=OUTPUT_BASE_DEFAULT,
-        help="Base directory for ast_training/{train,validate,evaluate}/ outputs.",
+        default=None,
+        help="Base directory for ast_training/{train,validate,evaluate}/ outputs "
+        "(default: <data-root>/processed/train_<task>/ast_training).",
     )
     parser.add_argument(
         "--seed",
@@ -187,21 +189,30 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    print(f"Loading AST sheet from: {args.ast_csv}")
-    ast_df = load_ast_sheet(args.ast_csv)
+    # Resolve store defaults off --task; explicit CLI paths win (the root is resolved
+    # only when a path is actually missing).
+    def _store() -> Path:
+        return organism(_TASK_TO_ORGANISM[args.task]).data_root()
+
+    ast_csv = args.ast_csv or _store() / "binary_ast.csv"
+    embeddings_dir = args.embeddings_dir or _store() / "esm"
+    output_base = args.output_base or _store() / "ast_training"
+
+    print(f"Loading AST sheet from: {ast_csv}")
+    ast_df = load_ast_sheet(ast_csv)
     print(f"Total AST rows (before pruning): {len(ast_df)}")
 
     print("Adding train/validate/evaluate splits (70/10/20)...")
     ast_df_splits = add_splits(ast_df, seed=args.seed)
 
     print("Validating embedding files and pruning missing samples...")
-    pruned_df, missing_ids = validate_embeddings_and_prune(ast_df_splits, args.embeddings_dir)
+    pruned_df, missing_ids = validate_embeddings_and_prune(ast_df_splits, embeddings_dir)
     print(f"Samples with missing embeddings (removed): {len(missing_ids)}")
     print(f"Samples kept: {len(pruned_df['Sample'].unique())}")
 
     # Write removed samples to CSV if any
     if missing_ids:
-        missing_out = args.missing_out or (args.output_base / "ast_samples_not_in_dataset.csv")
+        missing_out = args.missing_out or (output_base / "ast_samples_not_in_dataset.csv")
         missing_out.parent.mkdir(parents=True, exist_ok=True)
         missing_mask = ast_df_splits["Sample"].isin(missing_ids)
         removed_df = ast_df_splits[missing_mask].drop_duplicates(subset=["Sample"])
@@ -209,13 +220,13 @@ def main() -> None:
         print(f"Removed samples written to: {missing_out}")
 
     # Save pruned AST sheet
-    split_csv_path = args.ast_csv.with_name("binary_ast_with_split.csv")
+    split_csv_path = ast_csv.with_name("binary_ast_with_split.csv")
     print(f"Writing pruned AST sheet with splits to: {split_csv_path}")
     pruned_df.to_csv(split_csv_path, index=False)
 
     if args.write_pt_files:
         print("Writing per-sample pytorch (.pt) files with embeddings and AST labels...")
-        write_split_files(pruned_df, args.embeddings_dir, args.output_base, skip_existing=args.skip_existing)
+        write_split_files(pruned_df, embeddings_dir, output_base, skip_existing=args.skip_existing)
     else:
         print(
             "Skipping .pt file generation (default). "

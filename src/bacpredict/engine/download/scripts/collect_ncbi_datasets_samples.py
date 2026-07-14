@@ -24,19 +24,14 @@ from pathlib import Path
 
 import pandas as pd
 
-DEFAULT_METADATA_PATH = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/final/metadata_v2_all_samples_and_columns.tsv"
-)
-
-NCBI_GFF_DIR = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/raw/ncbi_gff3"
-)
+from bacpredict.engine.config import final_root, raw_root
 
 
 def collect_accessions(
     metadata_path: Path,
     n: int = -1,
     download_all: bool = False,
+    ncbi_gff_dir: Path | None = None,
 ) -> list[str]:
     """Return a list of NCBI genome accessions from the `Sample` column.
 
@@ -44,7 +39,7 @@ def collect_accessions(
     - Start from the full metadata file (default: curated metadata TSV).
     - Identify rows where bakta_gff3_downloaded is False / not truthy (not downloaded).
     - Optionally (default), skip rows whose Sample already appears to have a
-      corresponding downloaded NCBI GFF based on existing .gff files in NCBI_GFF_DIR,
+      corresponding downloaded NCBI GFF based on existing .gff files in the NCBI GFF directory,
       unless --download-all is provided.
     - Report counts of first-3-character prefixes for Sample within this not-downloaded
       (and not-skip-existing) set (including GCF/GCA and any other prefixes).
@@ -88,13 +83,14 @@ def collect_accessions(
 
     # Optional filesystem-based skip-existing filter:
     # If download_all is False, drop rows whose Sample appears to correspond
-    # to an already-downloaded NCBI GFF in NCBI_GFF_DIR, based on .gff stems.
+    # to an already-downloaded NCBI GFF in ncbi_gff_dir, based on .gff stems.
     if not download_all:
-        if NCBI_GFF_DIR.is_dir():
-            gff_stems = {p.stem for p in NCBI_GFF_DIR.glob("*.gff")}
+        ncbi_gff_dir = ncbi_gff_dir or raw_root() / "ncbi_gff3"
+        if ncbi_gff_dir.is_dir():
+            gff_stems = {p.stem for p in ncbi_gff_dir.glob("*.gff")}
         else:
             print(
-                f"WARNING: NCBI_GFF_DIR does not exist ({NCBI_GFF_DIR}); "
+                f"WARNING: ncbi_gff_dir does not exist ({ncbi_gff_dir}); "
                 "treating as if no .gff files are present.",
                 file=sys.stderr,
             )
@@ -115,7 +111,7 @@ def collect_accessions(
             not_downloaded = not_downloaded[keep_mask].copy()
             print(
                 f"Skip-existing filter: skipped {skipped_due_to_gff:,} rows "
-                "because a matching .gff file already exists in NCBI_GFF_DIR.",
+                "because a matching .gff file already exists in the NCBI GFF directory.",
                 file=sys.stderr,
             )
 
@@ -219,10 +215,19 @@ def main() -> None:
     parser.add_argument(
         "--metadata",
         type=Path,
-        default=DEFAULT_METADATA_PATH,
+        default=None,
         help=(
             "Path to metadata TSV containing a 'Sample' column "
-            f"(default: {DEFAULT_METADATA_PATH})"
+            "(default: <data-root>/final/metadata_v2_all_samples_and_columns.tsv)"
+        ),
+    )
+    parser.add_argument(
+        "--ncbi-gff-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Directory of already-downloaded NCBI .gff files, for the skip-existing filter "
+            "(default: <data-root>/raw/ncbi_gff3)"
         ),
     )
     parser.add_argument(
@@ -260,10 +265,12 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    metadata_path = args.metadata or final_root() / "metadata_v2_all_samples_and_columns.tsv"
     accessions = collect_accessions(
-        metadata_path=args.metadata,
+        metadata_path=metadata_path,
         n=args.n,
         download_all=args.download_all,
+        ncbi_gff_dir=args.ncbi_gff_dir,
     )
     write_batches(
         accessions=accessions,

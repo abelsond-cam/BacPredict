@@ -63,11 +63,8 @@ from bac_kleborate.parsing import (
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import OneHotEncoder
 
+from bacpredict.engine.config import final_root
 from bacpredict.engine.finetune.metrics import compute_full_metrics
-
-DEFAULT_METADATA = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/final/metadata_v2_all_samples_and_columns.tsv"
-)
 
 _NA_TOKEN = "__NA__"
 
@@ -445,8 +442,9 @@ def _main_cli() -> None:
                    help="Split CSV (Sample, <label>, train_val_eval).")
     p.add_argument("--label-column", required=True,
                    help="Binary label column name in the split CSV (e.g. blood_vs_faeces_label).")
-    p.add_argument("--metadata-file", type=Path, default=DEFAULT_METADATA,
-                   help="v2 metadata TSV (country_parsed + Sublineage + K_locus + Kleborate virulence/AMR columns).")
+    p.add_argument("--metadata-file", type=Path, default=None,
+                   help="v2 metadata TSV (country_parsed + Sublineage + K_locus + Kleborate virulence/AMR columns; "
+                   "default: <data-root>/final/metadata_v2_all_samples_and_columns.tsv).")
     p.add_argument(
         "--feature-sets", nargs="+",
         default=[
@@ -470,10 +468,11 @@ def _main_cli() -> None:
     args = p.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    metadata_file = args.metadata_file or final_root() / "metadata_v2_all_samples_and_columns.tsv"
     payload = run_baselines(
         sheet_path=args.sheet_path,
         label_column=args.label_column,
-        metadata_file=args.metadata_file,
+        metadata_file=metadata_file,
         feature_sets=list(args.feature_sets),
         also_score_validate=args.also_score_validate,
         task=args.task,

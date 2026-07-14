@@ -3,8 +3,8 @@
 Flatten NCBI GFF3 batch-run directories by moving result files up one level.
 
 Starting from the top directory
-    /home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/raw/ncbi_gff3
-this script will:
+    $BACPREDICT_DATA_ROOT/raw/ncbi_gff3
+(overridable with --ncbi-gff-dir) this script will:
 
 - Look at each immediate child directory (sample) under the top directory.
 - For each sample directory S, look for:
@@ -20,14 +20,13 @@ this script will:
 
 from __future__ import annotations
 
+import argparse
 import shutil
 from pathlib import Path
 
 from tqdm import tqdm
 
-NCBI_GFF_DIR = Path(
-    "/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/raw/ncbi_gff3"
-)
+from bacpredict.engine.config import raw_root
 
 NCBI_DATASET_DIR = "ncbi_dataset"
 NCBI_DATA_SUBDIR = "data"
@@ -92,7 +91,17 @@ def flatten_ncbi_gff3(ncbi_gff_dir: Path) -> None:
 
 
 def main() -> None:
-    flatten_ncbi_gff3(NCBI_GFF_DIR)
+    """Parse the (optional) GFF dir override and flatten it."""
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument(
+        "--ncbi-gff-dir",
+        type=Path,
+        default=None,
+        help="Top NCBI GFF3 directory to flatten (default: <data-root>/raw/ncbi_gff3).",
+    )
+    args = parser.parse_args()
+    ncbi_gff_dir = args.ncbi_gff_dir or raw_root() / "ncbi_gff3"
+    flatten_ncbi_gff3(ncbi_gff_dir)
 
 
 if __name__ == "__main__":
