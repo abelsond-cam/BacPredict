@@ -1,15 +1,18 @@
 #!/bin/bash
 #SBATCH --job-name=train_attn_surprisal_panel_1000
-#SBATCH --output=%x_%j.out
-#SBATCH --error=%x_%j.err
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
 #SBATCH --time=02:00:00
-#SBATCH --partition=ampere
-#SBATCH --account=FLOTO-SL2-GPU
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
 #SBATCH --mem=128G
+# CSD3/UoHPC variant (when it returns): --partition=ampere --account=FLOTO-SL2-GPU,
+#   logs → relative or ~/rds/hpc-work/logs/, and `module load cuda/12.4 cudnn/8.9_cuda-12.4`.
 
 # Train the gated-MIL head with the per-protein surprisal panel on the 1000-genome manifest
 # split (TB rifampin). Tests whether the surprisal panel lets the gate route to rpoB (the
@@ -23,19 +26,22 @@
 #   att_head : gated-MIL + panel steers the gate, backbone FROZEN, pooled value = pure token
 #   e2e      : gated-MIL + panel into gate + pooled value, backbone fine-tuned end-to-end
 #
-#   sbatch src/tb_ast/scripts/train_attn_surprisal_panel_1000.sh none
-#   sbatch src/tb_ast/scripts/train_attn_surprisal_panel_1000.sh att_head
+#   sbatch src/bacpredict/apps/tb/scripts/train_attn_surprisal_panel_1000.sh none
+#   sbatch src/bacpredict/apps/tb/scripts/train_attn_surprisal_panel_1000.sh att_head
 
-cd /home/dca36/workspace/BacPredict
+set -uo pipefail
+
+# Data root — one env var, cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 
 mode=${1:-att_head}
 
-module purge
-module load cuda/12.4
-module load cudnn/8.9_cuda-12.4
 export PYTHONUNBUFFERED=1
 
-RDS=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast
+RDS=$D/processed/train_tb_ast
 STORE_DIR=$RDS/tb_surprisal_panel
 SHEET=$STORE_DIR/tb_rif_1000_split.csv
 STD=$STORE_DIR/panel_standardization.json
@@ -53,14 +59,14 @@ echo "TB 1000-genome surprisal-panel run — mode=$mode  job=$SLURM_JOB_ID  node
 echo "sheet=$SHEET"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || true
 
-uv run python -m bacpredict.engine.finetune.finetune_amr --task tb_ast \
+"$PY" -m bacpredict.engine.finetune.finetune_amr --task tb_ast \
     --drug rifampin \
     --pooling attention \
     --attn-dim 128 \
     $panel_args \
     $freeze_flag \
     --ast-sheet-path $SHEET \
-    --embeddings-dir $RDS/tb_esm_embeddings \
+    --embeddings-dir $RDS/esm \
     --lr 1e-3 \
     --max-steps 4000 \
     --eval-steps 100 \

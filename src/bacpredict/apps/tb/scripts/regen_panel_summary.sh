@@ -7,13 +7,18 @@
 # For a full re-eval of one or more drugs, use scripts/eval_panel_on_slurm.sh.
 #
 # Usage (from anywhere on HPC):
-#     bash /home/dca36/workspace/BacPredict/src/tb_ast/scripts/regen_panel_summary.sh
+#     bash "$HOME/BacPredict/src/bacpredict/apps/tb/scripts/regen_panel_summary.sh"
 
 set -euo pipefail
-cd /home/dca36/workspace/BacPredict
+
+# Data root — one env var, cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 export CUDA_VISIBLE_DEVICES=""
 
-BASE=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast
+BASE=$D/processed/train_tb_ast
 CKPT=$BASE/checkpoints
 
 # Panel order: descending R count. Matches eval_panel_on_slurm.sh.
@@ -27,13 +32,13 @@ for d in $PANEL; do
 done
 echo "Combining ${#ARGS[@]} drugs..."
 
-uv run python src/bacpredict/engine/finetune/evaluate.py --combine "${ARGS[@]}" \
+"$PY" -m bacpredict.engine.finetune.evaluate --combine "${ARGS[@]}" \
   --prevalence-label "resistance rate" \
   --combine-out "$BASE/eval_roc_pr_grid_full_panel.png" \
   --bar-out "$BASE/eval_auroc_bar.png" \
   --bar-title "TB AMR panel — held-out AUROC"
 
-uv run python - "$CKPT" "$BASE/eval_summary.csv" <<'PY'
+"$PY" - "$CKPT" "$BASE/eval_summary.csv" <<'PY'
 import csv, glob, json, os, sys
 ckpt_root, out_csv = sys.argv[1], sys.argv[2]
 rows = []

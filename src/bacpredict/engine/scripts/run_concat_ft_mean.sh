@@ -16,32 +16,38 @@
 # Usage:  sbatch src/bacpredict/engine/scripts/run_concat_ft_mean.sh
 #
 #SBATCH --job-name=concat_ft_mean
-#SBATCH --output=concat_ft_mean_%j.out
-#SBATCH --error=concat_ft_mean_%j.err
-#SBATCH --partition=ampere
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=128G
 #SBATCH --time=24:00:00
-#SBATCH --account=FLOTO-SL2-GPU
 #SBATCH --open-mode=append
+# CSD3/UoHPC variant (when it returns): --partition=ampere --account=FLOTO-SL2-GPU,
+#   logs → concat_ft_mean_%j.out/.err (repo-relative), and `module load cuda/12.4 cudnn/8.9_cuda-12.4`.
 # ~2-3 GPU-h estimated (genotype ~30k parquets + one FT-Bacformer forward each); 24 h budget — never
 # under-call walltime (charged on time used, not requested). --pool-workers parallelises the ESM-C
 # rpoB .pt reads across the 8 cores.
 
-cd /home/dca36/workspace/BacPredict
+set -uo pipefail
+# Data root + env — cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+# CUDA comes from the Isambard Cray PE + the venv — no `module load` needed.
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 
 export PYTHONUNBUFFERED=1
-module purge
-module load cuda/12.4
-module load cudnn/8.9_cuda-12.4
 
-RDS=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast
+RDS=$D/processed/train_tb_ast
 SHEET=$RDS/binary_ast_with_split.csv
-PARQUET_DIR=$RDS/tb_protein_sequences
-ESM_STORE_DIR=$RDS/tb_esm_embeddings
+PARQUET_DIR=$RDS/protein_sequences
+ESM_STORE_DIR=$RDS/esm
 OUT_DIR=$RDS/pangena_predict/concat_ft_mean
 OUT_JSON=$OUT_DIR/concat_ft_mean_${SLURM_JOB_ID}.json
 QC_LOG=$OUT_DIR/rpob_copy_qc_${SLURM_JOB_ID}.log
@@ -66,7 +72,7 @@ echo "FT NPZ cache: $SAVE_NPZ"
 echo "Job ID:      $SLURM_JOB_ID"
 echo "========================================================================"
 
-uv run python src/bacpredict/engine/concat/concatenate_bacformer_genome_esm_protein_emb.py \
+"$PY" -m bacpredict.engine.concat.concatenate_bacformer_genome_esm_protein_emb \
     --ast-sheet-path "$SHEET" \
     --parquet-dir "$PARQUET_DIR" \
     --esm-store-dir "$ESM_STORE_DIR" \

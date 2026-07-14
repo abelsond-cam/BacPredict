@@ -14,30 +14,37 @@
 # knobs. Smoke:  TBP_MAX_PER_TASK=3 sbatch --array=0 ...   Full:  sbatch run_tbprofiler_cohort.sh
 #
 #SBATCH --job-name=tbprofiler_cohort
-#SBATCH --output=tbprofiler_cohort_%A_%a.out
-#SBATCH --error=tbprofiler_cohort_%A_%a.err
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
 #SBATCH --array=0-199
-#SBATCH --partition=icelake-himem
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
 #SBATCH --time=6:00:00
-#SBATCH --account=FLOTO-SL2-CPU
 #SBATCH --open-mode=append
+# CSD3/UoHPC variant (when it returns): --partition=icelake-himem --account=FLOTO-SL2-CPU,
+#   logs → tbprofiler_cohort_%A_%a.out/.err (repo-relative).
 # CPU-only; ~12 s/genome × ~184 genomes/task ≈ 37 min/task at full 200-way. 6 h budget (over-request).
 
 set -uo pipefail
+# Data root + env — cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
+
 # Run from node-local scratch (NOT the pixi dir): tb-profiler drops intermediate .paf/.vcf files in CWD,
 # which would litter the repo and collide across 200 tasks. Locate the env via --manifest-path instead.
-MANIFEST=/home/dca36/workspace/BacPredict/src/bacpredict/apps/tb/tbprofiler/pixi.toml
+MANIFEST="$HOME/BacPredict/src/bacpredict/apps/tb/tbprofiler/pixi.toml"
 WORK=${TMPDIR:-/tmp}/tbp_work_${SLURM_ARRAY_TASK_ID:-0}
 mkdir -p "$WORK" && cd "$WORK"
 
-RDS=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david
-ASM=$RDS/raw/tb/assemblies
-SHEET=$RDS/processed/train_tb_ast/binary_ast_with_split.csv
-OUT=$RDS/processed/train_tb_ast/pangena_predict/tbprofiler_calls
+ASM=$D/raw/tb/assemblies
+SHEET=$D/processed/train_tb_ast/binary_ast_with_split.csv
+OUT=$D/processed/train_tb_ast/pangena_predict/tbprofiler_calls
 mkdir -p "$OUT"
 
 NTASKS=${SLURM_ARRAY_TASK_COUNT:-1}

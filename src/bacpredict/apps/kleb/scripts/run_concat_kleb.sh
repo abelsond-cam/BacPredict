@@ -3,33 +3,42 @@
 # genome-mean -> logistic regression, scored on the canonical eval fold + a k-fold x m-seed harness.
 #
 # The Kp port of src/bacpredict/engine/scripts/run_concat_kfold_frozen.sh (same module,
-# pangena_predict.concatenate_bacformer_genome_esm_protein_emb). CPU-only: the Bacformer genome-mean is
-# loaded from the cached frozen NPZ (bacformer_frozen_genome_mean.npz, 6838 x 960) via --bacformer-vectors,
-# and --gene-from-ranking reads the top out-of-fold-AUROC gene from each drug's per_gene_lr_<drug>.csv.
-# One array task per drug, the same four as the ranking. Writes concat_frozen_<drug>_<jobid>.json (with a
-# "kfold" block of per-frame mean +/- sd + paired deltas) — the substrate for the ladder.
+# bacpredict.engine.concat.concatenate_bacformer_genome_esm_protein_emb). CPU-only: the Bacformer
+# genome-mean is loaded from the cached frozen NPZ (bacformer_frozen_genome_mean.npz, 6838 x 960) via
+# --bacformer-vectors, and --gene-from-ranking reads the top out-of-fold-AUROC gene from each drug's
+# per_gene_lr_<drug>.csv. One array task per drug, the same four as the ranking. Writes
+# concat_frozen_<drug>_<jobid>.json (with a "kfold" block of per-frame mean +/- sd + paired deltas) — the
+# substrate for the ladder.
 #
 # Prereqs: the per-gene ranking job (build_per_gene_lr_ranking.sh) must have written per_gene_lr_<drug>.csv,
-# and the genome-mean NPZ must exist. Usage:  sbatch src/kleb_ast/scripts/run_concat_kleb.sh
+# and the genome-mean NPZ must exist. Usage:  sbatch src/bacpredict/apps/kleb/scripts/run_concat_kleb.sh
 #
 #SBATCH --job-name=kleb_concat
-#SBATCH --output=kleb_concat_%A_%a.out
-#SBATCH --error=kleb_concat_%A_%a.err
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
 #SBATCH --array=0-21
-#SBATCH --partition=icelake-himem
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=96G
 #SBATCH --time=04:00:00
-#SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
 #SBATCH --open-mode=append
 # CPU-only (LR over precomputed vectors; the Bacformer mean is loaded from the NPZ, not recomputed). The
 # only real I/O is the pooled ESM-C gene reads over the cohort (--pool-workers) — a sub-hour job. 16 cores
-# / 96 GB is ample; 4 h is a generous ceiling. Uses the project_k SL2-CPU account (personal FLOTO-SL2-CPU
-# is nearly exhausted; project_k has ample budget).
+# / 96 GB is ample; 4 h is a generous ceiling.
+# CSD3/UoHPC variant (when it returns): --partition=icelake-himem --account=FLOTO-PROJECT-K-SL2-CPU,
+#   logs → relative or ~/rds/hpc-work/logs/.
 
-cd /home/dca36/workspace/BacPredict
+set -uo pipefail
+
+# Data root — one env var, cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 
@@ -49,13 +58,12 @@ if [[ -z "$DRUG" ]]; then
     exit 1
 fi
 
-D=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed
-SHEET=$D/train_kleb_ast/binary_ast_with_split.csv
-PARQUET=$D/klebsiella_protein_sequences
-EMB=$D/klebsiella_esm_embeddings
-NPZ=$D/train_kleb_ast/bacformer_frozen_genome_mean.npz
-RANK=$D/train_kleb_ast/pangena_predict/per_gene_lr_ranking_imputed/$DRUG/per_gene_lr_${DRUG}.csv
-OUT=$D/train_kleb_ast/pangena_predict/concat/$DRUG
+SHEET=$D/processed/train_kleb_ast/binary_ast_with_split.csv
+PARQUET=$D/processed/train_kleb_ast/protein_sequences
+EMB=$D/processed/train_kleb_ast/esm
+NPZ=$D/processed/train_kleb_ast/bacformer_frozen_genome_mean.npz
+RANK=$D/processed/train_kleb_ast/pangena_predict/per_gene_lr_ranking_imputed/$DRUG/per_gene_lr_${DRUG}.csv
+OUT=$D/processed/train_kleb_ast/pangena_predict/concat/$DRUG
 mkdir -p "$OUT"
 
 if [[ ! -f "$RANK" ]]; then
@@ -69,7 +77,7 @@ echo "Ranking: $RANK   NPZ: $NPZ"
 echo "Out:     $OUT/concat_frozen_${DRUG}_${SLURM_ARRAY_JOB_ID}.json"
 echo "========================================================================"
 
-uv run python src/bacpredict/engine/concat/concatenate_bacformer_genome_esm_protein_emb.py \
+"$PY" -m bacpredict.engine.concat.concatenate_bacformer_genome_esm_protein_emb \
     --ast-sheet-path "$SHEET" \
     --parquet-dir "$PARQUET" \
     --esm-store-dir "$EMB" \

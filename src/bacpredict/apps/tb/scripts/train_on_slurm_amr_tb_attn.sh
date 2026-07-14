@@ -1,16 +1,19 @@
 #!/bin/bash
 #SBATCH --job-name=tb_attn_stagec
-#SBATCH --output=%x_%j.out
-#SBATCH --error=%x_%j.err
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
 #SBATCH --time=36:00:00
-#SBATCH --partition=ampere
-#SBATCH --account=FLOTO-SL2-GPU
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
 #SBATCH --gres=gpu:1
 #SBATCH --mem=250G
 #SBATCH --open-mode=append
+# CSD3/UoHPC variant (when it returns): --partition=ampere --account=FLOTO-SL2-GPU,
+#   logs → relative or ~/rds/hpc-work/logs/, and `module load cuda/12.4 cudnn/8.9_cuda-12.4`.
 
 # Stage C (§0.2) for the attention-pool genome head — single split, 1 fold x 1 seed.
 # Identical data / split / hyperparameters to train_on_slurm_amr_tb_stage_c.sh, but
@@ -24,10 +27,16 @@
 #            rpoB-token ceiling (~0.95) vs the mean-pool baseline 0.905.
 #   e2e    : full end-to-end fine-tune -> apples-to-apples vs the 0.905 mean-pool run.
 # Override the job name per run so %x logs stay distinct:
-#   sbatch --job-name=tb_rif_attn_frozen src/tb_ast/scripts/train_on_slurm_amr_tb_attn.sh rifampin frozen
-#   sbatch --job-name=tb_rif_attn_e2e    src/tb_ast/scripts/train_on_slurm_amr_tb_attn.sh rifampin e2e
+#   sbatch --job-name=tb_rif_attn_frozen src/bacpredict/apps/tb/scripts/train_on_slurm_amr_tb_attn.sh rifampin frozen
+#   sbatch --job-name=tb_rif_attn_e2e    src/bacpredict/apps/tb/scripts/train_on_slurm_amr_tb_attn.sh rifampin e2e
 
-cd /home/dca36/workspace/BacPredict
+set -uo pipefail
+
+# Data root — one env var, cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 
 species=mycobacterium_tuberculosis
 drug=${1:-rifampin}     # TB binary_ast.csv uses US spelling (rifampin)
@@ -50,21 +59,17 @@ else
     echo "Unknown mode '$mode' (expected 'frozen' or 'e2e')"; exit 1
 fi
 
-module purge
-module load cuda/12.4
-module load cudnn/8.9_cuda-12.4
-
 export PYTHONUNBUFFERED=1
 export TRANSFORMERS_VERBOSITY=info
 
 echo "TB AMR attention-pool Stage C — drug=$drug mode=$mode attn_dim=$attn_dim lr=$lr"
 echo "Job ID: $SLURM_JOB_ID  Node: $SLURMD_NODENAME  GPU: $CUDA_VISIBLE_DEVICES"
 
-embeddings_dir="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/tb_esm_embeddings"
+embeddings_dir="$D/processed/train_tb_ast/esm"
 
-uv run python -m bacpredict.engine.finetune.finetune_amr --task tb_ast \
+"$PY" -m bacpredict.engine.finetune.finetune_amr --task tb_ast \
 --embeddings-dir $embeddings_dir \
---ast-sheet-path /home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/binary_ast_with_split.csv \
+--ast-sheet-path "$D/processed/train_tb_ast/binary_ast_with_split.csv" \
 --lr $lr \
 --model-name-or-path $model_name_or_path \
 --warmup-proportion $warmup_proportion \
@@ -78,7 +83,7 @@ $freeze_flag \
 --eval-steps $eval_steps \
 --max-steps 100000 \
 --early-stopping-patience 30 \
---output-dir /home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/checkpoints/${species}_${drug}_attn_${mode}_${SLURM_JOB_ID}
+--output-dir "$D/processed/train_tb_ast/checkpoints/${species}_${drug}_attn_${mode}_${SLURM_JOB_ID}"
 
 echo "End of script — check .out/.err for progress + results.json in the output dir."
 

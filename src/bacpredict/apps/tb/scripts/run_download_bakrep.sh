@@ -1,13 +1,18 @@
 #!/bin/bash
 #SBATCH --job-name=download_bakrep
-#SBATCH --output=download_bakrep_%j.out
-#SBATCH --error=download_bakrep_%j.err
-#SBATCH --partition=icelake-himem
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=76
 #SBATCH --time=06:00:00
-#SBATCH --account=FLOTO-SL2-CPU
+#SBATCH --mem=64G
+# CPU-only — no --gres. Isambard schedules a GPU-less job on workq normally; --mem must be set
+# explicitly (memory defaults are GPU-tied). CSD3/UoHPC variant (when it returns):
+#   --partition=icelake-himem --account=FLOTO-SL2-CPU, logs → relative or ~/rds/hpc-work/logs/.
 
 # =============================================================================
 # Download BakRep Bakta GFF3 annotations for TB BioSamples
@@ -53,10 +58,18 @@
 #   --overwrite-existing       Re-download even if files exist (default: skip)
 # =============================================================================
 
+set -uo pipefail
+
+# Data root — one env var, cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
+# NB: collect/download stages run inside the `bakrep_download` micromamba env, not the venv PY.
+
 # Default values
 N=-1
-METADATA="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/raw/tb/ebi_tb_amr_records.csv"
-OUTPUT_DIR="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/raw/tb/gff"
+METADATA="$D/raw/tb/ebi_tb_amr_records.csv"
+OUTPUT_DIR="$D/raw/tb/gff"
 FILE_TYPE=gff3
 NCORES=76
 BATCH_SIZE=100
@@ -103,8 +116,6 @@ done
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] === run_download_bakrep.sh START ==="
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] === run_download_bakrep.sh START ===" >&2
 
-# cd to project root so relative paths resolve consistently
-cd /home/dca36/workspace/BacPredict
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] PWD=$(pwd)" >&2
 
 # Create output directory if it doesn't exist
@@ -176,7 +187,7 @@ for ((PASS=1; PASS<=MAX_PASSES; PASS++)); do
     mkdir -p "$LOG_DIR"
 
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running Python collect (micromamba bakrep_download)..." >&2
-    micromamba run -n bakrep_download python scripts/collect_bakrep_samples.py \
+    micromamba run -n bakrep_download python "$HOME/BacPredict/src/bacpredict/engine/download/scripts/collect_bakrep_samples.py" \
         --metadata "$METADATA" \
         --output-dir "$OUTPUT_DIR" \
         --filetype "$FILE_TYPE" \
@@ -251,7 +262,7 @@ echo "============================================"
 
 MISSING_OUTPUT="${OUTPUT_DIR}/missing_samples_${TIMESTAMP}.tsv"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running Python verify (micromamba bakrep_download)..." >&2
-micromamba run -n bakrep_download python scripts/collect_bakrep_samples.py \
+micromamba run -n bakrep_download python "$HOME/BacPredict/src/bacpredict/engine/download/scripts/collect_bakrep_samples.py" \
     --metadata "$METADATA" \
     --output-dir "$OUTPUT_DIR" \
     --filetype "$FILE_TYPE" \

@@ -6,25 +6,34 @@
 #   - FT-mean ⊕ ESM ladder rung  -> run_concat_ft_kleb.sh (loads ft_genome_mean_<drug>.npz)
 #   - future multi-gene Bacformer concat -> gene_emb/<gene>.npz (top-gene FT tokens, carriers only)
 #
-# Usage:  sbatch src/kleb_ast/scripts/cache_ft_bacformer_gene_embeddings.sh
+# Usage:  sbatch src/bacpredict/apps/kleb/scripts/cache_ft_bacformer_gene_embeddings.sh
 #
 #SBATCH --job-name=kleb_ft_cache
-#SBATCH --output=kleb_ft_cache_%A_%a.out
-#SBATCH --error=kleb_ft_cache_%A_%a.err
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
 #SBATCH --array=0-21
-#SBATCH --partition=ampere
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
 #SBATCH --gres=gpu:1
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=128G
 #SBATCH --time=08:00:00
-#SBATCH --account=FLOTO-SL2-GPU
 #SBATCH --open-mode=append
-# SL2-GPU (personal account; SL3-GPU never schedules). The FT forward over each drug's labelled genomes
-# is the cost (~0.5 s/genome on GPU); --cpus-per-task=8 keeps the DataLoader feeding the GPU.
+# CSD3/UoHPC variant (when it returns): --partition=ampere --account=FLOTO-SL2-GPU,
+#   logs → a project-tier logs dir, and `module load cuda/12.4 cudnn/8.9_cuda-12.4`.
+# The FT forward over each drug's labelled genomes is the cost (~0.5 s/genome on GPU);
+# --cpus-per-task=8 keeps the DataLoader feeding the GPU.
 
-cd /home/dca36/workspace/BacPredict
+set -uo pipefail
+
+# Data root — one env var, cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 MKL_NUM_THREADS=8
 
@@ -36,10 +45,9 @@ DRUGS=(cefotaxime ertapenem ampicillin-sulbactam ceftriaxone cefuroxime ciproflo
 DRUG=${DRUGS[$SLURM_ARRAY_TASK_ID]}
 if [[ -z "$DRUG" ]]; then echo "ERROR: no drug for array index $SLURM_ARRAY_TASK_ID" >&2; exit 1; fi
 
-D=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed
-CKPT=$D/train_kleb_ast/models/finetune/klebsiella_pneumoniae_${DRUG}_lr_0.00015_finetuned_fold00_seed1
-RANK=$D/train_kleb_ast/pangena_predict/per_gene_lr_ranking_imputed/$DRUG/per_gene_lr_${DRUG}.csv
-OUT=$D/train_kleb_ast/pangena_predict/ft_bacformer_cache/$DRUG
+CKPT=$D/processed/train_kleb_ast/models/finetune/klebsiella_pneumoniae_${DRUG}_lr_0.00015_finetuned_fold00_seed1
+RANK=$D/processed/train_kleb_ast/pangena_predict/per_gene_lr_ranking_imputed/$DRUG/per_gene_lr_${DRUG}.csv
+OUT=$D/processed/train_kleb_ast/pangena_predict/ft_bacformer_cache/$DRUG
 mkdir -p "$OUT"
 if [[ ! -d "$CKPT" ]]; then echo "ERROR: FT checkpoint missing: $CKPT" >&2; exit 1; fi
 if [[ ! -f "$RANK" ]]; then echo "ERROR: ranking CSV missing: $RANK" >&2; exit 1; fi
@@ -47,11 +55,11 @@ if [[ ! -f "$RANK" ]]; then echo "ERROR: ranking CSV missing: $RANK" >&2; exit 1
 echo "=== Kp FT Bacformer cache — drug=$DRUG (task $SLURM_ARRAY_TASK_ID) ==="
 echo "ckpt=$CKPT"; echo "rank=$RANK"; echo "out=$OUT"
 
-uv run python src/kleb_ast/cache_ft_bacformer_gene_embeddings.py \
-    --ast-sheet-path "$D/train_kleb_ast/binary_ast_with_split.csv" \
+"$PY" -m bacpredict.apps.kleb.cache_ft_bacformer_gene_embeddings \
+    --ast-sheet-path "$D/processed/train_kleb_ast/binary_ast_with_split.csv" \
     --drug "$DRUG" \
-    --parquet-dir "$D/klebsiella_protein_sequences" \
-    --esm-store-dir "$D/klebsiella_esm_embeddings" \
+    --parquet-dir "$D/processed/train_kleb_ast/protein_sequences" \
+    --esm-store-dir "$D/processed/train_kleb_ast/esm" \
     --bacformer-checkpoint "$CKPT" \
     --ranking-csv "$RANK" \
     --out-dir "$OUT" \

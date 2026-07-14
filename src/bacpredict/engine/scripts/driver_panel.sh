@@ -27,7 +27,7 @@ case "$TASK" in
   tb)   SPECIES=tb; FOLDER=tb; CSVPREFIX=tbprofiler_gene_lr; CSVSUFFIX=""
         VIS="$HOME/BacPredict/src/bacpredict/docs/visualisations" ;;
   kleb) SPECIES=kp; FOLDER=kp; CSVPREFIX=card_determinant_lr; CSVSUFFIX="_family"
-        VIS="$HOME/BacPredict/src/kleb_ast/docs/visualisations/amr_per_abx"
+        VIS="$HOME/BacPredict/src/bacpredict/apps/kleb/docs/visualisations/amr_per_abx"
         # CARD sidecars locate acquired genes Bakta misses; falls back to Bakta names if unpopulated.
         AMR_ARG="--amr-sidecar-dir $S/processed/train_kleb_ast/amr_annotation" ;;
   *) echo "unknown TASK=$TASK (want tb|kleb)"; exit 1 ;;

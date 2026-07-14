@@ -16,7 +16,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../../.."        # repo root
 
 VIS_SUB="amr_per_abx"                    # figure-folder name under docs/visualisations
-VIS="src/kleb_ast/docs/visualisations/${VIS_SUB}"
+VIS="src/bacpredict/apps/kleb/docs/visualisations/${VIS_SUB}"
 
 DRUGS=(cefotaxime ertapenem ampicillin-sulbactam ceftriaxone cefuroxime ciprofloxacin ceftazidime \
        gentamicin cefazolin imipenem meropenem trimethoprim-sulfamethoxazole tobramycin amikacin \

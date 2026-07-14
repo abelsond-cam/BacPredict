@@ -1,15 +1,18 @@
 #!/bin/bash
 #SBATCH --job-name=kleb_protein_parquets
-#SBATCH --output=kleb_protein_parquets_%j.out
-#SBATCH --error=kleb_protein_parquets_%j.err
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
 #SBATCH --time=12:00:00
-#SBATCH --partition=icelake-himem
-#SBATCH --account=FLOTO-SL2-CPU
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=38
 #SBATCH --mem=128G
 #SBATCH --open-mode=append
+# CSD3/UoHPC variant (when it returns): --partition=icelake-himem --account=FLOTO-SL2-CPU,
+#   logs → relative or ~/rds/hpc-work/logs/.
 #
 # Regenerate the Kp {Sample}_protein_sequences.parquet store (the gene->embedding-index map for the
 # ESM ranking + concat). These were transient and never captured by the RCS backup, so rebuild from the
@@ -18,22 +21,26 @@
 # n_proteins guard enforces this and skips any mismatch).
 #
 # Node fraction (38 cores) for faster allocation; --skip-existing makes it resumable. After it completes,
-# remember the archive-then-delete discipline: run backup_rds_to_rcs.sh and CONFIRM the parquets are on
-# RCS before deleting them from RDS (the auto-login backup is additive but only captures what is present
-# at login time).
+# remember the archive-then-delete discipline: CONFIRM the parquets are backed up before deleting them.
 #
-# Submit: sbatch src/kleb_ast/scripts/regenerate_protein_parquets.sh
+# Submit: sbatch src/bacpredict/apps/kleb/scripts/regenerate_protein_parquets.sh
 
-cd /home/dca36/workspace/BacPredict
+set -uo pipefail
+
+# Data root — one env var, cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 export CUDA_VISIBLE_DEVICES=""
 export PYTHONUNBUFFERED=1
-D=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david
 
 # 1) Build the (Sample, sr_assembly_file, sr_gff_file) input CSV = AST cohort ∩ metadata_v2 with SR paths.
-uv run python - <<'PY'
+"$PY" - "$D" <<'PY'
+import sys
 import pandas as pd
 from pathlib import Path
-base = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david")
+base = Path(sys.argv[1])
 ast = pd.read_csv(base / "processed/train_kleb_ast/binary_ast_with_split.csv", low_memory=False)
 scol = "Sample" if "Sample" in ast.columns else "phenotype-BioSample_ID"
 samples = set(ast[scol].astype(str))
@@ -43,7 +50,7 @@ meta["Sample"] = meta["Sample"].astype(str)
 sub = meta[meta["Sample"].isin(samples)].dropna(subset=["sr_assembly_file", "sr_gff_file"]).copy()
 sub = sub[(sub["sr_assembly_file"].astype(str).str.strip() != "")
           & (sub["sr_gff_file"].astype(str).str.strip() != "")]
-# metadata stores paths relative to the RDS root (david/raw/...) — resolve to absolute.
+# metadata stores paths relative to the data-root parent (CSD3: david/raw/...) — resolve to absolute.
 rds = base.parent
 sub["sr_assembly_file"] = sub["sr_assembly_file"].apply(lambda p: str(rds / str(p)))
 sub["sr_gff_file"] = sub["sr_gff_file"].apply(lambda p: str(rds / str(p)))
@@ -55,8 +62,8 @@ PY
 # 2) Regenerate the parquets. --keep-internal-stop reproduces the original protein order (the embeddings
 #    were made before the internal-stop skip was added; without this the parquet is off by ~3 proteins
 #    and the n_proteins guard would skip every genome). --skip-existing makes it resumable.
-uv run python src/bacpredict/engine/embedding/preprocess_assemblies_to_protein_sequences.py \
+"$PY" -m bacpredict.engine.embedding.preprocess_assemblies_to_protein_sequences \
     --input-csv "$D/processed/protein_parquet_regen_input.csv" \
-    --output-dir "$D/processed/klebsiella_protein_sequences" \
+    --output-dir "$D/processed/train_kleb_ast/protein_sequences" \
     --keep-internal-stop --skip-existing --workers 38
 echo "PROTEIN_PARQUET_REGEN_DONE"

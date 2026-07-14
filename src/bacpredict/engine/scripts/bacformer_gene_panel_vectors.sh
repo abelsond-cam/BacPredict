@@ -27,7 +27,7 @@ case "$TASK" in
   tb)   DIR=train_tb_ast;   FOLDER=tb; CSVPREFIX=tbprofiler_gene_lr; CSVSUFFIX=""
         VIS="$HOME/BacPredict/src/bacpredict/docs/visualisations" ;;
   kleb) DIR=train_kleb_ast; FOLDER=kp; CSVPREFIX=card_determinant_lr; CSVSUFFIX="_family"
-        VIS="$HOME/BacPredict/src/kleb_ast/docs/visualisations/amr_per_abx"
+        VIS="$HOME/BacPredict/src/bacpredict/apps/kleb/docs/visualisations/amr_per_abx"
         AMR_ARG="--amr-sidecar-dir $S/processed/train_kleb_ast/amr_annotation" ;;
   *) echo "unknown TASK=$TASK (want tb|kleb)"; exit 1 ;;
 esac

@@ -1,10 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=ceftriaxone
-#SBATCH --output=ceftriaxone_%A_%a.out
-#SBATCH --error=ceftriaxone_%A_%a.err
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
 #SBATCH --time=36:00:00
-#SBATCH --partition=ampere
-#SBATCH --account=FLOTO-SL2-GPU
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
@@ -14,8 +15,16 @@
 #SBATCH --array=0-14   # 5 folds × 3 seeds = 15 jobs.
 # Stage C (single canonical run): submit with `sbatch --array=0 train_on_slurm_amr.sh`
 # (= fold 0, seed 1). Restore the full 0-14 sweep only for the publication k-fold.
+# CSD3/UoHPC variant (when it returns): --partition=ampere --account=FLOTO-SL2-GPU,
+#   logs → relative or ~/rds/hpc-work/logs/, and `module load cuda/12.4 cudnn/8.9_cuda-12.4`.
 
-cd /home/dca36/workspace/BacPredict
+set -uo pipefail
+
+# Data root — one env var, cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 
 # K-fold settings — SLURM_ARRAY_TASK_ID encodes fold×seed
 N_FOLDS=5
@@ -24,22 +33,16 @@ SEED=$(( SLURM_ARRAY_TASK_ID / N_FOLDS + 1 ))
 
 species=klebsiella_pneumoniae
 # Drug defaults to ceftriaxone (Stage A/B/C canonical). For the fan-out, override
-# per job: sbatch --array=0 --job-name=meropenem --output=meropenem_%A_%a.out \
-#   --error=meropenem_%A_%a.err --export=ALL,DRUG=meropenem train_on_slurm_amr.sh
+# per job: sbatch --array=0 --job-name=meropenem --export=ALL,DRUG=meropenem train_on_slurm_amr.sh
 drug=${DRUG:-ceftriaxone}
 warmup_proportion=0.1 # (default)
 lr=0.00015 # Use this is finetuning the encoder (freeze-encoder not called)
 eval_steps=250 # This is 3-8 per epoch with training set size 1500-4000 samples!
 # Default = refreshed complete-genomes weights (sub-step 2).
 # For sub-step 3 (MAG contrast), switch to "macwiatrak/bacformer-large-masked-MAG".
-#Restart training from a checkpoint
-#model_name_or_path=/home/dca36/rds/hpc-work/data/BacFormer/models/finetune/acinetobacter_baumannii_ceftazidime_lr_0.00015_finetuned/checkpoint-19250
+# Restart training from a checkpoint (example):
+# model_name_or_path=<checkpoint-dir>/checkpoint-19250
 model_name_or_path="macwiatrak/bacformer-large-masked-complete-genomes"
-
-# Load any necessary modules
-module purge
-module load cuda/12.4
-module load cudnn/8.9_cuda-12.4
 
 # Force Python unbuffered output for real-time logging
 export PYTHONUNBUFFERED=1
@@ -56,13 +59,11 @@ echo "Learning rate: $lr, Drug: $drug"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Node: $SLURMD_NODENAME, GPU: $CUDA_VISIBLE_DEVICES"
 
+embeddings_dir="$D/processed/train_kleb_ast/esm"
 
-echo "Finetuned model from pytorch (.pt) files (Bacformer finetuning, linear head)"
-embeddings_dir="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/klebsiella_esm_embeddings"
-
-uv run python -m bacpredict.engine.finetune.finetune_amr --task kleb_ast  \
---embeddings-dir $embeddings_dir \
---ast-sheet-path /home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_kleb_ast/binary_ast_with_split.csv \
+"$PY" -m bacpredict.engine.finetune.finetune_amr --task kleb_ast \
+--embeddings-dir "$embeddings_dir" \
+--ast-sheet-path "$D/processed/train_kleb_ast/binary_ast_with_split.csv" \
 --lr $lr \
 --model-name-or-path $model_name_or_path \
 --warmup-proportion $warmup_proportion \
@@ -76,11 +77,9 @@ uv run python -m bacpredict.engine.finetune.finetune_amr --task kleb_ast  \
 --n-folds $N_FOLDS \
 --fold $FOLD \
 --seed $SEED \
---output-dir /home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_kleb_ast/models/finetune/${species}_${drug}_lr_${lr}_finetuned
+--output-dir "$D/processed/train_kleb_ast/models/finetune/${species}_${drug}_lr_${lr}_finetuned"
 
 echo "End of script... check the .out and .err logs for any errors and for training progress"
 
-
-# Run with: sbatch train_on_slurm_finetune.sh
-# Check on progress with: squeue -u dca36
-
+# Run with: sbatch src/bacpredict/apps/kleb/scripts/train_on_slurm_amr.sh
+# Check on progress with: squeue -u dca36.u6fp

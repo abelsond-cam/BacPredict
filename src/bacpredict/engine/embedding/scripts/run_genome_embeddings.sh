@@ -1,25 +1,31 @@
 #!/bin/bash
 #SBATCH --job-name=genome_embeddings
-#SBATCH --output=genome_embeddings_%j.out
-#SBATCH --error=genome_embeddings_%j.err
-#SBATCH --partition=icelake
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=16G
 #SBATCH --time=00:25:00
-#SBATCH --account=FLOTO-SL2-CPU
+# CSD3/UoHPC variant (when it returns): --partition=icelake --account=FLOTO-SL2-CPU,
+#   logs → genome_embeddings_%j.out/.err (repo-relative).
 
-# Change to the workspace directory
-cd /home/dca36/workspace/BacPredict
+set -uo pipefail
+# Data root + env — cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 
-# Run the script with uv
-# Using 32 workers to process ~65,000 files efficiently
+# Run the script — 32 workers to process ~65,000 files efficiently
 echo "Starting genome embeddings generation at $(date)"
 echo "Using 32 parallel workers"
 echo ""
 
-uv run python src/bacpredict/engine/embedding/genome_assemblies_from_bacformer_embeddings.py \
+"$PY" -m bacpredict.engine.embedding.genome_assemblies_from_bacformer_embeddings \
     --workers 32
 
 EXIT_CODE=$?

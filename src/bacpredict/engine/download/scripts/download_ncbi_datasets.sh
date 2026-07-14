@@ -1,13 +1,16 @@
 #!/bin/bash
 #SBATCH --job-name=ncbi_datasets_download
-#SBATCH --output=ncbi_datasets_download_%j.out
-#SBATCH --error=ncbi_datasets_download_%j.err
-#SBATCH --partition=icelake
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=76
 #SBATCH --time=04:00:00
-#SBATCH --account=FLOTO-SL2-CPU
+# CSD3/UoHPC variant (when it returns): --partition=icelake --account=FLOTO-SL2-CPU,
+#   logs → ncbi_datasets_download_%j.out/.err (repo-relative).
 
 # =============================================================================
 # Download NCBI genomes (GCF/GCA) using the `datasets` CLI for accessions
@@ -52,10 +55,17 @@
 #   - Summary report: ${OUTPUT_DIR}/ncbi_datasets_summary_<timestamp>.txt
 # =============================================================================
 
+set -uo pipefail
+# Data root — one env var, cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
+
 # Default values
 N=-1  # Process all accessions by default, use --n <number> for test subset
-TSV_FILE="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/final/metadata_v2_all_samples_and_columns.tsv"
-OUTPUT_BASE="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/raw"
+TSV_FILE="$D/final/metadata_v2_all_samples_and_columns.tsv"
+OUTPUT_BASE="$D/raw"
 NCBI_DIR_NAME="ncbi_gff3"
 OUTPUT_DIR="${OUTPUT_BASE}/${NCBI_DIR_NAME}"
 NCORES=76
@@ -104,9 +114,9 @@ done
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] === download_ncbi_datasets.sh START ==="
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] === download_ncbi_datasets.sh START ===" >&2
 
-# Change to project root for consistent relative paths
+# Change to project root (PYTHONPATH covers imports; the standalone collect scripts run by abs path).
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] cd to project root..." >&2
-cd /home/dca36/workspace/BacPredict
+cd "$HOME/BacPredict"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] PWD=$(pwd)" >&2
 
 # Create output directory if it doesn't exist
@@ -125,7 +135,7 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S')] Log directory:    $LOG_DIR" >&2
 
 # Collect accessions and write batch files
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running Python collect (micromamba ncbi-datasets)..." >&2
-micromamba run -n ncbi-datasets python /home/dca36/workspace/BacPredict/src/bacpredict/engine/download/scripts/collect_ncbi_datasets_samples.py \
+micromamba run -n ncbi-datasets python "$HOME/BacPredict/src/bacpredict/engine/download/scripts/collect_ncbi_datasets_samples.py" \
     --metadata "$TSV_FILE" \
     --n "$N" \
     --batch-dir "$BATCH_DIR" \
@@ -225,13 +235,13 @@ cat "$SUMMARY_FILE"
 rm -rf "$BATCH_DIR"
 
 # Optionally flatten NCBI GFF3 downloads into a top-level directory of .gff files.
-DEFAULT_NCBI_GFF_DIR="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/raw/ncbi_gff3"
+DEFAULT_NCBI_GFF_DIR="$D/raw/ncbi_gff3"
 if [ "$OUTPUT_DIR" = "$DEFAULT_NCBI_GFF_DIR" ]; then
     echo ""
     echo "============================================"
     echo "Flattening ncbi_gff3 directory (moving genomic.gff files to top level)..."
     echo "============================================"
-    micromamba run -n ncbi-datasets python /home/dca36/workspace/BacPredict/src/bacpredict/engine/download/scripts/flatten_ncbi_gff3.py
+    micromamba run -n ncbi-datasets python "$HOME/BacPredict/src/bacpredict/engine/download/scripts/flatten_ncbi_gff3.py"
 else
     echo ""
     echo "NOTE: Skipping automatic flattening because OUTPUT_DIR ($OUTPUT_DIR)"

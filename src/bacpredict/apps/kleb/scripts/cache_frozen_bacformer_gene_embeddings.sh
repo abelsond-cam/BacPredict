@@ -4,24 +4,33 @@
 # top-N (AUROC>0.6) genes of the ESM screen, so per_gene_esm_vs_ft_lr can add a frozen_lr_auroc column and
 # Plot #1 can show ESM -> frozen -> fine-tuned for the non-AMR lineage genes too (not just AMR genes).
 #
-# Usage:  sbatch src/kleb_ast/scripts/cache_frozen_bacformer_gene_embeddings.sh
+# Usage:  sbatch src/bacpredict/apps/kleb/scripts/cache_frozen_bacformer_gene_embeddings.sh
 #
 #SBATCH --job-name=kleb_frozen_gene_cache
-#SBATCH --output=kleb_frozen_gene_cache_%A_%a.out
-#SBATCH --error=kleb_frozen_gene_cache_%A_%a.err
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
 #SBATCH --array=0-21
-#SBATCH --partition=ampere
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
 #SBATCH --gres=gpu:1
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=128G
 #SBATCH --time=08:00:00
-#SBATCH --account=FLOTO-SL2-GPU
 #SBATCH --open-mode=append
+# CSD3/UoHPC variant (when it returns): --partition=ampere --account=FLOTO-SL2-GPU,
+#   logs → a project-tier logs dir, and `module load cuda/12.4 cudnn/8.9_cuda-12.4`.
 # Same cost profile as the FT gene cache (~0.5 s/genome on GPU, eval-only); no checkpoint (base backbone).
 
-cd /home/dca36/workspace/BacPredict
+set -uo pipefail
+
+# Data root — one env var, cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 MKL_NUM_THREADS=8
 
@@ -31,20 +40,19 @@ DRUGS=(cefotaxime ertapenem ampicillin-sulbactam ceftriaxone cefuroxime ciproflo
 DRUG=${DRUGS[$SLURM_ARRAY_TASK_ID]}
 if [[ -z "$DRUG" ]]; then echo "ERROR: no drug for array index $SLURM_ARRAY_TASK_ID" >&2; exit 1; fi
 
-D=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed
-RANK=$D/train_kleb_ast/pangena_predict/per_gene_lr_ranking_imputed/$DRUG/per_gene_lr_${DRUG}.csv
-OUT=$D/train_kleb_ast/pangena_predict/frozen_bacformer_cache/$DRUG
+RANK=$D/processed/train_kleb_ast/pangena_predict/per_gene_lr_ranking_imputed/$DRUG/per_gene_lr_${DRUG}.csv
+OUT=$D/processed/train_kleb_ast/pangena_predict/frozen_bacformer_cache/$DRUG
 mkdir -p "$OUT"
 if [[ ! -f "$RANK" ]]; then echo "ERROR: ranking CSV missing: $RANK" >&2; exit 1; fi
 
 echo "=== Kp FROZEN Bacformer gene cache — drug=$DRUG (task $SLURM_ARRAY_TASK_ID) ==="
 echo "rank=$RANK"; echo "out=$OUT"
 
-uv run python src/kleb_ast/cache_ft_bacformer_gene_embeddings.py \
-    --ast-sheet-path "$D/train_kleb_ast/binary_ast_with_split.csv" \
+"$PY" -m bacpredict.apps.kleb.cache_ft_bacformer_gene_embeddings \
+    --ast-sheet-path "$D/processed/train_kleb_ast/binary_ast_with_split.csv" \
     --drug "$DRUG" \
-    --parquet-dir "$D/klebsiella_protein_sequences" \
-    --esm-store-dir "$D/klebsiella_esm_embeddings" \
+    --parquet-dir "$D/processed/train_kleb_ast/protein_sequences" \
+    --esm-store-dir "$D/processed/train_kleb_ast/esm" \
     --ranking-csv "$RANK" \
     --out-dir "$OUT" \
     --mode frozen --auroc-threshold 0.6 --top-n 50 --device cuda:0 --eval-only

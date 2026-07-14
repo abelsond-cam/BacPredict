@@ -13,27 +13,35 @@
 # there, so the ranking should recover the same gene). Writes the wide per_gene_lr_<drug>.csv
 # (gene_name, annotation, prevalence, lr_auroc_<drug>, n_train, n_pos, kept_filtered).
 #
-# Usage:  sbatch src/kleb_ast/scripts/build_per_gene_lr_ranking.sh
+# Usage:  sbatch src/bacpredict/apps/kleb/scripts/build_per_gene_lr_ranking_imputed.sh
 #
 #SBATCH --job-name=kleb_per_gene_lr_imp
-#SBATCH --output=kleb_per_gene_lr_imp_%A_%a.out
-#SBATCH --error=kleb_per_gene_lr_imp_%A_%a.err
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
 #SBATCH --array=0-21
-#SBATCH --partition=icelake-himem
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
 #SBATCH --time=06:00:00
-#SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
 #SBATCH --open-mode=append
+# CSD3/UoHPC variant (when it returns): --partition=icelake-himem --account=FLOTO-PROJECT-K-SL2-CPU,
+#   logs → a project-tier logs dir (e.g. ~/rds/hpc-work/logs/%x-%A_%a.out).
 # CPU-only (sklearn LRs over precomputed ESM-C vectors). At the 2000-genome subsample the in-memory
 # footprint is ~20 GB, so one 128 GB task fits all genes — no gene-sharding needed. The wall-time is
 # I/O-bound (~20 min of sequential per-genome reads) + a fast parallel fit phase, so ~30 min/task; 16
-# cores is ample (the fits are trivial, the reads are sequential). 6 h is a generous ceiling. Uses the
-# project_k SL2-CPU account (personal FLOTO-SL2-CPU is nearly exhausted; project_k has ample budget).
+# cores is ample (the fits are trivial, the reads are sequential). 6 h is a generous ceiling.
 
-cd /home/dca36/workspace/BacPredict
+set -uo pipefail
+
+# Data root — one env var, cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 
 export PYTHONUNBUFFERED=1
 # Pin BLAS to 1 thread/process so the joblib per-gene-LR workers don't oversubscribe.
@@ -51,13 +59,12 @@ if [[ -z "$DRUG" ]]; then
     exit 1
 fi
 
-D=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed
-SHEET=$D/train_kleb_ast/binary_ast_with_split.csv   # the FULL cohort split (all drug columns)
-PARQUET=$D/klebsiella_protein_sequences
-EMB=$D/klebsiella_esm_embeddings
+SHEET=$D/processed/train_kleb_ast/binary_ast_with_split.csv   # the FULL cohort split (all drug columns)
+PARQUET=$D/processed/train_kleb_ast/protein_sequences
+EMB=$D/processed/train_kleb_ast/esm
 # Per-drug subdir: the module also writes non-drug-specific files (build_summary, gene_lr_auroc,
 # gene_prevalence), so concurrent array tasks must not share an out-dir or they race on those.
-OUT=$D/train_kleb_ast/pangena_predict/per_gene_lr_ranking_imputed/$DRUG
+OUT=$D/processed/train_kleb_ast/pangena_predict/per_gene_lr_ranking_imputed/$DRUG
 
 echo "========================================================================"
 echo "Kp per-gene LR ranking — drug=$DRUG (array task $SLURM_ARRAY_TASK_ID)"
@@ -73,7 +80,7 @@ if [[ -f "$OUT/per_gene_lr_${DRUG}.csv" ]]; then
 fi
 mkdir -p "$OUT"
 
-uv run python src/bacpredict/engine/gene_lr/build_per_gene_lr_store.py \
+"$PY" -m bacpredict.engine.gene_lr.build_per_gene_lr_store \
     --split-csv "$SHEET" \
     --drug "$DRUG" \
     --parquet-dir "$PARQUET" \

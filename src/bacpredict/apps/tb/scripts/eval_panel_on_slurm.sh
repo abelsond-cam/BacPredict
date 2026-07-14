@@ -1,16 +1,19 @@
 #!/bin/bash
 #SBATCH --job-name=tb_eval_panel
-#SBATCH --output=tb_eval_panel_%j.out
-#SBATCH --error=tb_eval_panel_%j.err
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
 #SBATCH --time=06:00:00
-#SBATCH --partition=ampere
-#SBATCH --account=FLOTO-SL2-GPU
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
 #SBATCH --mem=64G
 #SBATCH --open-mode=append
+# CSD3/UoHPC variant (when it returns): --partition=ampere --account=FLOTO-SL2-GPU,
+#   logs → relative or ~/rds/hpc-work/logs/, and `module load cuda/12.4 cudnn/8.9_cuda-12.4`.
 #
 # Evaluate the full TB AST drug panel on its held-out evaluate set and render
 # the combined ROC|PR grid + summary CSV. Each drug also gets a Youden-J
@@ -21,21 +24,23 @@
 # because the dir names embed the per-drug SLURM jobid.
 #
 # Submit standalone (once training has finished):
-#   sbatch src/tb_ast/scripts/eval_panel_on_slurm.sh
+#   sbatch src/bacpredict/apps/tb/scripts/eval_panel_on_slurm.sh
 # Or chain after the training jobs:
-#   sbatch --dependency=afterany:<jid1>:<jid2>:... src/tb_ast/scripts/eval_panel_on_slurm.sh
+#   sbatch --dependency=afterany:<jid1>:<jid2>:... src/bacpredict/apps/tb/scripts/eval_panel_on_slurm.sh
 # (afterany = run regardless of success; the loop skips drugs with no checkpoint.)
 
-cd /home/dca36/workspace/BacPredict
-git pull --ff-only || true
-module purge
-module load cuda/12.4
-module load cudnn/8.9_cuda-12.4
+set -uo pipefail
+
+# Data root — one env var, cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
 
-BASE=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast
+BASE=$D/processed/train_tb_ast
 SHEET=$BASE/binary_ast_with_split.csv
-EMB=$BASE/tb_esm_embeddings
+EMB=$BASE/esm
 CKPT=$BASE/checkpoints
 
 # Panel = the 10 Stage C drugs (in resistance-count descending order).
@@ -57,7 +62,7 @@ for d in $PANEL; do
     continue
   fi
   echo "=== evaluating $d ($CK) ==="
-  uv run python src/bacpredict/engine/finetune/evaluate.py \
+  "$PY" -m bacpredict.engine.finetune.evaluate \
     --checkpoint "$CK" --drug "$d" --task tb_ast \
     --prevalence-label "resistance rate" \
     --ast-sheet-path "$SHEET" --embeddings-dir "$EMB" --num-workers 4 \
@@ -71,7 +76,7 @@ for d in $PANEL; do
   [ -n "$NPZ" ] && [ -f "$NPZ" ] && ARGS+=("${d}=$NPZ")
 done
 if [ ${#ARGS[@]} -gt 0 ]; then
-  uv run python src/bacpredict/engine/finetune/evaluate.py --combine "${ARGS[@]}" \
+  "$PY" -m bacpredict.engine.finetune.evaluate --combine "${ARGS[@]}" \
     --prevalence-label "resistance rate" \
     --combine-out "$BASE/eval_roc_pr_grid_full_panel.png" \
     --bar-out "$BASE/eval_auroc_bar.png" \
@@ -81,7 +86,7 @@ else
 fi
 
 # 3) Summary CSV (0.5 metrics + Youden operating point), sorted by AUROC desc.
-uv run python - "$CKPT" "$BASE/eval_summary.csv" <<'PY'
+"$PY" - "$CKPT" "$BASE/eval_summary.csv" <<'PY'
 import csv, glob, json, os, sys
 ckpt_root, out_csv = sys.argv[1], sys.argv[2]
 rows = []

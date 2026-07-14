@@ -1,10 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=kleb_amr_predict
-#SBATCH --output=kleb_amr_predict_%A_%a.out
-#SBATCH --error=kleb_amr_predict_%A_%a.err
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
 #SBATCH --time=04:00:00
-#SBATCH --partition=ampere
-#SBATCH --account=FLOTO-SL2-GPU
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
@@ -12,6 +13,8 @@
 #SBATCH --mem=64G
 #SBATCH --array=0-21
 #SBATCH --open-mode=append
+# CSD3/UoHPC variant (when it returns): --partition=ampere --account=FLOTO-SL2-GPU,
+#   logs → relative or ~/rds/hpc-work/logs/, and `module load cuda/12.4 cudnn/8.9_cuda-12.4`.
 #
 # Score every kpsc_final_list sample with the fine-tuned Bacformer head for one
 # drug per array task. Per-drug parquets land at:
@@ -20,25 +23,27 @@
 #
 # The downstream BacHGT merge step joins these into the v2 metadata table.
 #
-# Submit:   sbatch src/kleb_ast/scripts/predict_amr_panel_on_slurm.sh
+# Submit:   sbatch src/bacpredict/apps/kleb/scripts/predict_amr_panel_on_slurm.sh
 # Re-run one drug only (e.g. cipro = index 3):
-#           sbatch --array=3 src/kleb_ast/scripts/predict_amr_panel_on_slurm.sh
+#           sbatch --array=3 src/bacpredict/apps/kleb/scripts/predict_amr_panel_on_slurm.sh
 
-cd /home/dca36/workspace/BacPredict
-git pull --ff-only || true
-module purge
-module load cuda/12.4
-module load cudnn/8.9_cuda-12.4
+set -uo pipefail
+
+# Data root — one env var, cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
 
-BASE=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_kleb_ast
+BASE=$D/processed/train_kleb_ast
 FT=$BASE/models/finetune
-EMB=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/klebsiella_esm_embeddings
-METADATA=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/final/metadata_v2_all_samples_and_columns.tsv
+EMB=$D/processed/train_kleb_ast/esm
+METADATA=$D/final/metadata_v2_all_samples_and_columns.tsv
 OUT_DIR=$BASE/predictions_for_metadata
 mkdir -p "$OUT_DIR"
 
-# Panel order matches src/kleb_ast/scripts/eval_panel_on_slurm.sh.
+# Panel order matches src/bacpredict/apps/kleb/scripts/eval_panel_on_slurm.sh.
 DRUGS=(
   gentamicin
   ceftazidime
@@ -85,7 +90,7 @@ fi
 
 # NUM_WORKERS env (default 8) controls the DataLoader worker count.
 #   Past pitfall: at deployment scale (~73k items) the file_system sharing
-#   strategy + many workers can exhaust mmap on ampere nodes. workers=0 is
+#   strategy + many workers can exhaust mmap on GPU nodes. workers=0 is
 #   always safe but slow. workers=8 with cpus-per-task=8 is the production
 #   default; failures should surface fast (within minutes) — see fail-fast
 #   wrapper below.
@@ -104,7 +109,7 @@ if [ -n "${N_SAMPLES:-}" ]; then
 fi
 echo "Using NUM_WORKERS=$NUM_WORKERS"
 
-if ! uv run python src/kleb_ast/predict_amr_for_metadata.py \
+if ! "$PY" -m bacpredict.apps.kleb.predict_amr_for_metadata \
   --drug "$d" \
   --checkpoint "$CK" \
   --metadata-tsv "$METADATA" \

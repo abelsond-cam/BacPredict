@@ -10,11 +10,15 @@
 # Usage (on the HPC login node):  bash src/bacpredict/engine/scripts/smoke_concat_ft_mean.sh
 set -euo pipefail
 
-cd /home/dca36/workspace/BacPredict
+# Data root + env — cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
 export CUDA_VISIBLE_DEVICES=""   # force CPU — Stage-A must run with CUDA disabled
 
-RDS=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast
+RDS=$D/processed/train_tb_ast
 OUT_DIR=$RDS/pangena_predict/concat_ft_mean_smoke
 mkdir -p "$OUT_DIR"
 
@@ -27,10 +31,10 @@ if [[ -z "$CKPT" ]]; then
 fi
 echo "Fine-tuned checkpoint: $CKPT"
 
-uv run python src/bacpredict/engine/concat/concatenate_bacformer_genome_esm_protein_emb.py \
+"$PY" -m bacpredict.engine.concat.concatenate_bacformer_genome_esm_protein_emb \
     --ast-sheet-path "$RDS/binary_ast_with_split.csv" \
-    --parquet-dir "$RDS/tb_protein_sequences" \
-    --esm-store-dir "$RDS/tb_esm_embeddings" \
+    --parquet-dir "$RDS/protein_sequences" \
+    --esm-store-dir "$RDS/esm" \
     --output-json "$OUT_DIR/concat_ft_mean_smoke.json" \
     --qc-log "$OUT_DIR/rpob_copy_qc_smoke.log" \
     --drug rifampin \

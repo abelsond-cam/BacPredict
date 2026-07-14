@@ -1,15 +1,18 @@
 #!/bin/bash
 #SBATCH --job-name=tb_smoke_rif
-#SBATCH --output=tb_smoke_rif_%j.out
-#SBATCH --error=tb_smoke_rif_%j.err
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
 #SBATCH --time=00:10:00
-#SBATCH --partition=ampere
-#SBATCH --account=FLOTO-SL2-GPU
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
 #SBATCH --mem=64G
+# CSD3/UoHPC variant (when it returns): --partition=ampere --account=FLOTO-SL2-GPU,
+#   logs → relative or ~/rds/hpc-work/logs/, and `module load cuda/12.4 cudnn/8.9_cuda-12.4`.
 
 # Stage A smoke test for TB rifampin — pipeline correctness only.
 # Originally specified as CPU-disabled (§0.2 protocol) but the login node killed
@@ -17,11 +20,13 @@
 # accelerator quota; the verification target is identical: loss decreases, an
 # eval step succeeds, a checkpoint saves.
 
-cd /home/dca36/workspace/BacPredict
+set -uo pipefail
 
-module purge
-module load cuda/12.4
-module load cudnn/8.9_cuda-12.4
+# Data root — one env var, cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 
 export PYTHONUNBUFFERED=1
 export TRANSFORMERS_VERBOSITY=info
@@ -30,10 +35,10 @@ echo "TB AMR Stage A smoke test (GPU, n=10, drug=rifampin)"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Node: $SLURMD_NODENAME, GPU: $CUDA_VISIBLE_DEVICES"
 
-uv run python -m bacpredict.engine.finetune.finetune_amr --task tb_ast \
+"$PY" -m bacpredict.engine.finetune.finetune_amr --task tb_ast \
     --drug rifampin \
     --n-samples 10 \
     --num-workers 0 \
-    --output-dir /home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast/checkpoints/smoke_rifampin_$SLURM_JOB_ID
+    --output-dir "$D/processed/train_tb_ast/checkpoints/smoke_rifampin_$SLURM_JOB_ID"
 
 echo "Smoke test finished."

@@ -5,24 +5,33 @@
 # holdout (same samples, same zero-imputed out-of-fold k-fold) -> esm_vs_ft_per_gene_<drug>.csv. No forward
 # pass: ESM vectors come from the store, FT vectors from the cached ft_bacformer_cache/<drug>/gene_emb/.
 #
-# Usage:  sbatch src/kleb_ast/scripts/per_gene_esm_vs_ft_lr.sh
+# Usage:  sbatch src/bacpredict/apps/kleb/scripts/per_gene_esm_vs_ft_lr.sh
 #
 #SBATCH --job-name=kleb_esm_vs_ft
-#SBATCH --output=kleb_esm_vs_ft_%A_%a.out
-#SBATCH --error=kleb_esm_vs_ft_%A_%a.err
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
 #SBATCH --array=0-21
-#SBATCH --partition=icelake-himem
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=96G
 #SBATCH --time=06:00:00
-#SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
 #SBATCH --open-mode=append
 # CPU-only: the only I/O is the eval-holdout .pt/parquet reads for the ESM extraction (~280-940/drug);
-# the FT vectors are loaded from the cache. project_k SL2-CPU account.
+# the FT vectors are loaded from the cache.
+# CSD3/UoHPC variant (when it returns): --partition=icelake-himem --account=FLOTO-PROJECT-K-SL2-CPU,
+#   logs → relative or ~/rds/hpc-work/logs/.
 
-cd /home/dca36/workspace/BacPredict
+set -uo pipefail
+
+# Data root — one env var, cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 MKL_NUM_THREADS=4
 
@@ -32,21 +41,20 @@ DRUGS=(cefotaxime ertapenem ampicillin-sulbactam ceftriaxone cefuroxime ciproflo
 DRUG=${DRUGS[$SLURM_ARRAY_TASK_ID]}
 if [[ -z "$DRUG" ]]; then echo "ERROR: no drug for array index $SLURM_ARRAY_TASK_ID" >&2; exit 1; fi
 
-D=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed
-FTC=$D/train_kleb_ast/pangena_predict/ft_bacformer_cache/$DRUG
-FRC=$D/train_kleb_ast/pangena_predict/frozen_bacformer_cache/$DRUG
-OUT=$D/train_kleb_ast/pangena_predict/esm_vs_ft_per_gene/$DRUG
+FTC=$D/processed/train_kleb_ast/pangena_predict/ft_bacformer_cache/$DRUG
+FRC=$D/processed/train_kleb_ast/pangena_predict/frozen_bacformer_cache/$DRUG
+OUT=$D/processed/train_kleb_ast/pangena_predict/esm_vs_ft_per_gene/$DRUG
 mkdir -p "$OUT"
 if [[ ! -f "$FTC/top_gene_manifest_${DRUG}.csv" ]]; then echo "ERROR: FT cache manifest missing: $FTC" >&2; exit 1; fi
 [[ -d "$FRC/gene_emb" ]] || echo "WARN: frozen gene cache missing ($FRC) — frozen_lr_auroc skipped"
 
 echo "=== Kp ESM-vs-frozen-vs-FT per-gene LR — drug=$DRUG (task $SLURM_ARRAY_TASK_ID) ==="
 
-uv run python src/kleb_ast/per_gene_esm_vs_ft_lr.py \
-    --ast-sheet-path "$D/train_kleb_ast/binary_ast_with_split.csv" \
+"$PY" -m bacpredict.apps.kleb.per_gene_esm_vs_ft_lr \
+    --ast-sheet-path "$D/processed/train_kleb_ast/binary_ast_with_split.csv" \
     --drug "$DRUG" \
-    --parquet-dir "$D/klebsiella_protein_sequences" \
-    --esm-store-dir "$D/klebsiella_esm_embeddings" \
+    --parquet-dir "$D/processed/train_kleb_ast/protein_sequences" \
+    --esm-store-dir "$D/processed/train_kleb_ast/esm" \
     --ft-cache-dir "$FTC" \
     --frozen-cache-dir "$FRC" \
     --out-dir "$OUT" --n-folds 5 --seed 1

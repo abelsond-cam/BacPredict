@@ -8,24 +8,33 @@
 # the unsupervised top-AUROC gene (--gene-from-ranking, imputed). Writes concat_ft_<drug>_<jobid>.json ->
 # the FT-mean+ESM ladder rung (build_kleb_ladder --ft-concat-dir).
 #
-# Usage:  sbatch src/kleb_ast/scripts/run_concat_ft_kleb.sh
+# Usage:  sbatch src/bacpredict/apps/kleb/scripts/run_concat_ft_kleb.sh
 #
 #SBATCH --job-name=kleb_concat_ft
-#SBATCH --output=kleb_concat_ft_%A_%a.out
-#SBATCH --error=kleb_concat_ft_%A_%a.err
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
 #SBATCH --array=0-21
-#SBATCH --partition=icelake-himem
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=96G
 #SBATCH --time=04:00:00
-#SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
 #SBATCH --open-mode=append
 # CPU-only: the FT mean is loaded from the cached NPZ (not recomputed); only the pooled ESM-C gene reads
-# touch disk. project_k SL2-CPU account.
+# touch disk.
+# CSD3/UoHPC variant (when it returns): --partition=icelake-himem --account=FLOTO-PROJECT-K-SL2-CPU,
+#   logs → relative or ~/rds/hpc-work/logs/.
 
-cd /home/dca36/workspace/BacPredict
+set -uo pipefail
+
+# Data root — one env var, cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 
@@ -35,13 +44,12 @@ DRUGS=(cefotaxime ertapenem ampicillin-sulbactam ceftriaxone cefuroxime ciproflo
 DRUG=${DRUGS[$SLURM_ARRAY_TASK_ID]}
 if [[ -z "$DRUG" ]]; then echo "ERROR: no drug for array index $SLURM_ARRAY_TASK_ID" >&2; exit 1; fi
 
-D=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed
-SHEET=$D/train_kleb_ast/binary_ast_with_split.csv
-PARQUET=$D/klebsiella_protein_sequences
-EMB=$D/klebsiella_esm_embeddings
-FTNPZ=$D/train_kleb_ast/pangena_predict/ft_bacformer_cache/$DRUG/ft_genome_mean_${DRUG}.npz
-RANK=$D/train_kleb_ast/pangena_predict/per_gene_lr_ranking_imputed/$DRUG/per_gene_lr_${DRUG}.csv
-OUT=$D/train_kleb_ast/pangena_predict/concat_ft/$DRUG
+SHEET=$D/processed/train_kleb_ast/binary_ast_with_split.csv
+PARQUET=$D/processed/train_kleb_ast/protein_sequences
+EMB=$D/processed/train_kleb_ast/esm
+FTNPZ=$D/processed/train_kleb_ast/pangena_predict/ft_bacformer_cache/$DRUG/ft_genome_mean_${DRUG}.npz
+RANK=$D/processed/train_kleb_ast/pangena_predict/per_gene_lr_ranking_imputed/$DRUG/per_gene_lr_${DRUG}.csv
+OUT=$D/processed/train_kleb_ast/pangena_predict/concat_ft/$DRUG
 mkdir -p "$OUT"
 if [[ ! -f "$FTNPZ" ]]; then echo "ERROR: FT mean NPZ missing: $FTNPZ (run cache_ft_bacformer_gene_embeddings.sh first)" >&2; exit 1; fi
 if [[ ! -f "$RANK" ]]; then echo "ERROR: ranking CSV missing: $RANK" >&2; exit 1; fi
@@ -49,7 +57,7 @@ if [[ ! -f "$RANK" ]]; then echo "ERROR: ranking CSV missing: $RANK" >&2; exit 1
 echo "=== Kp FT-concat (CPU) — drug=$DRUG (task $SLURM_ARRAY_TASK_ID) ==="
 echo "ftnpz=$FTNPZ"; echo "rank=$RANK"
 
-uv run python src/bacpredict/engine/concat/concatenate_bacformer_genome_esm_protein_emb.py \
+"$PY" -m bacpredict.engine.concat.concatenate_bacformer_genome_esm_protein_emb \
     --ast-sheet-path "$SHEET" \
     --parquet-dir "$PARQUET" \
     --esm-store-dir "$EMB" \

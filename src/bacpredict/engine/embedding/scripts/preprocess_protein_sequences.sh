@@ -1,13 +1,16 @@
 #!/bin/bash
 #SBATCH --job-name=protein_seqs_klebsiella
-#SBATCH --output=protein_seqs_%A.out
-#SBATCH --error=protein_seqs_%A.err
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
 #SBATCH --time=00:20:00
-#SBATCH --partition=icelake
-#SBATCH --account=FLOTO-SL2-CPU
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=76
 #SBATCH --mem=200G
+# CSD3/UoHPC variant (when it returns): --partition=icelake --account=FLOTO-SL2-CPU,
+#   logs → protein_seqs_%A.out/.err (repo-relative).
 
 # Script to run protein-sequence extraction on HPC with CPU parallelization.
 # The python script reads a CSV of (Sample, sr_assembly_file, sr_gff_file) — generate it
@@ -18,16 +21,15 @@
 #   sbatch slurm_scripts/preprocess_protein_sequences.sh --skip-existing          # resume
 #   sbatch slurm_scripts/preprocess_protein_sequences.sh --input-csv /path/to/missing.csv
 
+set -uo pipefail
+# Data root + env — cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
+
 # Force Python unbuffered output for real-time logging
 export PYTHONUNBUFFERED=1
-# Use work directory for UV cache to avoid disk space issues in home directory
-export UV_CACHE_DIR=/home/dca36/rds/hpc-work/.uv_cache
-
-# Ensure uv is in PATH (adjust this path to where uv is installed)
-export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
-
-# Change to project directory
-cd /home/dca36/workspace/BacPredict
 
 echo "=========================================="
 echo "Protein Sequence Extraction"
@@ -40,9 +42,8 @@ echo "Start time: $(date)"
 echo "Arguments: $@"
 echo "=========================================="
 
-echo "Using uv: $(which uv)"
 # Run the Python script with all passed arguments ($@) passed as arguments to the script
-uv run python src/bacpredict/engine/embedding/preprocess_assemblies_to_protein_sequences.py "$@"
+"$PY" -m bacpredict.engine.embedding.preprocess_assemblies_to_protein_sequences "$@"
 
 echo "=========================================="
 echo "End time: $(date)"

@@ -1,16 +1,19 @@
 #!/bin/bash
 #SBATCH --job-name=tb_resume_stagec
-#SBATCH --output=%x_%j.out
-#SBATCH --error=%x_%j.err
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
 #SBATCH --time=36:00:00
-#SBATCH --partition=ampere
-#SBATCH --account=FLOTO-SL2-GPU
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
 #SBATCH --gres=gpu:1
 #SBATCH --mem=250G
 #SBATCH --open-mode=append
+# CSD3/UoHPC variant (when it returns): --partition=ampere --account=FLOTO-SL2-GPU,
+#   logs → relative or ~/rds/hpc-work/logs/, and `module load cuda/12.4 cudnn/8.9_cuda-12.4`.
 
 # Resume Stage C training from the most recent saved checkpoint of a previous
 # (TIMEOUT'd) run. Preserves optimizer state, LR schedule, global step counter,
@@ -24,9 +27,15 @@
 # Submit (after the eval-panel job has snapshotted the current best):
 #   sbatch --dependency=afterany:<eval_panel_jobid> \
 #     --job-name=tb_<drug>_resume_stagec \
-#     src/tb_ast/scripts/train_resume_amr_tb_stage_c.sh <drug>
+#     src/bacpredict/apps/tb/scripts/train_resume_amr_tb_stage_c.sh <drug>
 
-cd /home/dca36/workspace/BacPredict
+set -uo pipefail
+
+# Data root — one env var, cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 
 drug=${1:-rifampin}
 species=mycobacterium_tuberculosis
@@ -35,7 +44,7 @@ lr=0.00015
 eval_steps=250
 model_name_or_path="macwiatrak/bacformer-large-masked-complete-genomes"
 
-BASE=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast
+BASE=$D/processed/train_tb_ast
 CKPT_ROOT=$BASE/checkpoints
 
 # Find the most recent run dir for this drug, and the latest checkpoint inside it.
@@ -54,10 +63,6 @@ if [ -z "$LATEST" ] || [ ! -d "$LATEST" ]; then
     exit 1
 fi
 
-module purge
-module load cuda/12.4
-module load cudnn/8.9_cuda-12.4
-
 export PYTHONUNBUFFERED=1
 export TRANSFORMERS_VERBOSITY=info
 
@@ -67,8 +72,8 @@ echo "run dir:      $RUN_DIR"
 echo "resume from:  $LATEST"
 echo "Job ID:       $SLURM_JOB_ID  Node: $SLURMD_NODENAME  GPU: $CUDA_VISIBLE_DEVICES"
 
-uv run python -m bacpredict.engine.finetune.finetune_amr --task tb_ast \
-    --embeddings-dir $BASE/tb_esm_embeddings \
+"$PY" -m bacpredict.engine.finetune.finetune_amr --task tb_ast \
+    --embeddings-dir $BASE/esm \
     --ast-sheet-path $BASE/binary_ast_with_split.csv \
     --lr $lr \
     --model-name-or-path $model_name_or_path \

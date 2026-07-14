@@ -1,16 +1,19 @@
 #!/bin/bash
 #SBATCH --job-name=embeddings_array_tb
-#SBATCH --output=embeddings_array_tb_%A_%a.out
-#SBATCH --error=embeddings_array_tb_%A_%a.err
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
 #SBATCH --time=04:00:00
-#SBATCH --partition=ampere
-#SBATCH --account=FLOTO-SL2-GPU
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:1
 #SBATCH --mem=100G
 #SBATCH --array=0-63
+# CSD3/UoHPC variant (when it returns): --partition=ampere --account=FLOTO-SL2-GPU,
+#   logs → relative or ~/rds/hpc-work/logs/, and `module load cuda/12.4 cudnn/8.9_cuda-12.4`.
 
 # TB ESM-C embedding generation (GPU array job).
 #
@@ -27,26 +30,24 @@
 # resumes for free.
 #
 # Usage:
-#   sbatch src/tb_ast/scripts/run_embeddings_array_tb.sh
-#   sbatch --array=0-127 --time=02:00:00 src/tb_ast/scripts/run_embeddings_array_tb.sh
+#   sbatch src/bacpredict/apps/tb/scripts/run_embeddings_array_tb.sh
+#   sbatch --array=0-127 --time=02:00:00 src/bacpredict/apps/tb/scripts/run_embeddings_array_tb.sh
 
-module purge
-module load cuda/12.4 2>/dev/null || echo "CUDA module not found, using system CUDA"
-module load cudnn/8.9_cuda-12.4 2>/dev/null || echo "cuDNN module not found, using system cuDNN"
+set -uo pipefail
 
+# Data root — one env var, cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
+
+# Caches (HF_HOME/UV_CACHE_DIR/TMPDIR/...) come from ~/.bashrc on Isambard — do not hardcode here.
 export PYTHONUNBUFFERED=1
 export TRANSFORMERS_VERBOSITY=info
-export UV_CACHE_DIR=/home/dca36/rds/hpc-work/.uv_cache
-export HF_HOME=/home/dca36/rds/hpc-work/.huggingface_cache
-export TRANSFORMERS_CACHE=/home/dca36/rds/hpc-work/.huggingface_cache
-export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 
-cd /home/dca36/workspace/BacPredict
-
-RDS_ROOT=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david
-TB_INPUT_DIR="${RDS_ROOT}/processed/train_tb_ast/tb_protein_sequences"
-TB_ESM_DIR="${RDS_ROOT}/processed/train_tb_ast/tb_esm_embeddings"
-# TB_BACFORMER_DIR="${RDS_ROOT}/processed/train_tb_ast/tb_bacformer_embeddings"  # uncomment + pass --bacformer-embeddings if needed
+TB_INPUT_DIR="$D/processed/train_tb_ast/protein_sequences"
+TB_ESM_DIR="$D/processed/train_tb_ast/esm"
+# TB_BACFORMER_DIR="$D/processed/train_tb_ast/bacformer"  # uncomment + pass --bacformer-embeddings if needed
 
 echo "=========================================="
 echo "TB Embedding Generation (Array Job; ESM-C default)"
@@ -60,7 +61,7 @@ echo "=========================================="
 # shrunken list and slice into the wrong index space, leaving gaps. Each task
 # now slices [start..end) of the full sorted parquet list; `--skip-existing`
 # inside the Python script then filters within the slice.
-read TOTAL_FILES UNPROCESSED <<< "$(uv run python -c "
+read TOTAL_FILES UNPROCESSED <<< "$("$PY" -c "
 from pathlib import Path
 inp = Path('${TB_INPUT_DIR}')
 esm = Path('${TB_ESM_DIR}')
@@ -83,7 +84,7 @@ if [ $END_IDX -gt $TOTAL_FILES ]; then END_IDX=$TOTAL_FILES; fi
 echo "Tasks: $NTASKS  Chunk: $CHUNK_SIZE  Indices: $START_IDX..$END_IDX"
 echo "=========================================="
 
-uv run python src/bacpredict/engine/embedding/generate_embeddings.py \
+"$PY" -m bacpredict.engine.embedding.generate_embeddings \
     --input-dir "$TB_INPUT_DIR" \
     --esm-dir "$TB_ESM_DIR" \
     --skip-existing \

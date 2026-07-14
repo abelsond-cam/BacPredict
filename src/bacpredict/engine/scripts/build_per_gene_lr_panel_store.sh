@@ -1,14 +1,17 @@
 #!/bin/bash
 #SBATCH --job-name=build_per_gene_lr_panel_store
-#SBATCH --output=%x_%j.out
-#SBATCH --error=%x_%j.err
-#SBATCH --partition=icelake-himem
-#SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=128G
 #SBATCH --time=08:00:00
+# CSD3/UoHPC variant (when it returns): --partition=icelake-himem
+#   --account=FLOTO-PROJECT-K-SL2-CPU, logs → %x_%j.out/.err (repo-relative).
 
 # Build the per-gene logistic-regression probability panel store on the SAME 1000-genome
 # manifest split as the surprisal panel, so the att_head run is directly comparable to the
@@ -24,7 +27,14 @@
 # In-memory footprint ~ n_train x n_core x 960 floats (~8 GB for the 1000-genome manifest);
 # the full ~38k cohort would need gene-batching (see the module docstring).
 
-cd /home/dca36/workspace/BacPredict
+set -uo pipefail
+# Data root + env — cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
+
+cd "$HOME/BacPredict"
 git pull --ff-only || true
 export PYTHONUNBUFFERED=1
 # Pin BLAS to 1 thread/process so the joblib workers (one per-gene LR each) don't oversubscribe;
@@ -33,16 +43,16 @@ export PYTHONUNBUFFERED=1
 # minutes; the wall is dominated by the sequential .pt I/O passes (assembly + panel, ~12 min).
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 
-RDS=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast
+RDS=$D/processed/train_tb_ast
 SHEET=$RDS/tb_surprisal_panel/tb_rif_1000_split.csv   # the 700/100/200 manifest split
-PARQUET=$RDS/tb_protein_sequences
-EMB=$RDS/tb_esm_embeddings
+PARQUET=$RDS/protein_sequences
+EMB=$RDS/esm
 OUT=$RDS/tb_per_gene_lr_panel
 
 echo "Per-gene LR store build — sheet=$SHEET  out=$OUT"
 mkdir -p "$OUT"
 
-uv run python src/bacpredict/engine/gene_lr/build_per_gene_lr_store.py \
+"$PY" -m bacpredict.engine.gene_lr.build_per_gene_lr_store \
     --split-csv "$SHEET" \
     --drug rifampin \
     --parquet-dir "$PARQUET" \

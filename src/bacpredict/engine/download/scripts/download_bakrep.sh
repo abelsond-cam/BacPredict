@@ -1,13 +1,16 @@
 #!/bin/bash
 #SBATCH --job-name=bakrep_download
-#SBATCH --output=bakrep_download_%j.out
-#SBATCH --error=bakrep_download_%j.err
-#SBATCH --partition=icelake
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=76
 #SBATCH --time=02:00:00
-#SBATCH --account=FLOTO-SL2-CPU
+# CSD3/UoHPC variant (when it returns): --partition=icelake --account=FLOTO-SL2-CPU,
+#   logs → bakrep_download_%j.out/.err (repo-relative).
 
 # =============================================================================
 # Download BakRep bakta-annotated files (GBFF or GFF3) for samples in metadata
@@ -44,10 +47,17 @@
 #
 # =============================================================================
 
+set -uo pipefail
+# Data root — one env var, cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
+
 # Default values
 N=-1  # Process all samples by default, use --n <number> to process a test subset
-TSV_FILE="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/final/metadata_v2_all_samples_and_columns.tsv"
-OUTPUT_BASE="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/raw"
+TSV_FILE="$D/final/metadata_v2_all_samples_and_columns.tsv"
+OUTPUT_BASE="$D/raw"
 FILE_TYPE=gbff  # gbff (default) or gff3
 OUTPUT_DIR="${OUTPUT_BASE}/klebsiella_${FILE_TYPE}"
 NCORES=76
@@ -93,9 +103,9 @@ done
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] === download_bakrep.sh START ==="
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] === download_bakrep.sh START ===" >&2
 
-# Change to project root so uv can find pyproject.toml and the top-level packages
+# Change to project root (PYTHONPATH covers imports; the standalone collect scripts run by abs path).
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] cd to project root..." >&2
-cd /home/dca36/workspace/BacPredict
+cd "$HOME/BacPredict"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] PWD=$(pwd)" >&2
 
 # Create output directory if it doesn't exist
@@ -114,7 +124,7 @@ SKIP_ARG=""
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running Python collect (micromamba bakrep_download)..." >&2
 # Execute the python script inside micromamba environment named "bakrep_download", which has pandas installed.
 # It is equivilent to micromamba activate bakrep_download and then running the script.
-micromamba run -n bakrep_download python /home/dca36/workspace/BacPredict/src/bacpredict/engine/download/scripts/collect_bakrep_samples.py \
+micromamba run -n bakrep_download python "$HOME/BacPredict/src/bacpredict/engine/download/scripts/collect_bakrep_samples.py" \
     --metadata "$TSV_FILE" \
     --n "$N" \
     --filetype "$FILE_TYPE" \
@@ -205,7 +215,7 @@ echo "============================================"
 
 MISSING_OUTPUT="${OUTPUT_DIR}/missing_samples_$(date +%Y%m%d_%H%M%S).txt"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running Python update-flags (micromamba bakrep_download)..." >&2
-micromamba run -n bakrep_download python /home/dca36/workspace/BacPredict/src/bacpredict/engine/download/scripts/collect_bakrep_samples.py \
+micromamba run -n bakrep_download python "$HOME/BacPredict/src/bacpredict/engine/download/scripts/collect_bakrep_samples.py" \
     --metadata "$TSV_FILE" \
     --output-dir "$OUTPUT_DIR" \
     --filetype "$FILE_TYPE" \
@@ -226,7 +236,7 @@ if [ "$FILE_TYPE" = "gff3" ]; then
     echo "============================================"
     echo "Flattening klebsiella_gff3 directory (moving *.bakta.gff3.gz to top level)..."
     echo "============================================"
-    micromamba run -n bakrep_download python /home/dca36/workspace/BacPredict/src/kleb_ast/scripts/flatten_klebsiella_gff3.py
+    micromamba run -n bakrep_download python "$HOME/BacPredict/src/bacpredict/apps/kleb/scripts/flatten_klebsiella_gff3.py"
 fi
 
 # Final summary

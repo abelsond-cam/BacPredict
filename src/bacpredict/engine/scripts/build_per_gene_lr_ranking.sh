@@ -17,22 +17,30 @@
 # Usage:  sbatch src/bacpredict/engine/scripts/build_per_gene_lr_ranking.sh
 #
 #SBATCH --job-name=per_gene_lr_ranking
-#SBATCH --output=per_gene_lr_ranking_%A_%a.out
-#SBATCH --error=per_gene_lr_ranking_%A_%a.err
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
 #SBATCH --array=0-9
-#SBATCH --partition=icelake-himem
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=128G
 #SBATCH --time=24:00:00
-#SBATCH --account=FLOTO-SL2-CPU
 #SBATCH --open-mode=append
+# CSD3/UoHPC variant (when it returns): --partition=icelake-himem --account=FLOTO-SL2-CPU,
+#   logs → per_gene_lr_ranking_%A_%a.out/.err (repo-relative).
 # CPU-only (sklearn LRs over precomputed ESM-C vectors). At the 2000-genome subsample the in-memory
 # footprint is ~30 GB, so one 128 GB task fits all genes — no gene-sharding needed. icelake-himem,
 # 24 h budget (never under-call walltime). 10 tasks run in parallel → ~12 min wall.
 
-cd /home/dca36/workspace/BacPredict
+set -uo pipefail
+# Data root + env — cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 
 export PYTHONUNBUFFERED=1
 # Pin BLAS to 1 thread/process so the joblib per-gene-LR workers don't oversubscribe.
@@ -46,10 +54,10 @@ if [[ -z "$DRUG" ]]; then
     exit 1
 fi
 
-RDS=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_tb_ast
+RDS=$D/processed/train_tb_ast
 SHEET=$RDS/binary_ast_with_split.csv            # the FULL cohort split (all 20 drug columns)
-PARQUET=$RDS/tb_protein_sequences
-EMB=$RDS/tb_esm_embeddings
+PARQUET=$RDS/protein_sequences
+EMB=$RDS/esm
 # Per-drug subdir: the module also writes non-drug-specific files (build_summary, gene_lr_auroc,
 # gene_prevalence), so concurrent array tasks must not share an out-dir or they race on those.
 OUT=$RDS/pangena_predict/per_gene_lr_ranking/$DRUG
@@ -62,7 +70,7 @@ echo "Job ID:  ${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 echo "========================================================================"
 mkdir -p "$OUT"
 
-uv run python src/bacpredict/engine/gene_lr/build_per_gene_lr_store.py \
+"$PY" -m bacpredict.engine.gene_lr.build_per_gene_lr_store \
     --split-csv "$SHEET" \
     --drug "$DRUG" \
     --parquet-dir "$PARQUET" \

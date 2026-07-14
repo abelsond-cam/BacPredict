@@ -1,15 +1,18 @@
 #!/bin/bash
 #SBATCH --job-name=embeddings_klebsiella
-#SBATCH --output=embeddings_%A.out
-#SBATCH --error=embeddings_%A.err
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
 #SBATCH --time=36:00:00
-#SBATCH --partition=ampere
-#SBATCH --account=FLOTO-SL2-GPU
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:1
 #SBATCH --mem=100G
+# CSD3/UoHPC variant (when it returns): --partition=ampere --account=FLOTO-SL2-GPU,
+#   logs → embeddings_%A.out/.err (repo-relative), and `module load cuda/12.4 cudnn/8.9_cuda-12.4`.
 
 # Script to run ESM-C embedding generation on HPC with GPU (single-job).
 # Pass --bacformer-embeddings to also produce Bacformer contextualised outputs.
@@ -19,24 +22,19 @@
 #   sbatch src/bacpredict/engine/embedding/scripts/run_embeddings.sh --skip-existing         # Resume
 #   sbatch src/bacpredict/engine/embedding/scripts/run_embeddings.sh --bacformer-embeddings  # Add Bacformer outputs
 
-# Load required modules
-module purge
-# Try to load CUDA modules (may not be available on all systems)
-module load cuda/12.4 2>/dev/null || echo "CUDA module not found, using system CUDA"
-module load cudnn/8.9_cuda-12.4 2>/dev/null || echo "cuDNN module not found, using system cuDNN"
+# CUDA comes from the Isambard Cray PE + the venv — no `module load` needed.
+
+set -uo pipefail
+# Data root + env — cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 
 # Force Python unbuffered output for real-time logging
 export PYTHONUNBUFFERED=1
 # Set transformers verbosity for better logging
 export TRANSFORMERS_VERBOSITY=info
-# Use work directory for UV cache to avoid disk space issues in home directory
-export UV_CACHE_DIR=/home/dca36/rds/hpc-work/.uv_cache
-
-# Ensure uv is in PATH (adjust this path to where uv is installed)
-export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
-
-# Change to project directory
-cd /home/dca36/workspace/BacPredict
 
 echo "=========================================="
 echo "Embedding Generation (ESM-C; Bacformer opt-in)"
@@ -48,25 +46,8 @@ echo "Start time: $(date)"
 echo "Arguments: $@"
 echo "=========================================="
 
-# Check if uv is available
-if ! command -v uv &> /dev/null; then
-    echo "ERROR: uv not found in PATH"
-    echo "PATH: $PATH"
-    echo "Trying to use python directly from virtual environment..."
-    
-    # Try to use existing virtual environment
-    if [ -d ".venv" ]; then
-        source .venv/bin/activate
-        python src/bacpredict/engine/embedding/generate_embeddings.py "$@"
-    else
-        echo "ERROR: No .venv found and uv not available"
-        exit 1
-    fi
-else
-    echo "Using uv: $(which uv)"
-    # Run the Python script with all passed arguments
-    uv run python src/bacpredict/engine/embedding/generate_embeddings.py "$@"
-fi
+# Run the Python script with all passed arguments
+"$PY" -m bacpredict.engine.embedding.generate_embeddings "$@"
 
 echo "=========================================="
 echo "End time: $(date)"

@@ -1,13 +1,18 @@
 #!/bin/bash
 #SBATCH --job-name=download_assemblies
-#SBATCH --output=download_assemblies_%j.out
-#SBATCH --error=download_assemblies_%j.err
-#SBATCH --partition=icelake-himem
+#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --partition=workq
+#SBATCH --account=brics.u6fp
+#SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=76
 #SBATCH --time=06:00:00
-#SBATCH --account=FLOTO-SL2-CPU
+#SBATCH --mem=64G
+# CPU-only — no --gres. Isambard schedules a GPU-less job on workq normally; --mem must be set
+# explicitly (memory defaults are GPU-tied). CSD3/UoHPC variant (when it returns):
+#   --partition=icelake-himem --account=FLOTO-SL2-CPU, logs → relative or ~/rds/hpc-work/logs/.
 
 # =============================================================================
 # Download TB genome assemblies, ATB primary + NCBI fallback
@@ -58,12 +63,18 @@
 #   --skip-ncbi             Skip the NCBI fallback stage
 # =============================================================================
 
-set -u
+set -uo pipefail
+
+# Data root — one env var, cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
+# NB: download stages run inside the `ncbi-datasets` micromamba env (tool binaries), not the venv PY.
 
 # Defaults
 N=-1
-METADATA="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/raw/tb/ebi_tb_amr_records.csv"
-OUTPUT_DIR="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/raw/tb/assemblies"
+METADATA="$D/raw/tb/ebi_tb_amr_records.csv"
+OUTPUT_DIR="$D/raw/tb/assemblies"
 NCORES=76
 BATCH_SIZE=100
 MAX_PASSES=10
@@ -95,8 +106,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] === run_download_assemblies.sh START ===" >&2
-
-cd /home/dca36/workspace/BacPredict
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] PWD=$(pwd)" >&2
 
 mkdir -p "$OUTPUT_DIR"
@@ -278,7 +287,7 @@ for ((PASS=1; PASS<=MAX_PASSES; PASS++)); do
     PASS_MISSING="${LOG_ROOT}/${PASS_TAG}_missing_samples.tsv"
 
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Planning download (micromamba ncbi-datasets)..." >&2
-    micromamba run -n ncbi-datasets python scripts/download_assemblies.py \
+    micromamba run -n ncbi-datasets python "$HOME/BacPredict/src/bacpredict/engine/download/scripts/download_assemblies.py" \
         --metadata "$METADATA" \
         --output-dir "$OUTPUT_DIR" \
         --atb-batch-dir "$ATB_BATCH_DIR" \

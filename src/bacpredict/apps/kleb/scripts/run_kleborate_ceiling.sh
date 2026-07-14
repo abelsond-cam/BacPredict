@@ -11,12 +11,17 @@
 #
 # Ensure the HPC checkout is on the intended branch and up to date FIRST (do not let this script pull the
 # shared tree). Usage (from anywhere on HPC):
-#     bash /home/dca36/workspace/BacPredict/src/kleb_ast/scripts/run_kleborate_ceiling.sh
+#     bash $HOME/BacPredict/src/bacpredict/apps/kleb/scripts/run_kleborate_ceiling.sh
 #     bash .../run_kleborate_ceiling.sh colistin azithromycin        # explicit drug subset
 #     bash .../run_kleborate_ceiling.sh ALL                          # the full 22-drug panel
 
-set -euo pipefail
-cd /home/dca36/workspace/BacPredict
+set -uo pipefail
+
+# Data root — one env var, cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
+: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+D="$BACPREDICT_DATA_ROOT"
+PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 export CUDA_VISIBLE_DEVICES=""
 export PYTHONUNBUFFERED=1
 
@@ -35,5 +40,5 @@ else
 fi
 
 echo "Building Kleborate ceiling for: $DRUGS"
-uv run python src/kleb_ast/kleborate_determinant_lr.py --drugs $DRUGS
+"$PY" -m bacpredict.apps.kleb.kleborate_determinant_lr --drugs $DRUGS
 echo "KLEBORATE_CEILING_DONE"
