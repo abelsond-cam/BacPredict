@@ -5,15 +5,68 @@ branch in the code. Today that is the **store layout** (where an organism's AST 
 embeddings and protein parquets live) plus its identity. Drug panels, catalogue adapters and
 checkpoint-name templates are layered on in later refactor steps as the code that needs them lands.
 
-Data root resolution mirrors the Isambard convention (``$SCRATCHDIR/processed/<task>/``); override
-any individual path on the CLI. This replaces the ``SpeciesPaths``/``IgrPaths`` + ``default_paths``
-pair that was copy-pasted across ``coding_amr_lr`` and ``igr_amr_lr``.
+The cluster working-data **root** is resolved once by :func:`resolve_data_root` (one env var,
+cluster-agnostic); everything else is ``<root>/{raw,processed,final}/…``. Individual input/output
+paths stay overridable on the CLI — the resolver fixes only the root, not per-file names. This
+replaces the ``SpeciesPaths``/``IgrPaths`` + ``default_paths`` pair that was copy-pasted across
+``coding_amr_lr`` and ``igr_amr_lr``. See ``src/bacpredict/docs/ISAMBARD_DATA.md`` / ``HPC_DATA.md``
+for the per-cluster path maps.
 """
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
 from pathlib import Path
+
+# CSD3/UoHPC working-data root — the last-resort autodetect when no env var is set (and it exists).
+_CSD3_DATA_ROOT = Path.home() / "rds/rds-floto-bacterial-4k08a2yyQLw/david"
+
+
+def resolve_data_root(explicit: str | Path | None = None) -> Path:
+    """Resolve the cluster working-data **root** (the dir holding ``raw/`` ``processed/`` ``final/``).
+
+    Priority: ``explicit`` (a CLI ``--data-root``) → ``$BACPREDICT_DATA_ROOT`` → ``$SCRATCHDIR``
+    (Isambard) → the CSD3 ``rds-floto`` root *if it exists on disk* → ``RuntimeError``. Never
+    silently degrades to a relative path — an unresolvable root is a hard error naming the fix.
+
+    Parameters
+    ----------
+    explicit : str or Path, optional
+        An explicit root (e.g. from ``--data-root``); wins over every env var when truthy.
+
+    Returns
+    -------
+    Path
+        The resolved working-data root.
+
+    Raises
+    ------
+    RuntimeError
+        If no explicit root, no ``$BACPREDICT_DATA_ROOT``/``$SCRATCHDIR``, and no CSD3 root on disk.
+    """
+    if explicit:
+        return Path(explicit)
+    for var in ("BACPREDICT_DATA_ROOT", "SCRATCHDIR"):
+        val = os.environ.get(var)
+        if val:
+            return Path(val)
+    if _CSD3_DATA_ROOT.exists():
+        return _CSD3_DATA_ROOT
+    raise RuntimeError(
+        "Cannot resolve the BacPredict data root. Set $BACPREDICT_DATA_ROOT (or $SCRATCHDIR on "
+        "Isambard) to the directory holding raw/ processed/ final/. "
+        "See src/bacpredict/docs/ISAMBARD_DATA.md and HPC_DATA.md."
+    )
+
+
+def raw_root(explicit: str | Path | None = None) -> Path:
+    """``<root>/raw`` — raw inputs (assemblies, GFFs, EBI AMR tables). See :func:`resolve_data_root`."""
+    return resolve_data_root(explicit) / "raw"
+
+
+def final_root(explicit: str | Path | None = None) -> Path:
+    """``<root>/final`` — curated output tables. See :func:`resolve_data_root`."""
+    return resolve_data_root(explicit) / "final"
 
 
 @dataclass
@@ -39,9 +92,9 @@ class OrganismConfig:
     processed_task: str  # sub-dir under $SCRATCHDIR/processed/ (e.g. "train_tb_ast")
     sample_id_aliases: tuple[str, ...] = ("Sample", "phenotype-BioSample_ID")
 
-    def data_root(self) -> Path:
-        """``$SCRATCHDIR/processed/<processed_task>`` (empty ``$SCRATCHDIR`` → a relative path)."""
-        return Path(os.environ.get("SCRATCHDIR", "")) / "processed" / self.processed_task
+    def data_root(self, root: str | Path | None = None) -> Path:
+        """``<resolved root>/processed/<processed_task>`` — see :func:`resolve_data_root`."""
+        return resolve_data_root(root) / "processed" / self.processed_task
 
     def store_paths(self) -> StorePaths:
         """Default per-sample store locations under :meth:`data_root` (CLI-overridable)."""

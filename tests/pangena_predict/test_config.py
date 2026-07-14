@@ -6,7 +6,14 @@ the merge cannot silently change where the engine looks for an organism's data.
 """
 import pytest
 
-from bacpredict.engine.config import KP, TB, StorePaths, organism, store_paths
+from bacpredict.engine.config import KP, TB, StorePaths, organism, resolve_data_root, store_paths
+
+
+@pytest.fixture(autouse=True)
+def _clear_data_root_env(monkeypatch):
+    """Isolate every test from a dev shell that happens to export $BACPREDICT_DATA_ROOT/$SCRATCHDIR."""
+    monkeypatch.delenv("BACPREDICT_DATA_ROOT", raising=False)
+    monkeypatch.delenv("SCRATCHDIR", raising=False)
 
 
 def test_store_paths_tb_matches_legacy_layout(monkeypatch):
@@ -43,3 +50,27 @@ def test_organism_registry_and_unknown_key():
     assert organism("kp") is KP
     with pytest.raises(ValueError, match="Unknown organism"):
         organism("ecoli")
+
+
+def test_resolve_data_root_priority(monkeypatch):
+    # explicit arg wins over everything
+    monkeypatch.setenv("BACPREDICT_DATA_ROOT", "/env/root")
+    monkeypatch.setenv("SCRATCHDIR", "/scratch/x")
+    assert str(resolve_data_root("/explicit")) == "/explicit"
+    # BACPREDICT_DATA_ROOT wins over $SCRATCHDIR
+    assert str(resolve_data_root()) == "/env/root"
+    # $SCRATCHDIR used when it's the only one set (the Isambard default)
+    monkeypatch.delenv("BACPREDICT_DATA_ROOT")
+    assert str(resolve_data_root()) == "/scratch/x"
+
+
+def test_resolve_data_root_unresolvable_raises(monkeypatch):
+    # neither env var set, and force the CSD3 autodetect path to look absent
+    monkeypatch.setattr("bacpredict.engine.config._CSD3_DATA_ROOT", __import__("pathlib").Path("/no/such/csd3"))
+    with pytest.raises(RuntimeError, match="BACPREDICT_DATA_ROOT"):
+        resolve_data_root()
+
+
+def test_data_root_honours_explicit_override():
+    # the CLI --data-root seam: OrganismConfig.data_root(root=...) bypasses env entirely
+    assert str(TB.data_root("/custom")) == "/custom/processed/train_tb_ast"
