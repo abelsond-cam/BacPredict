@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from bacpredict.apps.kleb.validate_amr_annotation import DEFAULT_SIDECAR_DIR, load_sidecars
+from bacpredict.apps.kleb.validate_amr_annotation import default_sidecar_dir, load_sidecars
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -47,9 +47,10 @@ def run(sidecar_dir: Path) -> None:
 def main() -> None:
     """CLI entry point."""
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--sidecar-dir", type=Path, default=DEFAULT_SIDECAR_DIR)
+    p.add_argument("--sidecar-dir", type=Path, default=None,
+                   help="default: <data-root>/processed/train_kleb_ast/amr_annotation")
     args = p.parse_args()
-    run(args.sidecar_dir)
+    run(args.sidecar_dir or default_sidecar_dir())
 
 
 if __name__ == "__main__":

@@ -34,7 +34,7 @@ from bacpredict.apps.kleb.kleborate_determinant_lr import (
     load_labels,
     tokenize_cell,
 )
-from bacpredict.apps.kleb.validate_amr_annotation import DEFAULT_METADATA, DEFAULT_SIDECAR_DIR
+from bacpredict.apps.kleb.validate_amr_annotation import default_metadata, default_sidecar_dir
 from bacpredict.engine.catalogue.base import score_onehot_frame
 from bacpredict.engine.config import KP
 
@@ -226,21 +226,24 @@ def main() -> None:
     """CLI entry point."""
     here = Path(__file__).resolve().parent
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--calls-dir", type=Path, default=DEFAULT_SIDECAR_DIR,
-                   help="Sidecar dir holding amr_calls_all.parquet (else crawls the sidecars).")
+    p.add_argument("--calls-dir", type=Path, default=None,
+                   help="Sidecar dir holding amr_calls_all.parquet (default: <data-root>/processed/"
+                   "train_kleb_ast/amr_annotation; else crawls the sidecars).")
     p.add_argument("--ast-sheet", type=Path, default=None,
                    help="AST split sheet (default: <data-root>/processed/train_kleb_ast/binary_ast_with_split.csv).")
     p.add_argument("--out-dir", type=Path, default=here / "docs" / "visualisations" / "amr_per_abx")
-    p.add_argument("--metadata", type=Path, default=DEFAULT_METADATA,
-                   help="metadata_v2 TSV — Kleborate mutation columns for the chromosomal mut/WT split.")
+    p.add_argument("--metadata", type=Path, default=None,
+                   help="metadata_v2 TSV (default: <data-root>/final/...) — Kleborate mutation columns "
+                   "for the chromosomal mut/WT split.")
     p.add_argument("--drugs", type=str, nargs="+", required=True)
     p.add_argument("--grains", type=str, nargs="+", default=["family", "allele"],
                    choices=["family", "allele"])
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])
     args = p.parse_args()
+    calls_dir = args.calls_dir or default_sidecar_dir()
     ast_sheet = args.ast_sheet or KP.data_root() / "binary_ast_with_split.csv"
-    run(args.calls_dir, ast_sheet, args.out_dir, args.drugs, args.grains, args.metadata,
-        tuple(args.seeds))
+    metadata = args.metadata or default_metadata()
+    run(calls_dir, ast_sheet, args.out_dir, args.drugs, args.grains, metadata, tuple(args.seeds))
 
 
 if __name__ == "__main__":

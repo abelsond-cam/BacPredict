@@ -31,10 +31,17 @@ from pathlib import Path
 import pandas as pd
 
 from bacpredict.apps.kleb.kleborate_determinant_lr import COLUMN_SCHEMA, tokenize_cell
+from bacpredict.engine.config import final_root, resolve_data_root
 
-RDS_ROOT = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw")
-DEFAULT_SIDECAR_DIR = RDS_ROOT / "david" / "processed" / "train_kleb_ast" / "amr_annotation"
-DEFAULT_METADATA = RDS_ROOT / "david" / "final" / "metadata_v2_all_samples_and_columns.tsv"
+
+def default_sidecar_dir() -> Path:
+    """``<data-root>/processed/train_kleb_ast/amr_annotation`` — CARD AMR-call sidecars."""
+    return resolve_data_root() / "processed" / "train_kleb_ast" / "amr_annotation"
+
+
+def default_metadata() -> Path:
+    """``<data-root>/final/metadata_v2_all_samples_and_columns.tsv`` — the curated metadata TSV."""
+    return final_root() / "metadata_v2_all_samples_and_columns.tsv"
 
 # Kleborate columns that carry *gene/allele* tokens — the grain our CARD calls match. This is the
 # acquired-HGT columns PLUS Bla_chr: intrinsic SHV/OKP/LEN comes from the CARD ref (so we tag it
@@ -217,11 +224,16 @@ def run(sidecar_dir: Path, metadata: Path, out_dir: Path) -> None:
 def main() -> None:
     """CLI entry point."""
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--sidecar-dir", type=Path, default=DEFAULT_SIDECAR_DIR)
-    p.add_argument("--metadata", type=Path, default=DEFAULT_METADATA)
-    p.add_argument("--out-dir", type=Path, default=DEFAULT_SIDECAR_DIR / "validation")
+    p.add_argument("--sidecar-dir", type=Path, default=None,
+                   help="CARD AMR-call sidecar dir (default: <data-root>/processed/train_kleb_ast/amr_annotation).")
+    p.add_argument("--metadata", type=Path, default=None,
+                   help="metadata_v2 TSV (default: <data-root>/final/metadata_v2_all_samples_and_columns.tsv).")
+    p.add_argument("--out-dir", type=Path, default=None, help="default: <sidecar-dir>/validation")
     args = p.parse_args()
-    run(args.sidecar_dir, args.metadata, args.out_dir)
+    sidecar_dir = args.sidecar_dir or default_sidecar_dir()
+    metadata = args.metadata or default_metadata()
+    out_dir = args.out_dir or sidecar_dir / "validation"
+    run(sidecar_dir, metadata, out_dir)
 
 
 if __name__ == "__main__":

@@ -27,9 +27,9 @@ import pandas as pd
 
 from bacpredict.apps.kleb.kleborate_determinant_lr import tokenize_cell
 from bacpredict.apps.kleb.validate_amr_annotation import (
-    DEFAULT_METADATA,
-    DEFAULT_SIDECAR_DIR,
     _norm_allele,
+    default_metadata,
+    default_sidecar_dir,
     load_sidecars,
 )
 
@@ -198,11 +198,13 @@ def main() -> None:
     """CLI entry point."""
     here = Path(__file__).resolve().parent
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--sidecar-dir", type=Path, default=DEFAULT_SIDECAR_DIR)
-    p.add_argument("--metadata", type=Path, default=DEFAULT_METADATA)
+    p.add_argument("--sidecar-dir", type=Path, default=None,
+                   help="default: <data-root>/processed/train_kleb_ast/amr_annotation")
+    p.add_argument("--metadata", type=Path, default=None,
+                   help="default: <data-root>/final/metadata_v2_all_samples_and_columns.tsv")
     p.add_argument("--out-dir", type=Path, default=here / "docs" / "visualisations" / "amr_annotation")
     args = p.parse_args()
-    run(args.sidecar_dir, args.metadata, args.out_dir)
+    run(args.sidecar_dir or default_sidecar_dir(), args.metadata or default_metadata(), args.out_dir)
 
 
 if __name__ == "__main__":
