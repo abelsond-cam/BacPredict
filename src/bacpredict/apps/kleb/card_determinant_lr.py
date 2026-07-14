@@ -36,6 +36,7 @@ from bacpredict.apps.kleb.kleborate_determinant_lr import (
 )
 from bacpredict.apps.kleb.validate_amr_annotation import DEFAULT_METADATA, DEFAULT_SIDECAR_DIR
 from bacpredict.engine.catalogue.base import score_onehot_frame
+from bacpredict.engine.config import KP
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -223,13 +224,12 @@ def run(calls_dir: Path, ast_sheet: Path, out_dir: Path, drugs: list[str], grain
 
 def main() -> None:
     """CLI entry point."""
-    rds = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david")
     here = Path(__file__).resolve().parent
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--calls-dir", type=Path, default=DEFAULT_SIDECAR_DIR,
                    help="Sidecar dir holding amr_calls_all.parquet (else crawls the sidecars).")
-    p.add_argument("--ast-sheet", type=Path,
-                   default=rds / "processed" / "train_kleb_ast" / "binary_ast_with_split.csv")
+    p.add_argument("--ast-sheet", type=Path, default=None,
+                   help="AST split sheet (default: <data-root>/processed/train_kleb_ast/binary_ast_with_split.csv).")
     p.add_argument("--out-dir", type=Path, default=here / "docs" / "visualisations" / "amr_per_abx")
     p.add_argument("--metadata", type=Path, default=DEFAULT_METADATA,
                    help="metadata_v2 TSV — Kleborate mutation columns for the chromosomal mut/WT split.")
@@ -238,7 +238,8 @@ def main() -> None:
                    choices=["family", "allele"])
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])
     args = p.parse_args()
-    run(args.calls_dir, args.ast_sheet, args.out_dir, args.drugs, args.grains, args.metadata,
+    ast_sheet = args.ast_sheet or KP.data_root() / "binary_ast_with_split.csv"
+    run(args.calls_dir, ast_sheet, args.out_dir, args.drugs, args.grains, args.metadata,
         tuple(args.seeds))
 
 

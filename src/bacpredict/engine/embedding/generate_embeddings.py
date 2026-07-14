@@ -26,11 +26,6 @@ from bacformer.pp import (
 from tqdm import tqdm
 from transformers import AutoModel
 
-RDS_ROOT = Path("/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw")
-PROTEIN_SEQUENCES_DIR = RDS_ROOT / "david" / "processed" / "klebsiella_protein_sequences"
-ESM_EMBEDDINGS_DIR = RDS_ROOT / "david" / "processed" / "klebsiella_esm_embeddings"
-BACFORMER_EMBEDDINGS_DIR = RDS_ROOT / "david" / "processed" / "klebsiella_bacformer_embeddings"
-
 # The refreshed Bacformer complete-genomes model (not the MAG-trained one).
 BACFORMER_MODEL_ID = "macwiatrak/bacformer-large-masked-complete-genomes"
 
@@ -344,22 +339,25 @@ def main():
     parser.add_argument(
         "--input-dir",
         type=Path,
-        default=PROTEIN_SEQUENCES_DIR,
-        help="Directory of *_protein_sequences.parquet files "
-        "(default: klebsiella_protein_sequences)",
+        default=None,
+        required=True,
+        help="Directory of *_protein_sequences.parquet files (e.g. "
+        "$BACPREDICT_DATA_ROOT/processed/train_kleb_ast/protein_sequences; see docs/ISAMBARD_DATA.md).",
     )
     parser.add_argument(
         "--esm-dir",
         type=Path,
-        default=ESM_EMBEDDINGS_DIR,
-        help="Output directory for ESM embeddings (default: klebsiella_esm_embeddings)",
+        default=None,
+        required=True,
+        help="Output directory for ESM embeddings (e.g. "
+        "$BACPREDICT_DATA_ROOT/processed/train_kleb_ast/esm).",
     )
     parser.add_argument(
         "--bacformer-dir",
         type=Path,
-        default=BACFORMER_EMBEDDINGS_DIR,
-        help="Output directory for Bacformer embeddings (only used with "
-        "--bacformer-embeddings; default: klebsiella_bacformer_embeddings)",
+        default=None,
+        help="Output directory for Bacformer embeddings (required with --bacformer-embeddings; e.g. "
+        "$BACPREDICT_DATA_ROOT/processed/train_kleb_ast/bacformer).",
     )
     parser.add_argument(
         "--bacformer-embeddings",
@@ -379,6 +377,8 @@ def main():
     esm_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"ESM embeddings directory: {esm_dir}")
 
+    if args.bacformer_embeddings and args.bacformer_dir is None:
+        parser.error("--bacformer-dir is required when --bacformer-embeddings is set")
     bacformer_dir: Path | None = args.bacformer_dir if args.bacformer_embeddings else None
     if bacformer_dir is not None:
         bacformer_dir.mkdir(parents=True, exist_ok=True)
