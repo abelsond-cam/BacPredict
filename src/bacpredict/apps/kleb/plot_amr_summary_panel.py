@@ -11,13 +11,13 @@ For one organism, assemble — per antibiotic — three head-to-head series and 
   (the best ``group == concat`` ladder row, preferring the FT-mean concat).
 
 Everything is read from the already-computed per-drug ladder tables
-(``<viz>/<org>_<drug>/<drug>_ladder_table.csv``) and the catalogue-ceiling CSVs
+(``visualisations/<org>/<drug>/<drug>_ladder_table.csv``) and the catalogue-ceiling CSVs
 (``tbprofiler_gene_lr_*`` / ``kleborate_determinant_lr_*``); both carry AUROC and AUPRC. A drug is
 included only if both a ladder table and a ceiling CSV exist for it. Also emits the simple
 FT-only AUROC bar (the motivation figure, the TB analogue of ``kp_amr_panel_auroc.png``).
 
-Pure matplotlib over small CSVs — login/CPU. Figures are written into the pangena_predict report's
-visualisation dir so ``PROGRESS_REPORT.md`` can reference them.
+Pure matplotlib over small CSVs — login/CPU. Figures are written into the TB visualisation dir
+(``visualisations/tb/``) so ``PROGRESS_REPORT.md`` can reference them.
 """
 
 from __future__ import annotations
@@ -35,23 +35,24 @@ import numpy as np
 import pandas as pd
 from matplotlib.patches import Patch
 
+from bacpredict.engine.config import visualisations_dir
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-REPO = Path(__file__).resolve().parents[2]
-TB_VIZ = REPO / "src" / "pangena_predict" / "docs" / "visualisations"
-KP_VIZ = REPO / "src" / "kleb_ast" / "docs" / "visualisations"
-OUT_DIR = REPO / "src" / "pangena_predict" / "docs" / "visualisations"
+TB_VIZ = visualisations_dir("tb")
+KP_VIZ = visualisations_dir("kp")
+OUT_DIR = visualisations_dir("tb")  # the summary panel historically wrote next to the TB tree root
 
 CEILING_COLOUR = "#c0392b"   # red — catalogue one-hot ceiling (WHO / Kleborate)
 FT_COLOUR = "#2e2a7a"        # indigo — Bacformer fine-tuned mean-pool (deployed)
 CONCAT_COLOUR = "#1e8449"    # green — FT mean ⊕ best ESM gene (concat)
 
 ORGS = {
-    "tb": {"viz": TB_VIZ, "prefix": "tb_", "ceiling_glob": "tbprofiler_gene_lr_*.csv",
+    "tb": {"viz": TB_VIZ, "ceiling_glob": "tbprofiler_gene_lr_*.csv",
            "ceiling_row": "__ALL_WHO_one_hot__", "ceiling_name": "TB-Profiler / WHO one-hot",
            "title": "M. tuberculosis"},
-    "kp": {"viz": KP_VIZ, "prefix": "kp_", "ceiling_glob": "kleborate_determinant_lr_*.csv",
+    "kp": {"viz": KP_VIZ, "ceiling_glob": "kleborate_determinant_lr_*.csv",
            "ceiling_row": "__ALL_Kleborate__", "ceiling_name": "Kleborate / CARD one-hot",
            "title": "Klebsiella pneumoniae"},
 }
@@ -88,10 +89,10 @@ def assemble_table(organism: str) -> pd.DataFrame:
     """Per-drug ceiling / FT / concat AUROC + AUPRC for one organism (drugs with all sources)."""
     cfg = ORGS[organism]
     rows = []
-    for drug_dir in sorted(cfg["viz"].glob(f"{cfg['prefix']}*")):
+    for drug_dir in sorted(cfg["viz"].glob("*")):
         if not drug_dir.is_dir():
             continue
-        drug = drug_dir.name[len(cfg["prefix"]):]
+        drug = drug_dir.name
         ladders = glob.glob(str(drug_dir / "*_ladder_table.csv"))
         ceilings = glob.glob(str(drug_dir / cfg["ceiling_glob"]))
         if not ladders or not ceilings:

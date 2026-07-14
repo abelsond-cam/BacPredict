@@ -26,6 +26,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from bacpredict.engine.config import visualisations_dir
 from bacpredict.engine.plots.labels import display_name
 
 # WHO one-hot is the red family (consistent across plots). The top embeddable gene is the "pick" we
@@ -135,17 +136,16 @@ def plot_cause(csv_path: Path, out_path: Path, *, drug: str, top_n: int = 20) ->
 
 def main() -> None:
     """CLI entry point."""
-    here = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--drug", type=str, required=True, help="AST drug column (for the title / dir).")
     parser.add_argument("--csv", type=Path, default=None,
-                        help="tbprofiler_gene_lr_<drug>.csv (default: docs/visualisations/tb_<drug>/...).")
+                        help="tbprofiler_gene_lr_<drug>.csv (default: visualisations/tb/<drug>/...).")
     parser.add_argument("--top-n", type=int, default=12)
     parser.add_argument("--out", type=Path, default=None,
-                        help="Default: docs/visualisations/tb_<drug>/<drug>_WHO_one_hot_histogram.png.")
+                        help="Default: visualisations/tb/<drug>/<drug>_WHO_one_hot_histogram.png.")
     args = parser.parse_args()
     disp = display_name(args.drug)
-    drug_dir = here / "docs" / "visualisations" / f"tb_{disp}"
+    drug_dir = visualisations_dir("tb") / disp
     csv = args.csv or drug_dir / f"tbprofiler_gene_lr_{args.drug}.csv"
     out = args.out or drug_dir / f"{disp}_WHO_one_hot_histogram.png"
     plot_cause(csv, out, drug=args.drug, top_n=args.top_n)

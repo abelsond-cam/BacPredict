@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from bacpredict.engine.config import KP
+from bacpredict.engine.config import KP, visualisations_dir
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -70,13 +70,12 @@ def run(root: Path, out_csv: Path) -> None:
 
 def main() -> None:
     """CLI entry point."""
-    here = Path(__file__).resolve().parent
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--root", type=Path, default=None,
                    help="Dir holding <drug>/reliable_concat_<drug>.csv (the reliable_ft_concat OUT root; "
                    "default: <data-root>/processed/train_kleb_ast/pangena_predict/reliable_ft_concat).")
     p.add_argument("--out-csv", type=Path,
-                   default=here / "docs" / "visualisations" / "reliable_amr" / "kp_reliable_concat_summary.csv")
+                   default=visualisations_dir("kp") / "reliable_amr" / "kp_reliable_concat_summary.csv")
     args = p.parse_args()
     root = args.root or KP.data_root() / "pangena_predict" / "reliable_ft_concat"
     run(root, args.out_csv)

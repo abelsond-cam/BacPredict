@@ -38,7 +38,7 @@ from pathlib import Path
 import pandas as pd
 
 from bacpredict.engine.catalogue.base import score_onehot_frame
-from bacpredict.engine.config import KP, final_root
+from bacpredict.engine.config import KP, final_root, visualisations_dir
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -275,7 +275,7 @@ def run(metadata: Path, ast_sheet: Path, out_dir: Path, drugs: list[str],
             continue
 
         df = pd.DataFrame(rows).sort_values("mut_auroc", ascending=False)
-        drug_dir = out_dir / f"kp_{drug}"
+        drug_dir = out_dir / drug
         drug_dir.mkdir(parents=True, exist_ok=True)
         df.to_csv(drug_dir / f"kleborate_determinant_lr_{drug}.csv", index=False)
         top = df[df.gene_name != ALL_KEY].head(3)
@@ -283,13 +283,12 @@ def run(metadata: Path, ast_sheet: Path, out_dir: Path, drugs: list[str],
                     ", ".join(f"{r.site}={r.mut_auroc:.3f}" for r in top.itertuples()),
                     full["auroc"]["mean"] if full else float("nan"))
 
-    done = sorted(str(p.relative_to(out_dir)) for p in out_dir.glob("kp_*/kleborate_determinant_lr_*.csv"))
+    done = sorted(str(p.relative_to(out_dir)) for p in out_dir.glob("*/kleborate_determinant_lr_*.csv"))
     (out_dir / "kleborate_determinant_lr_manifest.json").write_text(json.dumps({"files": done}, indent=2))
 
 
 def main() -> None:
     """CLI entry point."""
-    here = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--metadata", type=Path, default=None,
                         help="metadata_v2_all_samples_and_columns.tsv with Kleborate determinant columns "
@@ -297,8 +296,8 @@ def main() -> None:
     parser.add_argument("--ast-sheet", type=Path, default=None,
                         help="Kp binary_ast_with_split.csv, Sample + lowercase drug columns "
                              "(default: <data-root>/processed/train_kleb_ast/binary_ast_with_split.csv).")
-    parser.add_argument("--out-dir", type=Path, default=here / "docs" / "visualisations",
-                        help="Per-drug CSVs go to <out-dir>/kp_<drug>/kleborate_determinant_lr_<drug>.csv.")
+    parser.add_argument("--out-dir", type=Path, default=visualisations_dir("kp"),
+                        help="Per-drug CSVs go to <out-dir>/<drug>/kleborate_determinant_lr_<drug>.csv.")
     parser.add_argument("--drugs", type=str, nargs="+", default=DEFAULT_DRUGS,
                         help=f"AST drug columns to score (default weak-first: {DEFAULT_DRUGS}).")
     parser.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])

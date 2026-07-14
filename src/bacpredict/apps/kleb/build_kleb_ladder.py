@@ -35,6 +35,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.colors import to_rgba
 
+from bacpredict.engine.config import visualisations_dir
+
 ALL_KEY = "__ALL_Kleborate__"
 
 # Family → colour + legend label (shared with the TB ladder so the two figure sets read alike).
@@ -231,10 +233,9 @@ def plot_ladder(df: pd.DataFrame, out_path: Path, *, drug: str, ceiling: dict[st
 
 def main() -> None:
     """CLI entry point."""
-    here = Path(__file__).resolve().parent
-    vis = here / "docs" / "visualisations"
+    vis = visualisations_dir("kp")
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--drug", type=str, required=True, help="AST drug column / kp_<drug> dir name.")
+    parser.add_argument("--drug", type=str, required=True, help="AST drug column / <drug> dir name.")
     parser.add_argument("--concat-dir", type=Path, required=True,
                         help="Dir of concat_frozen_<drug>_*.json (from run_concat_kleb.sh).")
     parser.add_argument("--eval-summary", type=Path, default=vis / "eval" / "eval_summary.csv")
@@ -248,7 +249,7 @@ def main() -> None:
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
 
-    drug_dir = vis / f"kp_{args.drug}"
+    drug_dir = vis / args.drug
     kleborate_csv = args.kleborate_csv or drug_dir / f"kleborate_determinant_lr_{args.drug}.csv"
     out_csv = args.out_csv or drug_dir / f"{args.drug}_ladder_table.csv"
     out = args.out or drug_dir / f"{args.drug}_kleb_ladder_barplot.png"

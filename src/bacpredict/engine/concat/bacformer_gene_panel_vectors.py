@@ -96,15 +96,17 @@ def sweep_gene_tokens(
     return {g: (ids[g], np.vstack(tokens[g])) for g in tokens}
 
 
-def _derive_panel_genes(csv_dir: Path, folder_prefix: str, csv_prefix: str, csv_suffix: str = "") -> list[str]:
+def _derive_panel_genes(csv_dir: Path, csv_prefix: str, csv_suffix: str = "") -> list[str]:
     """Union of embeddable (coding) driver genes across every per-drug driver CSV in ``csv_dir``.
 
-    Schema-agnostic: gates on ``embeddable`` and excludes ``is_noncoding``/``is_rrna`` (works for both
-    the TB-Profiler and Kp-CARD CSVs), rather than a ``region == coding`` string.
+    Discovers each ``<csv-dir>/<drug>/`` folder by the presence of its driver CSV (robust to the
+    org-parented ``visualisations/<organism>/<drug>/`` layout, no folder prefix). Schema-agnostic:
+    gates on ``embeddable`` and excludes ``is_noncoding``/``is_rrna`` (works for both the TB-Profiler
+    and Kp-CARD CSVs), rather than a ``region == coding`` string.
     """
     genes: set[str] = set()
-    for folder in sorted(csv_dir.glob(f"{folder_prefix}_*")):
-        drug = folder.name[len(folder_prefix) + 1:]
+    for folder in sorted(p for p in csv_dir.iterdir() if p.is_dir()):
+        drug = folder.name
         csv = folder / f"{csv_prefix}_{drug}{csv_suffix}.csv"
         if not csv.exists():
             continue
@@ -126,7 +128,6 @@ def main() -> None:
     ap.add_argument("--output-npz", type=Path, required=True, help="NPZ of per-gene {<gene>__ids, <gene>__tok}.")
     ap.add_argument("--genes", nargs="*", default=None, help="explicit gene list (else derive from --csv-dir).")
     ap.add_argument("--csv-dir", type=Path, default=None, help="driver-CSV dir to derive the coding-gene union from.")
-    ap.add_argument("--folder-prefix", default="tb")
     ap.add_argument("--csv-prefix", default="tbprofiler_gene_lr")
     ap.add_argument("--csv-suffix", default="")
     ap.add_argument("--amr-sidecar-dir", type=Path, default=None,
@@ -136,7 +137,7 @@ def main() -> None:
     args = ap.parse_args()
 
     genes = args.genes or (
-        _derive_panel_genes(args.csv_dir, args.folder_prefix, args.csv_prefix, args.csv_suffix)
+        _derive_panel_genes(args.csv_dir, args.csv_prefix, args.csv_suffix)
         if args.csv_dir else None)
     if not genes:
         raise SystemExit("no genes: pass --genes or --csv-dir")

@@ -22,6 +22,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.colors import to_rgba
 
+from bacpredict.engine.config import visualisations_dir
+
 ALL_KEY = "__ALL_Kleborate__"
 PICK_COLOUR = "#7e3f9e"        # purple — ESM single-gene (family colour, consistent across plots)
 CEILING_COLOUR = "#c0392b"     # red — the Kleborate determinant ceiling reference line
@@ -90,10 +92,9 @@ def _kleborate_ceiling(kleborate_csv: Path) -> float | None:
 
 def main() -> None:
     """CLI entry point."""
-    here = Path(__file__).resolve().parent
-    vis = here / "docs" / "visualisations"
+    vis = visualisations_dir("kp")
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--drug", type=str, required=True, help="AST drug column / kp_<drug> dir name.")
+    parser.add_argument("--drug", type=str, required=True, help="AST drug column / <drug> dir name.")
     parser.add_argument("--csv", type=Path, required=True, help="per_gene_lr_<drug>.csv from the ranking job.")
     parser.add_argument("--top-n", type=int, default=12)
     parser.add_argument("--kleborate-csv", type=Path, default=None,
@@ -101,7 +102,7 @@ def main() -> None:
     parser.add_argument("--out", type=Path, default=None,
                         help="Default: kp_<drug>/<drug>_esm_per_gene_ranking.png.")
     args = parser.parse_args()
-    drug_dir = vis / f"kp_{args.drug}"
+    drug_dir = vis / args.drug
     kleborate_csv = args.kleborate_csv or drug_dir / f"kleborate_determinant_lr_{args.drug}.csv"
     out = args.out or drug_dir / f"{args.drug}_esm_per_gene_ranking.png"
     plot_ranking(args.csv, out, drug=args.drug, top_n=args.top_n,

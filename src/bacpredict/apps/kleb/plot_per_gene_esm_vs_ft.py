@@ -21,6 +21,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from bacpredict.engine.config import visualisations_dir
+
 ALL_KEY = "__ALL_Kleborate__"
 ESM_COLOUR = "#7e3f9e"     # purple — ESM-C per-gene LR
 FT_COLOUR = "#2e2a7a"      # deep indigo — fine-tuned Bacformer per-gene LR
@@ -126,8 +128,7 @@ def plot_esm_vs_ft(csv_path: Path, out_path: Path, *, drug: str, top_n: int = 15
 
 def main() -> None:
     """CLI entry point."""
-    here = Path(__file__).resolve().parent
-    vis = here / "docs" / "visualisations"
+    vis = visualisations_dir("kp")
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--drug", type=str, required=True)
     parser.add_argument("--csv", type=Path, required=True, help="esm_vs_ft_per_gene_<drug>.csv.")
@@ -137,7 +138,7 @@ def main() -> None:
     parser.add_argument("--out", type=Path, default=None,
                         help="Default: kp_<drug>/<drug>_esm_vs_ft_per_gene.png.")
     args = parser.parse_args()
-    drug_dir = vis / f"kp_{args.drug}"
+    drug_dir = vis / args.drug
     kleborate_csv = args.kleborate_csv or drug_dir / f"kleborate_determinant_lr_{args.drug}.csv"
     out = args.out or drug_dir / f"{args.drug}_esm_vs_ft_per_gene.png"
     plot_esm_vs_ft(args.csv, out, drug=args.drug, top_n=args.top_n,

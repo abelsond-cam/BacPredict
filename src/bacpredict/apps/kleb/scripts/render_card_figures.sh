@@ -15,15 +15,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/../../.."        # repo root
 
-VIS_SUB="amr_per_abx"                    # figure-folder name under docs/visualisations
-VIS="src/bacpredict/apps/kleb/docs/visualisations/${VIS_SUB}"
+VIS="src/bacpredict/visualisations/kp"   # checked-in Kp figures (out of docs/), per-drug dirs are bare <drug>
 
 DRUGS=(cefotaxime ertapenem ampicillin-sulbactam ceftriaxone cefuroxime ciprofloxacin ceftazidime \
        gentamicin cefazolin imipenem meropenem trimethoprim-sulfamethoxazole tobramycin amikacin \
        levofloxacin piperacillin-tazobactam cefoxitin tetracycline aztreonam cefepime azithromycin colistin)
 
 for drug in "${DRUGS[@]}"; do
-    dir="${VIS}/kp_${drug}"
+    dir="${VIS}/${drug}"
     [ -f "${dir}/card_determinant_lr_${drug}_family.csv" ] || { echo "skip ${drug} (no determinant CSV)"; continue; }
 
     # #2 CARD cause histogram — both grains (mutation-aware: GyrA (mut)/(WT) bars + __ALL_CARD__ ceiling)

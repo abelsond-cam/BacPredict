@@ -148,10 +148,10 @@ embedding gives no gain.
 
 ## Source files
 
-- TB one-hot: `src/pangena_predict/docs/visualisations/tb_<drug>/tbprofiler_gene_lr_<drug>.csv`
-- TB ESM: `src/pangena_predict/docs/visualisations/tb_<drug>/per_gene_lr_<drug>.csv` (`lr_auroc_<drug>`)
+- TB one-hot: `src/bacpredict/visualisations/tb/<drug>/tbprofiler_gene_lr_<drug>.csv`
+- TB ESM: `src/bacpredict/visualisations/tb/<drug>/per_gene_lr_<drug>.csv` (`lr_auroc_<drug>`)
   — note rifampicin's folder uses the US stem `rifampin` in filenames.
-- Kp one-hot: `src/kleb_ast/docs/visualisations/amr_per_abx/kp_ciprofloxacin/card_determinant_lr_ciprofloxacin_family.csv`
+- Kp one-hot: `src/bacpredict/visualisations/kp/ciprofloxacin/card_determinant_lr_ciprofloxacin_family.csv`
 - Kp ESM screen: `.../card_esm_vs_ft_per_gene_ciprofloxacin_family.csv`
 - Kp baclm+ESM ladder (measured): job `5595657` →
   `…/train_kleb_ast/pangena_predict/coding_amr_lr/ladder_kp_5595657.json`

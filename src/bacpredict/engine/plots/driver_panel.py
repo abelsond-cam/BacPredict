@@ -227,10 +227,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Per-drug driver panel: one-hot vs baclm/ESM/Bacformer.")
     ap.add_argument("--species", choices=["tb", "kp"], default="tb")
     ap.add_argument("--csv-dir", type=Path, required=True,
-                    help="dir with <prefix>_<drug>/*_gene_lr_<drug>.csv driver lists (repo docs/visualisations).")
+                    help="dir with <drug>/*_gene_lr_<drug>.csv driver lists (repo visualisations/<organism>/).")
     ap.add_argument("--csv-prefix", default="tbprofiler_gene_lr", help="driver CSV filename stem (default TB).")
     ap.add_argument("--csv-suffix", default="", help="driver CSV filename suffix before .csv (Kp: _family).")
-    ap.add_argument("--folder-prefix", default="tb", help="per-drug folder prefix (tb_/kp_).")
     ap.add_argument("--drugs", nargs="*", default=None, help="drugs to run (default: all folders present).")
     ap.add_argument("--bacformer-npz", type=Path, default=None, help="optional Bacformer gene-token sweep NPZ.")
     ap.add_argument("--amr-sidecar-dir", type=Path, default=None,
@@ -254,16 +253,20 @@ def main() -> None:
             logger.warning("AMR sidecar dir %s not populated — falling back to Bakta gene_name locating", card_dir)
             card_dir = None
 
-    # Discover drugs from the folder layout unless an explicit list is given.
+    # Discover drugs unless an explicit list is given: any <csv-dir>/<drug>/ that holds the driver CSV
+    # (robust to the org-parented visualisations/<organism>/<drug>/ layout with no folder prefix).
     if args.drugs:
         drugs = args.drugs
     else:
-        drugs = sorted(p.name[len(args.folder_prefix) + 1:] for p in args.csv_dir.glob(f"{args.folder_prefix}_*") if p.is_dir())
+        drugs = sorted(
+            p.name for p in args.csv_dir.iterdir()
+            if p.is_dir() and (p / f"{args.csv_prefix}_{p.name}{args.csv_suffix}.csv").exists()
+        )
 
     args.output.mkdir(parents=True, exist_ok=True)
     summary = []
     for drug in drugs:
-        csv_path = args.csv_dir / f"{args.folder_prefix}_{drug}" / f"{args.csv_prefix}_{drug}{args.csv_suffix}.csv"
+        csv_path = args.csv_dir / drug / f"{args.csv_prefix}_{drug}{args.csv_suffix}.csv"
         if not csv_path.exists():
             logger.warning("[%s] no CSV at %s — skipping", drug, csv_path)
             continue

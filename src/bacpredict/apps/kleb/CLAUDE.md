@@ -45,7 +45,7 @@ Kleborate**, whose per-isolate determinant calls are already in `metadata_v2` (n
   Kleborate columns and scores it through `pangena_predict.kfold_probe.run_kfold_probe`, emitting one
   **bar per Kleborate column** (tagged `acquired_hgt` / `chromosomal_coding` / `chromosomal_mutation` /
   `porin_truncation` / `truncation_lof` — the HGT-vs-chromosomal axis) plus the combined
-  `__ALL_Kleborate__` **ceiling** row, to `docs/visualisations/kp_<drug>/kleborate_determinant_lr_<drug>.csv`.
+  `__ALL_Kleborate__` **ceiling** row, to `../../visualisations/kp/<drug>/kleborate_determinant_lr_<drug>.csv`.
   Light CPU (login node / small sbatch, no GPU). Inputs: `final/metadata_v2_all_samples_and_columns.tsv`
   + `processed/train_kleb_ast/binary_ast_with_split.csv`, joined on `Sample`. The `bac_kleborate.parsing`
   cell semantics are **vendored** (that package is in the sibling BacHGT repo, not a dependency here).

@@ -14,14 +14,14 @@ everywhere — most drugs AUROC > 0.95 — and the floor sits at **colistin 0.80
 (both chromosomal / efflux). TB rifampicin's deployed ~0.905 — *below a one-hot of a single SNP codon* — is
 the anomaly we explain.
 
-![TB AMR panel — fine-tuned held-out AUROC](docs/visualisations/tb_amr_panel_auroc.png)
+![TB AMR panel — fine-tuned held-out AUROC](../visualisations/tb/amr_panel_auroc.png)
 
 *The anomaly, plotted — the deployed fine-tuned Bacformer across the nine-drug TB panel. Even the best
 drug (rifampicin 0.905) sits below its single-SNP catalogue ceiling, and performance falls to
 **moxifloxacin 0.792 / ethionamide 0.774** — the chromosomal / rRNA / promoter drugs. Contrast the
 Klebsiella panel below, where the same model is strong almost everywhere.*
 
-![Kp AMR panel — held-out AUROC](docs/visualisations/kp_amr_panel_auroc.png)
+![Kp AMR panel — held-out AUROC](../visualisations/kp/amr_panel_auroc.png)
 
 *Klebsiella AMR is mostly HGT-driven — Bacformer's strong regime — and it predicts the whole panel well
 (from the `kleb_ast` eval). The few weak Kp drugs (colistin, azithromycin, cefepime, aztreonam) are
@@ -66,7 +66,7 @@ mean-pool **buries** that one vector among ~4,000 proteins before the classifier
 ESM-LR *screen* makes the point directly — across every gene in the genome, *rpoB*'s own ESM-C vector is by
 far the strongest single predictor of rifampicin resistance:
 
-![rifampicin ESM-LR screen](docs/visualisations/tb_rifampicin/rifampicin_esm_lr_screen_histogram.png)
+![rifampicin ESM-LR screen](../visualisations/tb/rifampicin/rifampicin_esm_lr_screen_histogram.png)
 
 So the whole problem reduces to: *how do we surface the causal gene's ESM-C vector to the classification
 head?* Two strategies:
@@ -112,7 +112,7 @@ and fit a plain logistic regression. This needs no attention head at all.
   k-fold × m-seed (concat beats ESM-rpoB-alone **15/15** runs; frozen Δ+0.0023, an honest eval-holdout FT
   k-fold Δ+0.0065).
 
-![ladder](docs/visualisations/tb_rifampicin/rifampicin_ladder_barplot.png)
+![ladder](../visualisations/tb/rifampicin/rifampicin_ladder_barplot.png)
 
 So **Strategy B solves the read-out** — inelegantly (a hand-injected gene vector, not a learned pool), but
 decisively: concat tops the ladder, above the fine-tuned mean (0.905), the attention head (0.868), and even
@@ -132,7 +132,7 @@ holds across the whole TB panel. Scoring every drug's concat against the **WHO c
 TB-Profiler (WHO v2) over all **36,684 genomes**, a one-hot of *all* that drug's catalogued mutations → LR —
 sorts the nine drugs into three clean regimes:
 
-![TB summary panel — ceiling vs FT vs concat](docs/visualisations/tb_amr_summary_panel.png)
+![TB summary panel — ceiling vs FT vs concat](../visualisations/tb/amr_summary_panel.png)
 
 *The whole §5 result at a glance (AUROC top, AUPRC bottom): per drug, the **WHO / TB-Profiler one-hot
 ceiling** (red), the **deployed fine-tuned Bacformer** (indigo), and **Bacformer FT + concat best
@@ -158,8 +158,8 @@ alone, with no curated mutation list. In each the single ESM gene carries most o
 Bacformer genome-mean augments it into the top bar. The two **ladders** below (isoniazid, pyrazinamide) show
 this directly — the purple ESM gene, then the concat bar level with or past the dotted WHO ceiling:
 
-![isoniazid ladder](docs/visualisations/tb_isoniazid/isoniazid_ladder_barplot.png)
-![pyrazinamide ladder](docs/visualisations/tb_pyrazinamide/pyrazinamide_ladder_barplot.png)
+![isoniazid ladder](../visualisations/tb/isoniazid/isoniazid_ladder_barplot.png)
+![pyrazinamide ladder](../visualisations/tb/pyrazinamide/pyrazinamide_ladder_barplot.png)
 
 **2 — Pyrazinamide *beats* the catalogue — the encouraging result.** concat **0.928 ≫ WHO one-hot 0.854
 (+0.074)**. pncA resistance is *hundreds of diverse loss-of-function mutations*; the one-hot can only encode
@@ -191,9 +191,9 @@ proxies (*rpoB* 0.744) and concat reaches just **0.772 — a full 0.098 below th
 gap in the panel. The contrast with isoniazid is the cleanest statement of the thesis: *the same promoter
 mechanism is recovered when a coding co-driver (katG) carries it, and lost when none exists.*
 
-![ethionamide WHO one-hot](docs/visualisations/tb_ethionamide/ethionamide_WHO_one_hot_histogram.png)
-![ethionamide ESM screen](docs/visualisations/tb_ethionamide/ethionamide_esm_lr_screen_histogram.png)
-![ethionamide ladder](docs/visualisations/tb_ethionamide/ethionamide_ladder_barplot.png)
+![ethionamide WHO one-hot](../visualisations/tb/ethionamide/ethionamide_WHO_one_hot_histogram.png)
+![ethionamide ESM screen](../visualisations/tb/ethionamide/ethionamide_esm_lr_screen_histogram.png)
+![ethionamide ladder](../visualisations/tb/ethionamide/ethionamide_ladder_barplot.png)
 
 **kanamycin — not recovered.** The dominant cause is **rrs (16S rRNA, 0.778)** plus the **eis promoter
 (0.620)** — both un-embeddable, and there is *no* embeddable causal gene at all. So the auto-discovered ESM
@@ -201,9 +201,9 @@ mechanism is recovered when a coding co-driver (katG) carries it, and lost when 
 over the fine-tuned mean (0.833): both sit a full **0.067 below the WHO ceiling (0.899)**. This is the clean
 un-embeddable case — the whole gap is rRNA + promoter, and the ESM screen has nothing causal to surface:
 
-![kanamycin WHO one-hot](docs/visualisations/tb_kanamycin/kanamycin_WHO_one_hot_histogram.png)
-![kanamycin ESM screen](docs/visualisations/tb_kanamycin/kanamycin_esm_lr_screen_histogram.png)
-![kanamycin ladder](docs/visualisations/tb_kanamycin/kanamycin_ladder_barplot.png)
+![kanamycin WHO one-hot](../visualisations/tb/kanamycin/kanamycin_WHO_one_hot_histogram.png)
+![kanamycin ESM screen](../visualisations/tb/kanamycin/kanamycin_esm_lr_screen_histogram.png)
+![kanamycin ladder](../visualisations/tb/kanamycin/kanamycin_ladder_barplot.png)
 
 **streptomycin — partly closed, then capped by the rRNA.** Unlike kanamycin, streptomycin *does* have an
 embeddable coding cause — **rpsL** (ribosomal protein S12; WHO one-hot 0.775) — alongside the un-embeddable
@@ -212,9 +212,9 @@ fine-tuned mean (0.834) by ~0.03. But the auto-pick still grabs a co-resistance 
 rather than rpsL, and the rRNA fraction stays out of reach — so it lands **0.045 below the ceiling (0.908)**,
 closer than kanamycin precisely because part of its mechanism is a protein:
 
-![streptomycin WHO one-hot](docs/visualisations/tb_streptomycin/streptomycin_WHO_one_hot_histogram.png)
-![streptomycin ESM screen](docs/visualisations/tb_streptomycin/streptomycin_esm_lr_screen_histogram.png)
-![streptomycin ladder](docs/visualisations/tb_streptomycin/streptomycin_ladder_barplot.png)
+![streptomycin WHO one-hot](../visualisations/tb/streptomycin/streptomycin_WHO_one_hot_histogram.png)
+![streptomycin ESM screen](../visualisations/tb/streptomycin/streptomycin_esm_lr_screen_histogram.png)
+![streptomycin ladder](../visualisations/tb/streptomycin/streptomycin_ladder_barplot.png)
 
 
 **isoniazid — partially recovered.** 87% of inhA-mediated resistance is a **promoter SNP** (`c.-777C>T` etc.;
@@ -225,7 +225,7 @@ coding change ESM reads at 0.914) plus a strong lineage / co-resistance backgrou
 carries, so Bacformer+ESM largely closes the inhA gap **indirectly** (its ladder is in §5; here the inhA
 promoter is the hatched stub beside the dominant *katG* coding bar):
 
-![isoniazid WHO one-hot](docs/visualisations/tb_isoniazid/isoniazid_WHO_one_hot_histogram.png)
+![isoniazid WHO one-hot](../visualisations/tb/isoniazid/isoniazid_WHO_one_hot_histogram.png)
 
 ---
 
@@ -266,7 +266,7 @@ enumerate. On the well-catalogued β-lactams and fluoroquinolones the Kleborate 
 by ~0.005–0.03 — the gap the **FT + concat** read-out is built to close (the same recipe that tops the TB
 ladder in §4–§5).
 
-![Kp summary panel — ceiling vs FT](docs/visualisations/kp_amr_summary_panel.png)
+![Kp summary panel — ceiling vs FT](../visualisations/kp/amr_summary_panel.png)
 
 *Kp panel (AUROC top, AUPRC bottom), sorted by fine-tuned AUROC: **Kleborate / CARD one-hot ceiling** (red)
 vs **deployed fine-tuned Bacformer** (indigo). Fine-tuning matches the ceiling across the HGT-driven majority
@@ -311,7 +311,7 @@ TB, how we recovered it, how far that gets us against the WHO catalogue, and the
 The detailed diagnostic phase (the routing experiments, the surprisal sub-studies, every sub-figure) is in
 [`docs/PROGRESS_REPORT.md`](docs/PROGRESS_REPORT.md); operational detail is in [`CLAUDE.md`](CLAUDE.md);
 the forward plan is `~/.claude/plans/i-d-like-to-start-crystalline-allen.md`. Per-drug figures live under
-[`docs/visualisations/tb_<drug>/`](docs/visualisations/).*
+[`../visualisations/tb/<drug>/`](../visualisations/).*
 
 ### Possible methods to append to an attention head
 

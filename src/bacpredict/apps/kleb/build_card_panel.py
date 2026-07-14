@@ -27,6 +27,8 @@ import numpy as np
 import pandas as pd
 from matplotlib.patches import Patch
 
+from bacpredict.engine.config import visualisations_dir
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -67,7 +69,7 @@ def assemble_table(summary_csv: Path, card_dir: Path, grain: str) -> pd.DataFram
     rows = []
     for _, s in summ.iterrows():
         drug = str(s["drug"])
-        ceil = _ceiling(card_dir / f"kp_{drug}" / f"card_determinant_lr_{drug}_{grain}.csv")
+        ceil = _ceiling(card_dir / drug / f"card_determinant_lr_{drug}_{grain}.csv")
         bac_auroc, bac_auprc = _best_bacformer(s)
         rows.append({
             "drug": drug,
@@ -127,12 +129,11 @@ def run(summary_csv: Path, card_dir: Path, out_dir: Path, grain: str) -> pd.Data
 
 def main() -> None:
     """CLI entry point."""
-    here = Path(__file__).resolve().parent
-    vis = here / "docs" / "visualisations"
+    vis = visualisations_dir("kp")
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--summary-csv", type=Path, default=vis / "reliable_amr" / "kp_reliable_concat_summary.csv")
-    p.add_argument("--card-dir", type=Path, default=vis / "amr_per_abx")
-    p.add_argument("--out-dir", type=Path, default=vis / "amr_per_abx")
+    p.add_argument("--card-dir", type=Path, default=vis)
+    p.add_argument("--out-dir", type=Path, default=vis)
     p.add_argument("--grain", type=str, default="family", choices=["family", "allele"],
                    help="Grain of the CARD ceiling to plot (Bacformer is grain-agnostic). Default family.")
     args = p.parse_args()

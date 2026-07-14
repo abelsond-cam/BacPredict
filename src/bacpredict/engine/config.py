@@ -69,6 +69,15 @@ def final_root(explicit: str | Path | None = None) -> Path:
     return resolve_data_root(explicit) / "final"
 
 
+def visualisations_dir(organism: str) -> Path:
+    """Repo figure dir ``<bacpredict>/visualisations/<organism>`` (checked-in figures, out of ``docs/``).
+
+    Independent of the cluster data root — this is source-tree-relative. Per-drug figures live at
+    ``visualisations/<organism>/<drug>/`` (organism is the parent; no ``tb_``/``kp_`` prefix).
+    """
+    return Path(__file__).resolve().parents[1] / "visualisations" / organism
+
+
 @dataclass
 class StorePaths:
     """Where one organism's per-sample stores live (mutable so the CLI can override fields)."""

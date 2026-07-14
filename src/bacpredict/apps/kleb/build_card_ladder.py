@@ -33,6 +33,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from bacpredict.apps.kleb.card_label import causal_genes_for_drug
+from bacpredict.engine.config import visualisations_dir
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -198,8 +199,7 @@ def run(*, drug: str, grain: str, summary_csv: Path, per_gene_csv: Path, card_cs
 
 def main() -> None:
     """CLI entry point."""
-    here = Path(__file__).resolve().parent
-    vis = here / "docs" / "visualisations"
+    vis = visualisations_dir("kp")
     rel = vis / "reliable_amr"
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--drug", type=str, required=True)
@@ -208,12 +208,12 @@ def main() -> None:
     p.add_argument("--per-gene-csv", type=Path, default=None,
                    help="Default: reliable_amr/per_gene/reliable_esm_vs_ft_per_gene_<drug>.csv.")
     p.add_argument("--card-csv", type=Path, default=None,
-                   help="Default: amr_per_abx/kp_<drug>/card_determinant_lr_<drug>_<grain>.csv (ceiling + top).")
-    p.add_argument("--out-dir", type=Path, default=None, help="Default: docs/visualisations/amr_per_abx/kp_<drug>.")
+                   help="Default: kp/<drug>/card_determinant_lr_<drug>_<grain>.csv (ceiling + top).")
+    p.add_argument("--out-dir", type=Path, default=None, help="Default: visualisations/kp/<drug>.")
     args = p.parse_args()
     per_gene = args.per_gene_csv or rel / "per_gene" / f"reliable_esm_vs_ft_per_gene_{args.drug}.csv"
-    card_csv = args.card_csv or vis / "amr_per_abx" / f"kp_{args.drug}" / f"card_determinant_lr_{args.drug}_{args.grain}.csv"
-    out_dir = args.out_dir or vis / "amr_per_abx" / f"kp_{args.drug}"
+    card_csv = args.card_csv or vis / args.drug / f"card_determinant_lr_{args.drug}_{args.grain}.csv"
+    out_dir = args.out_dir or vis / args.drug
     run(drug=args.drug, grain=args.grain, summary_csv=args.summary_csv, per_gene_csv=per_gene,
         card_csv=card_csv, out_dir=out_dir)
 

@@ -36,6 +36,7 @@ import pandas as pd
 from matplotlib.patches import Patch
 
 from bacpredict.apps.kleb.card_label import causal_genes_for_drug
+from bacpredict.engine.config import visualisations_dir
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -200,26 +201,25 @@ def run(*, drug: str, grain: str, reliable_csv: Path, bakta_csv: Path | None, ou
 
 def main() -> None:
     """CLI entry point."""
-    here = Path(__file__).resolve().parent
-    vis = here / "docs" / "visualisations"
+    vis = visualisations_dir("kp")
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--drug", type=str, required=True)
     p.add_argument("--grain", choices=["family", "allele"], default="family")
     p.add_argument("--reliable-csv", type=Path, default=None,
                    help="Default: reliable_amr/per_gene/reliable_esm_vs_ft_per_gene_<drug>.csv.")
     p.add_argument("--bakta-csv", type=Path, default=None,
-                   help="Default: amr_per_abx/kp_<drug>/esm_vs_ft_per_gene_<drug>.csv (non-AMR lineage genes).")
+                   help="Default: kp/<drug>/esm_vs_ft_per_gene_<drug>.csv (non-AMR lineage genes).")
     p.add_argument("--card-lr-csv", type=Path, default=None,
-                   help="Default: amr_per_abx/kp_<drug>/card_determinant_lr_<drug>_<grain>.csv (ceiling line).")
-    p.add_argument("--out-dir", type=Path, default=None, help="Default: docs/visualisations/amr_per_abx/kp_<drug>.")
+                   help="Default: kp/<drug>/card_determinant_lr_<drug>_<grain>.csv (ceiling line).")
+    p.add_argument("--out-dir", type=Path, default=None, help="Default: visualisations/kp/<drug>.")
     p.add_argument("--top-n-nonamr", type=int, default=15)
     p.add_argument("--top-n", type=int, default=18)
     args = p.parse_args()
 
     reliable = args.reliable_csv or vis / "reliable_amr" / "per_gene" / f"reliable_esm_vs_ft_per_gene_{args.drug}.csv"
-    bakta = args.bakta_csv or vis / "amr_per_abx" / f"kp_{args.drug}" / f"esm_vs_ft_per_gene_{args.drug}.csv"
-    card_lr = args.card_lr_csv or vis / "amr_per_abx" / f"kp_{args.drug}" / f"card_determinant_lr_{args.drug}_{args.grain}.csv"
-    out_dir = args.out_dir or vis / "amr_per_abx" / f"kp_{args.drug}"
+    bakta = args.bakta_csv or vis / args.drug / f"esm_vs_ft_per_gene_{args.drug}.csv"
+    card_lr = args.card_lr_csv or vis / args.drug / f"card_determinant_lr_{args.drug}_{args.grain}.csv"
+    out_dir = args.out_dir or vis / args.drug
     run(drug=args.drug, grain=args.grain, reliable_csv=reliable, bakta_csv=bakta, out_dir=out_dir,
         card_lr_csv=card_lr, top_n_nonamr=args.top_n_nonamr, top_n=args.top_n)
 

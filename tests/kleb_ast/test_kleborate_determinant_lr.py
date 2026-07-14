@@ -84,7 +84,7 @@ def test_run_end_to_end(tmp_path):
     out_dir = tmp_path / "out"
     run(meta_path, ast_path, out_dir, drugs=["ciprofloxacin"], seeds=(1, 2))
 
-    csv = out_dir / "kp_ciprofloxacin" / "kleborate_determinant_lr_ciprofloxacin.csv"
+    csv = out_dir / "ciprofloxacin" / "kleborate_determinant_lr_ciprofloxacin.csv"
     assert csv.exists()
     df = pd.read_csv(csv)
     assert ALL_KEY in set(df["gene_name"])                      # ceiling row present
@@ -99,4 +99,4 @@ def test_run_end_to_end(tmp_path):
     assert mut["category"] == "chromosomal_mutation" and bool(mut["embeddable"]) is False
 
     manifest = json.loads((out_dir / "kleborate_determinant_lr_manifest.json").read_text())
-    assert "kp_ciprofloxacin/kleborate_determinant_lr_ciprofloxacin.csv" in manifest["files"]
+    assert "ciprofloxacin/kleborate_determinant_lr_ciprofloxacin.csv" in manifest["files"]

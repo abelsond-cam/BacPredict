@@ -37,4 +37,4 @@ DRUGS=(cefotaxime ertapenem ampicillin-sulbactam ceftriaxone cefuroxime ciproflo
 
 echo "=== CARD determinant LR (one-hot ceiling) — ${#DRUGS[@]} drugs × {family,allele} ==="
 "$PY" -m bacpredict.apps.kleb.card_determinant_lr --drugs "${DRUGS[@]}" --grains family allele
-echo "done -> docs/visualisations/amr_per_abx/kp_<drug>/card_determinant_lr_<drug>_<grain>.csv"
+echo "done -> visualisations/kp/<drug>/card_determinant_lr_<drug>_<grain>.csv"

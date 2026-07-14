@@ -26,6 +26,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from bacpredict.engine.config import visualisations_dir
+
 ALL_KEY = "__ALL_Kleborate__"
 # Every bar is a CARD/Kleborate determinant → all one red. The HGT-vs-chromosomal split is carried by the
 # x-label colour (matching the per-gene esm-vs-ft plot): red = acquired/HGT (a distinct gene), blue =
@@ -148,14 +150,13 @@ def best_bacformer(summary_csv: Path | None, drug: str) -> tuple[float | None, s
 
 def main() -> None:
     """CLI entry point."""
-    here = Path(__file__).resolve().parent
-    vis = here / "docs" / "visualisations"
+    vis = visualisations_dir("kp")
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--drug", type=str, required=True, help="AST drug column / kp_<drug> dir name.")
+    parser.add_argument("--drug", type=str, required=True, help="AST drug column / <drug> dir name.")
     parser.add_argument("--csv", type=Path, default=None,
-                        help="Default: docs/visualisations/kp_<drug>/kleborate_determinant_lr_<drug>.csv.")
+                        help="Default: visualisations/kp/<drug>/kleborate_determinant_lr_<drug>.csv.")
     parser.add_argument("--out", type=Path, default=None,
-                        help="Default: docs/visualisations/kp_<drug>/<drug>_kleborate_cause_histogram.png.")
+                        help="Default: visualisations/kp/<drug>/<drug>_kleborate_cause_histogram.png.")
     parser.add_argument("--eval-summary", type=Path, default=vis / "eval" / "eval_summary.csv",
                         help="eval_summary.csv — fallback deployed Bacformer AUROC if no reliable summary.")
     parser.add_argument("--summary-csv", type=Path,
@@ -168,7 +169,7 @@ def main() -> None:
     parser.add_argument("--all-key", type=str, default=None,
                         help="Ceiling-row key override (default __ALL_<source-name>__, e.g. __ALL_CARD__).")
     args = parser.parse_args()
-    drug_dir = vis / f"kp_{args.drug}"
+    drug_dir = vis / args.drug
     csv = args.csv or drug_dir / f"kleborate_determinant_lr_{args.drug}.csv"
     out = args.out or drug_dir / f"{args.drug}_kleborate_cause_histogram.png"
     bac_auroc, bac_variant = best_bacformer(args.summary_csv, args.drug)

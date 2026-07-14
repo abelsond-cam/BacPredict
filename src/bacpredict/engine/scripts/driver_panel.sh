@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Per-drug DRIVER PANEL (one-hot | baclm | ESM | Bacformer) for every driving mutation of a species.
-# Reads the per-drug driver CSVs committed under docs/visualisations/<prefix>_<drug>/ and scores the
+# Reads the per-drug driver CSVs committed under visualisations/<organism>/<drug>/ and scores the
 # coding drivers' baclm + ESM (+ Bacformer, if --bacformer-npz points at a sweep) vs the drug label,
 # leaving non-coding / rRNA rows blank (one-hot only). CPU-only (NO --gres; --mem required).
 #
@@ -25,9 +25,9 @@ export MPLBACKEND=Agg
 AMR_ARG=""
 case "$TASK" in
   tb)   SPECIES=tb; FOLDER=tb; CSVPREFIX=tbprofiler_gene_lr; CSVSUFFIX=""
-        VIS="$HOME/BacPredict/src/bacpredict/docs/visualisations" ;;
+        VIS="$HOME/BacPredict/src/bacpredict/visualisations/tb" ;;
   kleb) SPECIES=kp; FOLDER=kp; CSVPREFIX=card_determinant_lr; CSVSUFFIX="_family"
-        VIS="$HOME/BacPredict/src/bacpredict/apps/kleb/docs/visualisations/amr_per_abx"
+        VIS="$HOME/BacPredict/src/bacpredict/visualisations/kp"
         # CARD sidecars locate acquired genes Bakta misses; falls back to Bakta names if unpopulated.
         AMR_ARG="--amr-sidecar-dir $S/processed/train_kleb_ast/amr_annotation" ;;
   *) echo "unknown TASK=$TASK (want tb|kleb)"; exit 1 ;;
@@ -35,10 +35,10 @@ esac
 OUT="$S/processed/train_${TASK}_ast/pangena_predict/driver_panel"
 NPZ_ARG=""; [ -n "${BACFORMER_NPZ:-}" ] && NPZ_ARG="--bacformer-npz ${BACFORMER_NPZ}"
 
-echo "=== driver panel: species=$SPECIES csv=$VIS/${FOLDER}_* npz=${BACFORMER_NPZ:-none} ==="
-"$PY" "$HOME/BacPredict/src/bacpredict/engine/plots/driver_panel.py" \
+echo "=== driver panel: species=$SPECIES csv=$VIS/<drug> npz=${BACFORMER_NPZ:-none} ==="
+"$PY" -m bacpredict.engine.plots.driver_panel \
   --species "$SPECIES" \
-  --csv-dir "$VIS" --folder-prefix "$FOLDER" --csv-prefix "$CSVPREFIX" --csv-suffix "$CSVSUFFIX" \
+  --csv-dir "$VIS" --csv-prefix "$CSVPREFIX" --csv-suffix "$CSVSUFFIX" \
   --n-folds 5 --seeds 1,2,3 --pool-workers "${SLURM_CPUS_PER_TASK:-8}" \
   $NPZ_ARG $AMR_ARG \
   --output "$OUT"

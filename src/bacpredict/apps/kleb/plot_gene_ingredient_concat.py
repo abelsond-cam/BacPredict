@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.patches import Patch
 
-from bacpredict.engine.config import KP
+from bacpredict.engine.config import KP, visualisations_dir
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -114,12 +114,11 @@ def run(concat_root: Path, out_dir: Path) -> None:
 
 def main() -> None:
     """CLI entry point."""
-    here = Path(__file__).resolve().parent
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--concat-root", type=Path, default=None,
                    help="Root holding per-drug gene_ingredient_concat CSVs (default: <data-root>/processed/"
                    "train_kleb_ast/pangena_predict/gene_ingredient_concat).")
-    p.add_argument("--out-dir", type=Path, default=here / "docs" / "visualisations" / "amr_per_abx" / "ingredient")
+    p.add_argument("--out-dir", type=Path, default=visualisations_dir("kp") / "ingredient")
     args = p.parse_args()
     concat_root = args.concat_root or KP.data_root() / "pangena_predict" / "gene_ingredient_concat"
     run(concat_root, args.out_dir)

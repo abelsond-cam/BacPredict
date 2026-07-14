@@ -28,7 +28,7 @@ Panaroo nodes green-lights PangenomeFormer; a negative on all three drugs says t
 
 | Decision | Choice |
 |---|---|
-| **Drugs (3 separate runs — all <3500 ⇒ all-in-one with a real in-run test)** | **imipenem** (~2,370; acquired carbapenemase KPC/OXA/NDM **+** porin loss ompK35/36 — mixed/HGT; kleb_ast AUROC 0.973), **tetracycline** (~1,945; acquired *tet* efflux — accessory/HGT, catalogue-gap, 0.914), **colistin** (~1,400; chromosomal mgrB/pmrB — hard SNP-localisation case, 0.807, heavy lineage confound). Counts ≈ 5× the per-drug evaluate holdout in `../kleb_ast/docs/visualisations/eval/eval_summary.csv`. |
+| **Drugs (3 separate runs — all <3500 ⇒ all-in-one with a real in-run test)** | **imipenem** (~2,370; acquired carbapenemase KPC/OXA/NDM **+** porin loss ompK35/36 — mixed/HGT; kleb_ast AUROC 0.973), **tetracycline** (~1,945; acquired *tet* efflux — accessory/HGT, catalogue-gap, 0.914), **colistin** (~1,400; chromosomal mgrB/pmrB — hard SNP-localisation case, 0.807, heavy lineage confound). Counts ≈ 5× the per-drug evaluate holdout in `../bacpredict/visualisations/kp/eval/eval_summary.csv`. |
 | **Embedding (Axis B)** | **B1 frozen ESM-C** (best single-residue localisation; already in the store, no GPU pass). Axis C (FT genome-mean concat) + B2 frozen-Bacformer are follow-ups once B1 works. |
 | **Engine** | **`groupyr`** (sklearn-compatible Sparse Group Lasso, JOSS 2021, copt-backed, 2–10× faster than `group_lasso`, built-in CV). `group_lasso` (Moe 2020) = documented fallback. Both = Simon et al. 2013 SGL (**A1**); **A2** group elastic-net = same core, relaxed L1/L2 group ratio. Confirm `copt` installs under uv at Step D. |
 | **Branch** | **None — stay on `dev`** (shared project space; pyseer + other work run here). |
@@ -130,4 +130,4 @@ big arrays on RDS `processed/gene_array_lasso/{panaroo,gene_arrays}/<drug>/`) ·
   [`../kleb_ast/prepare_esmc_embeddings_and_labels_to_finetune_amr.py`](../kleb_ast/prepare_esmc_embeddings_and_labels_to_finetune_amr.py).
 - Embeddings: SR-only extractor [`../tl/embed/preprocess_assemblies_to_protein_sequences.py`](../tl/embed/preprocess_assemblies_to_protein_sequences.py);
   `{Sample}_esm_embeddings.pt` store + `klebsiella_protein_sequences/{Sample}_protein_sequences.parquet`. Upstream
-  success we extend: kleb_ast Plot #1 / ladder / panel under `../kleb_ast/docs/visualisations/amr_per_abx/`.
+  success we extend: kleb_ast Plot #1 / ladder / panel under `../bacpredict/visualisations/kp/`.

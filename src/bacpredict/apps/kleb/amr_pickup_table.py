@@ -32,6 +32,7 @@ from bacpredict.apps.kleb.validate_amr_annotation import (
     default_sidecar_dir,
     load_sidecars,
 )
+from bacpredict.engine.config import visualisations_dir
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -196,13 +197,12 @@ def run(sidecar_dir: Path, metadata: Path, out_dir: Path) -> None:
 
 def main() -> None:
     """CLI entry point."""
-    here = Path(__file__).resolve().parent
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--sidecar-dir", type=Path, default=None,
                    help="default: <data-root>/processed/train_kleb_ast/amr_annotation")
     p.add_argument("--metadata", type=Path, default=None,
                    help="default: <data-root>/final/metadata_v2_all_samples_and_columns.tsv")
-    p.add_argument("--out-dir", type=Path, default=here / "docs" / "visualisations" / "amr_annotation")
+    p.add_argument("--out-dir", type=Path, default=visualisations_dir("kp") / "amr_annotation")
     args = p.parse_args()
     run(args.sidecar_dir or default_sidecar_dir(), args.metadata or default_metadata(), args.out_dir)
 

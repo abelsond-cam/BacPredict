@@ -21,6 +21,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from bacpredict.engine.config import visualisations_dir
 from bacpredict.engine.plots.labels import display_name
 
 # Family → colour (the user's scheme).
@@ -190,7 +191,6 @@ def plot_ladder(csv_path: Path, out_path: Path, *, sort_metric: str = "auroc",
 
 def main() -> None:
     """CLI entry point."""
-    here = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--drug", type=str, default="rifampin", help="AST drug column (for title / paths).")
     parser.add_argument("--csv", type=Path, default=None,
@@ -201,7 +201,7 @@ def main() -> None:
     parser.add_argument("--title", type=str, default=None)
     args = parser.parse_args()
     disp = display_name(args.drug)
-    drug_dir = here / "docs" / "visualisations" / f"tb_{disp}"  # each drug's data + figures live together
+    drug_dir = visualisations_dir("tb") / disp  # each drug's data + figures live together
     # rifampin keeps its rich hand-built deep-dive table; other drugs use the auto-assembled one.
     default_csv = "rif_ladder_table.csv" if args.drug == "rifampin" else f"{args.drug}_ladder_table.csv"
     csv = args.csv or drug_dir / default_csv

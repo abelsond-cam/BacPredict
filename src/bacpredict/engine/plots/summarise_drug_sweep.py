@@ -32,6 +32,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from bacpredict.engine.config import visualisations_dir
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -161,7 +163,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--sweep-dir", type=Path, required=True, help="Dir of concat_frozen_<drug>_*.json.")
     parser.add_argument("--out-dir", type=Path, default=here / "docs", help="Where to write tables.")
-    parser.add_argument("--plot", type=Path, default=here / "docs" / "visualisations" / "drug_sweep_concat.png")
+    parser.add_argument("--plot", type=Path, default=visualisations_dir("tb") / "drug_sweep_concat.png")
     args = parser.parse_args()
 
     df = collect_sweep(args.sweep_dir)

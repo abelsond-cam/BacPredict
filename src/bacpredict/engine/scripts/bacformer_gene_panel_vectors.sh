@@ -25,9 +25,9 @@ export TOKENIZERS_PARALLELISM=false PYTORCH_CUDA_ALLOC_CONF=expandable_segments:
 AMR_ARG=""
 case "$TASK" in
   tb)   DIR=train_tb_ast;   FOLDER=tb; CSVPREFIX=tbprofiler_gene_lr; CSVSUFFIX=""
-        VIS="$HOME/BacPredict/src/bacpredict/docs/visualisations" ;;
+        VIS="$HOME/BacPredict/src/bacpredict/visualisations/tb" ;;
   kleb) DIR=train_kleb_ast; FOLDER=kp; CSVPREFIX=card_determinant_lr; CSVSUFFIX="_family"
-        VIS="$HOME/BacPredict/src/bacpredict/apps/kleb/docs/visualisations/amr_per_abx"
+        VIS="$HOME/BacPredict/src/bacpredict/visualisations/kp"
         AMR_ARG="--amr-sidecar-dir $S/processed/train_kleb_ast/amr_annotation" ;;
   *) echo "unknown TASK=$TASK (want tb|kleb)"; exit 1 ;;
 esac
@@ -35,11 +35,11 @@ PROC="$S/processed/$DIR"
 OUT="$PROC/pangena_predict/driver_panel/bacformer_panel_tokens_${FOLDER}.npz"
 
 echo "=== bacformer gene-panel sweep: task=$TASK ==="
-"$PY" "$HOME/BacPredict/src/bacpredict/engine/concat/bacformer_gene_panel_vectors.py" \
+"$PY" -m bacpredict.engine.concat.bacformer_gene_panel_vectors \
   --ast-sheet-path "$PROC/binary_ast_with_split.csv" \
   --parquet-dir "$PROC/protein_sequences" \
   --esm-store-dir "$PROC/esm" \
-  --csv-dir "$VIS" --folder-prefix "$FOLDER" --csv-prefix "$CSVPREFIX" --csv-suffix "$CSVSUFFIX" \
+  --csv-dir "$VIS" --csv-prefix "$CSVPREFIX" --csv-suffix "$CSVSUFFIX" \
   $AMR_ARG \
   --pool-workers "${SLURM_CPUS_PER_TASK:-8}" \
   --output-npz "$OUT"

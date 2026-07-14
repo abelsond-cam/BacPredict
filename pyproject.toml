@@ -108,6 +108,10 @@ packages = [
   "src/gene_array_lasso",
   "src/dp_short_read",
 ]
+# Checked-in figures are source artifacts, not shippable package data — keep them out of the wheel.
+exclude = [
+  "**/visualisations/**",
+]
 
 [tool.uv.sources]
 bacformer = { git = "https://github.com/abelsond-cam/Bacformer" }

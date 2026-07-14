@@ -32,4 +32,4 @@ export PYTHONUNBUFFERED=1
 
 echo "=== CARD vs Kleborate vs Bakta pickup table ==="
 "$PY" -m bacpredict.apps.kleb.amr_pickup_table
-echo "pickup table finished -> src/bacpredict/apps/kleb/docs/visualisations/amr_annotation/card_vs_kleborate_vs_bakta_pickup.{csv,md}"
+echo "pickup table finished -> src/bacpredict/visualisations/kp/amr_annotation/card_vs_kleborate_vs_bakta_pickup.{csv,md}"

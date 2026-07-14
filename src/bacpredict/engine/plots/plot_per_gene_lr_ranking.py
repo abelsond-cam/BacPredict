@@ -22,6 +22,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.colors import to_rgba
 
+from bacpredict.engine.config import visualisations_dir
 from bacpredict.engine.plots.labels import display_name
 
 PICK_COLOUR = "#7e3f9e"   # purple — ESM single-gene (the family colour, consistent across plots)
@@ -96,20 +97,19 @@ def plot_ranking(csv_path: Path, out_path: Path, *, drug: str | None = None, top
 
 def main() -> None:
     """CLI entry point."""
-    here = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--drug", type=str, default="rifampin", help="AST drug column to rank by.")
     parser.add_argument("--csv", type=Path, default=None,
-                        help="per_gene_lr_<drug>.csv (default: docs/visualisations/tb_<drug>/per_gene_lr_<drug>.csv).")
+                        help="per_gene_lr_<drug>.csv (default: visualisations/tb/<drug>/per_gene_lr_<drug>.csv).")
     parser.add_argument("--top-n", type=int, default=10)
     parser.add_argument("--out", type=Path, default=None,
-                        help="Output PNG (default: docs/visualisations/tb_<drug>/<drug>_esm_lr_screen_histogram.png).")
+                        help="Output PNG (default: visualisations/tb/<drug>/<drug>_esm_lr_screen_histogram.png).")
     parser.add_argument("--who-onehot-csv", type=Path, default=None,
                         help="tbprofiler_gene_lr_<drug>.csv — draws its __ALL_WHO_one_hot__ AUROC as a red "
                              "reference line (default: in the same per-drug folder).")
     args = parser.parse_args()
     disp = display_name(args.drug)
-    drug_dir = here / "docs" / "visualisations" / f"tb_{disp}"  # each drug's data + figures live together
+    drug_dir = visualisations_dir("tb") / disp  # each drug's data + figures live together
     csv = args.csv or drug_dir / f"per_gene_lr_{args.drug}.csv"
     out = args.out or drug_dir / f"{disp}_esm_lr_screen_histogram.png"
     who_csv = args.who_onehot_csv or drug_dir / f"tbprofiler_gene_lr_{args.drug}.csv"

@@ -3,7 +3,7 @@
 #
 # Reads metadata_v2 (Kleborate determinant columns) + binary_ast_with_split.csv, joins on Sample, and
 # scores each drug's determinant one-hot through the shared k-fold harness — emitting per-mechanism bars
-# (HGT vs chromosomal) + the __ALL_Kleborate__ ceiling to docs/visualisations/kp_<drug>/.
+# (HGT vs chromosomal) + the __ALL_Kleborate__ ceiling to visualisations/kp/<drug>/.
 #
 # Light, CPU-only, no GPU — runs on the login node in a few minutes (one TSV + one CSV read, sklearn LR).
 # Watch the join-coverage log line per drug: if >50% of labelled samples don't match a metadata_v2 row,

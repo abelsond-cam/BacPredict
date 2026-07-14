@@ -36,7 +36,7 @@ from bacpredict.apps.kleb.kleborate_determinant_lr import (
 )
 from bacpredict.apps.kleb.validate_amr_annotation import default_metadata, default_sidecar_dir
 from bacpredict.engine.catalogue.base import score_onehot_frame
-from bacpredict.engine.config import KP
+from bacpredict.engine.config import KP, visualisations_dir
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -204,7 +204,7 @@ def score_drug(calls: pd.DataFrame, ast_sheet: Path, drug: str, *, grain: str,
 
 def run(calls_dir: Path, ast_sheet: Path, out_dir: Path, drugs: list[str], grains: list[str],
         metadata: Path, seeds: tuple[int, ...] = (1, 2, 3)) -> None:
-    """Score every (drug, grain) and write ``amr_per_abx/kp_<drug>/card_determinant_lr_<drug>_<grain>.csv``."""
+    """Score every (drug, grain) and write ``visualisations/kp/<drug>/card_determinant_lr_<drug>_<grain>.csv``."""
     calls = load_calls(calls_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     for drug in drugs:
@@ -212,7 +212,7 @@ def run(calls_dir: Path, ast_sheet: Path, out_dir: Path, drugs: list[str], grain
             df = score_drug(calls, ast_sheet, drug, grain=grain, seeds=seeds, metadata=metadata)
             if df is None:
                 continue
-            drug_dir = out_dir / f"kp_{drug}"
+            drug_dir = out_dir / drug
             drug_dir.mkdir(parents=True, exist_ok=True)
             df.to_csv(drug_dir / f"card_determinant_lr_{drug}_{grain}.csv", index=False)
             ceil = df[df["gene_name"] == ALL_KEY]
@@ -224,14 +224,13 @@ def run(calls_dir: Path, ast_sheet: Path, out_dir: Path, drugs: list[str], grain
 
 def main() -> None:
     """CLI entry point."""
-    here = Path(__file__).resolve().parent
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--calls-dir", type=Path, default=None,
                    help="Sidecar dir holding amr_calls_all.parquet (default: <data-root>/processed/"
                    "train_kleb_ast/amr_annotation; else crawls the sidecars).")
     p.add_argument("--ast-sheet", type=Path, default=None,
                    help="AST split sheet (default: <data-root>/processed/train_kleb_ast/binary_ast_with_split.csv).")
-    p.add_argument("--out-dir", type=Path, default=here / "docs" / "visualisations" / "amr_per_abx")
+    p.add_argument("--out-dir", type=Path, default=visualisations_dir("kp"))
     p.add_argument("--metadata", type=Path, default=None,
                    help="metadata_v2 TSV (default: <data-root>/final/...) — Kleborate mutation columns "
                    "for the chromosomal mut/WT split.")
