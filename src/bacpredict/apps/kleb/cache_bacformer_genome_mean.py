@@ -25,7 +25,7 @@ import pandas as pd
 import torch
 
 from bacpredict.engine.concat.bacformer_genome_vectors import forward_inputs, load_model
-from bacpredict.engine.config import KP, resolve_data_root
+from bacpredict.engine.config import KP
 from bacpredict.engine.embedding.generate_embeddings import bacformer_last_hidden_state
 from bacpredict.engine.gene_lr.snp_vs_esm_prediction import real_protein_indices
 
@@ -101,7 +101,7 @@ def main() -> None:
                         "default: <data-root>/processed/train_kleb_ast/binary_ast_with_split.csv.")
     parser.add_argument("--esm-store-dir", type=Path, default=None,
                         help="Dir of {sample}_esm_embeddings.pt "
-                        "(default: <data-root>/processed/klebsiella_esm_embeddings).")
+                        "(default: <data-root>/processed/train_kleb_ast/esm).")
     parser.add_argument("--output-npz", type=Path, default=None,
                         help="NPZ to write {sample_ids, mean_vectors} (the --bacformer-vectors contract); "
                         "default: <data-root>/processed/train_kleb_ast/bacformer_frozen_genome_mean.npz.")
@@ -109,7 +109,7 @@ def main() -> None:
     parser.add_argument("--max-samples", type=int, default=None, help="Cap the cohort (smoke; default: all).")
     args = parser.parse_args()
     ast_sheet_path = args.ast_sheet_path or KP.data_root() / "binary_ast_with_split.csv"
-    esm_store_dir = args.esm_store_dir or resolve_data_root() / "processed" / "klebsiella_esm_embeddings"
+    esm_store_dir = args.esm_store_dir or KP.data_root() / "esm"
     output_npz = args.output_npz or KP.data_root() / "bacformer_frozen_genome_mean.npz"
 
     sample_ids = load_sample_ids(ast_sheet_path)

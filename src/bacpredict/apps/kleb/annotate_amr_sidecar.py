@@ -242,7 +242,7 @@ def main() -> None:
     p.add_argument("--metadata", type=Path, default=None,
                    help="metadata_v2 TSV (default: <data-root>/final/metadata_v2_all_samples_and_columns.tsv).")
     p.add_argument("--protein-dir", type=Path, default=None,
-                   help="Protein-parquet dir (default: <data-root>/processed/klebsiella_protein_sequences).")
+                   help="Protein-parquet dir (default: <data-root>/processed/train_kleb_ast/protein_sequences).")
     p.add_argument("--amr-ref-dir", type=Path, default=DEFAULT_AMR_REF_DIR)
     p.add_argument("--out-dir", type=Path, default=None,
                    help="Sidecar output dir (default: <data-root>/processed/train_kleb_ast/amr_annotation).")
@@ -262,7 +262,7 @@ def main() -> None:
     args = p.parse_args()
     ast_sheet = args.ast_sheet or KP.data_root() / "binary_ast_with_split.csv"
     metadata = args.metadata or final_root() / "metadata_v2_all_samples_and_columns.tsv"
-    protein_dir = args.protein_dir or resolve_data_root() / "processed" / "klebsiella_protein_sequences"
+    protein_dir = args.protein_dir or KP.data_root() / "protein_sequences"
     out_dir = args.out_dir or KP.data_root() / "amr_annotation"
     run(
         ast_sheet=ast_sheet, metadata=metadata, protein_dir=protein_dir,

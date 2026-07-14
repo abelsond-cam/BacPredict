@@ -33,7 +33,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from bacpredict.engine.config import KP, resolve_data_root
+from bacpredict.engine.config import KP
 from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_one_gene_imputed, read_genome
 from bacpredict.engine.gene_lr.snp_vs_esm_prediction import resolve_clean_splits
 
@@ -180,10 +180,10 @@ def main() -> None:
     p.add_argument("--sidecar-dir", type=Path, default=None,
                    help="CARD AMR-call sidecar dir (default: <data-root>/processed/train_kleb_ast/amr_annotation).")
     p.add_argument("--esm-store-dir", type=Path, default=None,
-                   help="ESM embedding store (default: <data-root>/processed/klebsiella_esm_embeddings).")
+                   help="ESM embedding store (default: <data-root>/processed/train_kleb_ast/esm).")
     p.add_argument("--parquet-dir", type=Path, default=None,
                    help="Protein-sequence parquet store (default: <data-root>/processed/"
-                   "klebsiella_protein_sequences).")
+                   "train_kleb_ast/protein_sequences).")
     p.add_argument("--out-dir", type=Path, required=True)
     p.add_argument("--grain", choices=["family", "allele"], default="family")
     p.add_argument("--n-folds", type=int, default=5)
@@ -191,8 +191,8 @@ def main() -> None:
     args = p.parse_args()
     ast_sheet = args.ast_sheet_path or KP.data_root() / "binary_ast_with_split.csv"
     sidecar_dir = args.sidecar_dir or KP.data_root() / "amr_annotation"
-    esm_dir = args.esm_store_dir or resolve_data_root() / "processed" / "klebsiella_esm_embeddings"
-    parquet_dir = args.parquet_dir or resolve_data_root() / "processed" / "klebsiella_protein_sequences"
+    esm_dir = args.esm_store_dir or KP.data_root() / "esm"
+    parquet_dir = args.parquet_dir or KP.data_root() / "protein_sequences"
     run(
         ast_sheet=ast_sheet, drug=args.drug, sidecar_dir=sidecar_dir,
         esm_dir=esm_dir, parquet_dir=parquet_dir, out_dir=args.out_dir,

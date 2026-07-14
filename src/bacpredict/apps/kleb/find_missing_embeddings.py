@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from bacpredict.engine.config import final_root, resolve_data_root
+from bacpredict.engine.config import KP, final_root, resolve_data_root
 
 
 def _abs_path(value: str | float, root: Path) -> str | float:
@@ -69,7 +69,7 @@ def main() -> None:
                         help="Curated metadata TSV (default: <data-root>/final/"
                              "metadata_v2_all_samples_and_columns.tsv).")
     parser.add_argument("--embeddings-dir", type=Path, default=None,
-                        help="ESM embedding store (default: <data-root>/processed/klebsiella_esm_embeddings).")
+                        help="ESM embedding store (default: <data-root>/processed/train_kleb_ast/esm).")
     parser.add_argument("--out-csv", type=Path, default=None,
                         help="Output CSV of missing samples (default: <data-root>/processed/"
                              "missing_embeddings_kpsc.csv).")
@@ -79,7 +79,7 @@ def main() -> None:
     args = parser.parse_args()
 
     metadata_tsv = args.metadata_tsv or final_root() / "metadata_v2_all_samples_and_columns.tsv"
-    embeddings_dir = args.embeddings_dir or resolve_data_root() / "processed" / "klebsiella_esm_embeddings"
+    embeddings_dir = args.embeddings_dir or KP.data_root() / "esm"
     out_csv = args.out_csv or resolve_data_root() / "processed" / "missing_embeddings_kpsc.csv"
     data_mount_root = args.data_mount_root or resolve_data_root().parent
 

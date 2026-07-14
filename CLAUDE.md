@@ -207,12 +207,24 @@ ruff check src/
 
 ## Training data architecture
 
-Embedding files are large (~1 TB total across 84k samples) and are **never duplicated per experiment**. One canonical embedding store + small CSVs recording split assignments and labels.
+Embedding files are large and are **never duplicated per experiment**: an embedding store + small CSVs
+recording split assignments and labels.
 
-**1. Embedding store (read-only, shared across experiments):**
-```
-processed/klebsiella_esm_embeddings/{sample_accession}_esm_embeddings.pt
-```
+**1. Embedding stores (read-only, one `.pt` per sample).** There are **two distinct stores** — do not
+conflate them (this was the pre-2026-07 confusion):
+
+- **Per-task AST stores (Isambard, current).** The only ESM/baclm/Bacformer embeddings on Isambard.
+  One store per organism per stage, holding just that task's AST cohort:
+  ```
+  $BACPREDICT_DATA_ROOT/processed/train_{tb,kleb}_ast/{esm,baclm,bacformer,protein_sequences,intergenic}/{Sample}_<suffix>.pt
+  ```
+  Live counts: TB 38,257 · Kp 9,724 (see `src/bacpredict/docs/ISAMBARD_DATA.md`). This is what the
+  trainer + all AST engine/apps modules resolve to (`OrganismConfig.data_root()` = `<root>/processed/train_<task>_ast`).
+- **Flat whole-Klebsiella store (Cambridge/CSD3 only).** `processed/klebsiella_esm_embeddings/{Sample}_esm_embeddings.pt`
+  — the ~84k-genome *whole Klebsiella genomics* set (a superset that includes most Kp-AST samples).
+  **Consumed by `kleb_iso_source`, not the AST pipeline**, and it lives only on CSD3 — it is **not**
+  present on Isambard. Don't point AST work at it.
+
 Each `.pt` holds `prot_embeddings` (shape `[n_proteins, dim]`), `attention_mask`, contig indices. **No labels.**
 
 **2. Split CSV (canonical record of who-went-where):** each prepare script writes one CSV per experiment to RDS — these are **permanent**.

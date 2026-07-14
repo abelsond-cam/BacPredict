@@ -33,7 +33,7 @@ import pandas as pd
 import torch
 
 from bacpredict.engine.concat.bacformer_genome_vectors import forward_inputs, load_model
-from bacpredict.engine.config import KP, resolve_data_root
+from bacpredict.engine.config import KP
 from bacpredict.engine.embedding.generate_embeddings import bacformer_last_hidden_state
 from bacpredict.engine.gene_lr.locate_gene import flatten_proteins
 from bacpredict.engine.gene_lr.snp_vs_esm_prediction import real_protein_indices, resolve_clean_splits
@@ -178,9 +178,9 @@ def main() -> None:
                    help="default: <data-root>/processed/train_kleb_ast/binary_ast_with_split.csv.")
     p.add_argument("--drug", type=str, required=True)
     p.add_argument("--parquet-dir", type=Path, default=None,
-                   help="default: <data-root>/processed/klebsiella_protein_sequences.")
+                   help="default: <data-root>/processed/train_kleb_ast/protein_sequences.")
     p.add_argument("--esm-store-dir", type=Path, default=None,
-                   help="default: <data-root>/processed/klebsiella_esm_embeddings.")
+                   help="default: <data-root>/processed/train_kleb_ast/esm.")
     p.add_argument("--sidecar-dir", type=Path, default=None,
                    help="default: <data-root>/processed/train_kleb_ast/amr_annotation.")
     p.add_argument("--bacformer-checkpoint", type=Path, required=True,
@@ -191,8 +191,8 @@ def main() -> None:
     p.add_argument("--max-samples", type=int, default=None, help="Cap genomes (smoke).")
     args = p.parse_args()
     ast_sheet = args.ast_sheet_path or KP.data_root() / "binary_ast_with_split.csv"
-    parquet_dir = args.parquet_dir or resolve_data_root() / "processed" / "klebsiella_protein_sequences"
-    esm_store_dir = args.esm_store_dir or resolve_data_root() / "processed" / "klebsiella_esm_embeddings"
+    parquet_dir = args.parquet_dir or KP.data_root() / "protein_sequences"
+    esm_store_dir = args.esm_store_dir or KP.data_root() / "esm"
     sidecar_dir = args.sidecar_dir or KP.data_root() / "amr_annotation"
     run(
         ast_sheet=ast_sheet, drug=args.drug, parquet_dir=parquet_dir,

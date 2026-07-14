@@ -31,7 +31,7 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-from bacpredict.engine.config import final_root, resolve_data_root
+from bacpredict.engine.config import KP, final_root
 
 # Configure logging
 logging.basicConfig(
@@ -331,21 +331,21 @@ def main():
         "--embeddings-dir",
         type=Path,
         default=None,
-        help="Bacformer embeddings dir (default: <data-root>/processed/klebsiella_bacformer_embeddings)",
+        help="Bacformer embeddings dir (default: <data-root>/processed/train_kleb_ast/bacformer)",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
         default=None,
-        help="Output .h5ad dir (default: <data-root>/processed/klebsiella_anndata)",
+        help="Output .h5ad dir (default: <data-root>/processed/train_kleb_ast/anndata)",
     )
 
     args = parser.parse_args()
 
     # Setup paths (resolve lazily against the cluster data root)
     metadata_file = args.metadata or final_root() / "metadata_v2_all_samples_and_columns.tsv"
-    embeddings_dir = args.embeddings_dir or resolve_data_root() / "processed" / "klebsiella_bacformer_embeddings"
-    output_dir = args.output_dir or resolve_data_root() / "processed" / "klebsiella_anndata"
+    embeddings_dir = args.embeddings_dir or KP.data_root() / "bacformer"
+    output_dir = args.output_dir or KP.data_root() / "anndata"
 
     # Create output directory if needed
     output_dir.mkdir(parents=True, exist_ok=True)
