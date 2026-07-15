@@ -68,6 +68,9 @@ AMR_REF=${AMR_REF:-$HOME/BacHGT/src/bac_kleborate/refs/kleb_amr/inputs}
 META_ARGS=()
 [[ -n "$META" ]] && META_ARGS+=(--metadata "$META")
 [[ -n "$AMR_REF" ]] && META_ARGS+=(--amr-ref-dir "$AMR_REF")
+# The Isambard protein/embedding store was built keep_internal_stop=False; the sidecar flat_index must
+# match it or every sample is 'misaligned'. Default off here; set KEEP_INTERNAL_STOP=1 on CSD3.
+if [[ "${KEEP_INTERNAL_STOP:-0}" == "1" ]]; then META_ARGS+=(--keep-internal-stop); else META_ARGS+=(--no-keep-internal-stop); fi
 
 # minimap2 from the kleb pixi env (absolute path; no PATH/module fiddling). Prefer a
 # pre-resolved $MM2 (passed via --export) so array tasks don't each invoke pixi on a compute node.

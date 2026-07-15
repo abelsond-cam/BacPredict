@@ -118,17 +118,23 @@ def annotate_one(
     minimap2_bin: str,
     threads: int,
     skip_existing: bool,
+    keep_internal_stop: bool = True,
 ) -> tuple[str, str, int]:
     """Annotate one genome and write its sidecar. Returns ``(sample, status, n_calls)``.
 
     ``status`` is ``ok`` / ``exists`` / ``misaligned`` / ``no_calls`` / ``error: ...``.
+
+    ``keep_internal_stop`` MUST match how the ``{Sample}_protein_sequences.parquet`` (and hence the
+    embedding rows the ``flat_index`` addresses) was built, or the flat-order guard rejects the sample.
+    CSD3 parquets were built keep_internal_stop=True; the Isambard store uses False (pass
+    ``--no-keep-internal-stop``).
     """
     out_path = out_dir / f"{sample}_amr.parquet"
     if skip_existing and out_path.exists():
         return sample, "exists", 0
     try:
         out = extract_proteins_from_gff_fna(
-            sr_gff_file, sr_assembly_file, keep_internal_stop=True,
+            sr_gff_file, sr_assembly_file, keep_internal_stop=keep_internal_stop,
             annotate_amr=True, amr_ref_dir=amr_ref_dir,
             minimap2_bin=minimap2_bin, amr_threads=threads,
         )
@@ -189,6 +195,7 @@ def run(
     samples: list[str] | None,
     path_root: Path | None = None,
     dry_run: bool = False,
+    keep_internal_stop: bool = True,
 ) -> None:
     """Build the worklist, annotate each genome in parallel, write per-sample sidecars.
 
@@ -214,7 +221,8 @@ def run(
         return
 
     kw = {"protein_dir": protein_dir, "amr_ref_dir": amr_ref_dir, "out_dir": out_dir,
-          "minimap2_bin": minimap2_bin, "threads": threads, "skip_existing": skip_existing}
+          "minimap2_bin": minimap2_bin, "threads": threads, "skip_existing": skip_existing,
+          "keep_internal_stop": keep_internal_stop}
     tasks = [(r["Sample"], str(r["sr_assembly_file"]), str(r["sr_gff_file"]), kw)
              for _, r in work.iterrows()]
 
@@ -250,6 +258,9 @@ def main() -> None:
                    help="Root for resolving relative sr_assembly_file/sr_gff_file (the project_k root, "
                    "parent of david/; default: <data-root>'s parent).")
     p.add_argument("--minimap2-bin", type=str, default="minimap2")
+    p.add_argument("--keep-internal-stop", action=argparse.BooleanOptionalAction, default=True,
+                   help="Match how the protein parquet/embeddings were built (CSD3: True; "
+                   "Isambard store: pass --no-keep-internal-stop). Mismatch → all samples 'misaligned'.")
     p.add_argument("--threads", type=int, default=4, help="minimap2 threads per genome.")
     p.add_argument("--workers", type=int, default=16, help="parallel genome workers.")
     p.add_argument("--skip-existing", action="store_true")
@@ -269,7 +280,7 @@ def main() -> None:
         amr_ref_dir=args.amr_ref_dir, out_dir=out_dir, minimap2_bin=args.minimap2_bin,
         threads=args.threads, workers=args.workers, skip_existing=args.skip_existing,
         start=args.start, count=args.count, samples=args.samples, path_root=args.path_root,
-        dry_run=args.dry_run,
+        dry_run=args.dry_run, keep_internal_stop=args.keep_internal_stop,
     )
 
 
