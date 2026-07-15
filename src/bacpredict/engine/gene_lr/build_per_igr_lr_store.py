@@ -182,12 +182,13 @@ def collect_igr_matrices(
         for s in train_ids if str(s) in sample_gff
     ]
     if pool_workers > 1:
-        # joblib (not multiprocessing.Pool) for the sweep: this module then runs a joblib Parallel fit
-        # (fit_per_gene), and mixing an mp.Pool with a following loky Parallel corrupts the resource
-        # tracker on aarch64 (worker crash). One consistent backend for sweep + fit avoids it.
+        # THREADS, not processes, for the sweep. Each task calls torch.load(mmap=True), and forking
+        # torch into loky/mp worker processes segfaults on aarch64 (Grace). The sweep is I/O-bound
+        # (mmap reads + GFF parse), so the GIL is released during the native reads and threads give the
+        # overlap without forking torch. (The downstream numpy fit stays process-parallel via n_jobs.)
         from joblib import Parallel, delayed
 
-        results = Parallel(n_jobs=pool_workers)(
+        results = Parallel(n_jobs=pool_workers, prefer="threads")(
             delayed(_genome_igr_records)(sid, gff, pt, boundary_tol) for sid, gff, pt in tasks
         )
     else:
