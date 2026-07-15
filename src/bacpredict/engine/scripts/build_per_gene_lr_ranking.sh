@@ -19,9 +19,11 @@
 # its own random class-balanced 2000-genome subsample (--max-train-genomes; full-cohort fit is I/O-heavy,
 # population correction deferred) over the FULL cohort split, fits ~2k per-gene LRs, NO per-sample panels.
 #
-# Usage:  sbatch src/bacpredict/engine/scripts/build_per_gene_lr_ranking.sh                 # ESM (default)
-#         EMBEDDING_STORE=baclm sbatch --export=ALL,EMBEDDING_STORE=baclm \
-#             src/bacpredict/engine/scripts/build_per_gene_lr_ranking.sh                     # baclm
+# Usage:  sbatch src/bacpredict/engine/scripts/build_per_gene_lr_ranking.sh                 # TB ESM (default)
+#         EMBEDDING_STORE=baclm sbatch --export=ALL,EMBEDDING_STORE=baclm --array=0-9 \
+#             src/bacpredict/engine/scripts/build_per_gene_lr_ranking.sh                     # TB baclm
+#         EMBEDDING_STORE=baclm SPECIES=kp sbatch --export=ALL,EMBEDDING_STORE=baclm,SPECIES=kp --array=0-21 \
+#             src/bacpredict/engine/scripts/build_per_gene_lr_ranking.sh                     # Kp baclm (22 drugs)
 #
 #SBATCH --job-name=per_gene_lr_ranking
 #SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
@@ -53,17 +55,27 @@ export PYTHONUNBUFFERED=1
 # Pin BLAS to 1 thread/process so the joblib per-gene-LR workers don't oversubscribe.
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 
-# The 10 TB drugs with a fine-tuned stage_c checkpoint (one drug per array index).
-DRUGS=(rifampin isoniazid ethambutol pyrazinamide moxifloxacin levofloxacin streptomycin ethionamide rifabutin kanamycin)
+# SPECIES (env, default tb) selects tb|kp — same drug lists + store layout as build_per_igr_lr_ranking.sh.
+# One drug per array index: TB has 10 (array 0-9), Kp has 22 (array 0-21).
+SPECIES=${SPECIES:-tb}
+if [[ "$SPECIES" == "kp" ]]; then
+    TASK=kleb_ast
+    DRUGS=(cefotaxime ertapenem ampicillin-sulbactam ceftriaxone cefuroxime ciprofloxacin ceftazidime \
+           gentamicin cefazolin imipenem meropenem trimethoprim-sulfamethoxazole tobramycin amikacin \
+           levofloxacin piperacillin-tazobactam cefoxitin tetracycline aztreonam cefepime azithromycin colistin)
+else
+    TASK=tb_ast
+    DRUGS=(rifampin isoniazid ethambutol pyrazinamide moxifloxacin levofloxacin streptomycin ethionamide rifabutin kanamycin)
+fi
 DRUG=${DRUGS[$SLURM_ARRAY_TASK_ID]}
 if [[ -z "$DRUG" ]]; then
-    echo "ERROR: no drug for array index $SLURM_ARRAY_TASK_ID" >&2
+    echo "ERROR: no drug for array index $SLURM_ARRAY_TASK_ID (species=$SPECIES)" >&2
     exit 1
 fi
 
 STORE=${EMBEDDING_STORE:-esm}                    # esm (default) | baclm
-RDS=$D/processed/train_tb_ast
-SHEET=$RDS/binary_ast_with_split.csv            # the FULL cohort split (all 20 drug columns)
+RDS=$D/processed/train_${TASK}
+SHEET=$RDS/binary_ast_with_split.csv            # the FULL cohort split (all drug columns)
 PARQUET=$RDS/protein_sequences
 EMB=$RDS/$STORE                                  # $RDS/esm or $RDS/baclm — same flat parquet order
 # Per-drug + per-store subdir: the module also writes non-drug-specific files (build_summary,
@@ -72,12 +84,17 @@ EMB=$RDS/$STORE                                  # $RDS/esm or $RDS/baclm — sa
 OUT=$RDS/pangena_predict/per_gene_lr_ranking_$STORE/$DRUG
 
 echo "========================================================================"
-echo "Per-gene LR ranking — drug=$DRUG store=$STORE (array task $SLURM_ARRAY_TASK_ID)"
+echo "Per-gene LR ranking — species=$SPECIES drug=$DRUG store=$STORE (array task $SLURM_ARRAY_TASK_ID)"
 echo "Sheet:   $SHEET"
 echo "Emb:     $EMB"
 echo "Out dir: $OUT  (subsample 2000 train, min-prevalence 0.10, no panels)"
 echo "Job ID:  ${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 echo "========================================================================"
+# Idempotent: skip drugs whose ranking already exists (lets a full array backfill the panel).
+if [[ -f "$OUT/per_gene_lr_${DRUG}.csv" ]]; then
+    echo "Ranking already exists for $DRUG ($SPECIES $STORE) — skipping."
+    exit 0
+fi
 mkdir -p "$OUT"
 
 "$PY" -m bacpredict.engine.gene_lr.build_per_gene_lr_store \
