@@ -14,7 +14,7 @@ Why top-N and not "all > 0.6": the pervasive lineage signal means 600–1700 gen
 "all" would be ~26 GB/drug. Top-N (default 50, AUROC > 0.6 floor) is generous over the ~20 a multi-gene
 concat would use and keeps the store ~1 GB/drug.
 
-Reuses the pangena_predict forward helpers (``load_model`` / ``forward_inputs`` finetuned backbone,
+Reuses the engine forward helpers (``load_model`` / ``forward_inputs`` finetuned backbone,
 ``real_protein_indices``, ``flatten_proteins``, ``bacformer_last_hidden_state``). GPU; one drug per run.
 """
 

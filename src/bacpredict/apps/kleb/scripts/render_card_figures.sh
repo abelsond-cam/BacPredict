@@ -27,25 +27,25 @@ for drug in "${DRUGS[@]}"; do
 
     # #2 CARD cause histogram — both grains (mutation-aware: GyrA (mut)/(WT) bars + __ALL_CARD__ ceiling)
     for grain in family allele; do
-        uv run python -m kleb_ast.plot_kleborate_cause_histogram \
+        uv run python -m bacpredict.apps.kleb.plot_kleborate_cause_histogram \
             --drug "${drug}" --source-name CARD --all-key __ALL_CARD__ --grain "${grain}" \
             --csv "${dir}/card_determinant_lr_${drug}_${grain}.csv" \
             --out "${dir}/${drug}_card_cause_histogram_${grain}.png"
     done
 
     # #3 CARD ladder (family) — ceiling rung now picks the (mut) determinant
-    uv run python -m kleb_ast.build_card_ladder --drug "${drug}" --grain family
+    uv run python -m bacpredict.apps.kleb.build_card_ladder --drug "${drug}" --grain family
 
     # #1 per-gene ESM-vs-FT (family) — bars unchanged; CARD ceiling reference line refreshed
-    uv run python -m kleb_ast.per_gene_esm_vs_ft_card --drug "${drug}" --grain family || \
+    uv run python -m bacpredict.apps.kleb.per_gene_esm_vs_ft_card --drug "${drug}" --grain family || \
         echo "  (per-gene #1 skipped for ${drug})"
 done
 
 # #4 headline panel — CARD ceiling vs best Bacformer (family-grain ceiling)
-uv run python -m kleb_ast.build_card_panel
+uv run python -m bacpredict.apps.kleb.build_card_panel
 
 # #5 gene-ingredient concat summary (render from the committed per-drug CSVs under ${VIS}/ingredient)
-uv run python -m kleb_ast.plot_gene_ingredient_concat \
+uv run python -m bacpredict.apps.kleb.plot_gene_ingredient_concat \
     --concat-root "${VIS}/ingredient" --out-dir "${VIS}/ingredient"
 
 echo "=== render_card_figures done -> ${VIS} ==="
