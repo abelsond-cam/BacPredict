@@ -9,6 +9,16 @@
 > `kleb_ast/train_amr.py` + `prepare_esmc_…` are gone (merged into the engine). Both organisms train in
 > **bf16**. Many file/import references in the sections below predate the move — trust the engine layout.
 >
+> **Concat/cache consolidation (2026-07-15).** The per-gene ESM-vs-FT LR, the concat drivers, and the
+> Bacformer GPU token/mean cachers are now organism-agnostic engine modules under
+> `bacpredict.engine.{gene_lr,concat}` (`per_gene_esm_vs_ft`, `concat_gene_panel`, `reliable_concat`,
+> `gene_ingredient_concat`, `cache_bacformer_gene_embeddings`, `bacformer_token_cache`, `cache_genome_mean`).
+> The CARD/Kleborate half stays here: `per_gene_lr_from_annotation.card_amr_calls` supplies the sidecar
+> `calls_fn` seam, and the `apps/kleb/{reliable_ft_concat,gene_ingredient_concat,aggregate_reliable_concat,
+> cache_ft_amr_proteins,cache_frozen_amr_proteins,cache_bacformer_genome_mean}` modules are now **thin CLIs**
+> (same `-m` paths + args) that inject CARD + Kp data-root defaults into the engine drivers. The CARD/Kleborate
+> **plots** (`per_gene_esm_vs_ft_card`, `plot_*`, `build_card_*`) stay here (Phase 4).
+>
 > **Catalogue policy (REVISED — reverses the "Kleborate ceiling" section below).** **CARD is the DEFAULT
 > Kp determinant ceiling** (`card_determinant_lr`): it resolves to *specific mutations*, which Kleborate's
 > per-isolate calls cannot, and CARD is *also* the acquired-gene **locator** (`card_gene_locator` supplies
