@@ -131,7 +131,7 @@ def _flank_pair(
 
 
 def _genome_igr_records(
-    sid: str, gff_path: str, pt_path: str, *, boundary_tol: int
+    sid: str, gff_path: str, pt_path: str, boundary_tol: int = 3
 ) -> tuple[str, list[tuple[str, np.ndarray]]] | None:
     """One genome's ``[(igr_pair, embedding)]`` — the named, CDS-flanked baclm intergenic regions.
 
