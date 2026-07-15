@@ -71,7 +71,7 @@ def test_collect_igr_matrices_keeps_single_copy_and_counts_prevalence(monkeypatc
     assert set(read_ids) == set(ids)
     assert "A→B" in matrices and matrices["A→B"][1].shape == (3, DIM)  # single-copy in all 3
     assert "C→D" not in matrices  # its only occurrence was multi-copy -> never single-copy
-    prev = dict(zip(prevalence["igr_pair"], prevalence["prevalence"]))
+    prev = dict(zip(prevalence["igr_pair"], prevalence["prevalence"], strict=False))
     assert prev["A→B"] == pytest.approx(1.0)
 
 
@@ -84,7 +84,7 @@ def test_collect_igr_matrices_skips_missing_inputs(monkeypatch: pytest.MonkeyPat
     ids = ["G0", "G1", "G2"]
     matrices, prevalence, read_ids = bigr.collect_igr_matrices(ids, {s: f"{s}.gff" for s in ids}, Path("b"))
     assert set(read_ids) == {"G0", "G2"}
-    assert dict(zip(prevalence["igr_pair"], prevalence["prevalence"]))["A→B"] == pytest.approx(1.0)
+    assert dict(zip(prevalence["igr_pair"], prevalence["prevalence"], strict=False))["A→B"] == pytest.approx(1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -130,3 +130,44 @@ def test_run_ranks_separable_pair_top(tmp_path: Path, monkeypatch: pytest.Monkey
     ]
     top = table.iloc[0]
     assert top["igr_pair"] == "katg→furA" and top["left_gene"] == "katg" and top["right_gene"] == "furA"
+
+
+def test_run_presence_feature_scores_lineage_pair_and_applies_band(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Presence one-hot: a pair carried only by resistant genomes tops; a ubiquitous pair is band-excluded."""
+    n = 24
+    ids = [f"R{i}" for i in range(n // 2)] + [f"S{i}" for i in range(n // 2)]
+    label_map = {s: (1 if s.startswith("R") else 0) for s in ids}
+    r_ids = [s for s in ids if s.startswith("R")]
+
+    # clone→marker is single-copy ONLY in the resistant genomes → presence alone separates the label.
+    # ubiq→ubiq is present in every genome (prevalence 1.0) → dropped by the 0.99 ceiling. The embedding
+    # values are irrelevant here: presence mode overwrites them with a ones-column.
+    matrices = {
+        "clone→marker": (r_ids, np.random.default_rng(3).normal(size=(len(r_ids), DIM))),
+        "ubiq→ubiq": (ids, np.random.default_rng(4).normal(size=(n, DIM))),
+    }
+    prevalence = bigr.pd.DataFrame([
+        {"igr_pair": "clone→marker", "n_single_copy": len(r_ids), "prevalence": len(r_ids) / n},
+        {"igr_pair": "ubiq→ubiq", "n_single_copy": n, "prevalence": 1.0},
+    ])
+    monkeypatch.setattr(bigr, "collect_igr_matrices", lambda *a, **k: (matrices, prevalence, list(ids)))
+
+    split_csv = tmp_path / "split.csv"
+    split_csv.write_text("Sample,rifampin,train_val_eval\n" + "".join(f"{s},{label_map[s]},train\n" for s in ids))
+    input_csv = tmp_path / "input.csv"
+    input_csv.write_text("Sample,sr_gff_file\n" + "".join(f"{s},/gff/{s}.gff\n" for s in ids))
+
+    summary = bigr.run(
+        split_csv=split_csv, drug="rifampin", input_csv=input_csv, baclm_dir=tmp_path / "baclm",
+        out_dir=tmp_path / "out", min_prevalence=0.01, max_prevalence=0.99, auroc_filter=0.8,
+        n_folds=5, seed=1, n_jobs=1, feature="presence",
+    )
+
+    assert summary["feature"] == "presence"
+    assert summary["n_core_pairs"] == 1  # ubiq→ubiq (prevalence 1.0) excluded by the 0.99 ceiling
+    assert summary["best_igr_pair"] == "clone→marker" and summary["best_igr_auroc"] > 0.9
+    table = bigr.pd.read_csv(tmp_path / "out" / "per_igr_presence_lr_rifampin.csv")
+    assert "presence_lr_auroc_rifampin" in table.columns
+    assert not (tmp_path / "out" / "per_igr_lr_rifampin.csv").exists()  # presence writes its own file

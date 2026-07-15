@@ -17,6 +17,8 @@
 # Usage:  sbatch --array=0 src/bacpredict/engine/scripts/build_per_igr_lr_ranking.sh          # TB rifampin
 #         SPECIES=kp sbatch --export=ALL,SPECIES=kp --array=5 \
 #             src/bacpredict/engine/scripts/build_per_igr_lr_ranking.sh                        # Kp ciprofloxacin
+#         FEATURE=presence sbatch --export=ALL,FEATURE=presence --array=0 \
+#             src/bacpredict/engine/scripts/build_per_igr_lr_ranking.sh                        # TB rif presence one-hot
 #
 #SBATCH --job-name=per_igr_lr_ranking
 #SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
@@ -62,18 +64,33 @@ if [[ -z "$DRUG" ]]; then
     exit 1
 fi
 
-# Per-drug + per-species subdir (the module also writes non-drug-specific files, so concurrent array
-# tasks must not share an out-dir).
-OUT=$D/processed/train_${TASK}/pangena_predict/per_igr_lr_ranking/$DRUG
+# FEATURE (env, default embedding): embedding = the 960-d baclm non-coding ranking (best-IGR for the 3-way
+# concat); presence = the presence/absence one-hot control ("does merely HAVING this IGR adjacency predict
+# resistance?" — the lineage/synteny signal), fitted over the wider 1-99% prevalence band.
+FEATURE=${FEATURE:-embedding}
+if [[ "$FEATURE" == "presence" ]]; then
+    RANK_DIR=per_igr_presence_lr_ranking
+    TABLE=per_igr_presence_lr_${DRUG}.csv
+    FEATURE_ARGS=(--feature presence --min-prevalence 0.01 --max-prevalence 0.99)
+    BAND="presence one-hot, prevalence band (0.01, 0.99]"
+else
+    RANK_DIR=per_igr_lr_ranking
+    TABLE=per_igr_lr_${DRUG}.csv
+    FEATURE_ARGS=(--min-prevalence 0.10)
+    BAND="960-d embedding, min-prevalence 0.10"
+fi
+# Per-drug + per-species + per-feature subdir (the module also writes non-drug-specific files, so
+# concurrent array tasks / features must not share an out-dir).
+OUT=$D/processed/train_${TASK}/pangena_predict/$RANK_DIR/$DRUG
 
 echo "========================================================================"
-echo "Per-IGR LR ranking — species=$SPECIES drug=$DRUG (array task $SLURM_ARRAY_TASK_ID)"
-echo "Out dir: $OUT  (subsample 2000 train, min-prevalence 0.10, boundary-tol 3)"
+echo "Per-IGR LR ranking — species=$SPECIES drug=$DRUG feature=$FEATURE (array task $SLURM_ARRAY_TASK_ID)"
+echo "Out dir: $OUT  (subsample 2000 train, $BAND, boundary-tol 3)"
 echo "Job ID:  ${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 echo "========================================================================"
 # Idempotent: skip drugs whose ranking already exists (lets a full array backfill the panel).
-if [[ -f "$OUT/per_igr_lr_${DRUG}.csv" ]]; then
-    echo "Ranking already exists for $DRUG — skipping."
+if [[ -f "$OUT/$TABLE" ]]; then
+    echo "Ranking already exists for $DRUG ($FEATURE) — skipping."
     exit 0
 fi
 mkdir -p "$OUT"
@@ -82,7 +99,7 @@ mkdir -p "$OUT"
     --species "$SPECIES" \
     --drug "$DRUG" \
     --out-dir "$OUT" \
-    --min-prevalence 0.10 \
+    "${FEATURE_ARGS[@]}" \
     --auroc-filter 0.8 \
     --n-folds 5 \
     --seed 1 \
@@ -91,6 +108,6 @@ mkdir -p "$OUT"
     --boundary-tol 3 \
     --n-jobs "${SLURM_CPUS_PER_TASK:-32}"
 
-echo "=== top of the wide IGR ranking table (per_igr_lr_${DRUG}.csv) ==="
-head -n 12 "$OUT/per_igr_lr_${DRUG}.csv"
-echo "Per-IGR LR ranking ($SPECIES $DRUG) finished — table at $OUT/per_igr_lr_${DRUG}.csv"
+echo "=== top of the wide IGR ranking table ($TABLE) ==="
+head -n 12 "$OUT/$TABLE"
+echo "Per-IGR LR ranking ($SPECIES $DRUG $FEATURE) finished — table at $OUT/$TABLE"

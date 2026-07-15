@@ -225,15 +225,15 @@ def write_igr_drug_table(
     fitted: dict[str, dict],
     prevalence: pd.DataFrame,
     *,
-    drug: str,
+    auroc_col: str,
     filtered_pairs: set[str],
     out_path: Path,
 ) -> None:
-    """Write the wide IGR×drug ranking: ``igr_pair,left_gene,right_gene,prevalence,lr_auroc_<drug>,…``.
+    """Write the wide IGR×drug ranking: ``igr_pair,left_gene,right_gene,prevalence,<auroc_col>,…``.
 
-    One row per fitted pair, ranked by AUROC. The per-drug AUROC column is ``lr_auroc_<drug>`` so later
-    drugs merge onto ``igr_pair`` into one wide table. ``left_gene``/``right_gene`` split the ordered
-    pair back out for readability.
+    One row per fitted pair, ranked by AUROC. The per-drug AUROC column is ``<auroc_col>`` (``lr_auroc_<drug>``
+    for the embedding screen, ``presence_lr_auroc_<drug>`` for the presence/absence one-hot) so later drugs
+    merge onto ``igr_pair`` into one wide table. ``left_gene``/``right_gene`` split the ordered pair back out.
     """
     prev_by_pair = dict(zip(prevalence["igr_pair"], prevalence["prevalence"], strict=False))
     rows = []
@@ -244,7 +244,7 @@ def write_igr_drug_table(
             "left_gene": left,
             "right_gene": right,
             "prevalence": prev_by_pair.get(pair, float("nan")),
-            f"lr_auroc_{drug}": f["auroc"],
+            auroc_col: f["auroc"],
             "n_train": f["n_train"],
             "n_pos": f["n_pos"],
             "kept_filtered": pair in filtered_pairs,
@@ -270,8 +270,19 @@ def run(
     boundary_tol: int = 3,
     baclm_suffix: str = "_baclm_embeddings.pt",
     impute_absent_zero: bool = False,
+    feature: str = "embedding",
+    max_prevalence: float = 1.0,
 ) -> dict:
-    """Name IGRs, fit per-IGR LRs on a (sub)sample of train, write the wide IGR×drug ranking table."""
+    """Name IGRs, fit per-IGR LRs on a (sub)sample of train, write the wide IGR×drug ranking table.
+
+    ``feature="embedding"`` (default) fits each pair's 960-d baclm non-coding embedding. ``feature="presence"``
+    fits a **single presence/absence one-hot** instead (each carrier's row → the scalar ``1``, absent genomes
+    zero-imputed to ``0``): the AUROC of "does merely *having* this IGR adjacency predict resistance?" — the
+    lineage/synteny control that isolates phylogenetic distribution from cis-regulatory sequence signal.
+    Presence mode forces ``impute_absent_zero`` (the one-hot is meaningless without the 0 rows) and is
+    typically run over a wider ``min_prevalence``..``max_prevalence`` band (e.g. 0.01–0.99) than the
+    embedding screen's >10% core floor.
+    """
     label_map, train_ids, validate_ids, evaluate_ids = load_splits(split_csv, drug)
     fit_train_ids = subsample_balanced(train_ids, label_map, max_n=max_train_genomes, seed=sample_seed)
 
@@ -282,10 +293,20 @@ def run(
         fit_train_ids, sample_gff, baclm_dir,
         baclm_suffix=baclm_suffix, boundary_tol=boundary_tol,
     )
-    core_pairs = set(prevalence.loc[prevalence["prevalence"] > min_prevalence, "igr_pair"])
+    prev = prevalence["prevalence"]
+    core_pairs = set(prevalence.loc[(prev > min_prevalence) & (prev <= max_prevalence), "igr_pair"])
     core_matrices = {p: m for p, m in matrices.items() if p in core_pairs}
-    logger.info("Core IGR pairs (single-copy in >%.0f%% of %d train): %d of %d named pairs",
-                100 * min_prevalence, len(read_ids), len(core_matrices), len(matrices))
+    logger.info("IGR pairs in prevalence band (%.2f, %.2f] over %d train: %d of %d named pairs",
+                min_prevalence, max_prevalence, len(read_ids), len(core_matrices), len(matrices))
+
+    presence = feature == "presence"
+    if presence:
+        # Replace each pair's embedding block with a ones-column; zero-impute over the read universe then
+        # makes the full design a 1/0 presence indicator (carrier=1, absent=0) — the pure one-hot LR.
+        core_matrices = {p: (ids, np.ones((len(ids), 1), dtype=np.float32)) for p, (ids, _v) in core_matrices.items()}
+        impute_absent_zero = True
+    auroc_col = f"presence_lr_auroc_{drug}" if presence else f"lr_auroc_{drug}"
+    table_name = f"per_igr_presence_lr_{drug}.csv" if presence else f"per_igr_lr_{drug}.csv"
 
     fitted = fit_per_gene(
         core_matrices, label_map, n_folds=n_folds, seed=seed, n_jobs=n_jobs,
@@ -300,9 +321,9 @@ def run(
          "kept_filtered": p in filtered_pairs}
         for p, f in sorted(fitted.items(), key=lambda kv: kv[1]["auroc"], reverse=True)
     ]
-    pd.DataFrame(auroc_rows).to_csv(out_dir / "igr_lr_auroc.csv", index=False)
-    write_igr_drug_table(fitted, prevalence, drug=drug, filtered_pairs=filtered_pairs,
-                         out_path=out_dir / f"per_igr_lr_{drug}.csv")
+    pd.DataFrame(auroc_rows).to_csv(out_dir / ("igr_presence_lr_auroc.csv" if presence else "igr_lr_auroc.csv"), index=False)
+    write_igr_drug_table(fitted, prevalence, auroc_col=auroc_col, filtered_pairs=filtered_pairs,
+                         out_path=out_dir / table_name)
     prevalence.to_csv(out_dir / "igr_prevalence.csv", index=False)
 
     best = max(fitted.items(), key=lambda kv: kv[1]["auroc"], default=(None, None))
@@ -320,7 +341,9 @@ def run(
         "n_evaluate": len(evaluate_ids),
         "n_read_genomes": len(read_ids),
         "boundary_tol": boundary_tol,
+        "feature": feature,
         "min_prevalence": min_prevalence,
+        "max_prevalence": max_prevalence,
         "n_named_pairs": len(matrices),
         "n_core_pairs": len(core_matrices),
         "n_fitted_pairs": len(fitted),
@@ -347,8 +370,14 @@ def main() -> None:
     parser.add_argument("--input-csv", type=Path, help="Sample→GFF map (embedding_input.csv; default: species input_csv).")
     parser.add_argument("--baclm-dir", type=Path, help="Dir of *_baclm_embeddings.pt (default: species baclm_dir).")
     parser.add_argument("--out-dir", type=Path, required=True, help="Output base dir for the ranking tables.")
+    parser.add_argument("--feature", choices=["embedding", "presence"], default="embedding",
+                        help="embedding = fit the 960-d baclm non-coding embedding (default); presence = fit a "
+                             "single presence/absence one-hot (the lineage/synteny control).")
     parser.add_argument("--min-prevalence", type=float, default=0.95,
-                        help="Single-copy prevalence threshold over train (0.95 = core; lower to include accessory pairs).")
+                        help="Single-copy prevalence floor over train (0.95 = core; lower to include accessory pairs).")
+    parser.add_argument("--max-prevalence", type=float, default=1.0,
+                        help="Single-copy prevalence ceiling over train (default 1.0; set e.g. 0.99 for the "
+                             "presence one-hot to drop near-ubiquitous, uninformative pairs).")
     parser.add_argument("--auroc-filter", type=float, default=0.8,
                         help="Mark pairs with out-of-fold train AUROC above this as kept_filtered (default 0.8).")
     parser.add_argument("--n-folds", type=int, default=5, help="Out-of-fold cross-fitting folds within train.")
@@ -386,6 +415,8 @@ def main() -> None:
         boundary_tol=args.boundary_tol,
         baclm_suffix=paths.baclm_suffix,
         impute_absent_zero=args.impute_absent_zero,
+        feature=args.feature,
+        max_prevalence=args.max_prevalence,
     )
 
 
