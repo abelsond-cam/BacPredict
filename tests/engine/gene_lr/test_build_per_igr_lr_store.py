@@ -57,7 +57,7 @@ def test_collect_igr_matrices_keeps_single_copy_and_counts_prevalence(monkeypatc
     """A pair present once per genome is collected; a multi-copy occurrence is dropped for that genome."""
     rng = np.random.default_rng(0)
 
-    def fake_records(sid, gff, pt, *, boundary_tol):
+    def fake_records(sid, gff, pt, boundary_tol=3):
         if sid == "G0":  # A→B single-copy; C→D appears twice (multi-copy -> dropped)
             return sid, [("A→B", rng.normal(size=DIM)), ("C→D", rng.normal(size=DIM)), ("C→D", rng.normal(size=DIM))]
         return sid, [("A→B", rng.normal(size=DIM))]
@@ -77,7 +77,7 @@ def test_collect_igr_matrices_keeps_single_copy_and_counts_prevalence(monkeypatc
 
 def test_collect_igr_matrices_skips_missing_inputs(monkeypatch: pytest.MonkeyPatch) -> None:
     """Genomes whose GFF/.pt is missing (reader returns None) are skipped, not counted as read."""
-    def fake_records(sid, gff, pt, *, boundary_tol):
+    def fake_records(sid, gff, pt, boundary_tol=3):
         return None if sid == "G1" else (sid, [("A→B", np.ones(DIM))])
 
     monkeypatch.setattr(bigr, "_genome_igr_records", fake_records)
