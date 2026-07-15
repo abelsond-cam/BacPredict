@@ -165,7 +165,6 @@ def collect_igr_matrices(
     *,
     baclm_suffix: str = "_baclm_embeddings.pt",
     boundary_tol: int = 3,
-    pool_workers: int = 1,
 ) -> tuple[dict[str, tuple[list[str], np.ndarray]], pd.DataFrame, list[str]]:
     """One GFF+``.pt`` sweep → per-IGR-pair single-copy design matrices + prevalence + read universe.
 
@@ -181,18 +180,12 @@ def collect_igr_matrices(
         (str(s), sample_gff.get(str(s), ""), str(Path(baclm_dir) / f"{s}{baclm_suffix}"))
         for s in train_ids if str(s) in sample_gff
     ]
-    if pool_workers > 1:
-        # THREADS, not processes, for the sweep. Each task calls torch.load(mmap=True), and forking
-        # torch into loky/mp worker processes segfaults on aarch64 (Grace). The sweep is I/O-bound
-        # (mmap reads + GFF parse), so the GIL is released during the native reads and threads give the
-        # overlap without forking torch. (The downstream numpy fit stays process-parallel via n_jobs.)
-        from joblib import Parallel, delayed
-
-        results = Parallel(n_jobs=pool_workers, prefer="threads")(
-            delayed(_genome_igr_records)(sid, gff, pt, boundary_tol) for sid, gff, pt in tasks
-        )
-    else:
-        results = [_genome_igr_records(sid, gff, pt, boundary_tol) for sid, gff, pt in tasks]
+    # Serial sweep, deliberately (mirrors build_per_gene_lr_store.assemble_gene_matrices). Each task
+    # calls torch.load(mmap=True); parallelising the sweep with either mp.Pool or a joblib thread/loky
+    # backend leaves torch/OpenMP multi-threaded in the main process, and the subsequent fork for the
+    # process-parallel fit (fit_per_gene, n_jobs) then segfaults on aarch64 (Grace). The reads are fast
+    # and I/O-bound, so serial here + a process-parallel fit is both safe and quick.
+    results = [_genome_igr_records(sid, gff, pt, boundary_tol) for sid, gff, pt in tasks]
 
     ids_by_pair: dict[str, list[str]] = {}
     vecs_by_pair: dict[str, list[np.ndarray]] = {}
@@ -276,7 +269,6 @@ def run(
     sample_seed: int = 1,
     boundary_tol: int = 3,
     baclm_suffix: str = "_baclm_embeddings.pt",
-    pool_workers: int = 1,
     impute_absent_zero: bool = False,
 ) -> dict:
     """Name IGRs, fit per-IGR LRs on a (sub)sample of train, write the wide IGR×drug ranking table."""
@@ -288,7 +280,7 @@ def run(
 
     matrices, prevalence, read_ids = collect_igr_matrices(
         fit_train_ids, sample_gff, baclm_dir,
-        baclm_suffix=baclm_suffix, boundary_tol=boundary_tol, pool_workers=pool_workers,
+        baclm_suffix=baclm_suffix, boundary_tol=boundary_tol,
     )
     core_pairs = set(prevalence.loc[prevalence["prevalence"] > min_prevalence, "igr_pair"])
     core_matrices = {p: m for p, m in matrices.items() if p in core_pairs}
@@ -362,7 +354,6 @@ def main() -> None:
     parser.add_argument("--n-folds", type=int, default=5, help="Out-of-fold cross-fitting folds within train.")
     parser.add_argument("--seed", type=int, default=1, help="Fold-assignment seed.")
     parser.add_argument("--n-jobs", type=int, default=-1, help="Worker processes for the per-IGR fits (-1 = all cores).")
-    parser.add_argument("--pool-workers", type=int, default=1, help="Worker processes for the GFF+.pt read sweep.")
     parser.add_argument("--max-train-genomes", type=int, default=None,
                         help="Fit on a random, class-balanced subsample of this many train genomes (default: all).")
     parser.add_argument("--sample-seed", type=int, default=1, help="Seed for the train subsample (default 1).")
@@ -394,7 +385,6 @@ def main() -> None:
         sample_seed=args.sample_seed,
         boundary_tol=args.boundary_tol,
         baclm_suffix=paths.baclm_suffix,
-        pool_workers=args.pool_workers,
         impute_absent_zero=args.impute_absent_zero,
     )
 

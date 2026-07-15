@@ -31,8 +31,9 @@
 #SBATCH --mem=128G
 #SBATCH --time=24:00:00
 #SBATCH --open-mode=append
-# CPU-only (GFF parse + sklearn LRs over precomputed baclm vectors). The GFF+.pt read sweep is the cost;
-# use --pool-workers for it. 24 h is a generous ceiling (never under-call walltime).
+# CPU-only (GFF parse + sklearn LRs over precomputed baclm vectors). The GFF+.pt read sweep is serial
+# (torch.load can't be forked on aarch64 before the process-parallel fit); the per-IGR fits fan out over
+# --n-jobs. 24 h is a generous ceiling (never under-call walltime).
 
 set -uo pipefail
 # Data root + env — cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
@@ -88,7 +89,6 @@ mkdir -p "$OUT"
     --max-train-genomes 2000 \
     --sample-seed 1 \
     --boundary-tol 3 \
-    --pool-workers "${SLURM_CPUS_PER_TASK:-32}" \
     --n-jobs "${SLURM_CPUS_PER_TASK:-32}"
 
 echo "=== top of the wide IGR ranking table (per_igr_lr_${DRUG}.csv) ==="
