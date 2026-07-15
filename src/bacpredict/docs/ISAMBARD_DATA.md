@@ -58,9 +58,9 @@ Both organisms have the identical shape. File counts (one `.pt`/`.parquet` per s
 |---|---|---|---|
 | `esm/` | 38,257 | 9,724 | `{Sample}_esm_embeddings.pt` (~15.6 MB each; TB esm ≈ 596 GB) |
 | `baclm/` | 38,257 | 9,724 | `{Sample}_baclm_embeddings.pt` |
-| `bacformer/` | 38,257 | 9,724 | **TODO (confirm)** filename |
+| `bacformer/` | 38,257 | 9,724 | `{Sample}_bacformer_embeddings.pt` |
 | `protein_sequences/` | 38,257 | 9,724 | `{Sample}_protein_sequences.parquet` |
-| `intergenic/` | 38,257 | 9,724 | **TODO (confirm)** filename |
+| `intergenic/` | 38,257 | 9,724 | `{Sample}_intergenic.parquet` |
 
 Top-level files in each store:
 - `binary_ast.csv`, `binary_ast_with_split.csv` (the split CSV the trainer reads),
