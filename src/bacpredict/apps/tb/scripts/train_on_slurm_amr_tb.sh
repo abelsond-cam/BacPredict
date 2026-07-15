@@ -33,7 +33,13 @@ species=mycobacterium_tuberculosis
 drug=rifampin  # TB binary_ast.csv uses US spelling (rifampin, not rifampicin)
 warmup_proportion=0.1
 lr=0.00015
-eval_steps=250
+# TB's AST cohort is ~10x Kp's, so a step-based early-stopping patience buys ~10x fewer
+# epochs than the same setting does for Kp. At ~2,850 steps/epoch, eval every 1000 steps
+# (~2.8 evals/epoch) with patience 45 gives TB a ~15-epoch no-improvement window (matches
+# root §0.2 "early-stopping ~15 epochs"), vs the ~2.5 epochs the old 250/30 gave. GH200 +
+# 24h wall covers it; checkpoints save each eval so a wall-hit run can --resume-from-checkpoint.
+eval_steps=${EVAL_STEPS:-1000}
+patience=${PATIENCE:-45}
 model_name_or_path="macwiatrak/bacformer-large-masked-complete-genomes"
 
 # Force Python unbuffered output for real-time logging
@@ -65,7 +71,7 @@ embeddings_dir="$D/processed/train_tb_ast/esm"
 --batch-size 1 \
 --eval-steps $eval_steps \
 --max-steps 100000 \
---early-stopping-patience 30 \
+--early-stopping-patience $patience \
 --n-folds $N_FOLDS \
 --fold $FOLD \
 --seed $SEED \
