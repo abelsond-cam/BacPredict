@@ -34,16 +34,21 @@ import numpy as np
 import pandas as pd
 
 from bacpredict.engine.config import KP
-from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_one_gene_imputed, read_genome
+from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_one_gene_imputed
+from bacpredict.engine.gene_lr.reliable_gene_vectors import (
+    MIN_CARRIERS,
+    GeneCall,
+    collect_reliable_gene_vectors,
+)
 from bacpredict.engine.gene_lr.snp_vs_esm_prediction import resolve_clean_splits
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 _NORM = re.compile(r"[^a-z0-9]")
-# A gene-family needs at least this many reliable single-copy carriers in the eval holdout to be scored
-# (below this the per-gene AUROC is too noisy to compare).
-MIN_CARRIERS = 8
+# MIN_CARRIERS moved to the generic engine collector (reliable_gene_vectors); re-exported here so existing
+# callers (reliable_ft_concat, gene_ingredient_concat) keep importing it from this module unchanged.
+__all__ = ["MIN_CARRIERS", "card_amr_calls", "collect_reliable_amr", "run", "main"]
 
 
 def _norm(tok) -> str:
@@ -60,53 +65,54 @@ def _bakta_matches_family(bakta_gene_name, amr_gene_family: str, amr_allele: str
     return bool(fam) and (fam in g or g in fam or g in allele)
 
 
-def collect_reliable_amr(
-    eval_ids: list[str], sidecar_dir: Path, esm_dir: Path, parquet_dir: Path, *, grain: str
-) -> tuple[list[str], dict[str, dict]]:
-    """One pass over eval genomes → per AMR gene-label, its single-copy carriers + ESM vectors + Bakta flag.
+def card_amr_calls(sidecar_dir: Path, *, grain: str):
+    """CARD-sidecar ``calls_fn`` for :func:`...engine.gene_lr.reliable_gene_vectors.collect_reliable_gene_vectors`.
 
-    Returns ``(read_ids, by_label)`` where ``read_ids`` is the genomes successfully read (the zero-impute
-    universe) and ``by_label[label] = {"source", "ids", "vecs", "bakta_ids"}`` — carrier ids, their ESM-C
-    vectors (``emb[flat_index]``), and the subset whose Bakta name matches the label.
+    The Kp/CARD-specific half of the old ``collect_reliable_amr``: returns a
+    ``calls_fn(sample_id, n_real)`` that reads ``{sample}_amr.parquet``, keeps acquired/chromosomal calls
+    whose ``flat_index`` is in range, applies the single-copy-per-label rule (mirrors the Bakta per-gene
+    rule), and yields one :class:`GeneCall` per surviving call — ``tag_match`` set when Bakta's gene name
+    also names the CARD family (the carrier the old Bakta-keyed analysis would have found).
     """
     label_col = "amr_gene_family" if grain == "family" else "amr_allele"
-    by_label: dict[str, dict] = {}
-    read_ids: list[str] = []
-    n_skip_read = 0
-    for k, sid in enumerate(eval_ids, 1):
-        read = read_genome(sid, esm_dir, parquet_dir)
-        if read is None:
-            n_skip_read += 1
-            continue
-        read_ids.append(sid)
-        _gene_names, emb = read
-        n_real = emb.shape[0]
+
+    def calls_fn(sid: str, n_real: int):
         side = sidecar_dir / f"{sid}_amr.parquet"
         if not side.exists():
-            continue
+            return
         calls = pd.read_parquet(side)
         calls = calls[calls["amr_source"].isin(["acquired", "chromosomal"])]
         calls = calls[(calls["flat_index"] >= 0) & (calls["flat_index"] < n_real)]
         if len(calls) == 0:
-            continue
-        # single-copy occurrence of a label within this genome (mirrors the Bakta per-gene rule)
-        counts = Counter(str(v) for v in calls[label_col].dropna())
+            return
+        counts = Counter(str(v) for v in calls[label_col].dropna())  # single-copy occurrence within genome
         for _, r in calls.iterrows():
             label = str(r[label_col]) if not pd.isna(r[label_col]) else None
             if label is None or counts[label] != 1:
                 continue
-            fi = int(r["flat_index"])
-            ent = by_label.setdefault(label, {"source": r["amr_source"], "ids": [], "vecs": [],
-                                              "bakta_ids": set()})
-            ent["ids"].append(sid)
-            ent["vecs"].append(emb[fi])
-            if _bakta_matches_family(r.get("bakta_gene_name"), str(r.get("amr_gene_family")),
-                                     str(r.get("amr_allele"))):
-                ent["bakta_ids"].add(sid)
-        if k % 300 == 0:
-            logger.info("  reliable AMR extract: %d/%d eval genomes", k, len(eval_ids))
-    if n_skip_read:
-        logger.warning("reliable AMR extract: skipped %d genomes (unread/misaligned)", n_skip_read)
+            tag = _bakta_matches_family(
+                r.get("bakta_gene_name"), str(r.get("amr_gene_family")), str(r.get("amr_allele"))
+            )
+            yield GeneCall(label=label, flat_index=int(r["flat_index"]), source=r["amr_source"], tag_match=tag)
+
+    return calls_fn
+
+
+def collect_reliable_amr(
+    eval_ids: list[str], sidecar_dir: Path, esm_dir: Path, parquet_dir: Path, *, grain: str
+) -> tuple[list[str], dict[str, dict]]:
+    """CARD-specific wrapper over the generic engine collector (back-compat; unchanged return contract).
+
+    Threads the CARD sidecar reader (:func:`card_amr_calls`) into
+    :func:`...engine.gene_lr.reliable_gene_vectors.collect_reliable_gene_vectors` and renames the generic
+    ``tag_ids`` key back to ``bakta_ids`` so existing consumers (``reliable_ft_concat``,
+    ``gene_ingredient_concat``, :func:`run`) see the identical ``by_label`` shape they did before the cut.
+    """
+    read_ids, by_label = collect_reliable_gene_vectors(
+        eval_ids, esm_dir, parquet_dir, card_amr_calls(sidecar_dir, grain=grain)
+    )
+    for ent in by_label.values():
+        ent["bakta_ids"] = ent.pop("tag_ids")
     return read_ids, by_label
 
 
