@@ -182,14 +182,16 @@ def collect_igr_matrices(
         for s in train_ids if str(s) in sample_gff
     ]
     if pool_workers > 1:
-        import multiprocessing as mp
+        # joblib (not multiprocessing.Pool) for the sweep: this module then runs a joblib Parallel fit
+        # (fit_per_gene), and mixing an mp.Pool with a following loky Parallel corrupts the resource
+        # tracker on aarch64 (worker crash). One consistent backend for sweep + fit avoids it.
+        from joblib import Parallel, delayed
 
-        with mp.Pool(pool_workers) as pool:
-            results = pool.starmap(
-                _genome_igr_records, [(sid, gff, pt, boundary_tol) for sid, gff, pt in tasks]
-            )
+        results = Parallel(n_jobs=pool_workers)(
+            delayed(_genome_igr_records)(sid, gff, pt, boundary_tol) for sid, gff, pt in tasks
+        )
     else:
-        results = [_genome_igr_records(sid, gff, pt, boundary_tol=boundary_tol) for sid, gff, pt in tasks]
+        results = [_genome_igr_records(sid, gff, pt, boundary_tol) for sid, gff, pt in tasks]
 
     ids_by_pair: dict[str, list[str]] = {}
     vecs_by_pair: dict[str, list[np.ndarray]] = {}
