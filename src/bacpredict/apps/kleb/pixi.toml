@@ -22,7 +22,7 @@
 [workspace]
 name = "kleb-ast-amr-tools"
 channels = ["conda-forge", "bioconda"]
-platforms = ["linux-64", "osx-arm64"]
+platforms = ["linux-64", "osx-arm64", "linux-aarch64"]
 
 [dependencies]
 # 2.30 is the version pinned in the lab's bac_isescan env; leave loose but floor at a recent
