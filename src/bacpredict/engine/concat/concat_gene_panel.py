@@ -1,6 +1,6 @@
-"""Panel concat: Bacformer-FT genome-mean ⊕ top-k per-gene embeddings → LR (Kp AST).
+"""Panel concat: Bacformer-FT genome-mean ⊕ top-k per-gene embeddings → LR (AST).
 
-The per-gene head-to-head (:mod:`bacpredict.apps.kleb.per_gene_esm_vs_ft_lr`) showed the fine-tuned Bacformer
+The per-gene head-to-head (:mod:`bacpredict.engine.gene_lr.per_gene_esm_vs_ft`) showed the fine-tuned Bacformer
 per-gene embedding predicts resistance far better than raw ESM-C — the FT token has *learned the gene*.
 This module asks the deployable follow-on: does concatenating the **best FT gene**, then a **panel** of
 the top-k FT genes, onto the genome-mean lift prediction above the mean alone — and does an FT-gene
@@ -28,47 +28,18 @@ from __future__ import annotations
 
 import argparse
 import logging
-from collections import Counter
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from bacpredict.engine.concat.concat_ingredients import impute_block, load_ft_mean
-from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_one_gene, read_genome
+from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_one_gene
+from bacpredict.engine.gene_lr.per_gene_esm_vs_ft import collect_esm_blocks
 from bacpredict.engine.gene_lr.snp_vs_esm_prediction import resolve_clean_splits
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-
-
-def collect_esm_blocks(
-    all_ids: list[str], genes: set[str], esm_dir: Path, parquet_dir: Path
-) -> dict[str, tuple[list[str], np.ndarray]]:
-    """One pass over the eval-holdout genomes → per requested gene, its single-copy carriers + ESM-C vectors.
-
-    Mirrors the FT cache's collection rule (parquet flat-order, single-copy only) so the ESM and FT carrier
-    sets for a gene coincide.
-    """
-    ids: dict[str, list[str]] = {g: [] for g in genes}
-    vecs: dict[str, list[np.ndarray]] = {g: [] for g in genes}
-    n_skipped = 0
-    for k, sid in enumerate(all_ids, 1):
-        read = read_genome(sid, esm_dir, parquet_dir)
-        if read is None:
-            n_skipped += 1
-            continue
-        gene_names, emb = read
-        counts = Counter(g for g in gene_names if g in genes)
-        for i, g in enumerate(gene_names):
-            if g in genes and counts[g] == 1:
-                ids[g].append(sid)
-                vecs[g].append(emb[i])
-        if k % 200 == 0:
-            logger.info("  ESM extract: %d/%d eval genomes", k, len(all_ids))
-    if n_skipped:
-        logger.warning("ESM extract: skipped %d eval genomes (missing/misaligned)", n_skipped)
-    return {g: (ids[g], np.vstack(vecs[g])) for g in genes if vecs[g]}
 
 
 def _rank(comparison: pd.DataFrame, auroc_col: str, top_n: int) -> list[str]:

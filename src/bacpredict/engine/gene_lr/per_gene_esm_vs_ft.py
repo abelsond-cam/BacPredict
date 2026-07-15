@@ -1,6 +1,6 @@
 """Per-gene ESM-LR vs Bacformer-FT-LR — is the FT contextualised gene embedding a better concat ingredient?
 
-The concat read-out (gene ⊕ genome mean → LR) is a proven, valuable Kp AST read-out — it lifts prediction
+The concat read-out (gene ⊕ genome mean → LR) is a proven, valuable AST read-out — it lifts prediction
 substantially for several drugs (trimethoprim-sulfamethoxazole ~0.99, cefotaxime ~1.0) and modestly for
 others. The injected gene is currently a raw ESM-C per-gene embedding. This module asks, gene-by-gene,
 whether the **fine-tuned Bacformer contextualised per-gene embedding** predicts resistance *better* than
@@ -17,7 +17,11 @@ Both are fit identically — zero-imputed over the full eval holdout, out-of-fol
 (:func:`bacpredict.engine.gene_lr.build_per_gene_lr_store.fit_one_gene_imputed`) — so the two AUROCs are directly
 comparable on the same samples. Writes ``esm_vs_ft_per_gene_<drug>.csv``
 (gene_name, esm_lr_auroc, ft_lr_auroc, delta_ft_minus_esm, prevalence, n_carriers_*). CPU only — no forward
-pass (the FT embeddings are already cached by ``cache_ft_bacformer_gene_embeddings.py``).
+pass (the FT embeddings are already cached by ``cache_bacformer_gene_embeddings.py``).
+
+Organism-agnostic: the carrier collector :func:`collect_esm_vectors` / :func:`collect_esm_blocks` (the
+one-pass single-copy ESM gene-vector extract shared with :mod:`bacpredict.engine.concat.concat_gene_panel`)
+lives here; a drug's genes come from a manifest, so nothing is Kp-specific.
 """
 
 from __future__ import annotations
@@ -38,15 +42,17 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 
 def collect_esm_vectors(
-    eval_ids: list[str], top_genes: set[str], esm_dir: Path, parquet_dir: Path
+    eval_ids: list[str], genes: set[str], esm_dir: Path, parquet_dir: Path
 ) -> tuple[dict[str, list[str]], dict[str, list[np.ndarray]]]:
-    """One pass over the eval-holdout genomes → per top gene, its single-copy carriers + ESM-C vectors.
+    """One pass over the eval-holdout genomes → per requested gene, its single-copy carriers + ESM-C vectors.
 
     Mirrors how the FT cache collected the FT tokens (same parquet flat-order + single-copy rule), so the
     ESM and FT carrier sets for a gene coincide → an apples-to-apples comparison on identical samples.
+    Returns ``(ids, vecs)`` as ``dict[gene -> list]`` (carrier ids / their ESM vectors). See
+    :func:`collect_esm_blocks` for the ``vstack``-ed variant the concat panel uses.
     """
-    ids: dict[str, list[str]] = {g: [] for g in top_genes}
-    vecs: dict[str, list[np.ndarray]] = {g: [] for g in top_genes}
+    ids: dict[str, list[str]] = {g: [] for g in genes}
+    vecs: dict[str, list[np.ndarray]] = {g: [] for g in genes}
     n_skipped = 0
     for k, sid in enumerate(eval_ids, 1):
         read = read_genome(sid, esm_dir, parquet_dir)
@@ -54,9 +60,9 @@ def collect_esm_vectors(
             n_skipped += 1
             continue
         gene_names, emb = read
-        counts = Counter(g for g in gene_names if g in top_genes)
+        counts = Counter(g for g in gene_names if g in genes)
         for i, g in enumerate(gene_names):
-            if g in top_genes and counts[g] == 1:  # single-copy occurrence only
+            if g in genes and counts[g] == 1:  # single-copy occurrence only
                 ids[g].append(sid)
                 vecs[g].append(emb[i])
         if k % 200 == 0:
@@ -64,6 +70,14 @@ def collect_esm_vectors(
     if n_skipped:
         logger.warning("ESM extract: skipped %d eval genomes (missing/misaligned)", n_skipped)
     return ids, vecs
+
+
+def collect_esm_blocks(
+    all_ids: list[str], genes: set[str], esm_dir: Path, parquet_dir: Path
+) -> dict[str, tuple[list[str], np.ndarray]]:
+    """:func:`collect_esm_vectors`, ``vstack``-ed → ``{gene: (carrier_ids, vectors)}`` for genes with carriers."""
+    ids, vecs = collect_esm_vectors(all_ids, genes, esm_dir, parquet_dir)
+    return {g: (ids[g], np.vstack(vecs[g])) for g in genes if vecs[g]}
 
 
 def run(

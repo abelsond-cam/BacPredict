@@ -50,7 +50,7 @@ if [[ ! -f "$FTC/top_gene_manifest_${DRUG}.csv" ]]; then echo "ERROR: FT cache m
 
 echo "=== Kp ESM-vs-frozen-vs-FT per-gene LR — drug=$DRUG (task $SLURM_ARRAY_TASK_ID) ==="
 
-"$PY" -m bacpredict.apps.kleb.per_gene_esm_vs_ft_lr \
+"$PY" -m bacpredict.engine.gene_lr.per_gene_esm_vs_ft \
     --ast-sheet-path "$D/processed/train_kleb_ast/binary_ast_with_split.csv" \
     --drug "$DRUG" \
     --parquet-dir "$D/processed/train_kleb_ast/protein_sequences" \
