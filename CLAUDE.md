@@ -260,8 +260,8 @@ The Slurm array `--array=0-14` runs 5 folds × 3 seeds = 15 jobs: `FOLD = SLURM_
 
 The split logic is designed so that **no Sample ID can appear in more than one split within a single training run**, and the evaluate holdout is preserved across the entire k-fold sweep.
 
-- **Single-split.** `add_splits()` shuffles unique `Sample` values, partitions into train 70 / validate 10 / evaluate 20. Tested in [tests/tl/train/test_split_utils.py::test_add_splits_no_overlap](tests/tl/train/test_split_utils.py).
-- **K-fold.** Evaluate selected first and removed from the pool; remaining samples partitioned into mutually disjoint validation folds. For any `(fold, seed)`: `evaluate ∩ train = ∅`, `evaluate ∩ validate = ∅`, `train ∩ validate = ∅`. Across folds, **train sets share samples** (intrinsic to k-fold; only validate rotates). Evaluate is identical across every `(fold, seed)` when `evaluate_seed` is held constant. Tested in [tests/tl/train/test_split_utils.py](tests/tl/train/test_split_utils.py) and [tests/kleb_ast/test_pt_training_pipeline.py](tests/kleb_ast/test_pt_training_pipeline.py).
+- **Single-split.** `add_splits()` shuffles unique `Sample` values, partitions into train 70 / validate 10 / evaluate 20. Tested in [tests/engine/finetune/test_split_utils.py::test_add_splits_no_overlap](tests/engine/finetune/test_split_utils.py).
+- **K-fold.** Evaluate selected first and removed from the pool; remaining samples partitioned into mutually disjoint validation folds. For any `(fold, seed)`: `evaluate ∩ train = ∅`, `evaluate ∩ validate = ∅`, `train ∩ validate = ∅`. Across folds, **train sets share samples** (intrinsic to k-fold; only validate rotates). Evaluate is identical across every `(fold, seed)` when `evaluate_seed` is held constant. Tested in [tests/engine/finetune/test_split_utils.py](tests/engine/finetune/test_split_utils.py) and [tests/apps/kleb/test_pt_training_pipeline.py](tests/apps/kleb/test_pt_training_pipeline.py).
 
 **Caveats — what these guarantees do NOT cover:**
 
