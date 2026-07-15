@@ -99,6 +99,8 @@ def run(
     num_workers: int = 16,
     warmup_proportion: float = 0.1,
     max_steps: int = 20000,
+    max_epochs: int = 40,
+    early_stopping_threshold: float = 0.005,
     n_folds: int | None = None,
     fold: int = 0,
     evaluate_seed: int = 1,
@@ -360,13 +362,22 @@ def run(
     else:
         if max_steps <= 0:
             raise ValueError("max_steps must be > 0 in full dataset mode. Pass --max-steps.")
-        training_args_dict["max_steps"] = max_steps
+        # Cap the flat max_steps by a dataset-aware epoch ceiling. A small cohort (Kp ~3k) otherwise
+        # inherits the same 100k-step ceiling as TB (~35k) — hundreds of epochs — so it memorises the
+        # train set (loss→0) many epochs past its best while early-stopping's patience counts down, and
+        # warmup (scaled off max_steps) would itself run for dozens of epochs. Bounding by max_epochs keeps
+        # the schedule, the warmup, and the worst-case wall sane per drug; early-stopping still ends most
+        # runs earlier.
+        steps_per_epoch = max(1, (len(train_ids) // batch_size) // grad_accumulation_steps)
+        effective_max_steps = min(max_steps, steps_per_epoch * max_epochs)
+        training_args_dict["max_steps"] = effective_max_steps
         training_args_dict["eval_steps"] = eval_steps
         training_args_dict["save_steps"] = eval_steps
-        warmup_steps = int(max_steps * warmup_proportion)
+        warmup_steps = int(effective_max_steps * warmup_proportion)
         training_args_dict["warmup_steps"] = warmup_steps
         training_args_dict["lr_scheduler_type"] = "linear"
-        print(f"Warmup steps: {warmup_steps}, max_steps: {max_steps}, eval_steps: {eval_steps}")
+        print(f"steps/epoch: {steps_per_epoch}, max_epochs cap: {max_epochs} -> effective max_steps: "
+              f"{effective_max_steps} (of requested {max_steps}); warmup {warmup_steps}, eval_steps {eval_steps}")
 
     training_args = TrainingArguments(**training_args_dict)
 
@@ -378,7 +389,8 @@ def run(
         eval_dataset=val_dataset,
         args=training_args,
         compute_metrics=compute_metrics_binary_genome_pred,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=early_stopping_patience)],
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=early_stopping_patience,
+                                         early_stopping_threshold=early_stopping_threshold)],
     )
     trainer.train(resume_from_checkpoint=resume_from_checkpoint)
 
@@ -461,7 +473,11 @@ class ArgumentParser(Tap):
     """Split sheet (default: <data-root>/processed/train_<task>/binary_ast_with_split.csv, keyed off --task)."""
     seed: int = 1
     max_steps: int = 100000
-    early_stopping_patience: int = 30
+    max_epochs: int = 40
+    """Epoch ceiling in full-dataset/k-fold mode: effective max_steps = min(max_steps, steps_per_epoch*max_epochs). Stops a small cohort inheriting a hundreds-of-epochs step ceiling (and dozens-of-epochs warmup)."""
+    early_stopping_patience: int = 15
+    early_stopping_threshold: float = 0.005
+    """Min eval_auroc gain to count as an improvement, so a noisy plateau exhausts patience instead of resetting it."""
     eval_steps: int = 250
     num_workers: int = 15
     warmup_proportion: float = 0.1
@@ -511,6 +527,8 @@ if __name__ == "__main__":
         num_workers=args.num_workers,
         warmup_proportion=args.warmup_proportion,
         max_steps=args.max_steps,
+        max_epochs=args.max_epochs,
+        early_stopping_threshold=args.early_stopping_threshold,
         n_folds=args.n_folds,
         fold=args.fold,
         evaluate_seed=args.evaluate_seed,
