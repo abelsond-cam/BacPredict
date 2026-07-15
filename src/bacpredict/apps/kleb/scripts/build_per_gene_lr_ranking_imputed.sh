@@ -5,7 +5,10 @@
 # read genomes, with a 0xdim vector for genomes that lack it (instead of dropping them). This lets the LR
 # use the presence/absence signal, so ACQUIRED genes (bla*, mph, tet, aac…) are no longer invisible —
 # their ESM-LR should now approach the determinant one-hot. ~no change for universal genes (gyrA). Writes
-# to per_gene_lr_ranking_imputed/<drug>/ so it sits beside the drop-absent ranking for direct comparison.
+# to per_gene_lr_ranking_imputed_<store>/<drug>/ so it sits beside the drop-absent ranking for comparison.
+#
+# EMBEDDING_STORE (env, default esm) selects esm (ESM-C) or baclm (baclm coding channel) — the shared
+# build_per_gene_lr_store --embedding-store. The baclm ranking is Phase 2's source for the best baclm gene.
 #
 # Drugs (one per array task) = the chromosomal/intrinsic regime where the per-gene story matters: the
 # three where Bacformer beats the Kleborate ceiling (azithromycin, colistin, tetracycline) + ciprofloxacin
@@ -59,16 +62,19 @@ if [[ -z "$DRUG" ]]; then
     exit 1
 fi
 
+STORE=${EMBEDDING_STORE:-esm}                                  # esm (default) | baclm
 SHEET=$D/processed/train_kleb_ast/binary_ast_with_split.csv   # the FULL cohort split (all drug columns)
 PARQUET=$D/processed/train_kleb_ast/protein_sequences
-EMB=$D/processed/train_kleb_ast/esm
-# Per-drug subdir: the module also writes non-drug-specific files (build_summary, gene_lr_auroc,
-# gene_prevalence), so concurrent array tasks must not share an out-dir or they race on those.
-OUT=$D/processed/train_kleb_ast/pangena_predict/per_gene_lr_ranking_imputed/$DRUG
+EMB=$D/processed/train_kleb_ast/$STORE                        # .../esm or .../baclm — same flat parquet order
+# Per-drug + per-store subdir: the module also writes non-drug-specific files (build_summary,
+# gene_lr_auroc, gene_prevalence), so concurrent array tasks must not share an out-dir (they'd race),
+# and esm vs baclm rankings must not overwrite each other.
+OUT=$D/processed/train_kleb_ast/pangena_predict/per_gene_lr_ranking_imputed_$STORE/$DRUG
 
 echo "========================================================================"
-echo "Kp per-gene LR ranking — drug=$DRUG (array task $SLURM_ARRAY_TASK_ID)"
+echo "Kp per-gene LR ranking — drug=$DRUG store=$STORE (array task $SLURM_ARRAY_TASK_ID)"
 echo "Sheet:   $SHEET"
+echo "Emb:     $EMB"
 echo "Out dir: $OUT  (subsample 2000 train, min-prevalence 0.10, no panels)"
 echo "Job ID:  ${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 echo "========================================================================"
@@ -85,6 +91,7 @@ mkdir -p "$OUT"
     --drug "$DRUG" \
     --parquet-dir "$PARQUET" \
     --esm-store-dir "$EMB" \
+    --embedding-store "$STORE" \
     --out-dir "$OUT" \
     --min-prevalence 0.10 \
     --auroc-filter 0.8 \

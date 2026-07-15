@@ -8,8 +8,13 @@ explicit, per-protein pointer the gated-attention head can route to.
 For every **core gene** (a ``gene_name`` that is single-copy in >95% of the *train* genomes —
 a threshold the per-genome-unique Prokka/Bakta locus-tag fallbacks can never meet, so only real
 recurring symbols such as ``rpoB`` survive) we fit a stand-alone ``LogisticRegression`` on that
-gene's 960-d ESM-C protein vector predicting the binary resistance label. Each protein row then
+gene's 960-d protein vector predicting the binary resistance label. Each protein row then
 carries its gene's predicted resistance probability; non-core (or filtered-out) proteins carry 0.
+
+``--embedding-store`` selects which per-protein store the LRs are fit over — ``esm`` (default,
+ESM-C) or ``baclm`` (the baclm coding channel). Both index the same parquet flat order, so the same
+discovery + ranking machinery applies; only the ``.pt`` reader differs (see :func:`_embedding_rows`).
+The baclm ranking is what Phase 2 picks the single best baclm gene block from for the concat panel.
 
 **Leakage is the make-or-break.** The per-gene probability is label-derived, so:
 
@@ -59,6 +64,13 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 PANEL_COLUMNS = ["lr_resistance_prob"]
+
+# The embedding store this per-gene ranking is fit over. Both stores share the parquet flat order
+# so the same core-gene discovery + LR machinery applies; only the reader differs (see _embedding_rows).
+EMBEDDING_STORES: dict[str, str] = {
+    "esm": "_esm_embeddings.pt",      # ESM-C per-protein store: [1, T, dim] padded/interleaved + mask
+    "baclm": "_baclm_embeddings.pt",  # baclm coding store: plain [n_cds, dim] in flat CDS order
+}
 
 
 # ---------------------------------------------------------------------------
@@ -138,28 +150,52 @@ def subsample_balanced(
     return picked
 
 
-def read_genome(sample_id: str, esm_dir: Path, parquet_dir: Path) -> tuple[list[str | None], np.ndarray] | None:
+def _embedding_rows(store: dict, store_kind: str, n_genes: int) -> np.ndarray | None:
+    """Real-protein embedding rows ``[n_real, dim]`` in flat order, or ``None`` on misalignment.
+
+    ESM-C / Bacformer-input stores pad and interleave CLS/SEP rows, so the real proteins are
+    recovered via :func:`real_protein_indices`; the store caps at ``max_n_proteins`` so
+    ``n_real <= n_genes``. baclm's ``protein_embeddings`` is a plain ``[n_cds, dim]`` matrix (one
+    row per CDS in flat order, no batch dim / mask), so its row count must equal the parquet's CDS
+    count exactly — a mismatch is a flat-order break and the genome is skipped (mirrors the
+    ``count_mismatch`` guard in :func:`coding_amr_lr._read_baclm_gene_one`).
+    """
+    if store_kind == "baclm":
+        prot = store["protein_embeddings"]
+        if prot.dim() == 3:  # defensive: a future writer might keep a leading batch dim
+            prot = prot[0]
+        if int(prot.shape[0]) != n_genes:
+            return None
+        return prot.float().numpy()
+    prot_emb = store["protein_embeddings"][0]
+    real_idx = real_protein_indices(store, prot_emb.shape[0])
+    n_real = int(real_idx.numel())
+    if n_real > n_genes:
+        return None
+    return prot_emb[real_idx].float().numpy()
+
+
+def read_genome(
+    sample_id: str, embed_dir: Path, parquet_dir: Path, *, store_kind: str = "esm"
+) -> tuple[list[str | None], np.ndarray] | None:
     """Return ``(gene_names[:n_real], embedding[n_real, dim])`` aligned in flat order, or ``None``.
 
-    The embedding store caps each genome at its first ``max_n_proteins`` proteins in flat order;
-    the parquet is uncapped, so the gene list is truncated to the embedding's real-protein count.
-    Returns ``None`` (skip) when a file is missing or the embedding has *more* real proteins than
-    the parquet annotates (a genuine flat-order misalignment).
+    ``store_kind`` selects the embedding store (``esm`` or ``baclm``); both index the same parquet
+    flat protein order, so the gene list is truncated to the embedding's real-protein count. Returns
+    ``None`` (skip) when a file is missing or the embedding fails its flat-order guard (ESM: more real
+    proteins than the parquet annotates; baclm: a CDS-count mismatch).
     """
     pq = parquet_dir / f"{sample_id}_protein_sequences.parquet"
-    pt = esm_dir / f"{sample_id}_esm_embeddings.pt"
+    pt = embed_dir / f"{sample_id}{EMBEDDING_STORES[store_kind]}"
     if not pq.exists() or not pt.exists():
         return None
     gene_names = [r["gene_name"] for r in flatten_proteins(pd.read_parquet(pq))]
 
     store = torch.load(pt, map_location="cpu", mmap=True)
-    prot_emb = store["protein_embeddings"][0]
-    real_idx = real_protein_indices(store, prot_emb.shape[0])
-    n_real = int(real_idx.numel())
-    if n_real > len(gene_names):
+    emb = _embedding_rows(store, store_kind, len(gene_names))
+    if emb is None:
         return None
-    emb = prot_emb[real_idx].float().numpy()
-    return gene_names[:n_real], emb
+    return gene_names[: emb.shape[0]], emb
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +242,7 @@ def discover_core_genes(
 
 
 def assemble_gene_matrices(
-    train_ids: list[str], core_genes: list[str], esm_dir: Path, parquet_dir: Path
+    train_ids: list[str], core_genes: list[str], embed_dir: Path, parquet_dir: Path, *, store_kind: str = "esm"
 ) -> tuple[dict[str, tuple[list[str], np.ndarray]], list[str]]:
     """Collect each core gene's single-copy 960-vector across the train genomes.
 
@@ -222,7 +258,7 @@ def assemble_gene_matrices(
     read_ids: list[str] = []
     n_skipped = 0
     for k, sid in enumerate(train_ids, 1):
-        read = read_genome(sid, esm_dir, parquet_dir)
+        read = read_genome(sid, embed_dir, parquet_dir, store_kind=store_kind)
         if read is None:
             n_skipped += 1
             continue
@@ -400,12 +436,13 @@ def build_panels(
     all_ids: list[str],
     fitted: dict[str, dict],
     filtered_genes: set[str],
-    esm_dir: Path,
+    embed_dir: Path,
     parquet_dir: Path,
     *,
     train_set: set[str],
     filtered_dir: Path,
     unfiltered_dir: Path,
+    store_kind: str = "esm",
 ) -> int:
     """Write the filtered + unfiltered panel stores in one pass over ``all_ids``.
 
@@ -418,7 +455,7 @@ def build_panels(
     std_filtered, std_unfiltered = _Standardizer1D(), _Standardizer1D()
     n_written = 0
     for k, sid in enumerate(all_ids, 1):
-        read = read_genome(sid, esm_dir, parquet_dir)
+        read = read_genome(sid, embed_dir, parquet_dir, store_kind=store_kind)
         if read is None:
             continue
         gene_names, emb = read
@@ -486,7 +523,7 @@ def run(
     split_csv: Path,
     drug: str,
     parquet_dir: Path,
-    esm_dir: Path,
+    embed_dir: Path,
     out_dir: Path,
     min_prevalence: float,
     auroc_filter: float,
@@ -497,6 +534,7 @@ def run(
     sample_seed: int = 1,
     write_panels: bool = False,
     impute_absent_zero: bool = False,
+    store_kind: str = "esm",
 ) -> dict:
     """Discover genes, fit per-gene LRs on a (sub)sample of train, write the wide gene×drug table.
 
@@ -512,7 +550,9 @@ def run(
     core_genes, prevalence_table, annotation = discover_core_genes(
         fit_train_ids, parquet_dir, min_prevalence=min_prevalence
     )
-    gene_matrices, read_ids = assemble_gene_matrices(fit_train_ids, core_genes, esm_dir, parquet_dir)
+    gene_matrices, read_ids = assemble_gene_matrices(
+        fit_train_ids, core_genes, embed_dir, parquet_dir, store_kind=store_kind
+    )
     fitted = fit_per_gene(gene_matrices, label_map, n_folds=n_folds, seed=seed, n_jobs=n_jobs,
                           all_ids=read_ids, impute_absent_zero=impute_absent_zero)
     filtered_genes = {g for g, f in fitted.items() if f["auroc"] > auroc_filter}
@@ -525,8 +565,9 @@ def run(
         for d in (filtered_dir, unfiltered_dir):
             d.mkdir(parents=True, exist_ok=True)
         n_written = build_panels(
-            all_ids, fitted, filtered_genes, esm_dir, parquet_dir,
+            all_ids, fitted, filtered_genes, embed_dir, parquet_dir,
             train_set=set(fit_train_ids), filtered_dir=filtered_dir, unfiltered_dir=unfiltered_dir,
+            store_kind=store_kind,
         )
 
     # Per-gene AUROC table (the filter evidence) + the wide gene×drug ranking table + prevalence.
@@ -546,6 +587,7 @@ def run(
         "task": "pangena_predict",
         "analysis": "build_per_gene_lr_store",
         "drug": drug,
+        "embedding_store": store_kind,
         "split_csv": str(split_csv),
         "n_train": len(train_ids),
         "n_train_fit": len(fit_train_ids),
@@ -584,7 +626,11 @@ def main() -> None:
                         help="CSV with Sample, <drug>, train_val_eval (manifest sheet or binary_ast_with_split.csv).")
     parser.add_argument("--drug", type=str, default="rifampin", help="Binary label column (default rifampin, US).")
     parser.add_argument("--parquet-dir", type=Path, required=True, help="Dir of *_protein_sequences.parquet.")
-    parser.add_argument("--esm-store-dir", type=Path, required=True, help="Dir of *_esm_embeddings.pt.")
+    parser.add_argument("--esm-store-dir", type=Path, required=True,
+                        help="Embedding store dir — *_esm_embeddings.pt or *_baclm_embeddings.pt, per --embedding-store.")
+    parser.add_argument("--embedding-store", choices=sorted(EMBEDDING_STORES), default="esm",
+                        help="Which per-protein embedding store to fit the per-gene LRs over (default esm). "
+                             "'baclm' reads the [n_cds, dim] baclm coding store from --esm-store-dir instead.")
     parser.add_argument("--out-dir", type=Path, required=True,
                         help="Output base dir; writes filtered/ and unfiltered/ panel stores + tables.")
     parser.add_argument("--min-prevalence", type=float, default=0.95,
@@ -613,8 +659,9 @@ def main() -> None:
         split_csv=args.split_csv,
         drug=args.drug,
         parquet_dir=args.parquet_dir,
-        esm_dir=args.esm_store_dir,
+        embed_dir=args.esm_store_dir,
         out_dir=args.out_dir,
+        store_kind=args.embedding_store,
         min_prevalence=args.min_prevalence,
         auroc_filter=args.auroc_filter,
         n_folds=args.n_folds,

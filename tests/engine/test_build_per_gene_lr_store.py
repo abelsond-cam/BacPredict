@@ -108,7 +108,7 @@ def test_build_panels_filtered_zeroes_low_auroc_gene(tmp_path: Path, monkeypatch
     emb_by_id = {s: np.stack([x_good[i], x_noise[i], np.zeros(DIM)]) for i, s in enumerate(ids)}
     emb_by_id["EVAL0"] = np.stack([x_good[0], x_noise[0], np.zeros(DIM)])  # an unseen genome
 
-    def fake_read(sid, esm_dir, parquet_dir):
+    def fake_read(sid, embed_dir, parquet_dir, *, store_kind="esm"):
         return (gene_names, emb_by_id[sid]) if sid in emb_by_id else None
 
     monkeypatch.setattr(bplr, "read_genome", fake_read)
@@ -167,6 +167,35 @@ def test_subsample_balanced_none_or_large_returns_all() -> None:
     ids, label_map = _label_map(10, 10)
     assert bplr.subsample_balanced(ids, label_map, max_n=None, seed=1) == ids
     assert bplr.subsample_balanced(ids, label_map, max_n=999, seed=1) == ids
+
+
+def test_embedding_rows_baclm_direct_and_count_guard() -> None:
+    """baclm store: plain [n_cds, dim] read directly; a CDS-count mismatch is skipped (None)."""
+    torch = pytest.importorskip("torch")
+    prot = torch.arange(12, dtype=torch.float32).reshape(4, 3)  # [n_cds=4, dim=3]
+    store = {"protein_embeddings": prot}
+
+    rows = bplr._embedding_rows(store, "baclm", n_genes=4)
+    assert rows is not None and rows.shape == (4, 3)
+    np.testing.assert_allclose(rows, prot.numpy())
+
+    assert bplr._embedding_rows(store, "baclm", n_genes=5) is None  # count mismatch -> skip
+    # A defensive leading batch dim is squeezed, not misread as n_cds=1.
+    batched = {"protein_embeddings": prot[None]}  # [1, 4, 3]
+    rows_b = bplr._embedding_rows(batched, "baclm", n_genes=4)
+    assert rows_b is not None and rows_b.shape == (4, 3)
+
+
+def test_embedding_rows_esm_selects_real_proteins() -> None:
+    """ESM store: real-protein rows are selected by attention_mask; n_real may be < n_genes (capped)."""
+    torch = pytest.importorskip("torch")
+    # 3 real proteins + 1 padding row, plain per-protein layout (attention_mask marks real rows).
+    prot = torch.arange(12, dtype=torch.float32).reshape(1, 4, 3)
+    store = {"protein_embeddings": prot, "attention_mask": torch.tensor([[1, 1, 1, 0]])}
+    rows = bplr._embedding_rows(store, "esm", n_genes=5)
+    assert rows is not None and rows.shape == (3, 3)  # only the 3 real proteins
+    np.testing.assert_allclose(rows, prot[0, :3].numpy())
+    assert bplr._embedding_rows(store, "esm", n_genes=2) is None  # more real proteins than genes -> skip
 
 
 def test_load_splits_drops_ambiguous_and_reads_split(tmp_path: Path) -> None:
