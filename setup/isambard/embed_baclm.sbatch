@@ -4,6 +4,13 @@
 # TASK + array size; submit with e.g.:
 #   sbatch --export=ALL,TASK=tb   -J embed-baclm-tb   --array=0-31 setup/isambard/embed_baclm.sbatch
 #   sbatch --export=ALL,TASK=kleb -J embed-baclm-kleb --array=0-7  setup/isambard/embed_baclm.sbatch
+#
+# STORE (env, default "baclm") names the output store sub-dir. The full non-coding re-embed writes to a
+# SEPARATE store so the stale July-7 `baclm/` (intergenic-only) is kept intact for the before/after and so
+# it can run CONCURRENTLY with a stale-store LR fan-out (no shared-file race). A fresh dir + --skip-existing
+# embeds everything and stays re-runnable, so no FRESH/overwrite is needed for a new store:
+#   sbatch --export=ALL,TASK=tb,STORE=baclm_reembed   -J embed-baclm-tb-reembed   --array=0-31 setup/isambard/embed_baclm.sbatch
+#   sbatch --export=ALL,TASK=kleb,STORE=baclm_reembed -J embed-baclm-kleb-reembed --array=0-7  setup/isambard/embed_baclm.sbatch
 #SBATCH --partition=workq
 #SBATCH --account=brics.u6fp
 #SBATCH --qos=normal
@@ -47,10 +54,12 @@ START=$(( ID * CHUNK )); END=$(( START + CHUNK )); [ "$END" -gt "$TOTAL" ] && EN
 echo "=== $TASK baclm task $ID/$NT : TOTAL=$TOTAL slice [$START:$END] ==="
 [ "$START" -ge "$TOTAL" ] && { echo "slice past end, nothing to do"; exit 0; }
 
-# FRESH=1 drops --skip-existing to force a full re-embed (overwrite stale baclm/*.pt in place) — used
-# for the non-coding-channel re-embed; default keeps --skip-existing for re-runnable incremental jobs.
+# STORE (default baclm) selects the output store dir — a NEW dir for the non-coding re-embed keeps the
+# stale store intact (see header). FRESH=1 drops --skip-existing to force a re-embed that OVERWRITES an
+# existing store in place; not needed for a fresh STORE dir (--skip-existing embeds all, stays re-runnable).
+STORE="${STORE:-baclm}"
 SKIP="--skip-existing"; [ "${FRESH:-0}" = 1 ] && SKIP=""
 "$PY" "$EMB/baclm_embed.py" \
   --protein-dir "$PROC/protein_sequences" --intergenic-dir "$PROC/intergenic" \
-  --output-dir "$PROC/baclm" \
+  --output-dir "$PROC/$STORE" \
   --start-idx "$START" --end-idx "$END" $SKIP --device cuda:0   # default batch-size (128, flash-attn)
