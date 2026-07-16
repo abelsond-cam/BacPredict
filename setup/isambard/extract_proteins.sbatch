@@ -39,9 +39,12 @@ echo "=== [$(date -u +%H:%M:%S)] extract protein sequences (coding) ==="
   --workers 48 --skip-existing
 
 echo "=== [$(date -u +%H:%M:%S)] extract intergenic regions (non-coding, for baclm) ==="
+# FRESH=1 regenerates ALL intergenic parquets (overwrite the stale intergenic_* schema with the
+# three-channel noncoding_*/fragment_*/feature_* schema); default is incremental --skip-existing.
+SKIP_IG="--skip-existing"; [ "${FRESH:-0}" = 1 ] && SKIP_IG=""
 "$PY" "$EMB/extract_intergenic_to_parquet.py" \
   --input-csv "$PROC/embedding_input.csv" --output-dir "$PROC/intergenic" \
-  --workers 48 --skip-existing
+  --workers 48 $SKIP_IG
 
 NP=$(find "$PROC/protein_sequences" -name '*_protein_sequences.parquet' -type f | wc -l)
 NI=$(find "$PROC/intergenic" -name '*_intergenic.parquet' -type f | wc -l)

@@ -47,7 +47,10 @@ START=$(( ID * CHUNK )); END=$(( START + CHUNK )); [ "$END" -gt "$TOTAL" ] && EN
 echo "=== $TASK baclm task $ID/$NT : TOTAL=$TOTAL slice [$START:$END] ==="
 [ "$START" -ge "$TOTAL" ] && { echo "slice past end, nothing to do"; exit 0; }
 
+# FRESH=1 drops --skip-existing to force a full re-embed (overwrite stale baclm/*.pt in place) — used
+# for the non-coding-channel re-embed; default keeps --skip-existing for re-runnable incremental jobs.
+SKIP="--skip-existing"; [ "${FRESH:-0}" = 1 ] && SKIP=""
 "$PY" "$EMB/baclm_embed.py" \
   --protein-dir "$PROC/protein_sequences" --intergenic-dir "$PROC/intergenic" \
   --output-dir "$PROC/baclm" \
-  --start-idx "$START" --end-idx "$END" --skip-existing --device cuda:0   # default batch-size (128, flash-attn)
+  --start-idx "$START" --end-idx "$END" $SKIP --device cuda:0   # default batch-size (128, flash-attn)
