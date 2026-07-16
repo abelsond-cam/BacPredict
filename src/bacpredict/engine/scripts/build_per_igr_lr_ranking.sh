@@ -41,8 +41,11 @@ set -uo pipefail
 # Data root + env — cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
 : "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
 D="$BACPREDICT_DATA_ROOT"
+# Code checkout: default to the Isambard worktree on the consolidated branch ($HOME/BacPredict is a
+# stale `dev` checkout without the bacpredict package). Override with REPO=... for another checkout.
+REPO="${REPO:-$SCRATCHDIR/worktrees/consolidate}"
 PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
-export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
+export PYTHONPATH="$REPO/src:${PYTHONPATH:-}"
 
 export PYTHONUNBUFFERED=1
 # Pin BLAS to 1 thread/process so the joblib per-IGR-LR workers don't oversubscribe.
