@@ -93,7 +93,7 @@ EMB=$RDS/$STORE                                  # $RDS/esm or $RDS/baclm — sa
 # rankings sit beside — not on top of — the OOF ones (per_gene_lr_ranking_baclm_eval/).
 EVAL="${EVAL:-0}"                                 # 1 → --eval-holdout (train+val fit, evaluate test)
 SUFFIX="${SUFFIX:-}"                              # output-subdir suffix, e.g. _eval
-MAX_TRAIN="${MAX_TRAIN:-2000}"                    # "" → full cohort (no subsample cap)
+MAX_TRAIN="${MAX_TRAIN-2000}"                    # "" → full cohort (no subsample cap)
 STORE_DTYPE="${STORE_DTYPE:-float32}"            # float16 → whole-cohort memory
 # Per-drug + per-store subdir: the module also writes non-drug-specific files (build_summary,
 # gene_lr_auroc, gene_prevalence), so concurrent array tasks must not share an out-dir (they'd race

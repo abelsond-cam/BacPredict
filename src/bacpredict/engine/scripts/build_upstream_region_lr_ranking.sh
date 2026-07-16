@@ -74,7 +74,7 @@ fi
 # (upstream_lr_ranking_eval/). BACLM_DIR overrides the store (e.g. …/baclm_reembed for the re-embed pass).
 EVAL="${EVAL:-0}"                                 # 1 → --eval-holdout
 SUFFIX="${SUFFIX:-}"                              # output-subdir suffix, e.g. _eval
-MAX_TRAIN="${MAX_TRAIN:-2000}"                    # "" → full cohort
+MAX_TRAIN="${MAX_TRAIN-2000}"                    # "" → full cohort
 # Per-drug + per-species subdir (the module also writes non-drug-specific files, so concurrent array tasks
 # must not share an out-dir).
 OUT=$D/processed/train_${TASK}/pangena_predict/upstream_lr_ranking${SUFFIX}/$DRUG
