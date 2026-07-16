@@ -17,7 +17,7 @@
 #         SPECIES=kp sbatch --export=ALL,SPECIES=kp --array=0-21 \
 #             src/bacpredict/engine/scripts/build_upstream_region_lr_ranking.sh                          # Kp, all 22
 #   Held-out-test ("real numbers", full cohort — fit train+validate, score the evaluate split):
-#         sbatch --export=ALL,EVAL=1,SUFFIX=_eval,MAX_TRAIN= --mem=256G --array=0-9 \
+#         sbatch --export=ALL,EVAL=1,SUFFIX=_eval,MAX_TRAIN=,STORE_DTYPE=float16 --mem=400G --array=0-9 \
 #             src/bacpredict/engine/scripts/build_upstream_region_lr_ranking.sh                          # TB eval
 #         (SPECIES=kp + --array=0-21 for Kp.)  BACLM_DIR=<...>/baclm_reembed for the re-embed store.
 #
@@ -75,6 +75,7 @@ fi
 EVAL="${EVAL:-0}"                                 # 1 → --eval-holdout
 SUFFIX="${SUFFIX:-}"                              # output-subdir suffix, e.g. _eval
 MAX_TRAIN="${MAX_TRAIN-2000}"                    # "" → full cohort
+STORE_DTYPE="${STORE_DTYPE:-float32}"            # float16 → whole-cohort memory
 # Per-drug + per-species subdir (the module also writes non-drug-specific files, so concurrent array tasks
 # must not share an out-dir).
 OUT=$D/processed/train_${TASK}/pangena_predict/upstream_lr_ranking${SUFFIX}/$DRUG
@@ -107,6 +108,7 @@ BACLM_ARG=""; [[ -n "${BACLM_DIR:-}" ]] && BACLM_ARG="--baclm-dir $BACLM_DIR"
     $MAXT_ARG \
     --sample-seed 1 \
     --boundary-tol 3 \
+    --store-dtype "$STORE_DTYPE" \
     $BACLM_ARG \
     $EVAL_ARG \
     --n-jobs "${SLURM_CPUS_PER_TASK:-32}"

@@ -99,6 +99,7 @@ def _genome_upstream_records(
 def collect_upstream_matrices(
     train_ids: list[str], sample_gff: dict[str, str], baclm_dir: Path, *,
     baclm_suffix: str = "_baclm_embeddings.pt", boundary_tol: int = 3, eval_ids: set[str] | None = None,
+    store_dtype: str = "float32",
 ) -> tuple[dict[str, tuple[list[str], np.ndarray]], pd.DataFrame, list[str]]:
     """GFF+``.pt`` sweep → per-anchor single-copy design matrices + prevalence + read universe.
 
@@ -136,7 +137,7 @@ def collect_upstream_matrices(
                 if not is_eval:
                     single_copy[key] += 1  # prevalence numerator = fit genomes only
                 ids_by_key.setdefault(key, []).append(sid)
-                vecs_by_key.setdefault(key, []).append(vec)
+                vecs_by_key.setdefault(key, []).append(vec.astype(store_dtype, copy=False))
     if n_skipped:
         logger.warning("upstream sweep: skipped %d genomes (missing/unreadable GFF or .pt)", n_skipped)
 
@@ -153,7 +154,7 @@ def run(
     *, split_csv: Path, drug: str, input_csv: Path, baclm_dir: Path, out_dir: Path,
     min_prevalence: float = 0.10, auroc_filter: float = 0.8, n_folds: int = 5, seed: int = 1,
     n_jobs: int = 1, max_train_genomes: int | None = None, sample_seed: int = 1, boundary_tol: int = 3,
-    baclm_suffix: str = "_baclm_embeddings.pt", eval_holdout: bool = False,
+    baclm_suffix: str = "_baclm_embeddings.pt", eval_holdout: bool = False, store_dtype: str = "float32",
 ) -> dict:
     """Anchor regions on the downstream gene, fit per-anchor LRs, write the wide ranking table.
 
@@ -171,7 +172,7 @@ def run(
 
     matrices, prevalence, read_ids = collect_upstream_matrices(
         sweep_ids, sample_gff, baclm_dir, baclm_suffix=baclm_suffix, boundary_tol=boundary_tol,
-        eval_ids=eval_set,
+        eval_ids=eval_set, store_dtype=store_dtype,
     )
     prev = prevalence["prevalence"]
     core = set(prevalence.loc[prev > min_prevalence, "upstream_gene"])
@@ -231,6 +232,9 @@ def main() -> None:
     p.add_argument("--eval-holdout", action="store_true",
                    help="Real held-out-test numbers: fit each anchor's LR on train+validate and additionally "
                         "report eval_auroc_<drug> on the untouched evaluate split (vs the OOF-only default).")
+    p.add_argument("--store-dtype", choices=["float32", "float16"], default="float32",
+                   help="Design-matrix storage precision. float16 halves the full-cohort footprint (the LR "
+                        "still fits in float32); use for whole-cohort --eval-holdout runs.")
     args = p.parse_args()
 
     sp = store_paths(args.species)
@@ -240,7 +244,7 @@ def main() -> None:
     run(split_csv=split_csv, drug=args.drug, input_csv=input_csv, baclm_dir=baclm_dir, out_dir=args.out_dir,
         min_prevalence=args.min_prevalence, auroc_filter=args.auroc_filter, n_folds=args.n_folds, seed=args.seed,
         n_jobs=args.n_jobs, max_train_genomes=args.max_train_genomes, sample_seed=args.sample_seed,
-        boundary_tol=args.boundary_tol, eval_holdout=args.eval_holdout)
+        boundary_tol=args.boundary_tol, eval_holdout=args.eval_holdout, store_dtype=args.store_dtype)
 
 
 if __name__ == "__main__":
