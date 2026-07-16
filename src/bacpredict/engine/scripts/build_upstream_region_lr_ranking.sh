@@ -16,6 +16,10 @@
 # Usage:  sbatch --array=0-9 src/bacpredict/engine/scripts/build_upstream_region_lr_ranking.sh          # TB, all 10
 #         SPECIES=kp sbatch --export=ALL,SPECIES=kp --array=0-21 \
 #             src/bacpredict/engine/scripts/build_upstream_region_lr_ranking.sh                          # Kp, all 22
+#   Held-out-test ("real numbers", full cohort — fit train+validate, score the evaluate split):
+#         sbatch --export=ALL,EVAL=1,SUFFIX=_eval,MAX_TRAIN= --mem=256G --array=0-9 \
+#             src/bacpredict/engine/scripts/build_upstream_region_lr_ranking.sh                          # TB eval
+#         (SPECIES=kp + --array=0-21 for Kp.)  BACLM_DIR=<...>/baclm_reembed for the re-embed store.
 #
 #SBATCH --job-name=upstream_lr_ranking
 #SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
@@ -64,23 +68,34 @@ if [[ -z "$DRUG" ]]; then
     exit 1
 fi
 
+# Held-out-test ("real numbers") mode — EVAL=1 fits each anchor's LR on train+validate and reports
+# eval_auroc_<drug> on the untouched evaluate split (vs the OOF-only 2000-subsample default). MAX_TRAIN=""
+# drops the cap (full cohort). SUFFIX namespaces the output dir so the eval rankings sit beside the OOF ones
+# (upstream_lr_ranking_eval/). BACLM_DIR overrides the store (e.g. …/baclm_reembed for the re-embed pass).
+EVAL="${EVAL:-0}"                                 # 1 → --eval-holdout
+SUFFIX="${SUFFIX:-}"                              # output-subdir suffix, e.g. _eval
+MAX_TRAIN="${MAX_TRAIN:-2000}"                    # "" → full cohort
 # Per-drug + per-species subdir (the module also writes non-drug-specific files, so concurrent array tasks
 # must not share an out-dir).
-OUT=$D/processed/train_${TASK}/pangena_predict/upstream_lr_ranking/$DRUG
+OUT=$D/processed/train_${TASK}/pangena_predict/upstream_lr_ranking${SUFFIX}/$DRUG
 TABLE=per_upstream_lr_${DRUG}.csv
 
 echo "========================================================================"
 echo "Upstream-region LR ranking — species=$SPECIES drug=$DRUG (array task $SLURM_ARRAY_TASK_ID)"
-echo "Out dir: $OUT  (subsample 2000 train, upstream:<gene> anchoring, boundary-tol 3)"
+echo "Out dir: $OUT  (eval=$EVAL max-train=${MAX_TRAIN:-full}, upstream:<gene> anchoring, boundary-tol 3)"
+echo "Store:   ${BACLM_DIR:-<store_paths default>}"
 echo "Job ID:  ${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 echo "========================================================================"
 # Idempotent: skip drugs whose ranking already exists (lets a full array backfill the panel).
 if [[ -f "$OUT/$TABLE" ]]; then
-    echo "Ranking already exists for $DRUG — skipping."
+    echo "Ranking already exists for $DRUG ($SUFFIX) — skipping."
     exit 0
 fi
 mkdir -p "$OUT"
 
+EVAL_ARG=""; [[ "$EVAL" == 1 ]] && EVAL_ARG="--eval-holdout"
+MAXT_ARG=""; [[ -n "$MAX_TRAIN" ]] && MAXT_ARG="--max-train-genomes $MAX_TRAIN"
+BACLM_ARG=""; [[ -n "${BACLM_DIR:-}" ]] && BACLM_ARG="--baclm-dir $BACLM_DIR"
 "$PY" -m bacpredict.engine.gene_lr.build_upstream_region_lr_store \
     --species "$SPECIES" \
     --drug "$DRUG" \
@@ -89,9 +104,11 @@ mkdir -p "$OUT"
     --auroc-filter 0.8 \
     --n-folds 5 \
     --seed 1 \
-    --max-train-genomes 2000 \
+    $MAXT_ARG \
     --sample-seed 1 \
     --boundary-tol 3 \
+    $BACLM_ARG \
+    $EVAL_ARG \
     --n-jobs "${SLURM_CPUS_PER_TASK:-32}"
 
 echo "=== top of the wide upstream ranking table ($TABLE) ==="

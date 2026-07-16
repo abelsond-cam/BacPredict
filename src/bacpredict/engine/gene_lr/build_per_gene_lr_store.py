@@ -242,7 +242,8 @@ def discover_core_genes(
 
 
 def assemble_gene_matrices(
-    train_ids: list[str], core_genes: list[str], embed_dir: Path, parquet_dir: Path, *, store_kind: str = "esm"
+    train_ids: list[str], core_genes: list[str], embed_dir: Path, parquet_dir: Path, *,
+    store_kind: str = "esm", store_dtype: str = "float32",
 ) -> tuple[dict[str, tuple[list[str], np.ndarray]], list[str]]:
     """Collect each core gene's single-copy 960-vector across the train genomes.
 
@@ -251,6 +252,10 @@ def assemble_gene_matrices(
     read (some are skipped for missing/misaligned files). ``read_ids`` is the universe for the
     zero-impute fit (a *read* genome that lacks a gene is genuinely gene-absent → a 0-vector; a *skipped*
     genome has no data and must not be imputed as absent).
+
+    ``store_dtype`` sets the stored embedding precision. ``float16`` halves the in-memory footprint of the
+    full-cohort collection (the design matrices, not the fit — :func:`fit_one_gene` upcasts to float32), so
+    a whole-cohort screen fits one node; the LR itself is unaffected (StandardScaler solves in float64).
     """
     core_set = set(core_genes)
     ids_by_gene: dict[str, list[str]] = {g: [] for g in core_genes}
@@ -268,7 +273,7 @@ def assemble_gene_matrices(
         for i, g in enumerate(gene_names):
             if g in core_set and counts[g] == 1:  # single-copy occurrence in this genome
                 ids_by_gene[g].append(sid)
-                vecs_by_gene[g].append(emb[i])
+                vecs_by_gene[g].append(emb[i].astype(store_dtype, copy=False))
         if k % 200 == 0:
             logger.info("  gene-matrix assembly: %d/%d genomes", k, len(train_ids))
     if n_skipped:
@@ -283,35 +288,63 @@ def assemble_gene_matrices(
 # ---------------------------------------------------------------------------
 
 
-def fit_one_gene(ids: list[str], x: np.ndarray, y: np.ndarray, *, n_folds: int, seed: int) -> dict | None:
-    """Fit one gene's out-of-fold + full LR; ``None`` if its train labels are single-class."""
-    n_pos = int(y.sum())
-    if n_pos == 0 or n_pos == len(y):
-        return None  # single-class — no resistance contrast for this gene
-    k = min(n_folds, n_pos, len(y) - n_pos)
+def fit_one_gene(
+    ids: list[str], x: np.ndarray, y: np.ndarray, *, n_folds: int, seed: int,
+    eval_ids: set[str] | None = None,
+) -> dict | None:
+    """Fit one gene's out-of-fold + full LR; ``None`` if its (fit) labels are single-class.
+
+    With ``eval_ids`` the gene's genomes are split into a **fit** set (the ids *not* in ``eval_ids`` —
+    train+validate) and a held-out **evaluate** set (the ids in ``eval_ids``). The out-of-fold CV + the
+    full-fit LR are estimated on the fit set only, and ``eval_auroc`` is that full-fit model scored on the
+    evaluate genomes — a real held-out-test number (present-conditioned, exactly like the OOF metric). The
+    default (``eval_ids=None``) reproduces the original OOF-only behaviour bit-for-bit: every genome is a
+    fit genome, ``oof_prob`` is keyed by all ``ids``, and the eval fields are empty.
+    """
+    ids = list(ids)
+    x = np.asarray(x, dtype=np.float32)  # storage may be float16 (memory); fit in float32 (StandardScaler → f64)
+    is_eval = np.array([s in eval_ids for s in ids], dtype=bool) if eval_ids else np.zeros(len(ids), bool)
+    fit_sel = ~is_eval
+    x_fit, y_fit = x[fit_sel], y[fit_sel]
+    fit_ids = [s for s, e in zip(ids, is_eval, strict=True) if not e]
+    n_pos = int(y_fit.sum())
+    if n_pos == 0 or n_pos == len(y_fit):
+        return None  # single-class fit set — no resistance contrast for this gene
+    k = min(n_folds, n_pos, len(y_fit) - n_pos)
     if k < 2:
         return None
     skf = StratifiedKFold(n_splits=k, shuffle=True, random_state=seed)
-    oof = np.full(len(y), np.nan, dtype=float)
-    for tr_idx, te_idx in skf.split(x, y):
-        scaler = StandardScaler().fit(x[tr_idx])
-        clf = LogisticRegression(**LOGREG_KW).fit(scaler.transform(x[tr_idx]), y[tr_idx])
-        oof[te_idx] = clf.predict_proba(scaler.transform(x[te_idx]))[:, 1]
-    full_scaler = StandardScaler().fit(x)
-    full_clf = LogisticRegression(**LOGREG_KW).fit(full_scaler.transform(x), y)
-    return {
-        "auroc": float(roc_auc_score(y, oof)),
-        "oof_prob": {s: float(p) for s, p in zip(ids, oof, strict=True)},
+    oof = np.full(len(y_fit), np.nan, dtype=float)
+    for tr_idx, te_idx in skf.split(x_fit, y_fit):
+        scaler = StandardScaler().fit(x_fit[tr_idx])
+        clf = LogisticRegression(**LOGREG_KW).fit(scaler.transform(x_fit[tr_idx]), y_fit[tr_idx])
+        oof[te_idx] = clf.predict_proba(scaler.transform(x_fit[te_idx]))[:, 1]
+    full_scaler = StandardScaler().fit(x_fit)
+    full_clf = LogisticRegression(**LOGREG_KW).fit(full_scaler.transform(x_fit), y_fit)
+    result = {
+        "auroc": float(roc_auc_score(y_fit, oof)),
+        "oof_prob": {s: float(p) for s, p in zip(fit_ids, oof, strict=True)},
         "scaler": full_scaler,
         "clf": full_clf,
-        "n_train": len(y),
+        "n_train": len(y_fit),
         "n_pos": n_pos,
+        "eval_auroc": float("nan"),
+        "n_eval": 0,
+        "n_eval_pos": 0,
     }
+    if is_eval.any():
+        x_ev, y_ev = x[is_eval], y[is_eval]
+        n_ev_pos = int(y_ev.sum())
+        result["n_eval"], result["n_eval_pos"] = int(len(y_ev)), n_ev_pos
+        if 0 < n_ev_pos < len(y_ev):  # need both classes for a held-out AUROC
+            p_ev = full_clf.predict_proba(full_scaler.transform(x_ev))[:, 1]
+            result["eval_auroc"] = float(roc_auc_score(y_ev, p_ev))
+    return result
 
 
 def fit_one_gene_imputed(
     present_ids: list[str], x_present: np.ndarray, all_ids: list[str], y_all: np.ndarray, dim: int,
-    *, n_folds: int, seed: int,
+    *, n_folds: int, seed: int, eval_ids: set[str] | None = None,
 ) -> dict | None:
     """Fit one gene over the **full** read universe, zero-imputing genomes where the gene is absent.
 
@@ -325,7 +358,7 @@ def fit_one_gene_imputed(
     rows = [pos[s] for s in present_ids if s in pos]
     if rows:
         x[rows] = x_present[: len(rows)]
-    return fit_one_gene(list(all_ids), x, y_all, n_folds=n_folds, seed=seed)
+    return fit_one_gene(list(all_ids), x, y_all, n_folds=n_folds, seed=seed, eval_ids=eval_ids)
 
 
 def fit_per_gene(
@@ -337,17 +370,23 @@ def fit_per_gene(
     n_jobs: int = 1,
     all_ids: list[str] | None = None,
     impute_absent_zero: bool = False,
+    eval_ids: set[str] | None = None,
 ) -> dict[str, dict]:
     """Fit one LR per core gene (out-of-fold train probs + full-train fit), genes in parallel.
 
     Each gene is independent, so the ~3,500 per-gene fits fan out over ``n_jobs`` worker
     processes (joblib). Returns ``{gene: {auroc, oof_prob: {sample: p}, scaler, clf, n_train,
-    n_pos}}``; genes whose train labels are single-class (no AUROC defined) are dropped.
+    n_pos, eval_auroc, n_eval, n_eval_pos}}``; genes whose fit labels are single-class (no AUROC
+    defined) are dropped.
 
     With ``impute_absent_zero`` the fit universe is ``all_ids`` (the full read set) and genomes lacking
     the gene get a 0-vector instead of being dropped — so the AUROC reflects presence/absence + the
     embedding, directly comparable to the determinant one-hot. Default off keeps the drop-absent
     (present-only) fit, conditioned on the gene being present.
+
+    ``eval_ids`` (the held-out evaluate-split Sample ids) turns the OOF-only screen into a held-out-test
+    screen: each gene's LR is fit on its non-eval genomes and ``eval_auroc`` is that model scored on its
+    eval genomes. Default ``None`` → OOF only (eval fields empty).
     """
     genes = list(gene_matrices)
     if impute_absent_zero:
@@ -357,13 +396,15 @@ def fit_per_gene(
         dim = next(iter(gene_matrices.values()))[1].shape[1]
         results = Parallel(n_jobs=n_jobs)(
             delayed(fit_one_gene_imputed)(
-                gene_matrices[g][0], gene_matrices[g][1], all_ids, y_all, dim, n_folds=n_folds, seed=seed)
+                gene_matrices[g][0], gene_matrices[g][1], all_ids, y_all, dim,
+                n_folds=n_folds, seed=seed, eval_ids=eval_ids)
             for g in genes
         )
     else:
         ys = {g: np.array([label_map[s] for s in gene_matrices[g][0]], dtype=int) for g in genes}
         results = Parallel(n_jobs=n_jobs)(
-            delayed(fit_one_gene)(gene_matrices[g][0], gene_matrices[g][1], ys[g], n_folds=n_folds, seed=seed)
+            delayed(fit_one_gene)(gene_matrices[g][0], gene_matrices[g][1], ys[g],
+                                  n_folds=n_folds, seed=seed, eval_ids=eval_ids)
             for g in genes
         )
     fitted = {g: r for g, r in zip(genes, results, strict=True) if r is not None}
@@ -508,8 +549,11 @@ def write_gene_drug_table(
             "annotation": annotation.get(g, ""),
             "prevalence": prev_by_gene.get(g, float("nan")),
             f"lr_auroc_{drug}": f["auroc"],
+            f"eval_auroc_{drug}": f.get("eval_auroc", float("nan")),
             "n_train": f["n_train"],
             "n_pos": f["n_pos"],
+            "n_eval": f.get("n_eval", 0),
+            "n_eval_pos": f.get("n_eval_pos", 0),
             "kept_filtered": g in filtered_genes,
         }
         for g, f in sorted(fitted.items(), key=lambda kv: kv[1]["auroc"], reverse=True)
@@ -535,6 +579,8 @@ def run(
     write_panels: bool = False,
     impute_absent_zero: bool = False,
     store_kind: str = "esm",
+    eval_holdout: bool = False,
+    store_dtype: str = "float32",
 ) -> dict:
     """Discover genes, fit per-gene LRs on a (sub)sample of train, write the wide gene×drug table.
 
@@ -542,19 +588,27 @@ def run(
     is untouched) — expedient for the first pass; ``None`` fits on all train. The panel store (the
     per-protein npz for the attention-head channel) is heavy and only written when ``write_panels`` —
     the gene-ranking run skips it.
+
+    ``eval_holdout`` produces **real held-out-test** numbers rather than the OOF-only screen: the LRs are
+    fit on ``train`` + ``validate`` (a plain LR needs no early-stopping set) and each gene additionally
+    reports ``eval_auroc_<drug>`` on the untouched ``evaluate`` split. Core-gene discovery + prevalence
+    stay on the fit genomes only; the evaluate genomes are swept solely to be scored (never fit).
     """
     label_map, train_ids, validate_ids, evaluate_ids = load_splits(split_csv, drug)
     all_ids = [*train_ids, *validate_ids, *evaluate_ids]
-    fit_train_ids = subsample_balanced(train_ids, label_map, max_n=max_train_genomes, seed=sample_seed)
+    fit_pool = [*train_ids, *validate_ids] if eval_holdout else list(train_ids)
+    eval_set: set[str] | None = set(evaluate_ids) if eval_holdout else None
+    fit_train_ids = subsample_balanced(fit_pool, label_map, max_n=max_train_genomes, seed=sample_seed)
+    sweep_ids = [*fit_train_ids, *(evaluate_ids if eval_holdout else [])]
 
     core_genes, prevalence_table, annotation = discover_core_genes(
         fit_train_ids, parquet_dir, min_prevalence=min_prevalence
     )
     gene_matrices, read_ids = assemble_gene_matrices(
-        fit_train_ids, core_genes, embed_dir, parquet_dir, store_kind=store_kind
+        sweep_ids, core_genes, embed_dir, parquet_dir, store_kind=store_kind, store_dtype=store_dtype
     )
     fitted = fit_per_gene(gene_matrices, label_map, n_folds=n_folds, seed=seed, n_jobs=n_jobs,
-                          all_ids=read_ids, impute_absent_zero=impute_absent_zero)
+                          all_ids=read_ids, impute_absent_zero=impute_absent_zero, eval_ids=eval_set)
     filtered_genes = {g for g, f in fitted.items() if f["auroc"] > auroc_filter}
     logger.info("Filter (AUROC > %.2f): %d of %d fitted genes kept", auroc_filter, len(filtered_genes), len(fitted))
 
@@ -572,8 +626,9 @@ def run(
 
     # Per-gene AUROC table (the filter evidence) + the wide gene×drug ranking table + prevalence.
     auroc_rows = [
-        {"gene": g, "auroc": f["auroc"], "n_train": f["n_train"], "n_pos": f["n_pos"],
-         "kept_filtered": g in filtered_genes}
+        {"gene": g, "auroc": f["auroc"], "eval_auroc": f.get("eval_auroc", float("nan")),
+         "n_train": f["n_train"], "n_pos": f["n_pos"], "n_eval": f.get("n_eval", 0),
+         "n_eval_pos": f.get("n_eval_pos", 0), "kept_filtered": g in filtered_genes}
         for g, f in sorted(fitted.items(), key=lambda kv: kv[1]["auroc"], reverse=True)
     ]
     pd.DataFrame(auroc_rows).to_csv(out_dir / "gene_lr_auroc.csv", index=False)
@@ -591,6 +646,7 @@ def run(
         "split_csv": str(split_csv),
         "n_train": len(train_ids),
         "n_train_fit": len(fit_train_ids),
+        "eval_holdout": eval_holdout,
         "max_train_genomes": max_train_genomes,
         "sample_seed": sample_seed,
         "n_validate": len(validate_ids),
@@ -652,6 +708,12 @@ def main() -> None:
                         help="Fit each gene over ALL read genomes, zero-imputing (0×dim) the ones that lack it, "
                              "instead of dropping absent genomes. Lets the LR use the presence/absence signal "
                              "(so acquired genes are no longer invisible); ~no change for universal genes.")
+    parser.add_argument("--eval-holdout", action="store_true",
+                        help="Real held-out-test numbers: fit each gene's LR on train+validate and additionally "
+                             "report eval_auroc_<drug> on the untouched evaluate split (vs the OOF-only default).")
+    parser.add_argument("--store-dtype", choices=["float32", "float16"], default="float32",
+                        help="Design-matrix storage precision. float16 halves the full-cohort memory footprint "
+                             "(the LR still fits in float32/64); use for whole-cohort --eval-holdout runs.")
     args = parser.parse_args()
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -671,6 +733,8 @@ def main() -> None:
         sample_seed=args.sample_seed,
         write_panels=args.write_panels,
         impute_absent_zero=args.impute_absent_zero,
+        eval_holdout=args.eval_holdout,
+        store_dtype=args.store_dtype,
     )
 
 

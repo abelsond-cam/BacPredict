@@ -98,13 +98,19 @@ def _genome_upstream_records(
 
 def collect_upstream_matrices(
     train_ids: list[str], sample_gff: dict[str, str], baclm_dir: Path, *,
-    baclm_suffix: str = "_baclm_embeddings.pt", boundary_tol: int = 3,
+    baclm_suffix: str = "_baclm_embeddings.pt", boundary_tol: int = 3, eval_ids: set[str] | None = None,
 ) -> tuple[dict[str, tuple[list[str], np.ndarray]], pd.DataFrame, list[str]]:
     """GFF+``.pt`` sweep → per-anchor single-copy design matrices + prevalence + read universe.
 
     Serial sweep (torch.load mmap can't be forked before the process-parallel fit on aarch64 — same
     constraint and rationale as :func:`build_per_igr_lr_store.collect_igr_matrices`).
+
+    ``eval_ids`` (the held-out evaluate split) are swept and added to each anchor's design matrix so the
+    fitted LR can be scored on them, but they are excluded from the prevalence / core-anchor selection and
+    from the returned ``read_ids`` universe — those stay on the fit (train+validate) genomes only, so the
+    evaluate split never influences which anchors are screened.
     """
+    eval_ids = eval_ids or set()
     tasks = [
         (str(s), sample_gff.get(str(s), ""), str(Path(baclm_dir) / f"{s}{baclm_suffix}"))
         for s in train_ids if str(s) in sample_gff
@@ -121,15 +127,18 @@ def collect_upstream_matrices(
             n_skipped += 1
             continue
         sid, records = res
-        read_ids.append(sid)
+        is_eval = sid in eval_ids
+        if not is_eval:
+            read_ids.append(sid)  # prevalence universe = fit genomes only
         counts = Counter(k for k, _ in records)
         for key, vec in records:
             if counts[key] == 1:  # gene single-copy in this genome
-                single_copy[key] += 1
+                if not is_eval:
+                    single_copy[key] += 1  # prevalence numerator = fit genomes only
                 ids_by_key.setdefault(key, []).append(sid)
                 vecs_by_key.setdefault(key, []).append(vec)
     if n_skipped:
-        logger.warning("upstream sweep: skipped %d train genomes (missing/unreadable GFF or .pt)", n_skipped)
+        logger.warning("upstream sweep: skipped %d genomes (missing/unreadable GFF or .pt)", n_skipped)
 
     n = len(read_ids)
     prevalence = pd.DataFrame(
@@ -144,33 +153,43 @@ def run(
     *, split_csv: Path, drug: str, input_csv: Path, baclm_dir: Path, out_dir: Path,
     min_prevalence: float = 0.10, auroc_filter: float = 0.8, n_folds: int = 5, seed: int = 1,
     n_jobs: int = 1, max_train_genomes: int | None = None, sample_seed: int = 1, boundary_tol: int = 3,
-    baclm_suffix: str = "_baclm_embeddings.pt",
+    baclm_suffix: str = "_baclm_embeddings.pt", eval_holdout: bool = False,
 ) -> dict:
-    """Anchor regions on the downstream gene, fit per-anchor LRs, write the wide ranking table."""
+    """Anchor regions on the downstream gene, fit per-anchor LRs, write the wide ranking table.
+
+    ``eval_holdout`` gives **real held-out-test** numbers: each anchor's LR is fit on train+validate and
+    additionally reports ``eval_auroc_<drug>`` on the untouched evaluate split (vs the OOF-only default).
+    """
     label_map, train_ids, validate_ids, evaluate_ids = load_splits(split_csv, drug)
-    fit_train_ids = subsample_balanced(train_ids, label_map, max_n=max_train_genomes, seed=sample_seed)
+    fit_pool = [*train_ids, *validate_ids] if eval_holdout else list(train_ids)
+    eval_set: set[str] | None = set(evaluate_ids) if eval_holdout else None
+    fit_train_ids = subsample_balanced(fit_pool, label_map, max_n=max_train_genomes, seed=sample_seed)
+    sweep_ids = [*fit_train_ids, *(evaluate_ids if eval_holdout else [])]
 
     inp = pd.read_csv(input_csv, usecols=["Sample", "sr_gff_file"])
     sample_gff = dict(zip(inp["Sample"].astype(str), inp["sr_gff_file"].astype(str), strict=True))
 
     matrices, prevalence, read_ids = collect_upstream_matrices(
-        fit_train_ids, sample_gff, baclm_dir, baclm_suffix=baclm_suffix, boundary_tol=boundary_tol,
+        sweep_ids, sample_gff, baclm_dir, baclm_suffix=baclm_suffix, boundary_tol=boundary_tol,
+        eval_ids=eval_set,
     )
     prev = prevalence["prevalence"]
     core = set(prevalence.loc[prev > min_prevalence, "upstream_gene"])
     core_matrices = {k: m for k, m in matrices.items() if k in core}
-    logger.info("upstream anchors > %.2f prevalence over %d train: %d of %d",
+    logger.info("upstream anchors > %.2f prevalence over %d fit genomes: %d of %d",
                 min_prevalence, len(read_ids), len(core_matrices), len(matrices))
 
     fitted = fit_per_gene(core_matrices, label_map, n_folds=n_folds, seed=seed, n_jobs=n_jobs,
-                          all_ids=read_ids, impute_absent_zero=False)
+                          all_ids=read_ids, impute_absent_zero=False, eval_ids=eval_set)
     filtered = {k for k, f in fitted.items() if f["auroc"] > auroc_filter}
 
     out_dir.mkdir(parents=True, exist_ok=True)
     prev_map = dict(zip(prevalence["upstream_gene"], prevalence["prevalence"], strict=True))
     rows = [
         {"upstream_gene": k, "gene": k.split("upstream:", 1)[-1], "prevalence": prev_map.get(k, float("nan")),
-         f"lr_auroc_{drug}": f["auroc"], "n_train": f["n_train"], "n_pos": f["n_pos"], "kept_filtered": k in filtered}
+         f"lr_auroc_{drug}": f["auroc"], f"eval_auroc_{drug}": f.get("eval_auroc", float("nan")),
+         "n_train": f["n_train"], "n_pos": f["n_pos"], "n_eval": f.get("n_eval", 0),
+         "n_eval_pos": f.get("n_eval_pos", 0), "kept_filtered": k in filtered}
         for k, f in sorted(fitted.items(), key=lambda kv: kv[1]["auroc"], reverse=True)
     ]
     table = out_dir / f"per_upstream_lr_{drug}.csv"
@@ -180,7 +199,8 @@ def run(
     best = max(fitted.items(), key=lambda kv: kv[1]["auroc"], default=(None, None))
     summary = {
         "analysis": "build_upstream_region_lr_store", "drug": drug, "split_csv": str(split_csv),
-        "n_train_fit": len(fit_train_ids), "n_read_genomes": len(read_ids), "boundary_tol": boundary_tol,
+        "eval_holdout": eval_holdout, "n_train_fit": len(fit_train_ids), "n_read_genomes": len(read_ids),
+        "n_evaluate": len(evaluate_ids) if eval_holdout else 0, "boundary_tol": boundary_tol,
         "min_prevalence": min_prevalence, "n_anchors": len(matrices), "n_core": len(core_matrices),
         "n_fitted": len(fitted), "auroc_filter": auroc_filter, "n_filtered": len(filtered),
         "best_anchor": best[0], "best_auroc": best[1]["auroc"] if best[1] else None,
@@ -208,6 +228,9 @@ def main() -> None:
     p.add_argument("--max-train-genomes", type=int, default=None)
     p.add_argument("--sample-seed", type=int, default=1)
     p.add_argument("--boundary-tol", type=int, default=3)
+    p.add_argument("--eval-holdout", action="store_true",
+                   help="Real held-out-test numbers: fit each anchor's LR on train+validate and additionally "
+                        "report eval_auroc_<drug> on the untouched evaluate split (vs the OOF-only default).")
     args = p.parse_args()
 
     sp = store_paths(args.species)
@@ -217,7 +240,7 @@ def main() -> None:
     run(split_csv=split_csv, drug=args.drug, input_csv=input_csv, baclm_dir=baclm_dir, out_dir=args.out_dir,
         min_prevalence=args.min_prevalence, auroc_filter=args.auroc_filter, n_folds=args.n_folds, seed=args.seed,
         n_jobs=args.n_jobs, max_train_genomes=args.max_train_genomes, sample_seed=args.sample_seed,
-        boundary_tol=args.boundary_tol)
+        boundary_tol=args.boundary_tol, eval_holdout=args.eval_holdout)
 
 
 if __name__ == "__main__":

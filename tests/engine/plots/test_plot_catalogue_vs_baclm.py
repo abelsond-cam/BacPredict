@@ -90,6 +90,29 @@ def test_run_writes_png_and_csv(tmp_path):
     assert inha["baclm_auroc"] == 0.80 and inha["matched_via"] == "upstream:fabg1"
 
 
+def test_run_prefers_eval_auroc_column(tmp_path):
+    """When a ranking CSV carries eval_auroc_<drug> (the CP-R held-out-test run), CP-P uses it over OOF."""
+    cat_csv = tmp_path / "tbprofiler_gene_lr_ethionamide.csv"
+    _tb_catalogue().to_csv(cat_csv, index=False)
+    per_gene = tmp_path / "per_gene_lr_ethionamide.csv"
+    pd.DataFrame([{"gene_name": "ethA", "annotation": "", "prevalence": 0.9,
+                   "lr_auroc_ethionamide": 0.58, "eval_auroc_ethionamide": 0.66,
+                   "n_train": 2000, "n_pos": 900, "n_eval": 500, "n_eval_pos": 220,
+                   "kept_filtered": False}]).to_csv(per_gene, index=False)
+    upstream = tmp_path / "per_upstream_lr_ethionamide.csv"
+    pd.DataFrame([{"upstream_gene": "upstream:fabg1", "gene": "fabg1", "prevalence": 0.95,
+                   "lr_auroc_ethionamide": 0.80, "eval_auroc_ethionamide": 0.78,
+                   "n_train": 2000, "n_pos": 900, "n_eval": 500, "n_eval_pos": 220,
+                   "kept_filtered": True}]).to_csv(upstream, index=False)
+
+    out_png = tmp_path / "tb_profiler_vs_bac_lm.png"
+    table = P.run(species="tb", drug="ethionamide", catalogue_kind="tbprofiler", catalogue_csv=cat_csv,
+                  per_gene_csv=per_gene, upstream_csv=upstream, out_path=out_png)
+    by_gene = table.set_index("gene")
+    assert by_gene.loc["ethA", "baclm_auroc"] == 0.66      # held-out test, not the 0.58 OOF
+    assert by_gene.loc["inhA", "baclm_auroc"] == 0.78      # held-out test, not the 0.80 OOF
+
+
 def test_run_survives_missing_rankings(tmp_path):
     """A drug whose baclm rankings are absent still renders (all baclm bars blank)."""
     cat_csv = tmp_path / "tbprofiler_gene_lr_kanamycin.csv"

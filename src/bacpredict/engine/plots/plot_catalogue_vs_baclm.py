@@ -80,6 +80,18 @@ def _auroc_col(df: pd.DataFrame, prefix: str = "lr_auroc_") -> str:
     return cols[0]
 
 
+def _pick_auroc_col(df: pd.DataFrame) -> tuple[str, bool]:
+    """Prefer the held-out-test ``eval_auroc_<drug>`` column; fall back to OOF ``lr_auroc_<drug>``.
+
+    Returns ``(column, is_eval)`` — ``is_eval`` drives the "held-out test" vs "out-of-fold" axis label.
+    """
+    for prefix in ("eval_auroc_", "lr_auroc_"):
+        cols = [c for c in df.columns if c.startswith(prefix)]
+        if cols:
+            return cols[0], prefix == "eval_auroc_"
+    raise ValueError(f"no eval_auroc_*/lr_auroc_* column in {list(df.columns)}")
+
+
 def _base_symbol(name: str) -> str:
     """Lower-cased base gene symbol — strips a trailing ``(mut)``/``(WT)``/``(promoter)`` qualifier.
 
@@ -102,15 +114,19 @@ def _mechanism(row: pd.Series, kind: str) -> str:
     return "coding"
 
 
-def _load_baclm_map(csv_path: Path | None, key_col: str) -> dict[str, float]:
-    """Ranking CSV → ``{normalised gene → AUROC}`` (empty if the CSV is absent)."""
+def _load_baclm_map(csv_path: Path | None, key_col: str) -> tuple[dict[str, float], bool]:
+    """Ranking CSV → ``({normalised gene → AUROC}, is_eval)``; empty map if the CSV is absent.
+
+    Prefers the held-out-test ``eval_auroc_<drug>`` column when present, else the OOF ``lr_auroc_<drug>``.
+    ``is_eval`` reports which metric the map holds (drives the axis label).
+    """
     if csv_path is None or not Path(csv_path).exists():
-        return {}
+        return {}, False
     df = pd.read_csv(csv_path)
     if key_col not in df.columns or df.empty:
-        return {}
-    au = _auroc_col(df)
-    return {_base_symbol(k): float(v) for k, v in zip(df[key_col], df[au], strict=False) if pd.notna(v)}
+        return {}, False
+    au, is_eval = _pick_auroc_col(df)
+    return {_base_symbol(k): float(v) for k, v in zip(df[key_col], df[au], strict=False) if pd.notna(v)}, is_eval
 
 
 def build_table(
@@ -142,7 +158,7 @@ def build_table(
 
 def plot_catalogue_vs_baclm(
     table: pd.DataFrame, ceiling: dict | None, *, species: str, drug: str, kind: str,
-    out_path: Path, top_n: int = 20,
+    out_path: Path, top_n: int = 20, metric_label: str = "out-of-fold",
 ) -> None:
     """Draw grouped bars per determinant: catalogue one-hot (solid) vs matched baclm LR (hatched)."""
     if table.empty:
@@ -170,7 +186,7 @@ def plot_catalogue_vs_baclm(
     ax.set_xticks(x)
     ax.set_xticklabels(top["determinant"], rotation=45, ha="right", fontsize=8)
     ax.set_ylim(0.4, 1.02)
-    ax.set_ylabel("out-of-fold AUROC")
+    ax.set_ylabel(f"{metric_label} AUROC")
     cat_name = "TB-Profiler" if kind == "tbprofiler" else "CARD"
     ax.set_title(f"{species.upper()} {display_name(drug)} — {cat_name} catalogue vs baclm")
     ax.spines[["top", "right"]].set_visible(False)
@@ -199,12 +215,13 @@ def run(
 ) -> pd.DataFrame:
     """Join one drug's catalogue determinants to the baclm rankings, write the figure + tidy CSV."""
     drivers, ceiling = parse_driver_csv(Path(catalogue_csv))
-    coding_map = _load_baclm_map(per_gene_csv, "gene_name")
-    upstream_map = _load_baclm_map(upstream_csv, "gene")  # upstream ranking keys the anchor in ``gene``
+    coding_map, coding_eval = _load_baclm_map(per_gene_csv, "gene_name")
+    upstream_map, upstream_eval = _load_baclm_map(upstream_csv, "gene")  # upstream keys the anchor in ``gene``
+    metric_label = "held-out test" if (coding_eval or upstream_eval) else "out-of-fold"
     table = build_table(drivers, kind=catalogue_kind, species=species,
                         coding_map=coding_map, upstream_map=upstream_map)
     plot_catalogue_vs_baclm(table, ceiling, species=species, drug=drug, kind=catalogue_kind,
-                            out_path=out_path, top_n=top_n)
+                            out_path=out_path, top_n=top_n, metric_label=metric_label)
     table.to_csv(out_path.with_suffix(".csv"), index=False)
     n_match = int(table["baclm_matched"].sum())
     logger.info("%s %s: %d determinants, %d baclm-matched (coding=%d, upstream=%d) -> %s",
@@ -242,6 +259,9 @@ def main() -> None:
                    help="dir holding per_gene_lr_ranking_baclm/ + upstream_lr_ranking/ (default: data-root).")
     p.add_argument("--out-dir", type=Path, default=None,
                    help="figure base dir; per drug -> <out>/<display_drug>/ (default: the visualisations tree).")
+    p.add_argument("--ranking-suffix", default="",
+                   help="suffix on the ranking sub-dir names, e.g. '_eval' → per_gene_lr_ranking_baclm_eval/ + "
+                        "upstream_lr_ranking_eval/ (the held-out-test run's namespaced output).")
     p.add_argument("--top-n", type=int, default=20)
     args = p.parse_args()
 
@@ -250,6 +270,7 @@ def main() -> None:
     cat_dir = args.catalogue_dir or visualisations_dir(args.species)
     out_dir = args.out_dir or visualisations_dir(args.species)
     rank_dir = args.ranking_dir or _ranking_dir(args.species)
+    sfx = args.ranking_suffix
     drugs = [args.drug] if args.drug else _DRUGS[args.species]
 
     for drug in drugs:
@@ -258,8 +279,8 @@ def main() -> None:
         if not cat_csv.exists():
             logger.warning("[%s] no catalogue CSV at %s — skipping", drug, cat_csv)
             continue
-        per_gene = rank_dir / "per_gene_lr_ranking_baclm" / drug / f"per_gene_lr_{drug}.csv"
-        upstream = rank_dir / "upstream_lr_ranking" / drug / f"per_upstream_lr_{drug}.csv"
+        per_gene = rank_dir / f"per_gene_lr_ranking_baclm{sfx}" / drug / f"per_gene_lr_{drug}.csv"
+        upstream = rank_dir / f"upstream_lr_ranking{sfx}" / drug / f"per_upstream_lr_{drug}.csv"
         run(species=args.species, drug=drug, catalogue_kind=kind, catalogue_csv=cat_csv,
             per_gene_csv=per_gene if per_gene.exists() else None,
             upstream_csv=upstream if upstream.exists() else None,
