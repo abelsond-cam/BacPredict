@@ -17,8 +17,11 @@ set -uo pipefail
 : "${SCRATCHDIR:?}" "${TASK:?set TASK=tb|kleb}"
 S="$SCRATCHDIR"
 PY="$S/envs/bacpredict-gpu-venv/bin/python"
-export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
-EMB="$HOME/BacPredict/src/tl/embed"
+# On Isambard $HOME/BacPredict is the stale pre-consolidation `dev` checkout; consolidated code is in
+# the worktree. Override REPO at submit if elsewhere.
+REPO="${REPO:-$SCRATCHDIR/worktrees/consolidate}"
+export PYTHONPATH="$REPO/src:${PYTHONPATH:-}"
+EMB="$REPO/src/bacpredict/engine/embedding"
 
 case "$TASK" in
   tb)   RAW="$S/raw/tb";       PROC="$S/processed/train_tb_ast" ;;

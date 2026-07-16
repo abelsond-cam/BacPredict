@@ -7,11 +7,12 @@ The DNA half of the baclm store. Mirrors
 ``{Sample}_intergenic.parquet`` per genome. The GPU baclm job then reads these parquets instead of
 re-extracting on the GPU node — the same CPU/GPU two-stage split the ESM-C pipeline uses.
 
-Each parquet is a single row with list-valued columns: ``noncoding_sequence`` (lowercase DNA strings
-for the maximal non-CDS runs) + ``noncoding_seqid`` / ``noncoding_start`` / ``noncoding_end``, and the
-per-RNA index ``rna_sequence`` / ``rna_gene_name`` / ``rna_type`` / ``rna_seqid`` / ``rna_start`` /
-``rna_end`` (see :mod:`bacpredict.engine.embedding.extract_intergenic_from_gff_fna`). Coordinates are 1-based inclusive,
-forward strand.
+Each parquet is a single row with list-valued columns for the three non-coding views produced by
+:mod:`bacpredict.engine.embedding.extract_intergenic_from_gff_fna`: ``noncoding_*`` (whole CDS-to-CDS
+runs), ``fragment_*`` (runs split at named-feature boundaries), and the named-feature index
+``feature_sequence`` / ``feature_name`` / ``feature_type`` / ``feature_seqid`` / ``feature_start`` /
+``feature_end`` (rRNA/tRNA/tmRNA/ncRNA/CRISPR/regulatory_region/oriC). Passed straight through
+(``{"sample_id", **ig}``). Coordinates are 1-based inclusive, forward strand.
 """
 
 import argparse

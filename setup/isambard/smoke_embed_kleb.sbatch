@@ -21,11 +21,14 @@ S="$SCRATCHDIR"
 PY="$S/envs/bacpredict-gpu-venv/bin/python"        # our pinned env: ESM-C + Bacformer (parity)
 BACLM_PY="/projects/u6fp/public/micromamba/envs/bacformer/bin/python"  # Maciej's env: baclm (flash-attn)
 export HF_HOME="$S/cache/hf" TORCH_HOME="$S/cache/torch"
-export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
+# On Isambard $HOME/BacPredict is the stale pre-consolidation `dev` checkout; consolidated code is in
+# the worktree. Override REPO at submit if elsewhere.
+REPO="${REPO:-$SCRATCHDIR/worktrees/consolidate}"
+export PYTHONPATH="$REPO/src:${PYTHONPATH:-}"
 export TOKENIZERS_PARALLELISM=false
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 SMOKE="$S/processed/smoke_kleb"
-EMB="$HOME/BacPredict/src/tl/embed"
+EMB="$REPO/src/bacpredict/engine/embedding"
 mkdir -p "$SMOKE" "$S/tmp"
 cd "$S/tmp"   # keep the scripts' CWD log files off $HOME / the repo
 
@@ -52,14 +55,14 @@ echo "=== 4. EQUIVALENCE GATE: our fast token_type_ids/input_ids == baclm's own 
 import glob, sys
 import pandas as pd, torch
 import torch.nn.functional as F
-from tl.embed.baclm_embed import _MODALITY, _encode_fast, load_baclm, mean_pool_embeddings
+from bacpredict.engine.embedding.baclm_embed import _MODALITY, _encode_fast, load_baclm, mean_pool_embeddings
 S = sys.argv[1]
 model, tok = load_baclm("cuda:0")
 special = torch.tensor(sorted(tok.all_special_ids))
 pf = sorted(glob.glob(f"{S}/protein_sequences/*_protein_sequences.parquet"))[0]
 proteins = [p for c in pd.read_parquet(pf)["protein_sequence"].iloc[0] for p in c][:64]
 igf = sorted(glob.glob(f"{S}/intergenic/*_intergenic.parquet"))[0]
-igs = list(pd.read_parquet(igf)["intergenic_sequence"].iloc[0])[:64]
+igs = list(pd.read_parquet(igf)["noncoding_sequence"].iloc[0])[:64]
 
 for modality, seqs in [("protein", proteins), ("dna", igs)]:
     if not seqs:
@@ -108,10 +111,15 @@ b = torch.load(bac[0], map_location="cpu")
 assert b.shape[-1] == 960, b.shape
 print("bacformer last_hidden_state:", tuple(b.shape), b.dtype)
 c = torch.load(bcl[0], map_location="cpu")
-assert c["protein_embeddings"].shape[-1] == 960 and c["intergenic_embeddings"].shape[-1] == 960, c
+for k in ("protein_embeddings", "noncoding_embeddings", "fragment_embeddings", "feature_embeddings"):
+    assert k in c, f"baclm .pt missing {k}: {list(c)}"
+    assert c[k].shape[-1] == 960, f"{k}: {c[k].shape}"
 print("baclm protein:", tuple(c["protein_embeddings"].shape),
-      "| intergenic:", tuple(c["intergenic_embeddings"].shape), c["protein_embeddings"].dtype)
+      "| noncoding:", tuple(c["noncoding_embeddings"].shape),
+      "| fragment:", tuple(c["fragment_embeddings"].shape),
+      "| feature:", tuple(c["feature_embeddings"].shape),
+      "| feature_types:", sorted(set(c["feature_type"])), c["protein_embeddings"].dtype)
 assert len(esm) == 10 == len(bac) == len(bcl), "expected 10 of each"
-print("=== SMOKE PASS: proteins + ESM-C + Bacformer + baclm(coding+noncoding) OK on GH200, 960-d ===")
+print("=== SMOKE PASS: proteins + ESM-C + Bacformer + baclm(coding + 3 non-coding channels) OK on GH200, 960-d ===")
 PY
 echo "=== smoke done (rc above) ==="

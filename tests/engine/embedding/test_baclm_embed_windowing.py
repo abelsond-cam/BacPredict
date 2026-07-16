@@ -24,14 +24,23 @@ def test_windowize_short_seq_is_single_window():
     assert weight == [40.0]
 
 
-def test_windowize_tiles_long_seq_non_overlapping():
+def test_windowize_splits_long_seq_into_equal_segments():
     seq = "a" * 5000
     windows, owner, weight = baclm_embed._windowize([seq], CHUNK, overlap=0)
-    # 5000 / 2046 -> windows of 2046, 2046, 908
-    assert [len(w) for w in windows] == [2046, 2046, 908]
+    # 5000 -> ceil(5000/2046)=3 EQUAL segments (not 2046,2046,908): divmod(5000,3)=(1666,2) -> 1667,1667,1666
+    assert [len(w) for w in windows] == [1667, 1667, 1666]
+    assert max(len(w) for w in windows) <= CHUNK
+    assert max(len(w) for w in windows) - min(len(w) for w in windows) <= 1  # balanced, no tiny tail
     assert owner == [0, 0, 0]
-    assert weight == [2046.0, 2046.0, 908.0]
-    assert "".join(windows) == seq  # non-overlapping tiling reconstructs the region exactly
+    assert weight == [1667.0, 1667.0, 1666.0]
+    assert "".join(windows) == seq  # equal-segment split still reconstructs the region exactly
+
+
+def test_windowize_just_over_chunk_splits_in_two_balanced():
+    seq = "a" * (CHUNK + 100)  # 2146 -> would be [2046, 100] under old tiling; now [1073, 1073]
+    windows, _, _ = baclm_embed._windowize([seq], CHUNK, overlap=0)
+    assert [len(w) for w in windows] == [1073, 1073]  # balanced halves, no 100-char tail
+    assert "".join(windows) == seq
 
 
 def test_windowize_overlap_shifts_start():
@@ -52,13 +61,13 @@ def test_mean_pool_windowed_token_weighted_equals_full_region(monkeypatch):
     monkeypatch.setattr(baclm_embed, "mean_pool_embeddings", fake_pool)
 
     short = "a" * 99
-    long = "a" * 5000  # windows 2046, 2046, 908
+    long = "a" * 5000  # equal windows 1667, 1667, 1666
     out = baclm_embed.mean_pool_windowed([short, long], model, None, "cpu", "dna", batch_size=8)
     assert out.shape == (2, 4)
     # short: single window weight 99, value 99 -> 99
     assert out[0, 0].item() == pytest.approx(99.0, rel=0.01)
     # long: sum(w*value)/sum(w) with value==w -> sum(w^2)/sum(w)
-    expected = (2046**2 + 2046**2 + 908**2) / 5000
+    expected = (1667**2 + 1667**2 + 1666**2) / 5000
     assert out[1, 0].item() == pytest.approx(expected, rel=0.02)
 
 

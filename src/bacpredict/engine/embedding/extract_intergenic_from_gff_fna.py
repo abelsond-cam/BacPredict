@@ -1,27 +1,26 @@
-"""Extract non-coding DNA regions (+ a named-RNA index) from a Bakta/NCBI GFF3 + sibling FASTA.
+"""Extract non-coding DNA regions from a Bakta/NCBI GFF3 + sibling FASTA — in THREE parallel views.
 
 baclm-350m-masked is a mixed protein+DNA model: proteins are embedded UPPERCASE (the
 `extract_proteins_from_gff_fna` output) and non-coding DNA is embedded **lowercase**. This module
-produces the DNA half.
+produces the DNA half, emitting the same genome's non-coding space at two granularities plus a named
+non-CDS feature index, so downstream LR screens can ask both "does the whole intergenic context predict?"
+and "which specific element (this promoter fragment, this rRNA, this CRISPR) predicts?".
 
-**Only ``CDS`` occupies (2d re-embed).** Earlier this module treated *every* annotated feature as
-occupying, so an intergenic stretch abutting a tRNA/rRNA was split off from its neighbour and every
-RNA *body* (``rrs``/``rrl``/``rrf``, tRNA, tmRNA, ncRNA) fell into no store at all. We now treat only
-protein-coding ``CDS`` as occupying, so each non-coding region is the **maximal contiguous non-CDS
-run** — promoter + any adjacent RNA embedded together, exactly the stretch baclm was trained on. RNA
-bodies are additionally emitted **on their own** (``rna_*`` + their sequence) with a named index, so
-``rrs`` is (a) locatable by name inside its run and (b) available as a standalone vector for the
-"embed RNA separately from IGR?" architecture question.
+**Only ``CDS`` occupies.** Everything else (RNA genes, CRISPR, regulatory_region, oriC, ``region``,
+``gap``, misc) is left inside the non-coding space. The three views:
 
-Long regions are returned **whole** (no truncation here); the embedder windows + pools anything longer
-than the model context. Strand is irrelevant for non-coding DNA, so the forward strand is used.
+* ``noncoding_*`` — **whole_igr**: each **maximal contiguous non-CDS run** (the region between two CDS,
+  label-agnostic — any RNA/CRISPR *inside* it kept). One row per CDS-to-CDS gap.
+* ``fragment_*`` — **per_unit (promoter fragments)**: each non-CDS run **split at every named non-CDS
+  feature boundary** → the intergenic/regulatory fragments between features (a promoter isolated from an
+  adjacent tRNA). One row per fragment.
+* ``feature_*`` — **per_unit (named bodies)**: each **named non-CDS feature body** embedded standalone,
+  with its ``type`` + ``name`` (rRNA ``rrs``/``rrl``/``rrf``, tRNA, tmRNA, ncRNA, **CRISPR**,
+  **regulatory_region**, **oriC**), so ``rrs`` is locatable/probeable by name.
 
-Returned keys (all parallel lists, contig-then-position order; 1-based inclusive forward coords):
-
-* ``noncoding_sequence`` / ``noncoding_seqid`` / ``noncoding_start`` / ``noncoding_end`` — the maximal
-  non-CDS runs (IGR ∪ any RNA they contain).
-* ``rna_sequence`` / ``rna_gene_name`` / ``rna_type`` / ``rna_seqid`` / ``rna_start`` / ``rna_end`` —
-  one entry per annotated RNA feature (best-effort ``gene``→``Name``→``product``→locus_tag label).
+Long regions are returned **whole** (no truncation here); the embedder windows anything longer than the
+model context into equal segments + pools. Strand is irrelevant for non-coding DNA, so the forward strand
+is used. Coords are 1-based inclusive forward; sequences lowercased; contig-then-position order.
 """
 
 from __future__ import annotations
@@ -34,13 +33,17 @@ from bacpredict.engine.embedding.extract_proteins_from_gff_fna import _load_fna,
 
 logger = logging.getLogger(__name__)
 
-# The only feature type that occupies sequence for the coding/non-coding split. Everything else
-# (RNA genes, ``region``, ``gap``, misc features) is left inside the non-coding runs.
+# The only feature type that occupies sequence for the coding/non-coding split.
 _OCCUPYING_TYPE = "CDS"
 
-# GFF feature types whose bodies we index + embed as standalone RNA (lower-cased ``parts[2]``).
-_RNA_TYPES = frozenset(
-    {"rrna", "trna", "tmrna", "ncrna", "ncrna_gene", "antisense_rna", "rnase_p_rna", "srp_rna", "riboswitch"}
+# Named non-CDS feature types (lower-cased ``parts[2]``): their bodies are indexed + embedded standalone,
+# AND they fragment the non-coding run. RNA + CRISPR (the whole array, not crispr-repeat/spacer sub-features)
+# + Bakta's explicit regulatory_region / oriC.
+_FEATURE_TYPES = frozenset(
+    {
+        "rrna", "trna", "tmrna", "ncrna", "ncrna_gene", "antisense_rna", "rnase_p_rna", "srp_rna", "riboswitch",
+        "crispr", "regulatory_region", "oric", "origin_of_replication",
+    }
 )
 
 
@@ -58,12 +61,40 @@ def _merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
     return merged
 
 
-def _rna_label(attrs: dict[str, str]) -> str:
-    """Best-effort RNA gene name: ``gene`` → ``Name`` → ``product`` → ``locus_tag``/``ID``.
+def _complement(occupied: list[tuple[int, int]], clen: int) -> list[tuple[int, int]]:
+    """The gaps (0-based half-open) between merged occupied intervals over ``[0, clen)``."""
+    merged = _merge_intervals(occupied)
+    gaps: list[tuple[int, int]] = []
+    prev_end = 0
+    for s, e in merged:
+        if s > prev_end:
+            gaps.append((prev_end, s))
+        prev_end = max(prev_end, e)
+    if prev_end < clen:
+        gaps.append((prev_end, clen))
+    return gaps
+
+
+def _subtract(run: tuple[int, int], cuts: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Sub-intervals of ``run`` (0-based half-open) left after removing ``cuts`` (clipped to the run)."""
+    r0, r1 = run
+    clipped = _merge_intervals([(max(s, r0), min(e, r1)) for s, e in cuts if e > r0 and s < r1])
+    frags: list[tuple[int, int]] = []
+    prev = r0
+    for cs, ce in clipped:
+        if cs > prev:
+            frags.append((prev, cs))
+        prev = max(prev, ce)
+    if prev < r1:
+        frags.append((prev, r1))
+    return frags
+
+
+def _feature_label(attrs: dict[str, str]) -> str:
+    """Best-effort feature name: ``gene`` → ``Name`` → ``product`` → ``locus_tag``/``ID``.
 
     Bakta annotates rRNA with ``product`` (e.g. "16S ribosomal RNA") and often no ``gene``; tRNA/ncRNA
-    usually carry ``gene``. Falling through in this order gives a searchable label for every RNA (so
-    ``rrs`` is found by ``gene=rrs`` where present, else by the "16S ribosomal RNA" product string).
+    usually carry ``gene``. Falling through in this order gives a searchable label for every feature.
     """
     return attrs.get("gene") or attrs.get("Name") or attrs.get("product") or attrs.get("locus_tag") or attrs.get("ID") or ""
 
@@ -74,29 +105,30 @@ def extract_intergenic_from_gff_fna(
     *,
     min_len: int = 30,
 ) -> dict[str, Any]:
-    """Extract non-coding DNA regions (+ RNA index) for one genome from a GFF + FASTA pair.
+    """Extract the three non-coding views for one genome from a GFF + FASTA pair.
 
     Parameters
     ----------
     gff_path, fna_path : str or Path
         A GFF3 (plain/gzipped) and the genome FASTA whose contig IDs match its ``seqid`` column.
     min_len : int, default 30
-        Minimum non-coding-run length (bp) to keep — drops the 1–few bp slivers between adjacent
-        genes. RNA bodies are indexed regardless of ``min_len`` (a tRNA is ~76 bp but always wanted).
+        Minimum length (bp) for a ``noncoding`` run and a ``fragment`` — drops the 1–few bp slivers.
+        Named ``feature`` bodies are indexed regardless (a tRNA is ~76 bp but always wanted).
 
     Returns
     -------
     dict
-        The ``noncoding_*`` and ``rna_*`` parallel-list columns documented in the module docstring.
+        ``noncoding_*`` (whole runs), ``fragment_*`` (per-feature fragments), and
+        ``feature_*`` (named bodies + ``feature_type``/``feature_name``) parallel-list columns.
     """
     gff_path, fna_path = Path(gff_path), Path(fna_path)
     contigs = _load_fna(fna_path)
     if not contigs:
         raise ValueError(f"No contigs parsed from FASTA: {fna_path}")
 
-    # One pass: collect CDS intervals (occupying, 0-based half-open) + RNA features (indexed) per contig.
+    # One pass: CDS intervals (occupying, 0-based half-open) + named non-CDS features (indexed) per contig.
     occupied: dict[str, list[tuple[int, int]]] = {}
-    rna_by_contig: dict[str, list[tuple[int, int, str, str]]] = {}  # seqid -> [(start1, end1, label, type)]
+    feat_by_contig: dict[str, list[tuple[int, int, str, str]]] = {}  # seqid -> [(start1, end1, label, type)]
     with _open_text(gff_path) as handle:
         for line in handle:
             if not line or line.startswith("#"):
@@ -114,77 +146,89 @@ def extract_intergenic_from_gff_fna(
                 continue
             if ftype == _OCCUPYING_TYPE:
                 occupied.setdefault(seqid, []).append((start - 1, end))  # 1-based incl -> 0-based half-open
-            elif ftype.lower() in _RNA_TYPES:
-                label = _rna_label(_parse_gff_attributes(parts[8]))
-                rna_by_contig.setdefault(seqid, []).append((start, end, label, ftype.lower()))
+            elif ftype.lower() in _FEATURE_TYPES:
+                label = _feature_label(_parse_gff_attributes(parts[8]))
+                feat_by_contig.setdefault(seqid, []).append((start, end, label, ftype.lower()))
 
     nc_seqs: list[str] = []
     nc_seqids: list[str] = []
     nc_starts: list[int] = []
     nc_ends: list[int] = []
+    fr_seqs: list[str] = []
+    fr_seqids: list[str] = []
+    fr_starts: list[int] = []
+    fr_ends: list[int] = []
     # Walk every contig (a contig with no CDS is wholly one non-coding run).
     for seqid in list(contigs.keys()):
-        clen = len(contigs[seqid])
-        merged = _merge_intervals(occupied.get(seqid, []))
-        gaps: list[tuple[int, int]] = []
-        prev_end = 0
-        for s, e in merged:
-            if s > prev_end:
-                gaps.append((prev_end, s))
-            prev_end = max(prev_end, e)
-        if prev_end < clen:
-            gaps.append((prev_end, clen))
         contig_seq = contigs[seqid]
-        for g0, g1 in gaps:
-            if g1 - g0 < min_len:
-                continue
-            nc_seqs.append(str(contig_seq[g0:g1]).lower())
-            nc_seqids.append(seqid)
-            nc_starts.append(g0 + 1)  # back to 1-based inclusive
-            nc_ends.append(g1)
+        clen = len(contig_seq)
+        # Named-feature cut intervals on this contig (0-based half-open), for fragmenting the runs.
+        feat_cuts = [(s1 - 1, e1) for s1, e1, _lbl, _ft in feat_by_contig.get(seqid, [])]
+        for g0, g1 in _complement(occupied.get(seqid, []), clen):
+            # whole_igr: the maximal CDS-to-CDS run (label-agnostic).
+            if g1 - g0 >= min_len:
+                nc_seqs.append(str(contig_seq[g0:g1]).lower())
+                nc_seqids.append(seqid)
+                nc_starts.append(g0 + 1)  # back to 1-based inclusive
+                nc_ends.append(g1)
+            # per_unit fragments: the run split at every named-feature boundary.
+            for f0, f1 in _subtract((g0, g1), feat_cuts):
+                if f1 - f0 < min_len:
+                    continue
+                fr_seqs.append(str(contig_seq[f0:f1]).lower())
+                fr_seqids.append(seqid)
+                fr_starts.append(f0 + 1)
+                fr_ends.append(f1)
 
-    # RNA bodies (their own sequence + named index), contig-then-position order.
-    rna_seqs: list[str] = []
-    rna_names: list[str] = []
-    rna_types: list[str] = []
-    rna_seqids: list[str] = []
-    rna_starts: list[int] = []
-    rna_ends: list[int] = []
+    # Named non-CDS feature bodies (own sequence + type + name), contig-then-position order.
+    feat_seqs: list[str] = []
+    feat_names: list[str] = []
+    feat_types: list[str] = []
+    feat_seqids: list[str] = []
+    feat_starts: list[int] = []
+    feat_ends: list[int] = []
     for seqid in list(contigs.keys()):
         contig_seq = contigs[seqid]
-        for start1, end1, label, rtype in sorted(rna_by_contig.get(seqid, [])):
-            rna_seqs.append(str(contig_seq[start1 - 1 : end1]).lower())
-            rna_names.append(label)
-            rna_types.append(rtype)
-            rna_seqids.append(seqid)
-            rna_starts.append(start1)
-            rna_ends.append(end1)
+        for start1, end1, label, ftype in sorted(feat_by_contig.get(seqid, [])):
+            feat_seqs.append(str(contig_seq[start1 - 1 : end1]).lower())
+            feat_names.append(label)
+            feat_types.append(ftype)
+            feat_seqids.append(seqid)
+            feat_starts.append(start1)
+            feat_ends.append(end1)
 
     logger.info(
-        "non-coding: %d runs >= %d bp, %d RNA bodies over %d contigs (%s)",
-        len(nc_seqs), min_len, len(rna_seqs), len(contigs), fna_path.name,
+        "non-coding: %d whole runs, %d fragments (>= %d bp), %d named feature bodies over %d contigs (%s)",
+        len(nc_seqs), len(fr_seqs), min_len, len(feat_seqs), len(contigs), fna_path.name,
     )
     return {
         "noncoding_sequence": nc_seqs,
         "noncoding_seqid": nc_seqids,
         "noncoding_start": nc_starts,
         "noncoding_end": nc_ends,
-        "rna_sequence": rna_seqs,
-        "rna_gene_name": rna_names,
-        "rna_type": rna_types,
-        "rna_seqid": rna_seqids,
-        "rna_start": rna_starts,
-        "rna_end": rna_ends,
+        "fragment_sequence": fr_seqs,
+        "fragment_seqid": fr_seqids,
+        "fragment_start": fr_starts,
+        "fragment_end": fr_ends,
+        "feature_sequence": feat_seqs,
+        "feature_name": feat_names,
+        "feature_type": feat_types,
+        "feature_seqid": feat_seqids,
+        "feature_start": feat_starts,
+        "feature_end": feat_ends,
     }
 
 
 if __name__ == "__main__":
     import argparse
 
-    ap = argparse.ArgumentParser(description="Extract non-coding DNA regions (+ RNA index) from a GFF + FASTA pair.")
+    ap = argparse.ArgumentParser(description="Extract non-coding DNA regions (3 views) from a GFF + FASTA pair.")
     ap.add_argument("--gff", required=True)
     ap.add_argument("--fna", required=True)
     ap.add_argument("--min-len", type=int, default=30)
     a = ap.parse_args()
     out = extract_intergenic_from_gff_fna(a.gff, a.fna, min_len=a.min_len)
-    print(f"{len(out['noncoding_sequence'])} non-coding runs >= {a.min_len} bp; {len(out['rna_sequence'])} RNA bodies")
+    print(
+        f"{len(out['noncoding_sequence'])} whole runs; {len(out['fragment_sequence'])} fragments; "
+        f"{len(out['feature_sequence'])} named feature bodies"
+    )

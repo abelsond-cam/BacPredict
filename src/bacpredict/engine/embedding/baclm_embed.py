@@ -24,14 +24,17 @@ to ``_infer_token_type_ids`` (asserted in the smoke). Not per-residue (deferred)
 Bacformer — a standalone store.
 
 Saves `{sample_id}_baclm_embeddings.pt` (bf16): ``protein_embeddings`` [n_cds, 960] (unchanged —
-the validated coding channel), ``noncoding_embeddings`` [n_nc, 960] (maximal non-CDS runs),
-``rna_embeddings`` [n_rna, 960] (standalone RNA bodies), plus coordinate + named-RNA-index metadata.
+the validated coding channel) plus THREE non-coding channels from
+``extract_intergenic_from_gff_fna``: ``noncoding_embeddings`` [n_nc, 960] (whole CDS-to-CDS runs =
+whole_igr), ``fragment_embeddings`` [n_fr, 960] (runs split at named-feature boundaries), and
+``feature_embeddings`` [n_feat, 960] (standalone named non-CDS bodies: rRNA/tRNA/tmRNA/ncRNA/CRISPR/
+regulatory_region/oriC), plus coordinate + ``feature_type``/``feature_name`` metadata.
 
-**Long regions are windowed, not truncated (2d).** A non-coding run or RNA body longer than the model
-context is split into non-overlapping ``MAX_LEN``-sized windows, each embedded + mean-pooled, then
-combined by a **token-count-weighted mean** — which equals mean-pooling the whole untruncated region
-(``--window-overlap`` > 0 adds boundary context at the cost of mildly double-counting the overlap).
-Proteins are deliberately left on the plain truncating path so the coding store stays byte-identical.
+**Long regions are windowed, not truncated.** A non-coding region longer than the model context is split
+into ``ceil(L/MAX_LEN)`` **equal** segments (no tiny remainder window — see ``_windowize``), each embedded
++ mean-pooled, then combined by a **token-count-weighted mean** = mean-pooling the whole untruncated region
+(``--window-overlap`` > 0 falls back to sliding tiling with boundary context). Proteins are deliberately
+left on the plain truncating path so the coding store stays byte-identical.
 """
 
 import argparse
@@ -135,34 +138,53 @@ def mean_pool_embeddings(
 
 
 def _windowize(seqs: list[str], chunk: int, overlap: int) -> tuple[list[str], list[int], list[float]]:
-    """Split each sequence into ``chunk``-sized windows for un-truncated embedding.
+    """Split each sequence into windows ≤ ``chunk`` for un-truncated embedding.
 
     Returns a flat list of window substrings, a parallel ``owner`` list (which input sequence each
     window came from), and a parallel ``weight`` list (window length, for the token-count-weighted
     pool). A sequence of length ≤ ``chunk`` yields exactly one window equal to itself, so short
-    regions are byte-identical to the non-windowed path. ``overlap`` (0 = non-overlapping tiling)
-    shifts the window start by ``chunk - overlap`` each step.
+    regions are byte-identical to the non-windowed path.
+
+    For ``overlap == 0`` (the default), a long sequence is split into ``ceil(L/chunk)`` **equal**
+    segments (sizes differ by ≤ 1 char) — NOT ``chunk`` + a tiny remainder. A near-empty tail window
+    contextualises poorly and, being length-weighted, would still perturb the pooled mean toward its
+    impoverished embedding; equal segments keep every window well-sized and the mean balanced across the
+    whole region. ``overlap > 0`` (rare) falls back to sliding ``chunk``-sized tiling stepped by
+    ``chunk - overlap`` to add boundary context.
     """
     if overlap < 0 or overlap >= chunk:
         raise ValueError(f"overlap must be in [0, {chunk}), got {overlap}")
-    step = chunk - overlap
     windows: list[str] = []
     owner: list[int] = []
     weight: list[float] = []
     for i, s in enumerate(seqs):
-        if len(s) <= chunk:
+        length = len(s)
+        if length <= chunk:
             windows.append(s)
             owner.append(i)
-            weight.append(float(max(len(s), 1)))
+            weight.append(float(max(length, 1)))
             continue
-        for start in range(0, len(s), step):
+        if overlap == 0:
+            n = -(-length // chunk)  # ceil(L/chunk) equal segments, each ≤ chunk
+            base, rem = divmod(length, n)
+            pos = 0
+            for w in range(n):
+                size = base + (1 if w < rem else 0)
+                sub = s[pos : pos + size]
+                pos += size
+                windows.append(sub)
+                owner.append(i)
+                weight.append(float(len(sub)))
+            continue
+        step = chunk - overlap
+        for start in range(0, length, step):
             w = s[start : start + chunk]
             if not w:
                 break
             windows.append(w)
             owner.append(i)
             weight.append(float(len(w)))
-            if start + chunk >= len(s):
+            if start + chunk >= length:
                 break
     return windows, owner, weight
 
@@ -210,15 +232,18 @@ def _col(df: pd.DataFrame, name: str, cast) -> list:
 def process_genome(sample_id: str, protein_parquet: Path, intergenic_parquet: Path | None,
                    model, tokenizer, device: str, output_dir: Path, batch_size: int,
                    *, window_overlap: int = 0) -> tuple[str, bool, str]:
-    """Embed one genome's proteins + non-coding runs + RNA bodies (read from parquet) → baclm .pt.
+    """Embed one genome's proteins + the three non-coding views (read from parquet) → baclm .pt.
 
-    Proteins use the plain truncating mean-pool (the coding store is deliberately unchanged); non-coding
-    runs and RNA bodies use the windowed pool so long regions are embedded whole rather than truncated.
+    Proteins use the plain truncating mean-pool (the coding store is deliberately unchanged). The three
+    non-coding channels — ``noncoding`` (whole CDS-to-CDS runs = whole_igr), ``fragment`` (runs split at
+    named-feature boundaries), and ``feature`` (named rRNA/tRNA/tmRNA/ncRNA/CRISPR/regulatory_region/oriC
+    bodies) — use the windowed pool so long regions are embedded whole (equal-segment) rather than truncated.
     """
     try:
         proteins = _flatten_proteins(protein_parquet)
         nc_seqs = nc_seqid = nc_start = nc_end = []
-        rna_seqs = rna_name = rna_type = rna_seqid = rna_start = rna_end = []
+        fr_seqs = fr_seqid = fr_start = fr_end = []
+        feat_seqs = feat_name = feat_type = feat_seqid = feat_start = feat_end = []
         if intergenic_parquet is not None and intergenic_parquet.exists():
             df = pd.read_parquet(intergenic_parquet)
             # Cast coords to native python types — parquet yields numpy scalars, which
@@ -227,33 +252,43 @@ def process_genome(sample_id: str, protein_parquet: Path, intergenic_parquet: Pa
             nc_seqid = _col(df, "noncoding_seqid", str)
             nc_start = _col(df, "noncoding_start", int)
             nc_end = _col(df, "noncoding_end", int)
-            rna_seqs = _col(df, "rna_sequence", str)
-            rna_name = _col(df, "rna_gene_name", str)
-            rna_type = _col(df, "rna_type", str)
-            rna_seqid = _col(df, "rna_seqid", str)
-            rna_start = _col(df, "rna_start", int)
-            rna_end = _col(df, "rna_end", int)
+            fr_seqs = _col(df, "fragment_sequence", str)
+            fr_seqid = _col(df, "fragment_seqid", str)
+            fr_start = _col(df, "fragment_start", int)
+            fr_end = _col(df, "fragment_end", int)
+            feat_seqs = _col(df, "feature_sequence", str)
+            feat_name = _col(df, "feature_name", str)
+            feat_type = _col(df, "feature_type", str)
+            feat_seqid = _col(df, "feature_seqid", str)
+            feat_start = _col(df, "feature_start", int)
+            feat_end = _col(df, "feature_end", int)
 
         prot_emb = mean_pool_embeddings(proteins, model, tokenizer, device, "protein", batch_size)
         nc_emb = mean_pool_windowed(nc_seqs, model, tokenizer, device, "dna", batch_size, overlap=window_overlap)
-        rna_emb = mean_pool_windowed(rna_seqs, model, tokenizer, device, "dna", batch_size, overlap=window_overlap)
+        fr_emb = mean_pool_windowed(fr_seqs, model, tokenizer, device, "dna", batch_size, overlap=window_overlap)
+        feat_emb = mean_pool_windowed(feat_seqs, model, tokenizer, device, "dna", batch_size, overlap=window_overlap)
 
         torch.save(
             {
                 "protein_embeddings": prot_emb,       # [n_cds, 960] bf16, flat-index order (unchanged)
-                "noncoding_embeddings": nc_emb,        # [n_nc, 960] bf16, maximal non-CDS runs
-                "rna_embeddings": rna_emb,             # [n_rna, 960] bf16, standalone RNA bodies
+                "noncoding_embeddings": nc_emb,        # [n_nc, 960] bf16, whole CDS-to-CDS runs (whole_igr)
+                "fragment_embeddings": fr_emb,         # [n_fr, 960] bf16, runs split at named-feature bounds
+                "feature_embeddings": feat_emb,        # [n_feat, 960] bf16, named non-CDS bodies
                 "n_proteins": int(prot_emb.shape[0]),
                 "n_noncoding": int(nc_emb.shape[0]),
-                "n_rna": int(rna_emb.shape[0]),
+                "n_fragment": int(fr_emb.shape[0]),
+                "n_feature": int(feat_emb.shape[0]),
                 "noncoding_seqid": nc_seqid,
                 "noncoding_start": nc_start,
                 "noncoding_end": nc_end,
-                "rna_gene_name": rna_name,
-                "rna_type": rna_type,
-                "rna_seqid": rna_seqid,
-                "rna_start": rna_start,
-                "rna_end": rna_end,
+                "fragment_seqid": fr_seqid,
+                "fragment_start": fr_start,
+                "fragment_end": fr_end,
+                "feature_name": feat_name,
+                "feature_type": feat_type,
+                "feature_seqid": feat_seqid,
+                "feature_start": feat_start,
+                "feature_end": feat_end,
             },
             output_dir / f"{sample_id}_baclm_embeddings.pt",
         )

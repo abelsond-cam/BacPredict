@@ -23,10 +23,13 @@ S="$SCRATCHDIR"
 # attention falls back to a dense O((batch×len)²) path that OOMs / runs ~100× slower.
 PY="/projects/u6fp/public/micromamba/envs/bacformer/bin/python"
 export HF_HOME="$S/cache/hf" TORCH_HOME="$S/cache/torch"
-export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
+# On Isambard $HOME/BacPredict is the stale pre-consolidation `dev` checkout (no bacpredict pkg); the
+# consolidated code lives in the worktree. Override REPO at submit if elsewhere.
+REPO="${REPO:-$SCRATCHDIR/worktrees/consolidate}"
+export PYTHONPATH="$REPO/src:${PYTHONPATH:-}"
 export TOKENIZERS_PARALLELISM=false
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-EMB="$HOME/BacPredict/src/tl/embed"
+EMB="$REPO/src/bacpredict/engine/embedding"
 
 case "$TASK" in
   tb)   PROC="$S/processed/train_tb_ast" ;;
