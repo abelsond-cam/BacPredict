@@ -24,6 +24,7 @@ vendored CARD table):
 from __future__ import annotations
 
 import logging
+import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -31,16 +32,21 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# Canonical vendored CARD clustering table (BacHGT bac_kleborate refs). HPC checkout first, local-dev second.
+# Canonical vendored CARD clustering table (BacHGT bac_kleborate refs). $BACPREDICT_CARD_CSV wins, then
+# known checkout layouts: Isambard ($HOME/BacHGT), CSD3 (~/workspace), local-dev (~/developer).
+_REF_TAIL = ("src", "bac_kleborate", "refs", "kleb_amr", "inputs", "CARD_AMR_clustered.csv")
 _CARD_CSV_CANDIDATES = (
-    Path("/home/dca36/workspace/BacHGT/src/bac_kleborate/refs/kleb_amr/inputs/CARD_AMR_clustered.csv"),
-    Path.home() / "developer" / "BacHGT" / "src" / "bac_kleborate" / "refs" / "kleb_amr" / "inputs"
-    / "CARD_AMR_clustered.csv",
+    Path.home() / "BacHGT" / Path(*_REF_TAIL),
+    Path("/home/dca36/workspace/BacHGT") / Path(*_REF_TAIL),
+    Path.home() / "developer" / "BacHGT" / Path(*_REF_TAIL),
 )
 
 
 def _default_card_csv() -> Path:
-    """First existing canonical CARD CSV path (HPC then local dev), else the HPC default."""
+    """First existing canonical CARD CSV path ($BACPREDICT_CARD_CSV override, then known layouts)."""
+    env = os.environ.get("BACPREDICT_CARD_CSV")
+    if env:
+        return Path(env)
     for cand in _CARD_CSV_CANDIDATES:
         if cand.exists():
             return cand
