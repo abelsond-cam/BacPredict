@@ -34,6 +34,7 @@ from matplotlib.colors import Normalize  # noqa: E402
 from matplotlib.patches import Patch  # noqa: E402
 from scipy.stats import gaussian_kde  # noqa: E402
 
+from bacpredict.engine.config import visualisations_dir  # noqa: E402
 from bacpredict.engine.plots.labels import display_name  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -201,13 +202,17 @@ def main() -> None:
     p.add_argument("--method", default="per_igr", help="ranking method label (per_igr | whole_igr | per_unit).")
     p.add_argument("--csv", type=Path, required=True, help="embedding ranking per_<method>_lr_<drug>.csv")
     p.add_argument("--presence-csv", type=Path, default=None, help="presence ranking per_<method>_presence_lr_<drug>.csv")
-    p.add_argument("--out-dir", type=Path, required=True, help="base dir; figures -> <out>/<species>/<drug>/<method>/")
+    p.add_argument("--out-dir", type=Path, default=None,
+                   help="base dir; figures -> <out>/<species>/<drug>/<method>/ "
+                   "(default: the repo src/bacpredict/visualisations/ tree).")
     p.add_argument("--causal-genes", nargs="*", default=None, help="known causal gene names for the drug (hatch).")
     p.add_argument("--causal-csv", type=Path, default=None, help="CSV with a gene_name column of causal genes.")
     p.add_argument("--top-n", type=int, default=10)
     args = p.parse_args()
+    # Default to the repo visualisations tree; run() appends <species>/<drug>/<method>/, so pass its parent.
+    out_dir = args.out_dir or visualisations_dir(args.species).parent
     run(species=args.species, drug=args.drug, method=args.method, csv=args.csv,
-        presence_csv=args.presence_csv, out_dir=args.out_dir, causal_genes=args.causal_genes,
+        presence_csv=args.presence_csv, out_dir=out_dir, causal_genes=args.causal_genes,
         causal_csv=args.causal_csv, top_n=args.top_n)
 
 
