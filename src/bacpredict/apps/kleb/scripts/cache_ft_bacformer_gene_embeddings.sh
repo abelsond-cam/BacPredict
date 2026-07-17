@@ -33,7 +33,9 @@ set -uo pipefail
 : "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
 D="$BACPREDICT_DATA_ROOT"
 PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
-export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
+# bacpredict is NOT pip-installed in the gpu-venv and $HOME/BacPredict may be on another agent's branch;
+# point PYTHONPATH at this branch's worktree via BACPREDICT_REPO (memory isambard-ft-fanout-run-mechanics).
+export PYTHONPATH="${BACPREDICT_REPO:-$HOME/BacPredict}/src:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 MKL_NUM_THREADS=8
 
