@@ -2,7 +2,8 @@
 #SBATCH --job-name=tb_rifampin
 #SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
 #SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
-#SBATCH --time=36:00:00
+# QOS 'normal' on partition workq caps wall at 24h; --qos=restricted48 allows 48h.
+#SBATCH --time=24:00:00
 #SBATCH --partition=workq
 #SBATCH --account=brics.u6fp
 #SBATCH --qos=normal
