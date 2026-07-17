@@ -24,7 +24,7 @@ set -uo pipefail
 : "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
 D="$BACPREDICT_DATA_ROOT"
 PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
-export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
+export PYTHONPATH="${BACPREDICT_REPO:-$HOME/BacPredict}/src:${PYTHONPATH:-}"
 
 # K-fold settings — SLURM_ARRAY_TASK_ID encodes fold×seed
 N_FOLDS=5
@@ -73,7 +73,7 @@ embeddings_dir="$D/processed/train_kleb_ast/esm"
 --batch-size 1 \
 --eval-steps $eval_steps \
 --max-steps 100000 \
---early-stopping-patience 30 \
+--early-stopping-patience 15 \
 --n-folds $N_FOLDS \
 --fold $FOLD \
 --seed $SEED \

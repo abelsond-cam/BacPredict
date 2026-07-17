@@ -22,7 +22,7 @@ set -uo pipefail
 : "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
 D="$BACPREDICT_DATA_ROOT"
 PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
-export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
+export PYTHONPATH="${BACPREDICT_REPO:-$HOME/BacPredict}/src:${PYTHONPATH:-}"
 
 # K-fold settings — SLURM_ARRAY_TASK_ID encodes fold×seed
 N_FOLDS=5
@@ -30,7 +30,7 @@ FOLD=$(( SLURM_ARRAY_TASK_ID % N_FOLDS ))
 SEED=$(( SLURM_ARRAY_TASK_ID / N_FOLDS + 1 ))
 
 species=mycobacterium_tuberculosis
-drug=rifampin  # TB binary_ast.csv uses US spelling (rifampin, not rifampicin)
+drug=${DRUG:-rifampin}  # US spelling (rifampin, not rifampicin); override per-drug via --export=ALL,DRUG=<drug>
 warmup_proportion=0.1
 lr=0.00015
 # TB's AST cohort is ~10x Kp's, so a step-based early-stopping patience buys ~10x fewer
