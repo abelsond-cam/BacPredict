@@ -16,6 +16,14 @@ just above the gene end; on ``+`` strand just below the gene start, within ``--b
 (``fit_per_gene``) → per-anchor AUROC. Writes ``per_upstream_lr_<drug>.csv``
 (``upstream_gene, gene, prevalence, lr_auroc_<drug>, n_train, n_pos, kept_filtered``).
 
+Like the flank-pair sibling this supports two **absence modes** beyond the default carrier-only
+(present-genomes) fit: ``--impute-absent-zero`` fits each anchor over the full read universe,
+zero-imputing genomes that lack it — the presence/absence + embedding signal the concat's
+zero-imputed block actually consumes (*selection = usage*); ``--feature presence`` fits a single
+presence/absence one-hot (the lineage/synteny control). Route the imputed and presence rankings to
+their own ``--out-dir`` (``upstream_lr_ranking_imputed/`` / ``upstream_presence_lr_ranking/``) so the
+carrier-only file is never overwritten; presence writes ``per_upstream_presence_lr_<drug>.csv``.
+
 Reuses the store readers/LR from :mod:`build_per_igr_lr_store` verbatim (both read the legacy
 ``intergenic_*`` and the re-embed ``noncoding_*`` keys), so it runs on the current store today and on the
 re-embedded store unchanged. Longer term the synteny anchoring is the job of the sibling *syntology*
@@ -99,7 +107,7 @@ def _genome_upstream_records(
 def collect_upstream_matrices(
     train_ids: list[str], sample_gff: dict[str, str], baclm_dir: Path, *,
     baclm_suffix: str = "_baclm_embeddings.pt", boundary_tol: int = 3, eval_ids: set[str] | None = None,
-    store_dtype: str = "float32", min_prevalence: float = 0.0,
+    store_dtype: str = "float32", min_prevalence: float = 0.0, max_prevalence: float = 1.0,
 ) -> tuple[dict[str, tuple[list[str], np.ndarray]], pd.DataFrame, list[str]]:
     """GFF+``.pt`` sweep → per-anchor single-copy design matrices + prevalence + read universe.
 
@@ -144,9 +152,9 @@ def collect_upstream_matrices(
     prevalence = pd.DataFrame(
         [{"upstream_gene": k, "n_single_copy": c, "prevalence": c / max(n, 1)} for k, c in single_copy.items()]
     ).sort_values("prevalence", ascending=False).reset_index(drop=True)
-    core = {k for k, c in single_copy.items() if (c / max(n, 1)) > min_prevalence}
-    logger.info("upstream pass 1: %d anchors > %.2f prevalence (of %d) over %d fit genomes",
-                len(core), min_prevalence, len(single_copy), n)
+    core = {k for k, c in single_copy.items() if min_prevalence < (c / max(n, 1)) <= max_prevalence}
+    logger.info("upstream pass 1: %d anchors in prevalence band (%.2f, %.2f] (of %d) over %d fit genomes",
+                len(core), min_prevalence, max_prevalence, len(single_copy), n)
 
     # Pass 2 (fit + eval) — store vectors for CORE anchors only (eval rows scored, never selected).
     ids_by_key: dict[str, list[str]] = {}
@@ -172,6 +180,7 @@ def run(
     min_prevalence: float = 0.10, auroc_filter: float = 0.8, n_folds: int = 5, seed: int = 1,
     n_jobs: int = 1, max_train_genomes: int | None = None, sample_seed: int = 1, boundary_tol: int = 3,
     baclm_suffix: str = "_baclm_embeddings.pt", eval_holdout: bool = False, store_dtype: str = "float32",
+    impute_absent_zero: bool = False, feature: str = "embedding", max_prevalence: float = 1.0,
 ) -> dict:
     """Anchor regions on the downstream gene, fit per-anchor LRs, write the wide ranking table.
 
@@ -189,30 +198,39 @@ def run(
 
     matrices, prevalence, read_ids = collect_upstream_matrices(
         sweep_ids, sample_gff, baclm_dir, baclm_suffix=baclm_suffix, boundary_tol=boundary_tol,
-        eval_ids=eval_set, store_dtype=store_dtype, min_prevalence=min_prevalence,
+        eval_ids=eval_set, store_dtype=store_dtype, min_prevalence=min_prevalence, max_prevalence=max_prevalence,
     )
-    # The collector already returns only core (> min_prevalence) anchor matrices; this is a belt-and-braces
-    # filter and the log line for the summary.
+    # The collector already returns only in-band anchor matrices; this is a belt-and-braces filter
+    # (+ the summary log line) applying the same (min, max] prevalence band.
     prev = prevalence["prevalence"]
-    core = set(prevalence.loc[prev > min_prevalence, "upstream_gene"])
+    core = set(prevalence.loc[(prev > min_prevalence) & (prev <= max_prevalence), "upstream_gene"])
     core_matrices = {k: m for k, m in matrices.items() if k in core}
-    logger.info("upstream core anchors > %.2f prevalence over %d fit genomes: %d (of %d total anchors)",
-                min_prevalence, len(read_ids), len(core_matrices), len(prevalence))
+    logger.info("upstream core anchors in prevalence band (%.2f, %.2f] over %d fit genomes: %d (of %d total anchors)",
+                min_prevalence, max_prevalence, len(read_ids), len(core_matrices), len(prevalence))
+
+    presence = feature == "presence"
+    if presence:
+        # Replace each anchor's embedding block with a ones-column; zero-imputing over the read universe
+        # then makes the full design a 1/0 presence indicator (carrier=1, absent=0) — the pure one-hot LR.
+        core_matrices = {k: (ids, np.ones((len(ids), 1), dtype=np.float32)) for k, (ids, _v) in core_matrices.items()}
+        impute_absent_zero = True
+    auroc_col = f"presence_lr_auroc_{drug}" if presence else f"lr_auroc_{drug}"
+    table_name = f"per_upstream_presence_lr_{drug}.csv" if presence else f"per_upstream_lr_{drug}.csv"
 
     fitted = fit_per_gene(core_matrices, label_map, n_folds=n_folds, seed=seed, n_jobs=n_jobs,
-                          all_ids=read_ids, impute_absent_zero=False, eval_ids=eval_set)
+                          all_ids=read_ids, impute_absent_zero=impute_absent_zero, eval_ids=eval_set)
     filtered = {k for k, f in fitted.items() if f["auroc"] > auroc_filter}
 
     out_dir.mkdir(parents=True, exist_ok=True)
     prev_map = dict(zip(prevalence["upstream_gene"], prevalence["prevalence"], strict=True))
     rows = [
         {"upstream_gene": k, "gene": k.split("upstream:", 1)[-1], "prevalence": prev_map.get(k, float("nan")),
-         f"lr_auroc_{drug}": f["auroc"], f"eval_auroc_{drug}": f.get("eval_auroc", float("nan")),
+         auroc_col: f["auroc"], f"eval_auroc_{drug}": f.get("eval_auroc", float("nan")),
          "n_train": f["n_train"], "n_pos": f["n_pos"], "n_eval": f.get("n_eval", 0),
          "n_eval_pos": f.get("n_eval_pos", 0), "kept_filtered": k in filtered}
         for k, f in sorted(fitted.items(), key=lambda kv: kv[1]["auroc"], reverse=True)
     ]
-    table = out_dir / f"per_upstream_lr_{drug}.csv"
+    table = out_dir / table_name
     pd.DataFrame(rows).to_csv(table, index=False)
     prevalence.to_csv(out_dir / "upstream_prevalence.csv", index=False)
 
@@ -221,7 +239,8 @@ def run(
         "analysis": "build_upstream_region_lr_store", "drug": drug, "split_csv": str(split_csv),
         "eval_holdout": eval_holdout, "n_train_fit": len(fit_train_ids), "n_read_genomes": len(read_ids),
         "n_evaluate": len(evaluate_ids) if eval_holdout else 0, "boundary_tol": boundary_tol,
-        "min_prevalence": min_prevalence, "n_anchors": len(matrices), "n_core": len(core_matrices),
+        "min_prevalence": min_prevalence, "max_prevalence": max_prevalence, "feature": feature,
+        "impute_absent_zero": impute_absent_zero, "n_anchors": len(matrices), "n_core": len(core_matrices),
         "n_fitted": len(fitted), "auroc_filter": auroc_filter, "n_filtered": len(filtered),
         "best_anchor": best[0], "best_auroc": best[1]["auroc"] if best[1] else None,
     }
@@ -254,6 +273,16 @@ def main() -> None:
     p.add_argument("--store-dtype", choices=["float32", "float16"], default="float32",
                    help="Design-matrix storage precision. float16 halves the full-cohort footprint (the LR "
                         "still fits in float32); use for whole-cohort --eval-holdout runs.")
+    p.add_argument("--feature", choices=["embedding", "presence"], default="embedding",
+                   help="embedding = fit the 960-d baclm upstream region (default); presence = fit a single "
+                        "presence/absence one-hot (the lineage/synteny control).")
+    p.add_argument("--impute-absent-zero", action="store_true",
+                   help="Fit each anchor over ALL read genomes, zero-imputing the ones lacking it, instead of "
+                        "dropping absent genomes. Selection = usage: the concat feeds a zero-imputed block, so "
+                        "select the non-coding rung on this AUROC (route to a distinct --out-dir).")
+    p.add_argument("--max-prevalence", type=float, default=1.0,
+                   help="Single-copy prevalence ceiling over fit genomes (default 1.0; set e.g. 0.99 for the "
+                        "presence one-hot to drop near-ubiquitous, uninformative anchors).")
     args = p.parse_args()
 
     sp = store_paths(args.species)
@@ -263,7 +292,8 @@ def main() -> None:
     run(split_csv=split_csv, drug=args.drug, input_csv=input_csv, baclm_dir=baclm_dir, out_dir=args.out_dir,
         min_prevalence=args.min_prevalence, auroc_filter=args.auroc_filter, n_folds=args.n_folds, seed=args.seed,
         n_jobs=args.n_jobs, max_train_genomes=args.max_train_genomes, sample_seed=args.sample_seed,
-        boundary_tol=args.boundary_tol, eval_holdout=args.eval_holdout, store_dtype=args.store_dtype)
+        boundary_tol=args.boundary_tol, eval_holdout=args.eval_holdout, store_dtype=args.store_dtype,
+        impute_absent_zero=args.impute_absent_zero, feature=args.feature, max_prevalence=args.max_prevalence)
 
 
 if __name__ == "__main__":
