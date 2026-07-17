@@ -48,7 +48,10 @@ DRUG=${DRUGS[$SLURM_ARRAY_TASK_ID]}
 if [[ -z "$DRUG" ]]; then echo "ERROR: no drug for array index $SLURM_ARRAY_TASK_ID" >&2; exit 1; fi
 
 CKPT=$D/processed/train_kleb_ast/models/finetune/klebsiella_pneumoniae_${DRUG}_lr_0.00015_finetuned_fold00_seed1
-RANK=$D/processed/train_kleb_ast/pangena_predict/per_gene_lr_ranking_imputed/$DRUG/per_gene_lr_${DRUG}.csv
+# The ranking only selects the top-N per-gene SIDE output; the FT genome-mean (the ladder rung-1 ingredient)
+# is over ALL proteins, so any valid per-gene ranking works. per_gene_lr_ranking_baclm exists for every Kp
+# drug (matches the TB cache); the old per_gene_lr_ranking_imputed path was stale (absent for most drugs).
+RANK=$D/processed/train_kleb_ast/pangena_predict/per_gene_lr_ranking_baclm/$DRUG/per_gene_lr_${DRUG}.csv
 OUT=$D/processed/train_kleb_ast/pangena_predict/ft_bacformer_cache/$DRUG
 mkdir -p "$OUT"
 if [[ ! -d "$CKPT" ]]; then echo "ERROR: FT checkpoint missing: $CKPT" >&2; exit 1; fi
