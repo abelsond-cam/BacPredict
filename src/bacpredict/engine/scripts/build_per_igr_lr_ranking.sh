@@ -14,11 +14,14 @@
 # organism config. Runs as a SLURM ARRAY, one drug per task. Each task assembles its own random
 # class-balanced 2000-genome subsample over the FULL cohort split, fits the per-IGR LRs, writes the ranking.
 #
-# Usage:  sbatch --array=0 src/bacpredict/engine/scripts/build_per_igr_lr_ranking.sh          # TB rifampin
+# Usage:  sbatch --array=0 src/bacpredict/engine/scripts/build_per_igr_lr_ranking.sh          # TB rifampin (carrier)
 #         SPECIES=kp sbatch --export=ALL,SPECIES=kp --array=5 \
 #             src/bacpredict/engine/scripts/build_per_igr_lr_ranking.sh                        # Kp ciprofloxacin
+#         FEATURE=imputed sbatch --export=ALL,FEATURE=imputed --array=0 \
+#             src/bacpredict/engine/scripts/build_per_igr_lr_ranking.sh                        # TB rif zero-imputed accessory band
 #         FEATURE=presence sbatch --export=ALL,FEATURE=presence --array=0 \
 #             src/bacpredict/engine/scripts/build_per_igr_lr_ranking.sh                        # TB rif presence one-hot
+#   Re-embed store + whole cohort: add BACLM_DIR=<...>/baclm_reembed and MAX_TRAIN= (empty → full cohort).
 #
 #SBATCH --job-name=per_igr_lr_ranking
 #SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
@@ -67,21 +70,38 @@ if [[ -z "$DRUG" ]]; then
     exit 1
 fi
 
-# FEATURE (env, default embedding): embedding = the 960-d baclm non-coding ranking (best-IGR for the 3-way
-# concat); presence = the presence/absence one-hot control ("does merely HAVING this IGR adjacency predict
-# resistance?" — the lineage/synteny signal), fitted over the wider 1-99% prevalence band.
+# FEATURE (env, default embedding) selects the (key × absence) variant — each writes its OWN ranking dir so
+# nothing overwrites the carrier-only per_igr_lr_ranking file:
+#   embedding = carrier-only 960-d baclm non-coding ranking (drop-absent, core min-prevalence 0.10) — the
+#               best-IGR block for the 3-way concat;
+#   imputed   = the SAME 960-d embedding but ZERO-IMPUTING absent genomes over the accessory band (0.01, 0.99]
+#               — the selection metric the concat's zero-imputed block actually consumes (selection = usage);
+#   presence  = the presence/absence one-hot control ("does merely HAVING this IGR adjacency predict
+#               resistance?" — the lineage/synteny signal), same accessory band.
 FEATURE=${FEATURE:-embedding}
-if [[ "$FEATURE" == "presence" ]]; then
-    RANK_DIR=per_igr_presence_lr_ranking
-    TABLE=per_igr_presence_lr_${DRUG}.csv
-    FEATURE_ARGS=(--feature presence --min-prevalence 0.01 --max-prevalence 0.99)
-    BAND="presence one-hot, prevalence band (0.01, 0.99]"
-else
-    RANK_DIR=per_igr_lr_ranking
-    TABLE=per_igr_lr_${DRUG}.csv
-    FEATURE_ARGS=(--min-prevalence 0.10)
-    BAND="960-d embedding, min-prevalence 0.10"
-fi
+case "$FEATURE" in
+    presence)
+        RANK_DIR=per_igr_presence_lr_ranking
+        TABLE=per_igr_presence_lr_${DRUG}.csv
+        FEATURE_ARGS=(--feature presence --min-prevalence 0.01 --max-prevalence 0.99)
+        BAND="presence one-hot, prevalence band (0.01, 0.99]"
+        ;;
+    imputed)
+        RANK_DIR=per_igr_lr_ranking_imputed
+        TABLE=per_igr_lr_${DRUG}.csv
+        FEATURE_ARGS=(--impute-absent-zero --min-prevalence 0.01 --max-prevalence 0.99)
+        BAND="960-d embedding zero-imputed, prevalence band (0.01, 0.99]"
+        ;;
+    *)
+        RANK_DIR=per_igr_lr_ranking
+        TABLE=per_igr_lr_${DRUG}.csv
+        FEATURE_ARGS=(--min-prevalence 0.10)
+        BAND="960-d embedding carrier-only, min-prevalence 0.10"
+        ;;
+esac
+# MAX_TRAIN (default 2000; set empty → full cohort) + BACLM_DIR (override the store, e.g. …/baclm_reembed for
+# the re-embed whole-IGR channel) — mirror the upstream launcher so A5 can select the parcel + cohort size.
+MAX_TRAIN="${MAX_TRAIN-2000}"
 # Per-drug + per-species + per-feature subdir (the module also writes non-drug-specific files, so
 # concurrent array tasks / features must not share an out-dir).
 OUT=$D/processed/train_${TASK}/pangena_predict/$RANK_DIR/$DRUG
@@ -98,6 +118,8 @@ if [[ -f "$OUT/$TABLE" ]]; then
 fi
 mkdir -p "$OUT"
 
+MAXT_ARG=""; [[ -n "$MAX_TRAIN" ]] && MAXT_ARG="--max-train-genomes $MAX_TRAIN"
+BACLM_ARG=""; [[ -n "${BACLM_DIR:-}" ]] && BACLM_ARG="--baclm-dir $BACLM_DIR"
 "$PY" -m bacpredict.engine.gene_lr.build_per_igr_lr_store \
     --species "$SPECIES" \
     --drug "$DRUG" \
@@ -106,9 +128,10 @@ mkdir -p "$OUT"
     --auroc-filter 0.8 \
     --n-folds 5 \
     --seed 1 \
-    --max-train-genomes 2000 \
+    $MAXT_ARG \
     --sample-seed 1 \
     --boundary-tol 3 \
+    $BACLM_ARG \
     --n-jobs "${SLURM_CPUS_PER_TASK:-32}"
 
 echo "=== top of the wide IGR ranking table ($TABLE) ==="

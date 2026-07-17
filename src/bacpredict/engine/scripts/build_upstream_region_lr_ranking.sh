@@ -16,6 +16,10 @@
 # Usage:  sbatch --array=0-9 src/bacpredict/engine/scripts/build_upstream_region_lr_ranking.sh          # TB, all 10
 #         SPECIES=kp sbatch --export=ALL,SPECIES=kp --array=0-21 \
 #             src/bacpredict/engine/scripts/build_upstream_region_lr_ranking.sh                          # Kp, all 22
+#   Absence modes (FEATURE, own out-dir each — needs the concat worktree until consolidate is advanced):
+#         sbatch --export=ALL,REPO=$SCRATCHDIR/worktrees/concat,FEATURE=imputed --array=0 \
+#             src/bacpredict/engine/scripts/build_upstream_region_lr_ranking.sh                          # TB rif zero-imputed
+#         (FEATURE=presence for the one-hot lineage control; both use the accessory band 0.01–0.99.)
 #   Held-out-test ("real numbers", full cohort — fit train+validate, score the evaluate split):
 #         sbatch --export=ALL,EVAL=1,SUFFIX=_eval,MAX_TRAIN=,STORE_DTYPE=float16 --mem=400G --array=0-9 \
 #             src/bacpredict/engine/scripts/build_upstream_region_lr_ranking.sh                          # TB eval
@@ -76,10 +80,34 @@ EVAL="${EVAL:-0}"                                 # 1 → --eval-holdout
 SUFFIX="${SUFFIX:-}"                              # output-subdir suffix, e.g. _eval
 MAX_TRAIN="${MAX_TRAIN-2000}"                    # "" → full cohort
 STORE_DTYPE="${STORE_DTYPE:-float32}"            # float16 → whole-cohort memory
+# FEATURE (env, default embedding) selects the (upstream key × absence) variant, mirroring
+# build_per_igr_lr_ranking.sh — each writes its OWN ranking base dir so the carrier-only file is never
+# overwritten. embedding = carrier-only (drop-absent, core min-prevalence 0.10); imputed = the same 960-d
+# embedding zero-imputing absent genomes over the accessory band (0.01, 0.99] — selection = usage; presence =
+# the presence/absence one-hot lineage control, same band. NB: the imputed/presence modes need
+# build_upstream_region_lr_store's new args (416f32f+) — run with REPO=$SCRATCHDIR/worktrees/concat until the
+# consolidate worktree is advanced past that commit.
+FEATURE=${FEATURE:-embedding}
+case "$FEATURE" in
+    presence)
+        RANK_BASE=upstream_presence_lr_ranking
+        TABLE=per_upstream_presence_lr_${DRUG}.csv
+        FEATURE_ARGS=(--feature presence --min-prevalence 0.01 --max-prevalence 0.99)
+        ;;
+    imputed)
+        RANK_BASE=upstream_lr_ranking_imputed
+        TABLE=per_upstream_lr_${DRUG}.csv
+        FEATURE_ARGS=(--impute-absent-zero --min-prevalence 0.01 --max-prevalence 0.99)
+        ;;
+    *)
+        RANK_BASE=upstream_lr_ranking
+        TABLE=per_upstream_lr_${DRUG}.csv
+        FEATURE_ARGS=(--min-prevalence 0.10)
+        ;;
+esac
 # Per-drug + per-species subdir (the module also writes non-drug-specific files, so concurrent array tasks
 # must not share an out-dir).
-OUT=$D/processed/train_${TASK}/pangena_predict/upstream_lr_ranking${SUFFIX}/$DRUG
-TABLE=per_upstream_lr_${DRUG}.csv
+OUT=$D/processed/train_${TASK}/pangena_predict/${RANK_BASE}${SUFFIX}/$DRUG
 
 echo "========================================================================"
 echo "Upstream-region LR ranking — species=$SPECIES drug=$DRUG (array task $SLURM_ARRAY_TASK_ID)"
@@ -101,7 +129,7 @@ BACLM_ARG=""; [[ -n "${BACLM_DIR:-}" ]] && BACLM_ARG="--baclm-dir $BACLM_DIR"
     --species "$SPECIES" \
     --drug "$DRUG" \
     --out-dir "$OUT" \
-    --min-prevalence 0.10 \
+    "${FEATURE_ARGS[@]}" \
     --auroc-filter 0.8 \
     --n-folds 5 \
     --seed 1 \
