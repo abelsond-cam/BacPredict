@@ -176,6 +176,35 @@ def run(
     return table
 
 
+def default_gene_ranking(rank_dir: Path, drug: str) -> tuple[Path | None, str]:
+    """Pick the gene ranking to SELECT from → ``(csv, flavour)``; prefers the zero-imputed whole-cohort one.
+
+    **Selection must match usage.** The concat feeds the block through :func:`impute_block`, i.e. the gene's
+    real vector for carriers and a **0-vector for non-carriers**, scored over the whole cohort. So the gene
+    must be chosen by the *zero-imputed whole-cohort* AUROC. The drop-absent (carrier-only) rankings answer
+    a different question — "among carriers, does this gene's sequence predict resistance?" — and at low
+    prevalence they surface conditional-on-carriage artifacts: Kp ciprofloxacin's carrier-only top is
+    ``recE`` (AUROC 0.949 but prevalence 0.22, 70% of carriers resistant), whereas the zero-imputed ranking
+    correctly tops out at ``gyrA`` (0.916, prevalence 0.997 — the QRDR driver). Picking ``recE`` would hand
+    the LR a block that is 0 for 78% of genomes, i.e. mostly a presence indicator.
+
+    For a near-universal core gene the two agree (impute ≡ drop-absent), so the fallback is safe for
+    coding-determinant drugs (TB rifampin → rpoB, prevalence 0.984) — but it is logged loudly.
+    """
+    imputed = rank_dir / "per_gene_lr_ranking_imputed_baclm" / drug / f"per_gene_lr_{drug}.csv"
+    if imputed.exists():
+        return imputed, "imputed_whole_cohort"
+    for flavour, sub in (("carrier_only_eval", "per_gene_lr_ranking_baclm_eval"),
+                         ("carrier_only", "per_gene_lr_ranking_baclm")):
+        csv = rank_dir / sub / drug / f"per_gene_lr_{drug}.csv"
+        if csv.exists():
+            logger.warning("%s: no zero-imputed gene ranking — falling back to %s (selection≠usage; safe only "
+                           "if the top gene is near-universal, else re-run the ranking with --impute-absent-zero)",
+                           drug, sub)
+            return csv, flavour
+    return None, "none"
+
+
 def _catalogue_csv(species: str, drug: str) -> Path:
     """Committed catalogue one-hot CSV for the RED ceiling (TB-Profiler for TB, CARD family for Kp)."""
     disp = display_name(drug)
@@ -207,7 +236,8 @@ def main() -> None:
 
     sp = store_paths(args.species)
     rank = _ranking_dir(args.species)
-    gene_csv = args.gene_ranking_csv or rank / "per_gene_lr_ranking_baclm_eval" / args.drug / f"per_gene_lr_{args.drug}.csv"
+    gene_csv = args.gene_ranking_csv or (default_gene_ranking(rank, args.drug)[0] or
+                                         rank / "per_gene_lr_ranking_baclm" / args.drug / f"per_gene_lr_{args.drug}.csv")
     if args.igr_kind == "upstream":
         igr_csv = args.igr_ranking_csv or rank / "upstream_lr_ranking" / args.drug / f"per_upstream_lr_{args.drug}.csv"
     else:

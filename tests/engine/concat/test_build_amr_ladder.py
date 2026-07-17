@@ -107,3 +107,24 @@ def test_run_survives_missing_rankings(tmp_path, monkeypatch):
     assert (table["block"] == "").all()  # nothing matched → all rungs are the FT-mean only
     assert table["n_features"].nunique() == 1
     assert np.isnan(table.loc[0, "ceiling_auroc"])
+
+
+def test_default_gene_ranking_prefers_imputed_over_carrier_only(tmp_path):
+    """Selection must match usage: the zero-imputed whole-cohort ranking wins over the carrier-only ones."""
+    drug = "ciprofloxacin"
+    imp = tmp_path / "per_gene_lr_ranking_imputed_baclm" / drug
+    ev = tmp_path / "per_gene_lr_ranking_baclm_eval" / drug
+    for d in (imp, ev):
+        d.mkdir(parents=True)
+        pd.DataFrame([{"gene_name": "x", "lr_auroc_ciprofloxacin": 0.9}]).to_csv(d / f"per_gene_lr_{drug}.csv",
+                                                                                 index=False)
+    csv, flavour = L.default_gene_ranking(tmp_path, drug)
+    assert flavour == "imputed_whole_cohort" and "imputed" in str(csv)
+
+    # no imputed ranking → fall back to the carrier-only eval one (logged as selection≠usage)
+    import shutil
+    shutil.rmtree(tmp_path / "per_gene_lr_ranking_imputed_baclm")
+    csv2, flavour2 = L.default_gene_ranking(tmp_path, drug)
+    assert flavour2 == "carrier_only_eval" and "_eval" in str(csv2)
+
+    assert L.default_gene_ranking(tmp_path / "empty", drug) == (None, "none")
