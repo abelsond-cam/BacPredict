@@ -99,54 +99,71 @@ def _genome_upstream_records(
 def collect_upstream_matrices(
     train_ids: list[str], sample_gff: dict[str, str], baclm_dir: Path, *,
     baclm_suffix: str = "_baclm_embeddings.pt", boundary_tol: int = 3, eval_ids: set[str] | None = None,
-    store_dtype: str = "float32",
+    store_dtype: str = "float32", min_prevalence: float = 0.0,
 ) -> tuple[dict[str, tuple[list[str], np.ndarray]], pd.DataFrame, list[str]]:
     """GFF+``.pt`` sweep → per-anchor single-copy design matrices + prevalence + read universe.
 
-    Serial sweep (torch.load mmap can't be forked before the process-parallel fit on aarch64 — same
-    constraint and rationale as :func:`build_per_igr_lr_store.collect_igr_matrices`).
+    **Two-pass, streamed** (one genome at a time — never materialise every genome's records at once): pass
+    1 tallies each anchor's single-copy prevalence over the fit genomes and keeps only anchors above
+    ``min_prevalence`` (the *core* set); pass 2 re-reads and stores the 960-d vectors for **core anchors
+    only**. This mirrors the coding side (:func:`assemble_gene_matrices` collects vectors only for
+    pre-discovered core genes) and is essential at the full cohort — holding *every* named gene's region
+    (mostly rare accessory anchors) needs >440 GB, while the ~1–2 k core anchors fit easily. The serial
+    read (torch.load mmap can't be forked before the process-parallel fit on aarch64) costs two passes over
+    the ``.pt`` files; the memory saving is worth the extra I/O.
 
-    ``eval_ids`` (the held-out evaluate split) are swept and added to each anchor's design matrix so the
-    fitted LR can be scored on them, but they are excluded from the prevalence / core-anchor selection and
-    from the returned ``read_ids`` universe — those stay on the fit (train+validate) genomes only, so the
-    evaluate split never influences which anchors are screened.
+    ``eval_ids`` (the held-out evaluate split) are swept in pass 2 and added to each core anchor's design
+    matrix so the fitted LR can be scored on them, but they are excluded from the pass-1 prevalence /
+    core-anchor selection and from the returned ``read_ids`` universe — those stay on the fit
+    (train+validate) genomes only, so the evaluate split never influences which anchors are screened.
     """
     eval_ids = eval_ids or set()
     tasks = [
         (str(s), sample_gff.get(str(s), ""), str(Path(baclm_dir) / f"{s}{baclm_suffix}"))
         for s in train_ids if str(s) in sample_gff
     ]
-    results = [_genome_upstream_records(sid, gff, pt, boundary_tol) for sid, gff, pt in tasks]
+    fit_tasks = [t for t in tasks if t[0] not in eval_ids]
 
-    ids_by_key: dict[str, list[str]] = {}
-    vecs_by_key: dict[str, list[np.ndarray]] = {}
+    # Pass 1 (fit genomes only) — prevalence → core anchors; discard vectors as we go.
     single_copy: Counter[str] = Counter()
     read_ids: list[str] = []
     n_skipped = 0
-    for res in results:
+    for sid, gff, pt in fit_tasks:
+        res = _genome_upstream_records(sid, gff, pt, boundary_tol)
         if res is None:
             n_skipped += 1
             continue
-        sid, records = res
-        is_eval = sid in eval_ids
-        if not is_eval:
-            read_ids.append(sid)  # prevalence universe = fit genomes only
+        _sid, records = res
+        read_ids.append(sid)
         counts = Counter(k for k, _ in records)
-        for key, vec in records:
-            if counts[key] == 1:  # gene single-copy in this genome
-                if not is_eval:
-                    single_copy[key] += 1  # prevalence numerator = fit genomes only
-                ids_by_key.setdefault(key, []).append(sid)
-                vecs_by_key.setdefault(key, []).append(vec.astype(store_dtype, copy=False))
+        single_copy.update(k for k, c in counts.items() if c == 1)
     if n_skipped:
-        logger.warning("upstream sweep: skipped %d genomes (missing/unreadable GFF or .pt)", n_skipped)
+        logger.warning("upstream pass 1: skipped %d fit genomes (missing/unreadable GFF or .pt)", n_skipped)
 
     n = len(read_ids)
     prevalence = pd.DataFrame(
         [{"upstream_gene": k, "n_single_copy": c, "prevalence": c / max(n, 1)} for k, c in single_copy.items()]
     ).sort_values("prevalence", ascending=False).reset_index(drop=True)
+    core = {k for k, c in single_copy.items() if (c / max(n, 1)) > min_prevalence}
+    logger.info("upstream pass 1: %d anchors > %.2f prevalence (of %d) over %d fit genomes",
+                len(core), min_prevalence, len(single_copy), n)
+
+    # Pass 2 (fit + eval) — store vectors for CORE anchors only (eval rows scored, never selected).
+    ids_by_key: dict[str, list[str]] = {}
+    vecs_by_key: dict[str, list[np.ndarray]] = {}
+    for sid, gff, pt in tasks:
+        res = _genome_upstream_records(sid, gff, pt, boundary_tol)
+        if res is None:
+            continue
+        _sid, records = res
+        counts = Counter(k for k, _ in records)
+        for key, vec in records:
+            if counts[key] == 1 and key in core:  # single-copy AND a core anchor
+                ids_by_key.setdefault(key, []).append(sid)
+                vecs_by_key.setdefault(key, []).append(vec.astype(store_dtype, copy=False))
+
     matrices = {k: (ids_by_key[k], np.vstack(vecs_by_key[k])) for k in ids_by_key}
-    logger.info("upstream sweep: %d single-copy anchors over %d read genomes", len(matrices), n)
+    logger.info("upstream pass 2: materialised %d core anchor matrices", len(matrices))
     return matrices, prevalence, read_ids
 
 
@@ -172,13 +189,15 @@ def run(
 
     matrices, prevalence, read_ids = collect_upstream_matrices(
         sweep_ids, sample_gff, baclm_dir, baclm_suffix=baclm_suffix, boundary_tol=boundary_tol,
-        eval_ids=eval_set, store_dtype=store_dtype,
+        eval_ids=eval_set, store_dtype=store_dtype, min_prevalence=min_prevalence,
     )
+    # The collector already returns only core (> min_prevalence) anchor matrices; this is a belt-and-braces
+    # filter and the log line for the summary.
     prev = prevalence["prevalence"]
     core = set(prevalence.loc[prev > min_prevalence, "upstream_gene"])
     core_matrices = {k: m for k, m in matrices.items() if k in core}
-    logger.info("upstream anchors > %.2f prevalence over %d fit genomes: %d of %d",
-                min_prevalence, len(read_ids), len(core_matrices), len(matrices))
+    logger.info("upstream core anchors > %.2f prevalence over %d fit genomes: %d (of %d total anchors)",
+                min_prevalence, len(read_ids), len(core_matrices), len(prevalence))
 
     fitted = fit_per_gene(core_matrices, label_map, n_folds=n_folds, seed=seed, n_jobs=n_jobs,
                           all_ids=read_ids, impute_absent_zero=False, eval_ids=eval_set)
