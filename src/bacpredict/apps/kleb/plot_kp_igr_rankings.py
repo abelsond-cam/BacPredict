@@ -49,6 +49,8 @@ def main() -> None:
                    help="dir with per-drug embedding-ranking subdirs (<rank-root>/<drug>/<prefix>_<drug>.csv).")
     p.add_argument("--presence-root", type=Path, default=None,
                    help="dir with per-drug presence-ranking subdirs (optional; adds the grey presence bar).")
+    p.add_argument("--imputed-root", type=Path, default=None,
+                   help="dir with per-drug zero-imputed ranking subdirs (optional; adds the 3rd bar + density KDE).")
     p.add_argument("--method", default="per_igr", help="store granularity: per_igr | whole_igr | per_unit.")
     p.add_argument("--prefix", default=None, help="ranking-file prefix (default: <method>_lr).")
     p.add_argument("--presence-prefix", default=None, help="presence-ranking prefix (default: <method>_presence_lr).")
@@ -74,7 +76,11 @@ def main() -> None:
         if args.presence_root is not None:
             cand = args.presence_root / drug / f"{pprefix}_{drug}.csv"
             pcsv = cand if cand.exists() else None
-        P.run(species="kp", drug=drug, method=args.method, csv=csv, presence_csv=pcsv,
+        icsv = None
+        if args.imputed_root is not None:
+            cand = args.imputed_root / drug / f"{prefix}_{drug}.csv"  # imputed table shares the embedding prefix
+            icsv = cand if cand.exists() else None
+        P.run(species="kp", drug=drug, method=args.method, csv=csv, presence_csv=pcsv, imputed_csv=icsv,
               out_dir=out_dir, causal_genes=_card_causal(drug, args.card_csv), top_n=args.top_n)
         ok += 1
     logger.info("Kp %s: %d drugs plotted, %d missing", args.method, ok, miss)

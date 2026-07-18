@@ -67,3 +67,47 @@ def test_runs_without_presence(tmp_path):
                  out_dir=tmp_path / "viz", causal_genes=["rpoB"])
     assert (base / "top10.png").exists() and (base / "density.png").exists()
     assert base.parts[-2] == "rifampicin"  # display_name maps rifampin -> rifampicin
+
+
+def _imputed(rank, drug="ciprofloxacin"):
+    return pd.DataFrame({"igr_pair": rank["igr_pair"],
+                         f"lr_auroc_{drug}": np.random.default_rng(7).uniform(0.5, 0.9, size=len(rank))})
+
+
+def test_run_three_series_with_imputed(tmp_path):
+    """carrier + presence + zero-imputed: both figures render (the accessory-vs-core density overlay)."""
+    rank = _ranking()
+    csv = tmp_path / "per_igr_lr_ciprofloxacin.csv"
+    rank.to_csv(csv, index=False)
+    pcsv = tmp_path / "per_igr_presence_lr_ciprofloxacin.csv"
+    _presence(rank).to_csv(pcsv, index=False)
+    icsv = tmp_path / "imp" / "per_igr_lr_ciprofloxacin.csv"
+    icsv.parent.mkdir()
+    _imputed(rank).to_csv(icsv, index=False)
+
+    base = P.run(species="kp", drug="ciprofloxacin", method="per_igr", csv=csv, presence_csv=pcsv,
+                 imputed_csv=icsv, out_dir=tmp_path / "viz", causal_genes=["gyrA", "parC"])
+    assert (base / "top10.png").exists() and (base / "density.png").exists()
+
+
+def test_run_per_unit_keyed_table(tmp_path):
+    """A per-unit table (keyed by ``unit``, no igr_pair) still joins presence/imputed via _key_col."""
+    rng = np.random.default_rng(3)
+    n = 12
+    rank = pd.DataFrame({
+        "unit": [f"rrna:u{i}" for i in range(n)], "feature_type": ["rrna"] * n,
+        "feature_name": [f"u{i}" for i in range(n)], "prevalence": rng.uniform(0.1, 1.0, n),
+        "lr_auroc_streptomycin": rng.uniform(0.5, 0.95, n),
+    })
+    csv = tmp_path / "per_unit_lr_streptomycin.csv"
+    rank.to_csv(csv, index=False)
+    pcsv = tmp_path / "per_unit_presence_lr_streptomycin.csv"
+    pd.DataFrame({"unit": rank["unit"], "presence_lr_auroc_streptomycin": rng.uniform(0.5, 0.6, n)}).to_csv(pcsv, index=False)
+    icsv = tmp_path / "imp" / "per_unit_lr_streptomycin.csv"
+    icsv.parent.mkdir()
+    pd.DataFrame({"unit": rank["unit"], "lr_auroc_streptomycin": rng.uniform(0.5, 0.9, n)}).to_csv(icsv, index=False)
+
+    base = P.run(species="tb", drug="streptomycin", method="per_unit", csv=csv, presence_csv=pcsv,
+                 imputed_csv=icsv, out_dir=tmp_path / "viz", causal_genes=["rrs"])
+    assert (base / "top10.png").exists() and (base / "density.png").exists()
+    assert base.parts[-1] == "per_unit"
