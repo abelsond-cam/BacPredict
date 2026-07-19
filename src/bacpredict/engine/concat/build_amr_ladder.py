@@ -65,8 +65,8 @@ def _best_from_ranking(csv_path: Path, *, key_col: str) -> tuple[str, float] | N
     df = pd.read_csv(csv_path)
     if df.empty or key_col not in df.columns:
         return None
-    au_cols = [c for c in df.columns if c.startswith("eval_auroc_")] or [c for c in df.columns
-                                                                          if c.startswith("lr_auroc_")]
+    au_cols = ([c for c in df.columns if c.startswith("eval_auroc_") and df[c].notna().any()]
+               or [c for c in df.columns if c.startswith("lr_auroc_")])
     if not au_cols:
         return None
     au = au_cols[0]
@@ -94,8 +94,8 @@ def _best_core_from_ranking(
     df = pd.read_csv(csv_path)
     if df.empty or key_col not in df.columns or "prevalence" not in df.columns:
         return None
-    au_cols = [c for c in df.columns if c.startswith("eval_auroc_")] or [c for c in df.columns
-                                                                          if c.startswith("lr_auroc_")]
+    au_cols = ([c for c in df.columns if c.startswith("eval_auroc_") and df[c].notna().any()]
+               or [c for c in df.columns if c.startswith("lr_auroc_")])
     if not au_cols:
         return None
     au = au_cols[0]

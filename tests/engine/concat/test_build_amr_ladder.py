@@ -29,6 +29,11 @@ def test_best_from_ranking_prefers_eval_auroc(tmp_path):
     csv2 = tmp_path / "oof_only.csv"
     pd.DataFrame([{"gene_name": "a", "lr_auroc_x": 0.7}, {"gene_name": "b", "lr_auroc_x": 0.8}]).to_csv(csv2, index=False)
     assert L._best_from_ranking(csv2, key_col="gene_name") == ("b", 0.8)
+    # an eval_auroc column that is ALL-NaN (an OOF ranking) must fall back to lr_auroc, not empty the frame.
+    csv3 = tmp_path / "empty_eval.csv"
+    pd.DataFrame([{"gene_name": "a", "lr_auroc_x": 0.7, "eval_auroc_x": np.nan},
+                  {"gene_name": "b", "lr_auroc_x": 0.8, "eval_auroc_x": np.nan}]).to_csv(csv3, index=False)
+    assert L._best_from_ranking(csv3, key_col="gene_name") == ("b", 0.8)
     assert L._best_from_ranking(tmp_path / "missing.csv", key_col="gene_name") is None
 
 
@@ -45,6 +50,11 @@ def test_best_core_from_ranking_guards_prevalence_and_n_pos(tmp_path):
     # loosen prevalence to admit the accessory but keep the n_pos floor → the 0.80 accessory now wins.
     assert L._best_core_from_ranking(csv, key_col="unit", min_prevalence=0.2, min_n_pos=50) == ("ncrna:acc", 0.80)
     assert L._best_core_from_ranking(tmp_path / "none.csv", key_col="unit", min_prevalence=0.9, min_n_pos=50) is None
+    # an all-NaN eval_auroc column (the OOF rankings the ladder reads) must fall back to lr_auroc.
+    csv_e = tmp_path / "core_empty_eval.csv"
+    pd.DataFrame([{"unit": "rrna:rrs", "prevalence": 0.997, "n_pos": 90, "lr_auroc_streptomycin": 0.65,
+                   "eval_auroc_streptomycin": np.nan}]).to_csv(csv_e, index=False)
+    assert L._best_core_from_ranking(csv_e, key_col="unit", min_prevalence=0.9, min_n_pos=50) == ("rrna:rrs", 0.65)
 
 
 def test_select_core_noncoding_picks_best_across_keys(tmp_path):
