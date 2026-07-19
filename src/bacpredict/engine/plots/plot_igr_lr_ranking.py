@@ -68,9 +68,12 @@ def _auroc_col(df: pd.DataFrame, prefix: str = "lr_auroc_") -> str:
 
 
 def _region_label(row: pd.Series) -> str:
-    """Human x-tick label across every key scheme: ``<name> (rRNA/CRISPR/…)`` for a named body, the
-    ``upstream:<gene>`` anchor, the ``left→right`` flank pair, or the raw ``unit`` key — capped in length
-    (the CRISPR/regulatory feature names run to 100+ chars and otherwise blow out the axis)."""
+    """Human x-tick label for one ranked region across every key scheme.
+
+    ``<name> (rRNA/CRISPR/…)`` for a named body, the ``upstream:<gene>`` anchor, the ``left→right`` flank
+    pair, or the raw ``unit`` key — capped in length (CRISPR/regulatory feature names run to 100+ chars and
+    otherwise blow out the axis).
+    """
     ftype = str(row.get("feature_type", "") or "").strip().lower()
     if ftype in _FEATURE_SUFFIX:
         name = str(row.get("feature_name", "") or "").strip() or ftype
