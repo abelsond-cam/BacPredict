@@ -53,7 +53,9 @@ fi
 DRUG=${DRUGS[$SLURM_ARRAY_TASK_ID]}
 [[ -z "$DRUG" ]] && { echo "ERROR: no drug for index $SLURM_ARRAY_TASK_ID (species=$SPECIES)" >&2; exit 1; }
 
-FT_CACHE=$D/processed/train_${TASK}/pangena_predict/ft_bacformer_cache/$DRUG
+# FT genome-mean dir. Defaults to the standard cache; override FT_CACHE for a drug whose npz sits elsewhere
+# (e.g. Kp ciprofloxacin's CP-0 cache lives under ft_amr_cache/, not ft_bacformer_cache/).
+FT_CACHE="${FT_CACHE:-$D/processed/train_${TASK}/pangena_predict/ft_bacformer_cache/$DRUG}"
 OUT=$D/processed/train_${TASK}/pangena_predict/amr_ladder/$DRUG
 CORE_PREV="${CORE_PREV:-0.9}"
 CORE_NPOS="${CORE_NPOS:-50}"
