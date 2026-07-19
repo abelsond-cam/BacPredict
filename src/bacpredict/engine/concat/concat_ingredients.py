@@ -152,3 +152,31 @@ def load_baclm_upstream_block(
             ids.append(str(sid))
             vecs.append(matches[0])
     return ids, (np.vstack(vecs).astype(np.float32) if vecs else np.zeros((0, 0), np.float32))
+
+
+def load_baclm_unit_block(
+    sample_ids: list[str], unit_key: str, *, baclm_dir: Path, baclm_suffix: str = "_baclm_embeddings.pt",
+) -> tuple[list[str], np.ndarray]:
+    """Carrier ``(ids, [n, dim])`` for ONE named body ``unit_key`` (``<type>:<name>``, e.g. ``rrna:rrs``).
+
+    The named-body sibling of :func:`load_baclm_upstream_block`, reusing
+    :func:`build_per_unit_lr_store._genome_unit_records` — which **mean-pools** a unit's several copies
+    (the multiple *rrn* operons of ``rrna:rrs``) into one per-genome vector, so a carrier contributes
+    exactly one row (the relaxed single-copy gate rRNA needs). ``unit_key`` is the ``unit`` column of
+    ``per_unit_lr_<drug>.csv``. Reads the ``feature_*`` channel, so ``baclm_dir`` **must** be the re-embed
+    store (the legacy ``baclm/`` store has no named bodies). Non-carriers are dropped; the caller
+    zero-imputes them onto the full universe.
+    """
+    from bacpredict.engine.gene_lr.build_per_unit_lr_store import _genome_unit_records
+
+    ids: list[str] = []
+    vecs: list[np.ndarray] = []
+    for sid in sample_ids:
+        res = _genome_unit_records(str(sid), str(Path(baclm_dir) / f"{sid}{baclm_suffix}"))
+        if res is None:
+            continue
+        matches = [emb for k, emb in res[1] if k == unit_key]
+        if len(matches) == 1:  # copies already mean-pooled to one row per (genome, unit)
+            ids.append(str(sid))
+            vecs.append(matches[0])
+    return ids, (np.vstack(vecs).astype(np.float32) if vecs else np.zeros((0, 0), np.float32))

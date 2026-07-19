@@ -30,19 +30,21 @@ from matplotlib.patches import Patch
 from bacpredict.engine.config import organism, visualisations_dir
 from bacpredict.engine.plots.labels import display_name
 
-# Additive progression: each added block deepens the blue.
-RUNG_COLOUR = {1: "#a6cee3", 2: "#4292c6", 3: "#08519c"}
+# ft_mean baseline (light) + the three added-block configs; the non-coding block gets its own hue (green)
+# since it is a different block type, not the next step of an additive chain; "+ both" is the darkest.
+RUNG_COLOUR = {1: "#a6cee3", 2: "#4292c6", 3: "#41ab5d", 4: "#08519c"}
 CEILING_COLOUR = "#c0392b"
 _CHANCE = 0.5
+_RUNG_ADD = {1: "FT genome-mean", 2: "+ baclm gene", 3: "+ baclm noncoding", 4: "+ gene + noncoding"}
 
 
 def _rung_label(row: pd.Series) -> str:
-    """x-tick label for one rung — the added block named on a second line (e.g. "+ baclm gene" / "(rpoB)")."""
+    """x-tick label for one config — the added block named on a second line (e.g. "+ baclm gene" / "(rpoB)")."""
+    r = int(row["rung"])
+    base = _RUNG_ADD.get(r, str(row.get("config") or ""))
+    if r == 1:
+        return base
     block = str(row.get("block") or "").strip()
-    if int(row["rung"]) == 1:
-        return "FT genome-mean"
-    kind = "gene" if int(row["rung"]) == 2 else "IGR"
-    base = f"+ baclm {kind}"
     return f"{base}\n({block})" if block else f"{base}\n(none)"
 
 
@@ -72,10 +74,10 @@ def plot_amr_ladder(table: pd.DataFrame, out_path: Path, *, species: str, drug: 
     base = df.loc[df["rung"].idxmin()]
     if pd.notna(top[metric]) and pd.notna(base[metric]):
         lift = float(top[metric]) - float(base[metric])
-        bits = [f"ladder lift (rung 3 − rung 1) = {lift:+.3f}"]
+        bits = [f"lift (+both − FT) = {lift:+.3f}"]
         if pd.notna(ceiling):
             bits.append(f"gap to ceiling = {ceiling - float(top[metric]):+.3f}")
-        ax.set_title(f"{species.upper()} {display_name(drug)} — FT ⊕ baclm gene ⊕ baclm IGR vs catalogue\n"
+        ax.set_title(f"{species.upper()} {display_name(drug)} — FT ⊕ baclm gene ⊕ noncoding vs catalogue\n"
                      + "   ·   ".join(bits), fontsize=11)
     else:
         ax.set_title(f"{species.upper()} {display_name(drug)} — concat ladder", fontsize=11)
@@ -88,7 +90,8 @@ def plot_amr_ladder(table: pd.DataFrame, out_path: Path, *, species: str, drug: 
     ax.grid(axis="y", alpha=0.3)
     ax.spines[["top", "right"]].set_visible(False)
     handles = [Patch(facecolor=RUNG_COLOUR[r], edgecolor="black", label=lbl) for r, lbl in
-               [(1, "FT genome-mean"), (2, "+ best baclm gene"), (3, "+ best baclm IGR")]]
+               [(1, "FT genome-mean"), (2, "+ best baclm gene"), (3, "+ best baclm noncoding"),
+                (4, "+ gene + noncoding")]]
     if pd.notna(ceiling):
         handles.append(Line2D([0], [0], ls="--", c=CEILING_COLOUR, lw=1.5, label="catalogue one-hot ceiling"))
     # Upper-left: the bars ascend left→right, so this corner stays clear of rung 3 and the ceiling label.
