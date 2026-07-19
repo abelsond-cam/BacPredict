@@ -68,15 +68,30 @@ def _auroc_col(df: pd.DataFrame, prefix: str = "lr_auroc_") -> str:
 
 
 def _region_label(row: pd.Series) -> str:
-    """``left→right`` for an IGR, or ``<name> (rRNA/CRISPR/…)`` for a named-feature unit."""
-    ftype = str(row.get("feature_type", "") or "")
+    """Human x-tick label across every key scheme: ``<name> (rRNA/CRISPR/…)`` for a named body, the
+    ``upstream:<gene>`` anchor, the ``left→right`` flank pair, or the raw ``unit`` key — capped in length
+    (the CRISPR/regulatory feature names run to 100+ chars and otherwise blow out the axis)."""
+    ftype = str(row.get("feature_type", "") or "").strip().lower()
     if ftype in _FEATURE_SUFFIX:
-        name = str(row.get("feature_name", "") or row.get("igr_pair", "") or ftype)
-        return f"{name} {_FEATURE_SUFFIX[ftype]}"
+        name = str(row.get("feature_name", "") or "").strip() or ftype
+        return _cap(f"{name} {_FEATURE_SUFFIX[ftype]}")
+    unit = row.get("unit")  # per-unit body key <type>:<name> (feature types outside the suffix map)
+    if isinstance(unit, str) and unit:
+        return _cap(unit)
+    for k in ("upstream_gene", "gene", "gene_name"):  # promoter anchor (upstream:<gene>) or coding gene
+        v = row.get(k)
+        if isinstance(v, str) and v:
+            return _cap(v)
     pair = row.get("igr_pair")
     if isinstance(pair, str) and pair:
-        return pair
-    return f"{row.get('left_gene', '')}→{row.get('right_gene', '')}"
+        return _cap(pair)
+    return _cap(f"{row.get('left_gene', '')}→{row.get('right_gene', '')}")
+
+
+def _cap(label: str, n: int = 30) -> str:
+    """Truncate a long region label for the x-axis (…) — CRISPR/regulatory names run to 100+ chars."""
+    label = label.strip()
+    return label if len(label) <= n else label[: n - 1].rstrip() + "…"
 
 
 def _is_causal(row: pd.Series, causal_lower: set[str]) -> bool:
@@ -84,7 +99,7 @@ def _is_causal(row: pd.Series, causal_lower: set[str]) -> bool:
     if not causal_lower:
         return False
     cands: list[str] = []
-    for key in ("left_gene", "right_gene", "feature_name"):
+    for key in ("left_gene", "right_gene", "feature_name", "gene", "gene_name"):
         v = row.get(key)
         if isinstance(v, str) and v:
             cands.append(v.lower())
@@ -118,15 +133,21 @@ def _joined_auroc(top: pd.DataFrame, other: pd.DataFrame | None, prefix: str, ke
 
 def plot_top10(rank: pd.DataFrame, presence: pd.DataFrame | None, *, imputed: pd.DataFrame | None = None,
                drug: str, method: str, species: str, out_path: Path, causal_lower: set[str],
-               top_n: int = 10) -> None:
+               top_n: int = 10, min_n_pos: int = 20) -> None:
     """Top-N grouped bars: presence one-hot → prevalence-coloured carrier embedding → zero-imputed embedding.
 
     ``imputed`` (the zero-imputed ranking the concat actually consumes) adds a third bar per region, joined
     to the carrier top-N on the shared identity column; ``None`` keeps the presence-vs-carrier pair (or the
     carrier bar alone). Embedding bars are hatched where the region is a known catalogue determinant.
+    ``min_n_pos`` drops the low-n conditional-on-carriage artifacts (a body at prevalence 0.003 scoring 1.0
+    on n=6 resistant carriers) so the top-N shows regions with real support — the same guard the ladder uses.
     """
     au = _auroc_col(rank)
-    top = rank.sort_values(au, ascending=False).head(top_n).reset_index(drop=True)
+    ranked = rank
+    if min_n_pos > 0 and "n_pos" in ranked.columns:
+        floored = ranked[ranked["n_pos"] >= min_n_pos]
+        ranked = floored if not floored.empty else ranked  # fall back if the floor removes everything
+    top = ranked.sort_values(au, ascending=False).head(top_n).reset_index(drop=True)
     labels = [_region_label(r) for _, r in top.iterrows()]
     emb = top[au].to_numpy(dtype=float)
     prev = top["prevalence"].to_numpy(dtype=float) if "prevalence" in top else np.zeros(len(top))
@@ -188,7 +209,8 @@ def plot_top10(rank: pd.DataFrame, presence: pd.DataFrame | None, *, imputed: pd
 
 
 def plot_density(rank: pd.DataFrame, *, drug: str, method: str, species: str, out_path: Path,
-                 top_n: int = 10, overlays: list[tuple[str, pd.DataFrame, str, str]] | None = None) -> None:
+                 top_n: int = 10, overlays: list[tuple[str, pd.DataFrame, str, str]] | None = None,
+                 min_n_pos: int = 20) -> None:
     """KDE of the carrier region AUROCs (N-th-best marked), overlaid with the zero-imputed + presence KDEs.
 
     ``overlays`` is ``[(label, ranking_df, auroc_prefix, colour)]`` — typically the zero-imputed
@@ -196,14 +218,20 @@ def plot_density(rank: pd.DataFrame, *, drug: str, method: str, species: str, ou
     if the zero-imputed distribution collapses onto the presence baseline the embedding adds nothing once
     mostly-zero (select **core-only**); if it stays above, accessory regions carry real sequence signal.
     A near-constant series (e.g. an all-chance presence one-hot) is dropped — a zero-variance KDE is
-    undefined.
+    undefined. The KDE spans **all** regions (the low-n artifact spike near 1.0 is part of the distribution),
+    but the N-th-best marker is taken over the ``min_n_pos``-floored regions so it reflects real support.
     """
     au = _auroc_col(rank)
     vals = rank[au].dropna().to_numpy(dtype=float)
     if len(vals) < 5:
         logger.warning("%s %s %s: only %d scores — skipping density", species, drug, method, len(vals))
         return
-    cut = float(np.sort(vals)[::-1][: top_n][-1])  # the N-th best carrier score
+    cut_pool = rank
+    if min_n_pos > 0 and "n_pos" in rank.columns:
+        floored = rank[rank["n_pos"] >= min_n_pos]
+        cut_pool = floored if not floored.empty else rank
+    cvals = cut_pool[au].dropna().to_numpy(dtype=float)
+    cut = float(np.sort(cvals)[::-1][: top_n][-1]) if len(cvals) else float(np.sort(vals)[::-1][: top_n][-1])
 
     # (label, values, line-colour, fill-colour|None). The carrier series is filled; overlays are lines.
     series: list[tuple[str, np.ndarray, str, str | None]] = [("carrier-only", vals, "#2f4b7c", "#4c72b0")]
@@ -240,11 +268,12 @@ def plot_density(rank: pd.DataFrame, *, drug: str, method: str, species: str, ou
 
 def run(*, species: str, drug: str, method: str, csv: Path, presence_csv: Path | None, out_dir: Path,
         causal_genes: list[str] | None = None, causal_csv: Path | None = None, top_n: int = 10,
-        imputed_csv: Path | None = None) -> Path:
+        imputed_csv: Path | None = None, min_n_pos: int = 20) -> Path:
     """Render both figures for one (species, drug, method); returns the output dir.
 
     ``imputed_csv`` (the zero-imputed ranking) adds the third top-10 bar + the third density KDE — the
-    accessory-vs-core comparison. ``None`` keeps the carrier-vs-presence pair.
+    accessory-vs-core comparison. ``None`` keeps the carrier-vs-presence pair. ``min_n_pos`` floors the
+    top-10 selection + the density N-th-best marker so low-n carriage artifacts don't dominate.
     """
     rank = pd.read_csv(csv)
     presence = pd.read_csv(presence_csv) if presence_csv and Path(presence_csv).exists() else None
@@ -252,14 +281,14 @@ def run(*, species: str, drug: str, method: str, csv: Path, presence_csv: Path |
     causal_lower = load_causal(causal_genes, causal_csv)
     base = Path(out_dir) / species / display_name(drug) / method
     plot_top10(rank, presence, imputed=imputed, drug=drug, method=method, species=species,
-               out_path=base / "top10.png", causal_lower=causal_lower, top_n=top_n)
+               out_path=base / "top10.png", causal_lower=causal_lower, top_n=top_n, min_n_pos=min_n_pos)
     overlays: list[tuple[str, pd.DataFrame, str, str]] = []
     if imputed is not None:
         overlays.append(("zero-imputed", imputed, "lr_auroc_", _IMPUTED_COLOUR))
     if presence is not None:
         overlays.append(("presence one-hot", presence, "presence_lr_auroc_", _PRESENCE_COLOUR))
     plot_density(rank, drug=drug, method=method, species=species, out_path=base / "density.png",
-                 top_n=top_n, overlays=overlays or None)
+                 top_n=top_n, overlays=overlays or None, min_n_pos=min_n_pos)
     logger.info("%s %s %s: wrote %s/{top10,density}.png (%d causal genes, presence=%s, imputed=%s)",
                 species, drug, method, base, len(causal_lower), presence is not None, imputed is not None)
     return base
