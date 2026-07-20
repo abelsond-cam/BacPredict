@@ -29,7 +29,7 @@ from sklearn.metrics import (
 )
 from transformers import EvalPrediction
 
-SCHEMA_VERSION = "1.1"
+SCHEMA_VERSION = "1.2"
 REQUIRED_TOP_LEVEL_KEYS = {
     "schema_version", "task", "drug", "model", "split", "metrics", "timestamp", "host",
 }
@@ -173,9 +173,16 @@ def youden_threshold(y_true: np.ndarray | list, y_prob: np.ndarray | list) -> fl
 
 
 def _git_sha() -> str | None:
+    # Resolve HEAD in THIS module's directory (inside the repo/worktree), not the process cwd. An FT
+    # job launched from an arbitrary cwd with PYTHONPATH pointing at a worktree otherwise records null
+    # (exactly what happened on the Isambard runs).
     try:
         return (
-            subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL)
+            subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                stderr=subprocess.DEVNULL,
+                cwd=Path(__file__).resolve().parent,
+            )
             .decode()
             .strip()
         )
@@ -195,13 +202,18 @@ def build_results_payload(
     n_folds: int | None = None,
     fold: int | None = None,
     n_evaluate: int | None = None,
+    model_revision: str | None = None,
+    run_config: dict[str, Any] | None = None,
+    versions: dict[str, Any] | None = None,
     operating_point: dict[str, Any] | None = None,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble a results payload.
 
-    ``metrics`` is the §0.4 block at the default 0.5 threshold. ``operating_point``
-    (optional, schema v1.1) holds tuned-threshold metrics — see ``docs/results_schema.md``.
+    ``metrics`` is the §0.4 block at the default 0.5 threshold. ``model_revision`` is the base-model HF
+    commit hash; ``run_config`` records precision + the training hyperparameters and ``versions`` the
+    torch/transformers versions — so a bf16-vs-fp32 or cross-cluster run is self-documenting (schema v1.2).
+    ``operating_point`` (optional, schema v1.1) holds tuned-threshold metrics — see ``docs/results_schema.md``.
     """
     payload: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -209,6 +221,7 @@ def build_results_payload(
         "drug": drug,
         "model": {
             "name_or_path": model_name_or_path,
+            "revision": model_revision,
             "git_sha": _git_sha(),
             "checkpoint_dir": checkpoint_dir,
         },
@@ -223,6 +236,10 @@ def build_results_payload(
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "host": socket.gethostname(),
     }
+    if run_config:
+        payload["run"] = run_config
+    if versions:
+        payload["versions"] = versions
     if operating_point is not None:
         payload["operating_point"] = operating_point
     if extra:

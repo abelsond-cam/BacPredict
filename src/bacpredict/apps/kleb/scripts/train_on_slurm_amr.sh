@@ -2,8 +2,8 @@
 #SBATCH --job-name=ceftriaxone
 #SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
 #SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
-# QOS 'normal' on partition workq caps wall at 24h; --qos=restricted48 allows 48h.
-#SBATCH --time=24:00:00
+# workq_qos caps wall at 24h with DenyOnLimit → requesting exactly 24:00:00 is REJECTED; use 23h.
+#SBATCH --time=23:00:00
 #SBATCH --partition=workq
 #SBATCH --account=brics.u6fp
 #SBATCH --qos=normal
@@ -11,7 +11,8 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
 #SBATCH --gres=gpu:1
-#SBATCH --mem=250G
+# 1-GPU job = one workq socket (~115G, DefMemPerGPU=115000); 250G blows the per-socket size limit.
+#SBATCH --mem=110G
 #SBATCH --open-mode=append
 #SBATCH --array=0-14   # 5 folds × 3 seeds = 15 jobs.
 # Stage C (single canonical run): submit with `sbatch --array=0 train_on_slurm_amr.sh`

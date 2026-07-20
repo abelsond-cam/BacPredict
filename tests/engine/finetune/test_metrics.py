@@ -176,3 +176,47 @@ def test_operating_point_roundtrips_and_validates(tmp_path: Path):
     loaded = json.loads(out.read_text())
     assert loaded["operating_point"]["objective"] == "youden_j"
     assert loaded["operating_point"]["threshold"] == 0.4
+
+
+def test_provenance_fields_recorded(tmp_path: Path):
+    """schema v1.2: model.revision, run (precision + hyperparams) and versions round-trip to JSON."""
+    y_true, y_prob = _separable_arrays()
+    payload = build_results_payload(
+        task="tb_ast",
+        drug="rifampin",
+        model_name_or_path="macwiatrak/bacformer-large-masked-complete-genomes",
+        checkpoint_dir=str(tmp_path / "ckpt"),
+        split_source="kfold",
+        metrics=compute_full_metrics(y_true, y_prob),
+        evaluate_seed=1,
+        n_folds=5,
+        fold=0,
+        n_evaluate=len(y_true),
+        model_revision="ab3a91a21027359ae59d1c258afea8089826ea4a",
+        run_config={"precision": "fp32", "seed": 1, "lr": 0.00015},
+        versions={"torch": "2.9.1", "transformers": "4.57.6"},
+    )
+    out = tmp_path / "results.json"
+    write_results_json(out, payload)
+    loaded = json.loads(out.read_text())
+    assert loaded["schema_version"] == "1.2"
+    assert loaded["model"]["revision"] == "ab3a91a21027359ae59d1c258afea8089826ea4a"
+    assert loaded["run"]["precision"] == "fp32"
+    assert loaded["versions"]["torch"] == "2.9.1"
+
+
+def test_provenance_fields_optional_and_backward_compatible(tmp_path: Path):
+    """Omitting the new provenance args still validates; model.revision defaults to None, no run/versions."""
+    y_true, y_prob = _separable_arrays()
+    payload = build_results_payload(
+        task="tb_ast",
+        drug="rifampin",
+        model_name_or_path="m",
+        checkpoint_dir="c",
+        split_source="csv",
+        metrics=compute_full_metrics(y_true, y_prob),
+    )
+    write_results_json(tmp_path / "r.json", payload)  # still validates
+    assert payload["model"]["revision"] is None
+    assert "run" not in payload
+    assert "versions" not in payload

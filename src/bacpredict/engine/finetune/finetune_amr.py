@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pandas as pd
 import torch
+import transformers
 from bacformer.modeling.trainer import BacformerLargeTrainer, _extract_loss_and_logits
 from tap import Tap
 from torch.nn.utils.rnn import pad_sequence
@@ -86,6 +87,7 @@ def run(
     drug: str = "rifampin",
     max_n_proteins: int = 6000,
     freeze_encoder: bool = False,
+    precision: str = "bf16",
     pooling: str = "mean",
     attn_dim: int = 128,
     panel_mode: str = "none",
@@ -130,6 +132,8 @@ def run(
 
     if panel_mode not in ("none", "att_head", "e2e"):
         raise ValueError(f"--panel-mode must be 'none', 'att_head' or 'e2e', got {panel_mode!r}")
+    if precision not in ("bf16", "fp32"):
+        raise ValueError(f"--precision must be 'bf16' or 'fp32', got {precision!r}")
     use_panel = panel_mode != "none"
     panel_standardization = None
     panel_dim = 0
@@ -297,10 +301,16 @@ def run(
             for param in bacformer_model.bacformer.parameters():
                 param.requires_grad = False
 
-    # bf16 master weights for both organisms (the deployed AST setting). Cast after construction so it
-    # applies uniformly to the stock head and the attention-pool wrapper.
-    bacformer_model = bacformer_model.to(torch.bfloat16)
+    # Master-weight precision. bf16 (default, the deployed AST setting) casts here — applied uniformly to
+    # the stock head and the attention-pool wrapper. fp32 keeps the native fp32 weights from_pretrained,
+    # matching the pre-b047ed8 / CSD3 dtype="auto" condition; the bf16 AMP autocast on GPU
+    # (TrainingArguments "bf16") is unchanged either way, so fp32-vs-bf16 isolates exactly that one commit
+    # (fp32 also re-enables CPU Stage-A smokes).
+    if precision == "bf16":
+        bacformer_model = bacformer_model.to(torch.bfloat16)
+    model_revision = getattr(getattr(bacformer_model, "config", None), "_commit_hash", None)
 
+    print(f"Precision (master weights): {precision}")
     print("Nr of parameters:", sum(p.numel() for p in bacformer_model.parameters()))
     print("Nr of trainable:", sum(p.numel() for p in bacformer_model.parameters() if p.requires_grad))
 
@@ -420,6 +430,19 @@ def run(
             n_folds=n_folds,
             fold=fold if n_folds is not None else None,
             n_evaluate=len(evaluate_ids),
+            model_revision=model_revision,
+            run_config={
+                "precision": precision,
+                "pooling": pooling,
+                "seed": seed,
+                "lr": lr,
+                "early_stopping_patience": early_stopping_patience,
+                "early_stopping_threshold": early_stopping_threshold,
+                "eval_steps": eval_steps,
+                "warmup_proportion": warmup_proportion,
+                "max_steps": max_steps,
+            },
+            versions={"torch": torch.__version__, "transformers": transformers.__version__},
         )
         results_path = Path(output_dir) / "results.json"
         write_results_json(results_path, payload)
@@ -457,6 +480,9 @@ class ArgumentParser(Tap):
     drug: str = "rifampin"
     max_n_proteins: int = 9000
     freeze_encoder: bool = False
+    precision: str = "bf16"
+    """Master-weight precision: 'bf16' (default, deployed setting) or 'fp32' (native weights + bf16 AMP,
+    the pre-b047ed8 / CSD3 condition). fp32-vs-bf16 isolates the master-weight cast for the precision ablation."""
     pooling: str = "mean"
     """Genome pooling head: 'mean' (stock mask-normalised mean) or 'attention' (gated-attention MIL pool)."""
     attn_dim: int = 128
@@ -514,6 +540,7 @@ if __name__ == "__main__":
         drug=args.drug,
         max_n_proteins=args.max_n_proteins,
         freeze_encoder=args.freeze_encoder,
+        precision=args.precision,
         pooling=args.pooling,
         attn_dim=args.attn_dim,
         panel_mode=args.panel_mode,

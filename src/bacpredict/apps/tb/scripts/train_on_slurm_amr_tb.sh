@@ -2,8 +2,8 @@
 #SBATCH --job-name=tb_rifampin
 #SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
 #SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
-# QOS 'normal' on partition workq caps wall at 24h; --qos=restricted48 allows 48h.
-#SBATCH --time=24:00:00
+# workq_qos caps wall at 24h with DenyOnLimit → requesting exactly 24:00:00 is REJECTED; use 23h.
+#SBATCH --time=23:00:00
 #SBATCH --partition=workq
 #SBATCH --account=brics.u6fp
 #SBATCH --qos=normal
@@ -11,7 +11,8 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
 #SBATCH --gres=gpu:1
-#SBATCH --mem=250G
+# 1-GPU job = one workq socket (~115G, DefMemPerGPU=115000); 250G blows the per-socket size limit.
+#SBATCH --mem=110G
 #SBATCH --open-mode=append
 #SBATCH --array=0-14   # 5 folds × 3 seeds = 15 jobs (comment out to run single-split mode)
 # CSD3/UoHPC variant (when it returns): --partition=ampere --account=FLOTO-SL2-GPU,
@@ -32,6 +33,8 @@ SEED=$(( SLURM_ARRAY_TASK_ID / N_FOLDS + 1 ))
 
 species=mycobacterium_tuberculosis
 drug=${DRUG:-rifampin}  # US spelling (rifampin, not rifampicin); override per-drug via --export=ALL,DRUG=<drug>
+precision=${PRECISION:-bf16}  # bf16 (deployed) | fp32 (precision ablation) via --export=ALL,PRECISION=fp32
+prec_suffix=""; [[ "$precision" == "fp32" ]] && prec_suffix="_fp32"  # fp32 gets its own checkpoint dir
 warmup_proportion=0.1
 lr=0.00015
 # TB's AST cohort is ~10x Kp's, so a step-based early-stopping patience buys ~10x fewer
@@ -54,7 +57,7 @@ echo "species: $species"
 echo "K-fold: n_folds=$N_FOLDS, fold=$FOLD, seed=$SEED"
 echo "eval_steps: $eval_steps"
 echo "Array Task ID: $SLURM_ARRAY_TASK_ID"
-echo "Learning rate: $lr, Drug: $drug"
+echo "Learning rate: $lr, Drug: $drug, Precision: $precision"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Node: $SLURMD_NODENAME, GPU: $CUDA_VISIBLE_DEVICES"
 
@@ -65,6 +68,7 @@ embeddings_dir="$D/processed/train_tb_ast/esm"
 --ast-sheet-path "$D/processed/train_tb_ast/binary_ast_with_split.csv" \
 --lr $lr \
 --model-name-or-path $model_name_or_path \
+--precision $precision \
 --warmup-proportion $warmup_proportion \
 --drug ${drug} \
 --num-workers 15 \
@@ -76,7 +80,7 @@ embeddings_dir="$D/processed/train_tb_ast/esm"
 --n-folds $N_FOLDS \
 --fold $FOLD \
 --seed $SEED \
---output-dir "$D/processed/train_tb_ast/checkpoints/${species}_${drug}_lr_${lr}_finetuned"
+--output-dir "$D/processed/train_tb_ast/checkpoints/${species}_${drug}_lr_${lr}_finetuned${prec_suffix}"
 
 echo "End of script... check the .out and .err logs for any errors and for training progress"
 
