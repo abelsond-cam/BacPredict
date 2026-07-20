@@ -43,7 +43,7 @@ import pandas as pd
 
 from bacpredict.engine.config import store_paths
 from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_per_gene, load_splits, subsample_balanced
-from bacpredict.engine.gene_lr.build_per_igr_lr_store import _read_intergenic
+from bacpredict.engine.gene_lr.build_per_igr_lr_store import _flank_pair, _read_intergenic
 from bacpredict.engine.gene_lr.igr_amr_lr import _parse_gff
 
 logger = logging.getLogger(__name__)
@@ -74,9 +74,18 @@ def _upstream_region_index(
 
 
 def _genome_upstream_records(
-    sid: str, gff_path: str, pt_path: str, boundary_tol: int = 3
+    sid: str, gff_path: str, pt_path: str, boundary_tol: int = 3, include_convergent: bool = False
 ) -> tuple[str, list[tuple[str, np.ndarray]]] | None:
-    """One genome's ``[(upstream:<gene>, embedding)]`` — each named gene's 5′-abutting baclm region."""
+    """One genome's ``[(key, embedding)]`` — each named gene's 5′-abutting baclm region as ``upstream:<gene>``.
+
+    With ``include_convergent`` the whole screen is completed by a **flank-pair fallback**: every non-coding
+    region NOT claimed by any ``upstream:<gene>`` key — a region between two *convergent* genes (both abutting
+    it with their 3′ ends) has no 5′ anchor — but with both flanks consistently named is emitted as
+    ``between:<left>→<right>`` (the flank-pair key of :mod:`build_per_igr_lr_store`). This is what surfaces
+    convergent regions like the *rrn*/``rrs`` operon (flanked by ``murA`` and ``ogt``) that ``upstream:<gene>``
+    structurally omits; the ladder's input dir is generated without it, so the fallback only feeds the
+    diagnostic ``per_igr_whole`` plot.
+    """
     gpath, ppath = Path(gff_path), Path(pt_path)
     if not gpath.exists() or not ppath.exists():
         return None
@@ -93,6 +102,7 @@ def _genome_upstream_records(
         rows_by_seqid.setdefault(sq, []).append((s, e, i))
 
     records: list[tuple[str, np.ndarray]] = []
+    claimed: set[int] = set()
     for gname, hits in genes.items():
         for seqid, gstart, gend, strand in hits:
             rows = rows_by_seqid.get(seqid)
@@ -101,6 +111,23 @@ def _genome_upstream_records(
             idx = _upstream_region_index(gstart, gend, strand, rows, boundary_tol=boundary_tol)
             if idx is not None:
                 records.append((f"upstream:{gname}", emb[idx]))
+                claimed.add(idx)
+
+    if include_convergent:
+        # Invert the parsed genes to a per-contig coordinate-sorted list, then name each region with no 5′
+        # anchor (unclaimed above) by its abutting flank pair — reusing build_per_igr_lr_store._flank_pair.
+        by_seqid: dict[str, list[tuple[int, int, str]]] = {}
+        for gname, hits in genes.items():
+            for seqid, gstart, gend, _strand in hits:
+                by_seqid.setdefault(seqid, []).append((int(gstart), int(gend), gname))
+        for regions in by_seqid.values():
+            regions.sort()
+        for i, (sq, s, e) in enumerate(zip(seqids, starts, ends, strict=True)):
+            if i in claimed:
+                continue
+            pair = _flank_pair(by_seqid.get(sq, []), s, e, boundary_tol=boundary_tol)
+            if pair is not None:
+                records.append((f"between:{pair[0]}→{pair[1]}", emb[i]))
     return sid, records
 
 
@@ -108,6 +135,7 @@ def collect_upstream_matrices(
     train_ids: list[str], sample_gff: dict[str, str], baclm_dir: Path, *,
     baclm_suffix: str = "_baclm_embeddings.pt", boundary_tol: int = 3, eval_ids: set[str] | None = None,
     store_dtype: str = "float32", min_prevalence: float = 0.0, max_prevalence: float = 1.0,
+    include_convergent: bool = False,
 ) -> tuple[dict[str, tuple[list[str], np.ndarray]], pd.DataFrame, list[str]]:
     """GFF+``.pt`` sweep → per-anchor single-copy design matrices + prevalence + read universe.
 
@@ -137,7 +165,7 @@ def collect_upstream_matrices(
     read_ids: list[str] = []
     n_skipped = 0
     for sid, gff, pt in fit_tasks:
-        res = _genome_upstream_records(sid, gff, pt, boundary_tol)
+        res = _genome_upstream_records(sid, gff, pt, boundary_tol, include_convergent)
         if res is None:
             n_skipped += 1
             continue
@@ -160,7 +188,7 @@ def collect_upstream_matrices(
     ids_by_key: dict[str, list[str]] = {}
     vecs_by_key: dict[str, list[np.ndarray]] = {}
     for sid, gff, pt in tasks:
-        res = _genome_upstream_records(sid, gff, pt, boundary_tol)
+        res = _genome_upstream_records(sid, gff, pt, boundary_tol, include_convergent)
         if res is None:
             continue
         _sid, records = res
@@ -181,6 +209,7 @@ def run(
     n_jobs: int = 1, max_train_genomes: int | None = None, sample_seed: int = 1, boundary_tol: int = 3,
     baclm_suffix: str = "_baclm_embeddings.pt", eval_holdout: bool = False, store_dtype: str = "float32",
     impute_absent_zero: bool = False, feature: str = "embedding", max_prevalence: float = 1.0,
+    include_convergent: bool = False,
 ) -> dict:
     """Anchor regions on the downstream gene, fit per-anchor LRs, write the wide ranking table.
 
@@ -199,6 +228,7 @@ def run(
     matrices, prevalence, read_ids = collect_upstream_matrices(
         sweep_ids, sample_gff, baclm_dir, baclm_suffix=baclm_suffix, boundary_tol=boundary_tol,
         eval_ids=eval_set, store_dtype=store_dtype, min_prevalence=min_prevalence, max_prevalence=max_prevalence,
+        include_convergent=include_convergent,
     )
     # The collector already returns only in-band anchor matrices; this is a belt-and-braces filter
     # (+ the summary log line) applying the same (min, max] prevalence band.
@@ -224,7 +254,8 @@ def run(
     out_dir.mkdir(parents=True, exist_ok=True)
     prev_map = dict(zip(prevalence["upstream_gene"], prevalence["prevalence"], strict=True))
     rows = [
-        {"upstream_gene": k, "gene": k.split("upstream:", 1)[-1], "prevalence": prev_map.get(k, float("nan")),
+        {"upstream_gene": k, "gene": k.split("upstream:", 1)[-1] if k.startswith("upstream:") else k,
+         "prevalence": prev_map.get(k, float("nan")),
          auroc_col: f["auroc"], f"eval_auroc_{drug}": f.get("eval_auroc", float("nan")),
          "n_train": f["n_train"], "n_pos": f["n_pos"], "n_eval": f.get("n_eval", 0),
          "n_eval_pos": f.get("n_eval_pos", 0), "kept_filtered": k in filtered}
@@ -240,7 +271,9 @@ def run(
         "eval_holdout": eval_holdout, "n_train_fit": len(fit_train_ids), "n_read_genomes": len(read_ids),
         "n_evaluate": len(evaluate_ids) if eval_holdout else 0, "boundary_tol": boundary_tol,
         "min_prevalence": min_prevalence, "max_prevalence": max_prevalence, "feature": feature,
-        "impute_absent_zero": impute_absent_zero, "n_anchors": len(matrices), "n_core": len(core_matrices),
+        "impute_absent_zero": impute_absent_zero, "include_convergent": include_convergent,
+        "n_anchors": len(matrices), "n_core": len(core_matrices),
+        "n_between": sum(1 for k in core_matrices if k.startswith("between:")),
         "n_fitted": len(fitted), "auroc_filter": auroc_filter, "n_filtered": len(filtered),
         "best_anchor": best[0], "best_auroc": best[1]["auroc"] if best[1] else None,
     }
@@ -283,6 +316,11 @@ def main() -> None:
     p.add_argument("--max-prevalence", type=float, default=1.0,
                    help="Single-copy prevalence ceiling over fit genomes (default 1.0; set e.g. 0.99 for the "
                         "presence one-hot to drop near-ubiquitous, uninformative anchors).")
+    p.add_argument("--include-convergent", action="store_true",
+                   help="Complete the whole-region screen with a flank-pair fallback: emit between:<left>→<right> "
+                        "for regions with no 5′ anchor (convergent flanks, e.g. the rrn/rrs operon). Feeds the "
+                        "per_igr_whole diagnostic plot; route to a distinct --out-dir (the ladder's input dir is "
+                        "built without it).")
     args = p.parse_args()
 
     sp = store_paths(args.species)
@@ -293,7 +331,8 @@ def main() -> None:
         min_prevalence=args.min_prevalence, auroc_filter=args.auroc_filter, n_folds=args.n_folds, seed=args.seed,
         n_jobs=args.n_jobs, max_train_genomes=args.max_train_genomes, sample_seed=args.sample_seed,
         boundary_tol=args.boundary_tol, eval_holdout=args.eval_holdout, store_dtype=args.store_dtype,
-        impute_absent_zero=args.impute_absent_zero, feature=args.feature, max_prevalence=args.max_prevalence)
+        impute_absent_zero=args.impute_absent_zero, feature=args.feature, max_prevalence=args.max_prevalence,
+        include_convergent=args.include_convergent)
 
 
 if __name__ == "__main__":

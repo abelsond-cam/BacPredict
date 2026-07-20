@@ -20,6 +20,11 @@
 #         sbatch --export=ALL,REPO=$SCRATCHDIR/worktrees/concat,FEATURE=imputed --array=0 \
 #             src/bacpredict/engine/scripts/build_upstream_region_lr_ranking.sh                          # TB rif zero-imputed
 #         (FEATURE=presence for the one-hot lineage control; both use the accessory band 0.01–0.99.)
+#   Whole-IGR w/ convergent fallback (feeds the per_igr_whole diagnostic; own dir whole_igr_lr_ranking<SUFFIX>/,
+#   the ladder's upstream_lr_ranking input untouched):
+#         sbatch --export=ALL,REPO=$SCRATCHDIR/worktrees/concat,CONVERGENT=1,SUFFIX=_reembed,\
+#             BACLM_DIR=$SCRATCHDIR/processed/train_tb_ast/baclm_reembed --array=9 \
+#             src/bacpredict/engine/scripts/build_upstream_region_lr_ranking.sh                          # TB kanamycin
 #   Held-out-test ("real numbers", full cohort — fit train+validate, score the evaluate split):
 #         sbatch --export=ALL,EVAL=1,SUFFIX=_eval,MAX_TRAIN=,STORE_DTYPE=float16 --mem=400G --array=0-9 \
 #             src/bacpredict/engine/scripts/build_upstream_region_lr_ranking.sh                          # TB eval
@@ -105,6 +110,14 @@ case "$FEATURE" in
         FEATURE_ARGS=(--min-prevalence 0.10)
         ;;
 esac
+# CONVERGENT=1 completes the whole-region screen with a flank-pair fallback — emit between:<left>→<right>
+# for regions with no 5' anchor (convergent flanks, e.g. the rrn/rrs operon that upstream:<gene> omits) —
+# and writes to its OWN base dir so the ladder's upstream_lr_ranking input is untouched. Feeds per_igr_whole.
+CONV_ARG=""
+if [[ "${CONVERGENT:-0}" == 1 ]]; then
+    RANK_BASE=whole_igr_lr_ranking
+    CONV_ARG="--include-convergent"
+fi
 # Per-drug + per-species subdir (the module also writes non-drug-specific files, so concurrent array tasks
 # must not share an out-dir).
 OUT=$D/processed/train_${TASK}/pangena_predict/${RANK_BASE}${SUFFIX}/$DRUG
@@ -138,6 +151,7 @@ BACLM_ARG=""; [[ -n "${BACLM_DIR:-}" ]] && BACLM_ARG="--baclm-dir $BACLM_DIR"
     --boundary-tol 3 \
     --store-dtype "$STORE_DTYPE" \
     $BACLM_ARG \
+    $CONV_ARG \
     $EVAL_ARG \
     --n-jobs "${SLURM_CPUS_PER_TASK:-32}"
 

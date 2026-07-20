@@ -46,13 +46,44 @@ def test_upstream_region_index_none_beyond_tolerance() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _genome_upstream_records — convergent flank-pair fallback (--include-convergent)
+# ---------------------------------------------------------------------------
+
+
+def test_genome_records_convergent_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A region between two convergent genes has no 5′ anchor; the fallback names it by its flank pair.
+
+    Synthetic contig ``c1``: ``mura`` (+, 100-200) and ``ogt`` (−, 300-400) both abut the region 201-299
+    with their **3′** ends (convergent) — like the rrn/rrs operon — so no ``upstream:<gene>`` key claims it.
+    ``rpob`` (+, 500-600) has a clean 5′ region 450-499. With the flag off only the two 5′-anchored keys
+    appear; with it on the convergent region is emitted as ``between:mura→ogt``.
+    """
+    gff, pt = tmp_path / "g.gff", tmp_path / "g.pt"
+    gff.write_text("x")
+    pt.write_text("x")
+    genes = {"mura": [("c1", 100, 200, "+")], "ogt": [("c1", 300, 400, "-")], "rpob": [("c1", 500, 600, "+")]}
+    seqids, starts, ends = ["c1", "c1", "c1"], [1, 201, 450], [99, 299, 499]
+    emb = np.arange(3 * DIM, dtype=float).reshape(3, DIM)
+    monkeypatch.setattr(bur, "_parse_gff", lambda p: ({}, genes))
+    monkeypatch.setattr(bur, "_read_intergenic", lambda p: (emb, seqids, starts, ends))
+
+    _sid, recs = bur._genome_upstream_records("G", str(gff), str(pt))
+    assert {k for k, _ in recs} == {"upstream:mura", "upstream:rpob"}  # default: 5′ anchors only
+
+    _sid, recs2 = bur._genome_upstream_records("G", str(gff), str(pt), include_convergent=True)
+    by_key = dict(recs2)
+    assert set(by_key) == {"upstream:mura", "upstream:rpob", "between:mura→ogt"}
+    np.testing.assert_array_equal(by_key["between:mura→ogt"], emb[1])  # the 201-299 region's embedding
+
+
+# ---------------------------------------------------------------------------
 # collect_upstream_matrices — single-copy sweep + (min, max] prevalence band
 # ---------------------------------------------------------------------------
 
 
 def test_collect_upstream_matrices_applies_prevalence_band(monkeypatch: pytest.MonkeyPatch) -> None:
     """A near-ubiquitous anchor (prevalence 1.0) is dropped by the ceiling; a mid-band anchor is kept."""
-    def fake_records(sid, gff, pt, boundary_tol=3):
+    def fake_records(sid, gff, pt, boundary_tol=3, include_convergent=False):
         recs = [("upstream:ubiq", np.ones(DIM))]  # every genome carries it single-copy
         if sid in {"G0", "G1", "G2"}:
             recs.append(("upstream:mid", np.ones(DIM) * 2.0))  # half the genomes
@@ -112,6 +143,7 @@ def test_run_carrier_ranks_separable_anchor_top(tmp_path: Path, monkeypatch: pyt
     )
 
     assert summary["feature"] == "embedding" and summary["impute_absent_zero"] is False
+    assert summary["include_convergent"] is False and summary["n_between"] == 0  # default: no fallback keys
     assert summary["best_anchor"] == "upstream:katg" and summary["best_auroc"] > 0.9
     table = bur.pd.read_csv(tmp_path / "out" / "per_upstream_lr_rifampin.csv")
     assert list(table.columns) == [
