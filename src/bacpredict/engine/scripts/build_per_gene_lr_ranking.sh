@@ -24,6 +24,11 @@
 #             src/bacpredict/engine/scripts/build_per_gene_lr_ranking.sh                     # TB baclm
 #         EMBEDDING_STORE=baclm SPECIES=kp sbatch --export=ALL,EMBEDDING_STORE=baclm,SPECIES=kp --array=0-21 \
 #             src/bacpredict/engine/scripts/build_per_gene_lr_ranking.sh                     # Kp baclm (22 drugs)
+#   Imputed (--impute-absent-zero) — the ranking the concat gene rung SELECTS from (build_amr_ladder
+#   hard-fails without it); writes per_gene_lr_ranking_imputed_<store>/:
+#         EMBEDDING_STORE=baclm FEATURE=imputed sbatch --export=ALL,EMBEDDING_STORE=baclm,FEATURE=imputed \
+#             --array=0-9 src/bacpredict/engine/scripts/build_per_gene_lr_ranking.sh         # TB baclm imputed
+#         (SPECIES=kp + --array=0-21 for Kp.)
 #   Held-out-test ("real numbers", full cohort — override --mem/--cpus for the ~34k-genome float16 fit):
 #         sbatch --export=ALL,EMBEDDING_STORE=baclm,EVAL=1,SUFFIX=_eval,MAX_TRAIN=,STORE_DTYPE=float16 \
 #             --mem=400G --cpus-per-task=96 --array=0-9 \
@@ -95,16 +100,27 @@ EVAL="${EVAL:-0}"                                 # 1 → --eval-holdout (train+
 SUFFIX="${SUFFIX:-}"                              # output-subdir suffix, e.g. _eval
 MAX_TRAIN="${MAX_TRAIN-2000}"                    # "" → full cohort (no subsample cap)
 STORE_DTYPE="${STORE_DTYPE:-float32}"            # float16 → whole-cohort memory
+# FEATURE (env, default embedding) picks how non-carriers are handled. The concat's gene rung is
+# zero-imputed at the head, so its selection ranking MUST be the imputed one — build_amr_ladder now
+# HARD-FAILS on a carrier-only gene ranking (selection≠usage). `imputed` passes --impute-absent-zero
+# (fit each gene over ALL read genomes, a 0-vector for non-carriers) and tags the output dir
+# `per_gene_lr_ranking_imputed_<store>/` so it sits beside the carrier-only one; `embedding` (default)
+# is the carrier-only drop-absent ranking (still used for the causal plot's carrier-only panel).
+FEATURE="${FEATURE:-embedding}"                  # embedding (carrier-only) | imputed (--impute-absent-zero)
+IMPUTE_ARG=""; MODE_TAG=""
+if [[ "$FEATURE" == "imputed" ]]; then
+    IMPUTE_ARG="--impute-absent-zero"; MODE_TAG="imputed_"
+fi
 # Per-drug + per-store subdir: the module also writes non-drug-specific files (build_summary,
 # gene_lr_auroc, gene_prevalence), so concurrent array tasks must not share an out-dir (they'd race
-# on those), and esm vs baclm (and OOF vs eval) rankings must not overwrite each other.
-OUT=$RDS/pangena_predict/per_gene_lr_ranking_${STORE}${SUFFIX}/$DRUG
+# on those), and esm vs baclm (and carrier vs imputed vs eval) rankings must not overwrite each other.
+OUT=$RDS/pangena_predict/per_gene_lr_ranking_${MODE_TAG}${STORE}${SUFFIX}/$DRUG
 
 echo "========================================================================"
 echo "Per-gene LR ranking — species=$SPECIES drug=$DRUG store=$STORE (array task $SLURM_ARRAY_TASK_ID)"
 echo "Sheet:   $SHEET"
 echo "Emb:     $EMB"
-echo "Out dir: $OUT  (eval=$EVAL max-train=${MAX_TRAIN:-full} dtype=$STORE_DTYPE, min-prevalence 0.10, no panels)"
+echo "Out dir: $OUT  (feature=$FEATURE eval=$EVAL max-train=${MAX_TRAIN:-full} dtype=$STORE_DTYPE, min-prevalence 0.10, no panels)"
 echo "Job ID:  ${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 echo "========================================================================"
 # Idempotent: skip drugs whose ranking already exists (lets a full array backfill the panel).
@@ -131,6 +147,7 @@ MAXT_ARG=""; [[ -n "$MAX_TRAIN" ]] && MAXT_ARG="--max-train-genomes $MAX_TRAIN"
     --sample-seed 1 \
     --store-dtype "$STORE_DTYPE" \
     $EVAL_ARG \
+    $IMPUTE_ARG \
     --n-jobs "${SLURM_CPUS_PER_TASK:-32}"
 
 echo "=== top of the wide ranking table (per_gene_lr_${DRUG}.csv) ==="

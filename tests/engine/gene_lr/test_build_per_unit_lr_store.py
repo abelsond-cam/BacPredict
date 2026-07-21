@@ -176,8 +176,9 @@ def test_run_carrier_ranks_separable_body_top(tmp_path: Path) -> None:
     table = bpu.pd.read_csv(tmp_path / "out" / f"per_unit_lr_{_DRUG}.csv")
     assert list(table.columns) == [
         "unit", "feature_type", "feature_name", "prevalence", f"lr_auroc_{_DRUG}", f"eval_auroc_{_DRUG}",
-        "n_train", "n_pos", "n_eval", "n_eval_pos", "kept_filtered",
+        "n_train", "n_pos", "n_eval", "n_eval_pos", "kept_filtered", "impute_mode",
     ]
+    assert (table["impute_mode"] == "carrier_only").all()  # embedding + no impute-absent → carrier-only
     top = table.iloc[0]
     assert top["unit"] == "rrna:rrs" and top["feature_type"] == "rrna" and top["feature_name"] == "rrs"
 

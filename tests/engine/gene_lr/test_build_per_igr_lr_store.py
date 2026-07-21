@@ -126,8 +126,10 @@ def test_run_ranks_separable_pair_top(tmp_path: Path, monkeypatch: pytest.Monkey
     assert summary["best_igr_auroc"] > 0.9
     table = bigr.pd.read_csv(tmp_path / "out" / "per_igr_lr_rifampin.csv")
     assert list(table.columns) == [
-        "igr_pair", "left_gene", "right_gene", "prevalence", "lr_auroc_rifampin", "n_train", "n_pos", "kept_filtered"
+        "igr_pair", "left_gene", "right_gene", "prevalence", "lr_auroc_rifampin", "n_train", "n_pos",
+        "kept_filtered", "impute_mode",
     ]
+    assert (table["impute_mode"] == "carrier_only").all()  # embedding + no impute-absent → carrier-only
     top = table.iloc[0]
     assert top["igr_pair"] == "katg→furA" and top["left_gene"] == "katg" and top["right_gene"] == "furA"
 

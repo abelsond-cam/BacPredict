@@ -261,33 +261,57 @@ def run(
     return table
 
 
-def default_gene_ranking(rank_dir: Path, drug: str) -> tuple[Path | None, str]:
-    """Pick the gene ranking to SELECT from → ``(csv, flavour)``; prefers the zero-imputed whole-cohort one.
+def default_gene_ranking(rank_dir: Path, drug: str) -> tuple[Path, str]:
+    """Resolve the zero-imputed whole-cohort gene ranking to SELECT from → ``(csv, "imputed_zero")``.
 
-    **Selection must match usage.** The concat feeds the block through :func:`impute_block`, i.e. the gene's
-    real vector for carriers and a **0-vector for non-carriers**, scored over the whole cohort. So the gene
-    must be chosen by the *zero-imputed whole-cohort* AUROC. The drop-absent (carrier-only) rankings answer
-    a different question — "among carriers, does this gene's sequence predict resistance?" — and at low
-    prevalence they surface conditional-on-carriage artifacts: Kp ciprofloxacin's carrier-only top is
-    ``recE`` (AUROC 0.949 but prevalence 0.22, 70% of carriers resistant), whereas the zero-imputed ranking
-    correctly tops out at ``gyrA`` (0.916, prevalence 0.997 — the QRDR driver). Picking ``recE`` would hand
-    the LR a block that is 0 for 78% of genomes, i.e. mostly a presence indicator.
-
-    For a near-universal core gene the two agree (impute ≡ drop-absent), so the fallback is safe for
-    coding-determinant drugs (TB rifampin → rpoB, prevalence 0.984) — but it is logged loudly.
+    **Selection must match usage — enforced, not preferred.** The concat feeds the gene block through
+    :func:`impute_block` (its real vector for carriers, a **0-vector for non-carriers**) and scores it with
+    a *linear* OOF LR over the whole cohort. So the gene MUST be chosen by the zero-imputed whole-cohort
+    AUROC. A drop-absent (carrier-only) ranking answers a different question — "among carriers, does this
+    gene's sequence predict resistance?" — and at low prevalence surfaces conditional-on-carriage artifacts:
+    Kp ciprofloxacin's carrier-only top is ``recE`` (AUROC 0.949 at prevalence 0.22), whereas the
+    zero-imputed ranking correctly tops out at ``gyrA`` (0.916 at prevalence 0.997 — the QRDR driver).
+    Selecting ``recE`` and then zero-imputing hands the LR a block that is 0 for ~78% of genomes and can
+    *degrade* the concat (tetracycline → ``iME4``). There is therefore **no carrier-only fallback**: if the
+    zero-imputed ranking is absent we raise rather than silently build a mathematically wrong ladder.
     """
     imputed = rank_dir / "per_gene_lr_ranking_imputed_baclm" / drug / f"per_gene_lr_{drug}.csv"
-    if imputed.exists():
-        return imputed, "imputed_whole_cohort"
-    for flavour, sub in (("carrier_only_eval", "per_gene_lr_ranking_baclm_eval"),
-                         ("carrier_only", "per_gene_lr_ranking_baclm")):
-        csv = rank_dir / sub / drug / f"per_gene_lr_{drug}.csv"
-        if csv.exists():
-            logger.warning("%s: no zero-imputed gene ranking — falling back to %s (selection≠usage; safe only "
-                           "if the top gene is near-universal, else re-run the ranking with --impute-absent-zero)",
-                           drug, sub)
-            return csv, flavour
-    return None, "none"
+    if not imputed.exists():
+        raise FileNotFoundError(
+            f"{drug}: no zero-imputed gene ranking at {imputed}. The concat gene block is zero-imputed at the "
+            f"head, so selecting the gene on a carrier-only AUROC is mathematically invalid — build the "
+            f"imputed ranking first (build_per_gene_lr_ranking.sh FEATURE=imputed, i.e. --impute-absent-zero)."
+        )
+    return imputed, "imputed_zero"
+
+
+def _assert_imputed_ranking(csv_path: Path, drug: str) -> None:
+    """Guard an explicit ``--gene-ranking-csv`` override: it MUST be the zero-imputed ranking.
+
+    Imputed and carrier-only ranking CSVs are schema-identical, so we check the ``impute_mode`` provenance
+    column the ranking builders stamp. A legacy file predating that column is accepted only if it sits under
+    an ``*_imputed_*`` path (with a warning); a carrier-only ranking (or anything unmarked off that path)
+    raises — selecting the zero-imputed gene block on a carrier-only AUROC is the bug this guards.
+    """
+    p = Path(csv_path)
+    if not p.exists():
+        raise FileNotFoundError(f"{drug}: --gene-ranking-csv {p} does not exist")
+    try:
+        modes = pd.read_csv(p, usecols=["impute_mode"])["impute_mode"]
+        mode = str(modes.iloc[0]) if len(modes) else None
+    except (ValueError, KeyError):
+        mode = None  # legacy CSV written before the provenance column existed
+    if mode == "imputed_zero":
+        return
+    if mode is None and "ranking_imputed" in p.as_posix():  # the imputed-ranking dir token, e.g. per_gene_lr_ranking_imputed_baclm
+        logger.warning("%s: gene ranking %s predates the impute_mode column — trusting its 'ranking_imputed' "
+                       "path; regenerate to stamp provenance", drug, p)
+        return
+    raise ValueError(
+        f"{drug}: --gene-ranking-csv {p} is not the zero-imputed ranking (impute_mode={mode!r}). The gene "
+        f"block is zero-imputed at the head, so selecting it on a carrier-only AUROC is invalid. Pass the "
+        f"per_gene_lr_ranking_imputed_baclm/ ranking (built with --impute-absent-zero)."
+    )
 
 
 def _catalogue_csv(species: str, drug: str) -> Path:
@@ -329,8 +353,11 @@ def main() -> None:
     sp = store_paths(args.species)
     rank = _ranking_dir(args.species)
     data_root = organism(args.species).data_root()
-    gene_csv = args.gene_ranking_csv or (default_gene_ranking(rank, args.drug)[0] or
-                                         rank / "per_gene_lr_ranking_baclm" / args.drug / f"per_gene_lr_{args.drug}.csv")
+    if args.gene_ranking_csv is not None:
+        gene_csv = args.gene_ranking_csv
+        _assert_imputed_ranking(gene_csv, args.drug)  # provenance guard on the explicit override
+    else:
+        gene_csv, _ = default_gene_ranking(rank, args.drug)  # raises if the zero-imputed ranking is absent
     upstream_csv = (args.upstream_ranking_csv or
                     rank / "upstream_lr_ranking_reembed" / args.drug / f"per_upstream_lr_{args.drug}.csv")
     unit_csv = args.unit_ranking_csv or rank / "per_unit_lr_ranking" / args.drug / f"per_unit_lr_{args.drug}.csv"

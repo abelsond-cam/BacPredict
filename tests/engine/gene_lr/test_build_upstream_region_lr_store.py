@@ -148,8 +148,9 @@ def test_run_carrier_ranks_separable_anchor_top(tmp_path: Path, monkeypatch: pyt
     table = bur.pd.read_csv(tmp_path / "out" / "per_upstream_lr_rifampin.csv")
     assert list(table.columns) == [
         "upstream_gene", "gene", "prevalence", "lr_auroc_rifampin", "eval_auroc_rifampin",
-        "n_train", "n_pos", "n_eval", "n_eval_pos", "kept_filtered",
+        "n_train", "n_pos", "n_eval", "n_eval_pos", "kept_filtered", "impute_mode",
     ]
+    assert (table["impute_mode"] == "carrier_only").all()  # embedding + no impute-absent → carrier-only
     top = table.iloc[0]
     assert top["upstream_gene"] == "upstream:katg" and top["gene"] == "katg"
 

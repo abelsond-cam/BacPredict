@@ -239,6 +239,7 @@ def run(
                 min_prevalence, max_prevalence, len(read_ids), len(core_matrices), len(prevalence))
 
     presence = feature == "presence"
+    impute_mode = "presence" if presence else ("imputed_zero" if impute_absent_zero else "carrier_only")
     if presence:
         # Replace each anchor's embedding block with a ones-column; zero-imputing over the read universe
         # then makes the full design a 1/0 presence indicator (carrier=1, absent=0) — the pure one-hot LR.
@@ -258,7 +259,7 @@ def run(
          "prevalence": prev_map.get(k, float("nan")),
          auroc_col: f["auroc"], f"eval_auroc_{drug}": f.get("eval_auroc", float("nan")),
          "n_train": f["n_train"], "n_pos": f["n_pos"], "n_eval": f.get("n_eval", 0),
-         "n_eval_pos": f.get("n_eval_pos", 0), "kept_filtered": k in filtered}
+         "n_eval_pos": f.get("n_eval_pos", 0), "kept_filtered": k in filtered, "impute_mode": impute_mode}
         for k, f in sorted(fitted.items(), key=lambda kv: kv[1]["auroc"], reverse=True)
     ]
     table = out_dir / table_name

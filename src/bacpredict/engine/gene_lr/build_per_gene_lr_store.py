@@ -535,12 +535,17 @@ def write_gene_drug_table(
     drug: str,
     filtered_genes: set[str],
     out_path: Path,
+    impute_mode: str = "carrier_only",
 ) -> None:
     """Write the wide gene×drug ranking table: ``gene_name, annotation, prevalence, lr_auroc_<drug>``.
 
     One row per fitted gene, ranked by AUROC. The per-drug AUROC column is named ``lr_auroc_<drug>`` so
     later drugs merge onto ``gene_name`` into one wide table. ``n_train`` / ``n_pos`` / ``kept`` give the
     fit context. This is the substrate for the top-k causal-gene concat (core **or** accessory).
+
+    ``impute_mode`` (``carrier_only`` | ``imputed_zero``) stamps how the LR handled non-carriers so a
+    downstream consumer can *assert* it: the concat gene block is zero-imputed at the head, so it may only
+    select from an ``imputed_zero`` ranking (carrier-only and imputed CSVs are otherwise schema-identical).
     """
     prev_by_gene = dict(zip(prevalence_table["gene"], prevalence_table["prevalence"], strict=False))
     rows = [
@@ -555,11 +560,12 @@ def write_gene_drug_table(
             "n_eval": f.get("n_eval", 0),
             "n_eval_pos": f.get("n_eval_pos", 0),
             "kept_filtered": g in filtered_genes,
+            "impute_mode": impute_mode,
         }
         for g, f in sorted(fitted.items(), key=lambda kv: kv[1]["auroc"], reverse=True)
     ]
     pd.DataFrame(rows).to_csv(out_path, index=False)
-    logger.info("Wrote wide gene×drug table (%d genes) to %s", len(rows), out_path)
+    logger.info("Wrote wide gene×drug table (%d genes, impute_mode=%s) to %s", len(rows), impute_mode, out_path)
 
 
 def run(
@@ -635,6 +641,7 @@ def run(
     write_gene_drug_table(
         fitted, prevalence_table, annotation,
         drug=drug, filtered_genes=filtered_genes, out_path=out_dir / f"per_gene_lr_{drug}.csv",
+        impute_mode="imputed_zero" if impute_absent_zero else "carrier_only",
     )
     prevalence_table.to_csv(out_dir / "gene_prevalence.csv", index=False)
 

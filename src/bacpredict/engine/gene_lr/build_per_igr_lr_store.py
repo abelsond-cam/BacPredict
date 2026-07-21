@@ -228,12 +228,14 @@ def write_igr_drug_table(
     auroc_col: str,
     filtered_pairs: set[str],
     out_path: Path,
+    impute_mode: str = "carrier_only",
 ) -> None:
     """Write the wide IGR×drug ranking: ``igr_pair,left_gene,right_gene,prevalence,<auroc_col>,…``.
 
     One row per fitted pair, ranked by AUROC. The per-drug AUROC column is ``<auroc_col>`` (``lr_auroc_<drug>``
     for the embedding screen, ``presence_lr_auroc_<drug>`` for the presence/absence one-hot) so later drugs
     merge onto ``igr_pair`` into one wide table. ``left_gene``/``right_gene`` split the ordered pair back out.
+    ``impute_mode`` (``carrier_only`` | ``imputed_zero`` | ``presence``) stamps how non-carriers were handled.
     """
     prev_by_pair = dict(zip(prevalence["igr_pair"], prevalence["prevalence"], strict=False))
     rows = []
@@ -248,6 +250,7 @@ def write_igr_drug_table(
             "n_train": f["n_train"],
             "n_pos": f["n_pos"],
             "kept_filtered": pair in filtered_pairs,
+            "impute_mode": impute_mode,
         })
     pd.DataFrame(rows).to_csv(out_path, index=False)
     logger.info("Wrote wide IGR×drug table (%d pairs) to %s", len(rows), out_path)
@@ -300,6 +303,7 @@ def run(
                 min_prevalence, max_prevalence, len(read_ids), len(core_matrices), len(matrices))
 
     presence = feature == "presence"
+    impute_mode = "presence" if presence else ("imputed_zero" if impute_absent_zero else "carrier_only")
     if presence:
         # Replace each pair's embedding block with a ones-column; zero-impute over the read universe then
         # makes the full design a 1/0 presence indicator (carrier=1, absent=0) — the pure one-hot LR.
@@ -323,7 +327,7 @@ def run(
     ]
     pd.DataFrame(auroc_rows).to_csv(out_dir / ("igr_presence_lr_auroc.csv" if presence else "igr_lr_auroc.csv"), index=False)
     write_igr_drug_table(fitted, prevalence, auroc_col=auroc_col, filtered_pairs=filtered_pairs,
-                         out_path=out_dir / table_name)
+                         out_path=out_dir / table_name, impute_mode=impute_mode)
     prevalence.to_csv(out_dir / "igr_prevalence.csv", index=False)
 
     best = max(fitted.items(), key=lambda kv: kv[1]["auroc"], default=(None, None))

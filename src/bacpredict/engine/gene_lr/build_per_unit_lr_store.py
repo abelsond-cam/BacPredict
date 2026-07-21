@@ -208,6 +208,7 @@ def run(
     )
 
     presence = feature == "presence"
+    impute_mode = "presence" if presence else ("imputed_zero" if impute_absent_zero else "carrier_only")
     if presence:
         # Replace each unit's embedding block with a ones-column; zero-imputing over the read universe
         # then makes the full design a 1/0 presence indicator (carrier=1, absent=0) — the pure one-hot LR.
@@ -226,7 +227,7 @@ def run(
         logger.warning("per-unit: 0 units in band — is --baclm-dir the re-embed store (feature_* keys)? "
                        "The legacy baclm/ store has no named bodies.")
         pd.DataFrame(columns=["unit", "feature_type", "feature_name", "prevalence", auroc_col,
-                              f"eval_auroc_{drug}", "n_train", "n_pos", "kept_filtered"]).to_csv(
+                              f"eval_auroc_{drug}", "n_train", "n_pos", "kept_filtered", "impute_mode"]).to_csv(
             out_dir / table_name, index=False)
         summary = {"analysis": "build_per_unit_lr_store", "drug": drug, "feature": feature,
                    "n_units": 0, "n_core": 0, "n_fitted": 0, "n_read_genomes": len(read_ids),
@@ -243,7 +244,7 @@ def run(
          "feature_name": meta_by_unit.get(k, ("", ""))[1], "prevalence": prev_map.get(k, float("nan")),
          auroc_col: f["auroc"], f"eval_auroc_{drug}": f.get("eval_auroc", float("nan")),
          "n_train": f["n_train"], "n_pos": f["n_pos"], "n_eval": f.get("n_eval", 0),
-         "n_eval_pos": f.get("n_eval_pos", 0), "kept_filtered": k in filtered}
+         "n_eval_pos": f.get("n_eval_pos", 0), "kept_filtered": k in filtered, "impute_mode": impute_mode}
         for k, f in sorted(fitted.items(), key=lambda kv: kv[1]["auroc"], reverse=True)
     ]
     pd.DataFrame(rows).to_csv(out_dir / table_name, index=False)

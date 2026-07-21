@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from bacpredict.engine.concat import build_amr_ladder as L
 
@@ -161,8 +162,8 @@ def test_run_survives_missing_rankings(tmp_path, monkeypatch):
     assert np.isnan(table.loc[0, "ceiling_auroc"])
 
 
-def test_default_gene_ranking_prefers_imputed_over_carrier_only(tmp_path):
-    """Selection must match usage: the zero-imputed whole-cohort ranking wins over the carrier-only ones."""
+def test_default_gene_ranking_requires_imputed(tmp_path):
+    """Selection must match usage — HARD: resolve the zero-imputed ranking, else RAISE (no carrier fallback)."""
     drug = "ciprofloxacin"
     imp = tmp_path / "per_gene_lr_ranking_imputed_baclm" / drug
     ev = tmp_path / "per_gene_lr_ranking_baclm_eval" / drug
@@ -171,12 +172,39 @@ def test_default_gene_ranking_prefers_imputed_over_carrier_only(tmp_path):
         pd.DataFrame([{"gene_name": "x", "lr_auroc_ciprofloxacin": 0.9}]).to_csv(d / f"per_gene_lr_{drug}.csv",
                                                                                  index=False)
     csv, flavour = L.default_gene_ranking(tmp_path, drug)
-    assert flavour == "imputed_whole_cohort" and "imputed" in str(csv)
+    assert flavour == "imputed_zero" and "imputed" in str(csv)
 
-    # no imputed ranking → fall back to the carrier-only eval one (logged as selection≠usage)
+    # only a carrier-only ranking present → RAISE, never silently select on it (the tetracycline/iME4 footgun).
     import shutil
     shutil.rmtree(tmp_path / "per_gene_lr_ranking_imputed_baclm")
-    csv2, flavour2 = L.default_gene_ranking(tmp_path, drug)
-    assert flavour2 == "carrier_only_eval" and "_eval" in str(csv2)
+    with pytest.raises(FileNotFoundError, match="zero-imputed gene ranking"):
+        L.default_gene_ranking(tmp_path, drug)
+    with pytest.raises(FileNotFoundError):
+        L.default_gene_ranking(tmp_path / "empty", drug)
 
-    assert L.default_gene_ranking(tmp_path / "empty", drug) == (None, "none")
+
+def test_assert_imputed_ranking_guards_override(tmp_path):
+    """--gene-ranking-csv override: accept only the zero-imputed ranking; reject a carrier-only one."""
+    ok = tmp_path / "imp.csv"
+    pd.DataFrame([{"gene_name": "gyrA", "lr_auroc_x": 0.9, "impute_mode": "imputed_zero"}]).to_csv(ok, index=False)
+    L._assert_imputed_ranking(ok, "x")  # no raise
+
+    bad = tmp_path / "carrier.csv"
+    pd.DataFrame([{"gene_name": "recE", "lr_auroc_x": 0.95, "impute_mode": "carrier_only"}]).to_csv(bad, index=False)
+    with pytest.raises(ValueError, match="not the zero-imputed ranking"):
+        L._assert_imputed_ranking(bad, "x")
+
+    # legacy file (no impute_mode column) is trusted ONLY under an *_imputed_* path.
+    legacy_dir = tmp_path / "per_gene_lr_ranking_imputed_baclm" / "x"
+    legacy_dir.mkdir(parents=True)
+    legacy_ok = legacy_dir / "per_gene_lr_x.csv"
+    pd.DataFrame([{"gene_name": "gyrA", "lr_auroc_x": 0.9}]).to_csv(legacy_ok, index=False)
+    L._assert_imputed_ranking(legacy_ok, "x")  # no raise (path carries 'imputed')
+
+    legacy_bad = tmp_path / "per_gene_lr_x.csv"  # unmarked AND not under an imputed path → reject
+    pd.DataFrame([{"gene_name": "gyrA", "lr_auroc_x": 0.9}]).to_csv(legacy_bad, index=False)
+    with pytest.raises(ValueError):
+        L._assert_imputed_ranking(legacy_bad, "x")
+
+    with pytest.raises(FileNotFoundError):
+        L._assert_imputed_ranking(tmp_path / "nope.csv", "x")
