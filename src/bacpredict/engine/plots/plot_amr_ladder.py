@@ -1,17 +1,17 @@
-"""Render the AMR concat **ladder**: FT-mean → +baclm gene → +baclm IGR, against the catalogue ceiling.
+"""Render the AMR concat **ladder**: FT-mean → +baclm gene → +baclm IGR, against the catalogue.
 
-The figure for :mod:`bacpredict.engine.concat.build_amr_ladder`'s ``<drug>_amr_ladder_table.csv`` — three
-BLUE bars in *additive* order (never re-sorted; the ladder's order is its meaning) under the RED catalogue
-one-hot ceiling:
+The figure for :mod:`bacpredict.engine.concat.build_amr_ladder`'s ``<drug>_amr_ladder_table.csv``. Two
+**red** catalogue reference bars on the left, then the **blue** Bacformer bars in *additive* order (never
+re-sorted; the ladder's order is its meaning):
 
-    rung 1  FT genome-mean          (light blue)
-    rung 2  + best baclm gene       (mid blue)
-    rung 3  + best baclm IGR        (dark blue)
+    catalogue  strongest single gene/IGR   (red, hatched)   — the best single catalogue determinant
+    catalogue  ceiling (all determinants)  (red, solid)     — the all-determinant one-hot ceiling
+    FT                                       (mid blue)      — Bacformer FT genome-mean
+    FT ⊕ gene / ⊕ IGR / ⊕ gene ⊕ IGR         (royal blue)    — every FT ⊕ baclm concat head, one colour
 
-The read: for a coding-determinant drug (rifampin/rpoB) rung 3 should add ~nothing — the control. For the
-**weak, non-coding-determinant drugs** (ethionamide, streptomycin, kanamycin) the question is whether rung 3
-closes the gap to the red ceiling. Each bar is annotated with its value; the rung-3 lift over rung 1 and the
-residual gap to the ceiling are called out. Pure matplotlib, CPU/login.
+The read: does the FT genome-mean (mid blue) already reach the catalogue ceiling (solid red), and does
+adding an explicit baclm gene/IGR concat head (royal blue) push it further? The two red bars separate the
+*single strongest* catalogue determinant from the *combined* catalogue ceiling. Pure matplotlib, CPU/login.
 """
 from __future__ import annotations
 
@@ -24,90 +24,158 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
 from bacpredict.engine.config import organism, visualisations_dir
+from bacpredict.engine.plots.driver_panel import parse_driver_csv
 from bacpredict.engine.plots.labels import display_name
 
-# ft_mean baseline (light) + the three added-block configs; the non-coding block gets its own hue (green)
-# since it is a different block type, not the next step of an additive chain; "+ both" is the darkest.
-RUNG_COLOUR = {1: "#a6cee3", 2: "#4292c6", 3: "#41ab5d", 4: "#08519c"}
-CEILING_COLOUR = "#c0392b"
+CATALOGUE_RED = "#c0392b"   # both catalogue bars (strongest single = hatched, ceiling = solid)
+FT_BLUE = "#4292c6"         # mid blue: Bacformer FT genome-mean
+CONCAT_BLUE = "#08306b"     # deep royal blue: every FT ⊕ baclm concat head (one colour)
 _CHANCE = 0.5
-_RUNG_ADD = {1: "FT genome-mean", 2: "+ baclm gene", 3: "+ baclm noncoding", 4: "+ gene + noncoding"}
+SPECIES_LABEL = {"tb": "TB", "kp": "Kp"}
+# Compact, additive bar labels; the ⊕ (circled plus) reads as "concatenated head".
+_RUNG_LABEL = {1: "FT", 2: "FT ⊕ gene", 3: "FT ⊕ IGR", 4: "FT ⊕ gene ⊕ IGR"}
 
 
-def _rung_label(row: pd.Series) -> str:
-    """x-tick label for one config — the added block named on a second line (e.g. "+ baclm gene" / "(rpoB)")."""
+def _catalogue_refs(catalogue_csv: Path | None, metric: str) -> tuple[float, str | None, float]:
+    """``(strongest single determinant AUROC, its name, all-determinant ceiling AUROC)`` from a driver CSV.
+
+    Reuses :func:`driver_panel.parse_driver_csv` (TB-Profiler + CARD schemas). The strongest single is the
+    max per-determinant one-hot AUROC; the ceiling is the split-out ``__ALL__`` row. NaNs when unavailable.
+    """
+    if not catalogue_csv or not Path(catalogue_csv).exists():
+        return float("nan"), None, float("nan")
+    drivers, ceiling = parse_driver_csv(Path(catalogue_csv))
+    col = f"mut_{metric}"
+    strongest, name = float("nan"), None
+    if col in drivers.columns and not drivers.empty:
+        vals = pd.to_numeric(drivers[col], errors="coerce")
+        if vals.notna().any():
+            i = vals.idxmax()
+            strongest, name = float(vals.loc[i]), str(drivers.loc[i, "gene_name"])
+    ceil = float(ceiling.get(metric)) if ceiling and ceiling.get(metric) is not None else float("nan")
+    return strongest, name, ceil
+
+
+# Display fixes for region keys whose stored casing isn't presentation-ready.
+_BLOCK_DISPLAY = {"oric": "OriC"}
+
+
+def _short_block(block: str, cap: int = 13) -> str:
+    """Compact a rung's chosen-block name for the x-tick: drop the ``upstream:`` type prefix, trim a
+    ``key:description`` region name to its key, cap each ``a | b`` part so long picks don't collide."""
+    parts = []
+    for tok in str(block).split("|"):
+        t = tok.strip().replace("upstream:", "")
+        t = t.split(":", 1)[0].strip() if ":" in t else t  # "oric:origin of replication" → "oric"
+        t = _BLOCK_DISPLAY.get(t.lower(), t)
+        if t:
+            parts.append(t if len(t) <= cap else t[: cap - 1] + "…")
+    return " | ".join(parts)
+
+
+def _rung_bar_label(row: pd.Series) -> str:
+    """x-tick label for one rung — the additive name, with the chosen block on a second line."""
     r = int(row["rung"])
-    base = _RUNG_ADD.get(r, str(row.get("config") or ""))
+    base = _RUNG_LABEL.get(r, str(row.get("config") or ""))
     if r == 1:
         return base
-    block = str(row.get("block") or "").strip()
-    return f"{base}\n({block})" if block else f"{base}\n(none)"
+    block = _short_block(str(row.get("block") or "").strip())
+    return f"{base}\n({block})" if block and block.lower() != "none" else base
 
 
-def plot_amr_ladder(table: pd.DataFrame, out_path: Path, *, species: str, drug: str, metric: str = "auroc") -> None:
-    """Draw one drug's 3-rung additive ladder + the catalogue ceiling → ``out_path``."""
+def plot_amr_ladder(table: pd.DataFrame, out_path: Path, *, species: str, drug: str, metric: str = "auroc",
+                    strongest_single: float = float("nan"), strongest_name: str | None = None,
+                    ceiling: float = float("nan")) -> None:
+    """Draw one drug's catalogue (red) + additive Bacformer ladder (blue) → ``out_path``."""
     df = table.sort_values("rung").reset_index(drop=True)
     if df.empty:
         return
-    x = np.arange(len(df))
-    colours = [RUNG_COLOUR.get(int(r), "#888888") for r in df["rung"]]
 
-    fig, ax = plt.subplots(figsize=(7.2, 5.0))
-    ax.bar(x, df[metric], width=0.62, color=colours, edgecolor="black", linewidth=0.7)
-    for xi, v in zip(x, df[metric], strict=True):
-        if pd.notna(v):
-            ax.text(xi, v + 0.004, f"{v:.3f}", ha="center", va="bottom", fontsize=10, fontweight="bold")
+    labels: list[str] = []
+    heights: list[float] = []
+    colours: list[str] = []
+    hatched: list[bool] = []
 
-    ceiling = float(df[f"ceiling_{metric}"].iloc[0]) if f"ceiling_{metric}" in df.columns else float("nan")
+    if pd.notna(strongest_single):
+        name = (strongest_name or "").strip()
+        name = name if len(name) <= 12 else name[:11] + "…"
+        labels.append("catalogue\nbest single" + (f"\n({name})" if name else ""))
+        heights.append(strongest_single)
+        colours.append(CATALOGUE_RED)
+        hatched.append(True)
     if pd.notna(ceiling):
-        ax.axhline(ceiling, color=CEILING_COLOUR, linestyle="--", linewidth=1.5)
-        ax.text(len(df) - 1, ceiling + 0.004, f"catalogue ceiling = {ceiling:.3f}",
-                ha="right", va="bottom", fontsize=8.5, color=CEILING_COLOUR)
-    ax.axhline(_CHANCE, color="0.6", linestyle=":", linewidth=1.0)
+        labels.append("catalogue\nceiling")
+        heights.append(ceiling)
+        colours.append(CATALOGUE_RED)
+        hatched.append(False)
+    for _, row in df.iterrows():
+        labels.append(_rung_bar_label(row))
+        heights.append(float(row[metric]) if pd.notna(row[metric]) else float("nan"))
+        colours.append(FT_BLUE if int(row["rung"]) == 1 else CONCAT_BLUE)
+        hatched.append(False)
 
-    # Headline: what the IGR rung actually bought, and what is still missing to the ceiling.
-    top = df.loc[df["rung"].idxmax()]
-    base = df.loc[df["rung"].idxmin()]
-    if pd.notna(top[metric]) and pd.notna(base[metric]):
-        lift = float(top[metric]) - float(base[metric])
-        bits = [f"lift (+both − FT) = {lift:+.3f}"]
-        if pd.notna(ceiling):
-            bits.append(f"gap to ceiling = {ceiling - float(top[metric]):+.3f}")
-        ax.set_title(f"{species.upper()} {display_name(drug)} — FT ⊕ baclm gene ⊕ noncoding vs catalogue\n"
-                     + "   ·   ".join(bits), fontsize=11)
-    else:
-        ax.set_title(f"{species.upper()} {display_name(drug)} — concat ladder", fontsize=11)
+    # A gap between the catalogue (red) group and the Bacformer (blue) group so the split reads at a glance.
+    n_red = sum(c == CATALOGUE_RED for c in colours)
+    gap = 0.7
+    x = np.array(list(range(n_red)) + [n_red + gap + j for j in range(len(labels) - n_red)])
+    fig, ax = plt.subplots(figsize=(max(7.6, 1.02 * len(labels) + 2.0), 5.2))
+    bars = ax.bar(x, heights, width=0.66, color=colours, edgecolor="black", linewidth=0.7, zorder=3)
+    for b, h in zip(bars, hatched, strict=True):
+        if h:
+            b.set_hatch("////")
+    for xi, v in zip(x, heights, strict=True):
+        if pd.notna(v):
+            ax.text(xi, v + 0.004, f"{v:.3f}", ha="center", va="bottom", fontsize=9.5, fontweight="bold")
+    ax.axhline(_CHANCE, color="0.6", linestyle=":", linewidth=1.0, zorder=1)
 
     ax.set_xticks(x)
-    ax.set_xticklabels([_rung_label(r) for _, r in df.iterrows()], fontsize=9)
+    ax.set_xticklabels(labels, fontsize=8.5)
     ax.set_ylabel(f"{metric.upper()} (out-of-fold, FT eval-holdout)")
-    lo = float(np.nanmin([df[metric].min(), ceiling if pd.notna(ceiling) else 1.0]))
+    finite = [v for v in heights if pd.notna(v)]
+    lo = min(finite) if finite else _CHANCE
     ax.set_ylim(min(0.45, max(0.0, lo - 0.05)), 1.02)
     ax.grid(axis="y", alpha=0.3)
     ax.spines[["top", "right"]].set_visible(False)
-    handles = [Patch(facecolor=RUNG_COLOUR[r], edgecolor="black", label=lbl) for r, lbl in
-               [(1, "FT genome-mean"), (2, "+ best baclm gene"), (3, "+ best baclm noncoding"),
-                (4, "+ gene + noncoding")]]
-    if pd.notna(ceiling):
-        handles.append(Line2D([0], [0], ls="--", c=CEILING_COLOUR, lw=1.5, label="catalogue one-hot ceiling"))
-    # Upper-left: the bars ascend left→right, so this corner stays clear of rung 3 and the ceiling label.
-    ax.legend(handles=handles, fontsize=8, loc="upper left", framealpha=0.95)
+    ax.set_title(f"{SPECIES_LABEL.get(species, species.upper())} {display_name(drug)} prediction",
+                 fontsize=13, fontweight="bold")
+
+    handles = [
+        Patch(facecolor=CATALOGUE_RED, edgecolor="black", hatch="////",
+              label="strongest single gene/IGR (catalogue)"),
+        Patch(facecolor=CATALOGUE_RED, edgecolor="black", label="catalogue ceiling (all determinants)"),
+        Patch(facecolor=FT_BLUE, edgecolor="black", label="Bacformer FT (genome-mean)"),
+        Patch(facecolor=CONCAT_BLUE, edgecolor="black", label="FT ⊕ bacLM concat heads"),
+    ]
+    # Outside, upper-right: for a high-AUROC drug every bar is tall, so no in-plot corner stays clear.
+    ax.legend(handles=handles, fontsize=8, loc="upper left", bbox_to_anchor=(1.01, 1.0), framealpha=0.95)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=150)
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
-def run(*, species: str, drug: str, table_csv: Path, out_path: Path, metric: str = "auroc") -> pd.DataFrame:
-    """Read one ladder table and render its figure."""
+def run(*, species: str, drug: str, table_csv: Path, out_path: Path, metric: str = "auroc",
+        catalogue_csv: Path | None = None) -> pd.DataFrame:
+    """Read one ladder table (+ optional catalogue CSV for the two red bars) and render its figure."""
     table = pd.read_csv(table_csv)
-    plot_amr_ladder(table, Path(out_path), species=species, drug=drug, metric=metric)
+    strongest, name, ceiling = _catalogue_refs(catalogue_csv, metric)
+    if np.isnan(ceiling) and f"ceiling_{metric}" in table.columns and len(table):
+        ceiling = float(table[f"ceiling_{metric}"].iloc[0])  # fall back to the ladder table's own ceiling
+    plot_amr_ladder(table, Path(out_path), species=species, drug=drug, metric=metric,
+                    strongest_single=strongest, strongest_name=name, ceiling=ceiling)
     return table
+
+
+def _default_catalogue_csv(species: str, drug: str) -> Path | None:
+    """The per-determinant catalogue CSV beside the drug's figures (TB-Profiler for TB, CARD for Kp)."""
+    d = visualisations_dir(species) / display_name(drug)
+    for cand in (d / f"tbprofiler_gene_lr_{drug}.csv", d / f"card_determinant_lr_{drug}_family.csv"):
+        if cand.exists():
+            return cand
+    return None
 
 
 def main() -> None:
@@ -116,13 +184,17 @@ def main() -> None:
     p.add_argument("--species", required=True, choices=["tb", "kp"])
     p.add_argument("--drug", required=True)
     p.add_argument("--table-csv", type=Path, default=None)
+    p.add_argument("--catalogue-csv", type=Path, default=None,
+                   help="per-determinant driver CSV for the two red bars; default: auto-resolve beside the figures")
     p.add_argument("--out", type=Path, default=None)
     p.add_argument("--metric", default="auroc", choices=["auroc", "auprc"])
     args = p.parse_args()
     table_csv = args.table_csv or (organism(args.species).data_root() / "pangena_predict" / "amr_ladder"
                                    / args.drug / f"{args.drug}_amr_ladder_table.csv")
+    catalogue_csv = args.catalogue_csv or _default_catalogue_csv(args.species, args.drug)
     out = args.out or visualisations_dir(args.species) / display_name(args.drug) / "amr_concat_ladder.png"
-    run(species=args.species, drug=args.drug, table_csv=table_csv, out_path=out, metric=args.metric)
+    run(species=args.species, drug=args.drug, table_csv=table_csv, out_path=out, metric=args.metric,
+        catalogue_csv=catalogue_csv)
     print(f"Wrote {out}")
 
 
