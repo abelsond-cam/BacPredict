@@ -13,6 +13,7 @@ Kleborate determinants combined". Login-node / local CPU only (matplotlib over a
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 
 import matplotlib
@@ -24,15 +25,28 @@ from matplotlib.colors import to_rgba
 
 from bacpredict.engine.config import visualisations_dir
 
+logger = logging.getLogger(__name__)
+
 ALL_KEY = "__ALL_Kleborate__"
 PICK_COLOUR = "#7e3f9e"        # purple — ESM single-gene (family colour, consistent across plots)
 CEILING_COLOUR = "#c0392b"     # red — the Kleborate determinant ceiling reference line
 
 
 def plot_ranking(csv_path: Path, out_path: Path, *, drug: str, top_n: int = 12,
-                 kleborate_ceiling: float | None = None) -> None:
-    """Top-``top_n`` genes by out-of-fold LR AUROC, ascending (highest on the right); top gene = our pick."""
+                 kleborate_ceiling: float | None = None, min_n_eval: int | None = None) -> None:
+    """Top-``top_n`` genes by out-of-fold LR AUROC, ascending (highest on the right); top gene = our pick.
+
+    ``min_n_eval`` gates the screen to genes carried by **more than** that many evaluate-set genomes
+    (``n_eval``) — the present-embeddings-only, well-powered filter for the *non-imputed* carrier screen
+    (needs an eval-holdout ranking). Skips the figure if the gate empties the table.
+    """
     df = pd.read_csv(csv_path)
+    if min_n_eval is not None and "n_eval" in df.columns:
+        df = df[df["n_eval"] > min_n_eval].reset_index(drop=True)
+        if df.empty:
+            logger.warning("%s: no gene with n_eval > %d — skipping the gated non-imputed screen",
+                           Path(csv_path).name, min_n_eval)
+            return
     auroc_cols = [c for c in df.columns if c.startswith("lr_auroc_")]
     if not auroc_cols:
         raise ValueError(f"{csv_path} has no lr_auroc_<drug> column — not a per-gene ranking table.")
@@ -73,7 +87,8 @@ def plot_ranking(csv_path: Path, out_path: Path, *, drug: str, top_n: int = 12,
     ax.legend(handles, [f"our pick: {pick} — top ESM prediction, injected gene", "other ranked genes",
                         "all Kleborate determinants"], loc="upper left", bbox_to_anchor=(0.01, 0.82),
               fontsize=9.0, framealpha=0.95)
-    ax.set_title(f"{drug}: Kp per-gene ESM-C LR ranking — which gene's embedding predicts resistance",
+    gate_note = f"  ·  non-imputed screen (>{min_n_eval} eval carriers)" if min_n_eval is not None else ""
+    ax.set_title(f"{drug}: Kp per-gene ESM-C LR ranking — which gene's embedding predicts resistance{gate_note}",
                  fontsize=12.5)
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -101,12 +116,15 @@ def main() -> None:
                         help="Default: kp_<drug>/kleborate_determinant_lr_<drug>.csv (draws the ceiling line).")
     parser.add_argument("--out", type=Path, default=None,
                         help="Default: kp_<drug>/<drug>_esm_per_gene_ranking.png.")
+    parser.add_argument("--min-n-eval", type=int, default=None,
+                        help="Gate the screen to genes with n_eval > this (the non-imputed carrier screen "
+                             "over present-embeddings-only, well-powered genes; needs an eval-holdout ranking).")
     args = parser.parse_args()
     drug_dir = vis / args.drug
     kleborate_csv = args.kleborate_csv or drug_dir / f"kleborate_determinant_lr_{args.drug}.csv"
     out = args.out or drug_dir / f"{args.drug}_esm_per_gene_ranking.png"
     plot_ranking(args.csv, out, drug=args.drug, top_n=args.top_n,
-                 kleborate_ceiling=_kleborate_ceiling(kleborate_csv))
+                 kleborate_ceiling=_kleborate_ceiling(kleborate_csv), min_n_eval=args.min_n_eval)
     print(f"Wrote {out}")
 
 

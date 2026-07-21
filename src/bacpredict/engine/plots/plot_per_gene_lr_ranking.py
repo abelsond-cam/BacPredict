@@ -13,6 +13,7 @@ Login-node / local CPU only (pure matplotlib over a small CSV).
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 
 import matplotlib
@@ -25,6 +26,8 @@ from matplotlib.colors import to_rgba
 from bacpredict.engine.config import visualisations_dir
 from bacpredict.engine.plots.labels import display_name
 
+logger = logging.getLogger(__name__)
+
 PICK_COLOUR = "#7e3f9e"   # purple — ESM single-gene (the family colour, consistent across plots)
 OTHER_COLOUR = "#9aa3ad"  # muted grey — the rest of the ranking
 WHO_LINE_COLOUR = "#d62728"  # red — the WHO one-hot family (the reference line)
@@ -35,13 +38,22 @@ WHO_LINE_COLOUR = "#d62728"  # red — the WHO one-hot family (the reference lin
 
 
 def plot_ranking(csv_path: Path, out_path: Path, *, drug: str | None = None, top_n: int = 10,
-                 who_onehot_auroc: float | None = None) -> None:
+                 who_onehot_auroc: float | None = None, min_n_eval: int | None = None) -> None:
     """Top-``top_n`` genes by out-of-fold LR AUROC, ascending (highest on the right); top gene = our pick.
 
     ``who_onehot_auroc`` (the full WHO one-hot ceiling for this drug) is drawn as a red reference line,
-    so the best single ESM gene can be read against "all WHO mutations combined".
+    so the best single ESM gene can be read against "all WHO mutations combined". ``min_n_eval`` gates the
+    screen to genes carried by **more than** that many evaluate-set genomes (``n_eval``) — the
+    present-embeddings-only, well-powered filter for the *non-imputed* carrier screen (needs an
+    eval-holdout ranking, which carries ``n_eval``). Skips the figure if the gate empties the table.
     """
     df = pd.read_csv(csv_path)
+    if min_n_eval is not None and "n_eval" in df.columns:
+        df = df[df["n_eval"] > min_n_eval].reset_index(drop=True)
+        if df.empty:
+            logger.warning("%s: no gene with n_eval > %d — skipping the gated non-imputed screen",
+                           Path(csv_path).name, min_n_eval)
+            return
     auroc_cols = [c for c in df.columns if c.startswith("lr_auroc_")]
     if not auroc_cols:
         raise ValueError(f"{csv_path} has no lr_auroc_<drug> column — not a per-gene ranking table.")
@@ -85,8 +97,9 @@ def plot_ranking(csv_path: Path, out_path: Path, *, drug: str | None = None, top
     ax.legend(handles, [f"our pick: {pick} — top ESM prediction, injected gene", "other ranked genes",
                         "all WHO mutations (one-hot)"], loc="upper left", bbox_to_anchor=(0.01, 0.82),
               fontsize=9.0, framealpha=0.95)
+    gate_note = f"  ·  non-imputed screen (>{min_n_eval} eval carriers)" if min_n_eval is not None else ""
     ax.set_title(
-        f"{drug_name}: ESM mean embedding predictions by LR, for each gene by Prokka annotation",
+        f"{drug_name}: ESM mean embedding predictions by LR, for each gene by Prokka annotation{gate_note}",
         fontsize=12.5,
     )
     fig.tight_layout()
@@ -107,6 +120,9 @@ def main() -> None:
     parser.add_argument("--who-onehot-csv", type=Path, default=None,
                         help="tbprofiler_gene_lr_<drug>.csv — draws its __ALL_WHO_one_hot__ AUROC as a red "
                              "reference line (default: in the same per-drug folder).")
+    parser.add_argument("--min-n-eval", type=int, default=None,
+                        help="Gate the screen to genes with n_eval > this (the non-imputed carrier screen "
+                             "over present-embeddings-only, well-powered genes; needs an eval-holdout ranking).")
     args = parser.parse_args()
     disp = display_name(args.drug)
     drug_dir = visualisations_dir("tb") / disp  # each drug's data + figures live together
@@ -118,7 +134,8 @@ def main() -> None:
         wdf = pd.read_csv(who_csv)
         row = wdf[wdf["gene_name"] == "__ALL_WHO_one_hot__"]
         who_auroc = float(row["mut_auroc"].iloc[0]) if not row.empty else None
-    plot_ranking(csv, out, drug=args.drug, top_n=args.top_n, who_onehot_auroc=who_auroc)
+    plot_ranking(csv, out, drug=args.drug, top_n=args.top_n, who_onehot_auroc=who_auroc,
+                 min_n_eval=args.min_n_eval)
     print(f"Wrote {out}")
 
 
