@@ -63,13 +63,12 @@ for _anchor, _det in PROMOTER_GENE_TO_DETERMINANT.items():
 # parens, which are part of real acquired-gene names (e.g. AAC(6')-Ib-cr).
 _STATUS_SUFFIX = re.compile(r"\s*\((?:mut|wt)\)\s*$", re.IGNORECASE)
 
-_CAUSAL = "#08306b"     # dark blue: catalogue-called causal region, at the LR's best AUROC
+_CAUSAL = "#08306b"     # dark blue: catalogue determinant (ranked, absent, or IGR — all one colour now)
 _LRONLY = "#6baed6"     # light blue: LR top hit the catalogue does not call causal
-_ABSENT_EDGE = "#7f9bbf"  # hollow dark-blue outline: catalogue-causal but absent from every ranking
 _CAT_RED = "#c0392b"    # catalogue reference — per-determinant one-hot tick + all-determinant ceiling
 _CODING_MARK = "#08306b"  # ◆ over the coding gene the concat routes in (rung 2)
 _NC_MARK = "#d94801"    # ★ over the non-coding region the concat routes in (rung 3)
-_NC_HATCH = ".."        # dot hatch marking a non-coding (promoter/RNA/convergent) bar, distinct from absent "////"
+_NC_HATCH = "////"      # line hatch = "includes IGR" (a non-coding promoter/RNA/convergent region)
 _CHANCE = 0.5
 SPECIES_LABEL = {"tb": "TB", "kp": "Kp"}
 # Opacity ramp for the penetrance colourbar (faint = rare → solid = near-universal); matches _prev_alpha.
@@ -282,9 +281,8 @@ def _draw_panel(ax, cat: list[_CatBar], lr_only: list[_LrBar], ceiling_auroc: fl
     low_cov = False
     for xi, (name, au, ref, cov, prev, src, raw) in zip(x_cat, cat, strict=True):
         absent = np.isnan(au)
-        if absent:
-            ax.bar(xi, _CHANCE, width=0.66, color="none", edgecolor=_ABSENT_EDGE, linewidth=1.1,
-                   hatch="////", zorder=3)
+        if absent:  # catalogue determinant absent from every ranking — same colour as the rest, just hollow
+            ax.bar(xi, _CHANCE, width=0.66, color="none", edgecolor=_CAUSAL, linewidth=1.1, zorder=3)
             ax.text(xi, _CHANCE + 0.008, "not ranked", ha="center", va="bottom", fontsize=6.5,
                     color="#666", rotation=90)
         else:
@@ -354,11 +352,9 @@ def plot_causal_comparison(*, imputed: tuple[list[_CatBar], list[_LrBar]],
     fig.text(0.5, 0.955, f"{SPECIES_LABEL.get(species, species.upper())} {display_name(drug)} — "
              "catalogue determinants (dark blue) vs LR-only regions (light blue)", ha="center", fontsize=9.5)
     handles = [Patch(facecolor=_CAUSAL, edgecolor="black", label="catalogue determinant (LR AUROC)"),
-               Patch(facecolor="none", edgecolor=_ABSENT_EDGE, hatch="////",
-                     label="catalogue determinant — not LR-ranked"),
                Patch(facecolor=_LRONLY, edgecolor="black", label="LR-only region (not catalogue)"),
-               Patch(facecolor="0.85", edgecolor="black", hatch=_NC_HATCH,
-                     label="non-coding region (promoter / RNA / convergent)"),
+               Patch(facecolor="0.8", edgecolor="black", hatch=_NC_HATCH,
+                     label="non-coding IGR (promoter / RNA / convergent)"),
                Line2D([0], [0], color=_CAT_RED, lw=2.2, label="catalogue one-hot AUROC (per determinant)"),
                Line2D([0], [0], color=_CAT_RED, lw=1.3, ls="--", label="all-determinant catalogue ceiling"),
                Line2D([0], [0], marker="D", color=_CODING_MARK, lw=0, markersize=7,

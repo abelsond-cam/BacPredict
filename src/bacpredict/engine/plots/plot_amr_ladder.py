@@ -101,6 +101,9 @@ def plot_amr_ladder(table: pd.DataFrame, out_path: Path, *, species: str, drug: 
     colours: list[str] = []
     hatched: list[bool] = []
 
+    # A "////" overlay marks every bar whose model includes an IGR/non-coding region — both catalogue
+    # references (their one-hot spans the IGR/promoter/RNA determinants) and the two concat rungs that add
+    # the baclm non-coding block. FT-alone and FT⊕gene have no IGR, so stay unhatched.
     if pd.notna(strongest_single):
         name = (strongest_name or "").strip()
         name = name if len(name) <= 12 else name[:11] + "…"
@@ -112,12 +115,12 @@ def plot_amr_ladder(table: pd.DataFrame, out_path: Path, *, species: str, drug: 
         labels.append("catalogue\nceiling")
         heights.append(ceiling)
         colours.append(CATALOGUE_RED)
-        hatched.append(False)
+        hatched.append(True)
     for _, row in df.iterrows():
         labels.append(_rung_bar_label(row))
         heights.append(float(row[metric]) if pd.notna(row[metric]) else float("nan"))
         colours.append(FT_BLUE if int(row["rung"]) == 1 else CONCAT_BLUE)
-        hatched.append(False)
+        hatched.append("noncoding" in str(row.get("config") or ""))
 
     # A gap between the catalogue (red) group and the Bacformer (blue) group so the split reads at a glance.
     n_red = sum(c == CATALOGUE_RED for c in colours)
@@ -146,11 +149,11 @@ def plot_amr_ladder(table: pd.DataFrame, out_path: Path, *, species: str, drug: 
                  fontsize=13, fontweight="bold")
 
     handles = [
-        Patch(facecolor=CATALOGUE_RED, edgecolor="black", hatch="////",
-              label="strongest single gene/IGR (catalogue)"),
+        Patch(facecolor=CATALOGUE_RED, edgecolor="black", label="catalogue best single determinant"),
         Patch(facecolor=CATALOGUE_RED, edgecolor="black", label="catalogue ceiling (all determinants)"),
         Patch(facecolor=FT_BLUE, edgecolor="black", label="Bacformer FT (genome-mean)"),
         Patch(facecolor=CONCAT_BLUE, edgecolor="black", label="FT ⊕ bacLM concat heads"),
+        Patch(facecolor="0.8", edgecolor="black", hatch="////", label="model includes IGR"),
     ]
     # Outside, upper-right: for a high-AUROC drug every bar is tall, so no in-plot corner stays clear.
     ax.legend(handles=handles, fontsize=8, loc="upper left", bbox_to_anchor=(1.01, 1.0), framealpha=0.95)
