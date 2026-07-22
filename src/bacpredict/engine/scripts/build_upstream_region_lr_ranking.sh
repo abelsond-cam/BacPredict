@@ -104,6 +104,11 @@ case "$FEATURE" in
         TABLE=per_upstream_lr_${DRUG}.csv
         FEATURE_ARGS=(--impute-absent-zero --min-prevalence 0.01 --max-prevalence 0.99)
         ;;
+    imputed_full)
+        RANK_BASE=upstream_lr_ranking_imputed_full
+        TABLE=per_upstream_lr_${DRUG}.csv
+        FEATURE_ARGS=(--impute-absent-zero --min-prevalence 0.01 --max-prevalence 1.0)
+        ;;
     *)
         RANK_BASE=upstream_lr_ranking
         TABLE=per_upstream_lr_${DRUG}.csv

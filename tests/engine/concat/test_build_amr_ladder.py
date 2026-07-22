@@ -3,7 +3,7 @@
 The heavy store loaders (FT-mean NPZ, baclm ``.pt`` + parquet + GFF) are monkeypatched so the test
 exercises the ladder ASSEMBLY, scoring, ceiling parse, and table shape on tiny synthetic vectors — no
 cluster stores. Separate tests pin the ranking selection (``_best_from_ranking`` prefers held-out eval
-AUROC; ``_best_core_from_ranking`` / ``_select_core_noncoding`` apply the core-prevalence + n_pos guard).
+AUROC; ``_select_noncoding`` picks the top-imputed-AUROC region across upstream ∪ per_unit ∪ igr, no gate).
 """
 from __future__ import annotations
 
@@ -38,41 +38,28 @@ def test_best_from_ranking_prefers_eval_auroc(tmp_path):
     assert L._best_from_ranking(tmp_path / "missing.csv", key_col="gene_name") is None
 
 
-def test_best_core_from_ranking_guards_prevalence_and_n_pos(tmp_path):
-    """Core selection keeps prevalence>=min and n_pos>=min — the low-n low-prev artifact is dropped."""
-    csv = tmp_path / "per_unit_lr_streptomycin.csv"
-    pd.DataFrame([
-        {"unit": "crispr:artifact", "prevalence": 0.003, "n_pos": 3, "lr_auroc_streptomycin": 1.0},
-        {"unit": "rrna:rrs", "prevalence": 0.997, "n_pos": 90, "lr_auroc_streptomycin": 0.65},
-        {"unit": "ncrna:acc", "prevalence": 0.30, "n_pos": 80, "lr_auroc_streptomycin": 0.80},
-    ]).to_csv(csv, index=False)
-    # artifact excluded (prev<0.9 AND n_pos<50); accessory excluded (prev<0.9); rrs is the only core survivor.
-    assert L._best_core_from_ranking(csv, key_col="unit", min_prevalence=0.9, min_n_pos=50) == ("rrna:rrs", 0.65)
-    # loosen prevalence to admit the accessory but keep the n_pos floor → the 0.80 accessory now wins.
-    assert L._best_core_from_ranking(csv, key_col="unit", min_prevalence=0.2, min_n_pos=50) == ("ncrna:acc", 0.80)
-    assert L._best_core_from_ranking(tmp_path / "none.csv", key_col="unit", min_prevalence=0.9, min_n_pos=50) is None
-    # an all-NaN eval_auroc column (the OOF rankings the ladder reads) must fall back to lr_auroc.
-    csv_e = tmp_path / "core_empty_eval.csv"
-    pd.DataFrame([{"unit": "rrna:rrs", "prevalence": 0.997, "n_pos": 90, "lr_auroc_streptomycin": 0.65,
-                   "eval_auroc_streptomycin": np.nan}]).to_csv(csv_e, index=False)
-    assert L._best_core_from_ranking(csv_e, key_col="unit", min_prevalence=0.9, min_n_pos=50) == ("rrna:rrs", 0.65)
-
-
-def test_select_core_noncoding_picks_best_across_keys(tmp_path):
-    """Best core region across upstream ∪ per_unit → (kind, key, auroc); the higher AUROC wins."""
+def test_select_noncoding_picks_top_imputed_across_keys(tmp_path):
+    """Top-imputed-AUROC region across upstream ∪ per_unit ∪ igr → (kind, key, auroc); no prevalence gate."""
     up = tmp_path / "per_upstream_lr_ethionamide.csv"
     pd.DataFrame([{"gene": "fabg1", "prevalence": 0.997, "n_pos": 100,
                    "lr_auroc_ethionamide": 0.80}]).to_csv(up, index=False)
     un = tmp_path / "per_unit_lr_ethionamide.csv"
     pd.DataFrame([{"unit": "rrna:rrs", "prevalence": 0.997, "n_pos": 100,
                    "lr_auroc_ethionamide": 0.60}]).to_csv(un, index=False)
-    assert L._select_core_noncoding(up, un, min_prevalence=0.9, min_n_pos=50) == ("upstream", "fabg1", 0.80)
-    # if the per_unit body scores higher, it wins and the kind flips.
-    pd.DataFrame([{"unit": "rrna:rrs", "prevalence": 0.997, "n_pos": 100,
-                   "lr_auroc_ethionamide": 0.90}]).to_csv(un, index=False)
-    assert L._select_core_noncoding(up, un, min_prevalence=0.9, min_n_pos=50) == ("per_unit", "rrna:rrs", 0.90)
-    assert L._select_core_noncoding(tmp_path / "n1.csv", tmp_path / "n2.csv",
-                                    min_prevalence=0.9, min_n_pos=50) is None
+    ig = tmp_path / "per_igr_lr_ethionamide.csv"
+    pd.DataFrame([{"igr_pair": "mura→ogt", "prevalence": 0.99, "n_pos": 100,
+                   "lr_auroc_ethionamide": 0.70}]).to_csv(ig, index=False)
+    assert L._select_noncoding(up, un, ig) == ("upstream", "fabg1", 0.80)
+    # if the merged convergent IGR scores highest, it wins and the kind flips to "igr".
+    pd.DataFrame([{"igr_pair": "mura→ogt", "prevalence": 0.99, "n_pos": 100,
+                   "lr_auroc_ethionamide": 0.92}]).to_csv(ig, index=False)
+    assert L._select_noncoding(up, un, ig) == ("igr", "mura→ogt", 0.92)
+    # NO gate: a low-prevalence accessory region with the top imputed AUROC still wins (the imputed zeros
+    # already penalise it, so the arg-max is safe — this is the point of dropping the ≥0.9 core gate).
+    pd.DataFrame([{"unit": "ncrna:acc", "prevalence": 0.05, "n_pos": 40,
+                   "lr_auroc_ethionamide": 0.95}]).to_csv(un, index=False)
+    assert L._select_noncoding(up, un, ig) == ("per_unit", "ncrna:acc", 0.95)
+    assert L._select_noncoding(tmp_path / "n1.csv", tmp_path / "n2.csv", tmp_path / "n3.csv") is None
 
 
 def test_run_builds_four_config_ladder_with_ceiling(tmp_path, monkeypatch):
@@ -97,8 +84,10 @@ def test_run_builds_four_config_ladder_with_ceiling(tmp_path, monkeypatch):
     monkeypatch.setattr(L, "load_baclm_gene_block", lambda ids, gene, **k: (gene_ids, _signal(gene_ids, 1.5, 1)))
     monkeypatch.setattr(L, "load_baclm_upstream_block", lambda ids, gene, **k: (igr_ids, _signal(igr_ids, 1.2, 2)))
     monkeypatch.setattr(L, "load_baclm_unit_block", lambda ids, unit, **k: ([], np.zeros((0, 0), np.float32)))
+    monkeypatch.setattr(L, "load_baclm_igr_block", lambda ids, pair, **k: ([], np.zeros((0, 0), np.float32)))
 
-    # synthetic ranking + catalogue inputs. Upstream fabg1 (0.80) beats per-unit rrs (0.60) → upstream rung.
+    # synthetic ranking + catalogue inputs. Upstream fabg1 (0.80) beats per-unit rrs (0.60) + igr a→b (0.50)
+    # → upstream non-coding rung (no prevalence gate now; top imputed AUROC wins).
     gcsv = tmp_path / "gene.csv"
     pd.DataFrame([{"gene_name": "rpoB", "lr_auroc_ethionamide": 0.9}]).to_csv(gcsv, index=False)
     ucsv = tmp_path / "upstream.csv"
@@ -107,6 +96,9 @@ def test_run_builds_four_config_ladder_with_ceiling(tmp_path, monkeypatch):
     nucsv = tmp_path / "unit.csv"
     pd.DataFrame([{"unit": "rrna:rrs", "prevalence": 0.997, "n_pos": 25,
                    "lr_auroc_ethionamide": 0.60}]).to_csv(nucsv, index=False)
+    igcsv = tmp_path / "igr.csv"
+    pd.DataFrame([{"igr_pair": "a→b", "prevalence": 0.5, "n_pos": 25,
+                   "lr_auroc_ethionamide": 0.50}]).to_csv(igcsv, index=False)
     ccsv = tmp_path / "cat.csv"
     pd.DataFrame([
         {"gene_name": "__ALL_WHO_one_hot__", "mut_auroc": 0.99, "mut_auprc": 0.98},
@@ -118,8 +110,8 @@ def test_run_builds_four_config_ladder_with_ceiling(tmp_path, monkeypatch):
     table = L.run(
         species="tb", drug="ethionamide", ast_sheet=tmp_path / "sheet.csv", ft_cache_dir=tmp_path,
         baclm_dir=tmp_path, noncoding_dir=tmp_path, parquet_dir=tmp_path, input_csv=inp,
-        gene_ranking_csv=gcsv, upstream_ranking_csv=ucsv, unit_ranking_csv=nucsv,
-        catalogue_csv=ccsv, out_dir=tmp_path, core_min_prevalence=0.9, core_min_n_pos=20,
+        gene_ranking_csv=gcsv, upstream_ranking_csv=ucsv, unit_ranking_csv=nucsv, igr_ranking_csv=igcsv,
+        catalogue_csv=ccsv, out_dir=tmp_path,
     )
 
     assert list(table["rung"]) == [1, 2, 3, 4]
@@ -139,7 +131,7 @@ def test_run_builds_four_config_ladder_with_ceiling(tmp_path, monkeypatch):
 
 
 def test_run_survives_missing_rankings(tmp_path, monkeypatch):
-    """No gene/upstream/unit ranking on disk → all four configs fall back to the FT-mean features (no crash)."""
+    """No gene/upstream/unit/igr ranking on disk → all four configs fall back to the FT-mean features (no crash)."""
     n = 40
     all_ids = [f"g{i}" for i in range(n)]
     y = np.array([i % 2 for i in range(n)])
@@ -154,7 +146,8 @@ def test_run_survives_missing_rankings(tmp_path, monkeypatch):
         species="tb", drug="kanamycin", ast_sheet=tmp_path / "s.csv", ft_cache_dir=tmp_path,
         baclm_dir=tmp_path, noncoding_dir=tmp_path, parquet_dir=tmp_path, input_csv=inp,
         gene_ranking_csv=tmp_path / "none_g.csv", upstream_ranking_csv=tmp_path / "none_u.csv",
-        unit_ranking_csv=tmp_path / "none_nu.csv", catalogue_csv=tmp_path / "none_c.csv", out_dir=tmp_path,
+        unit_ranking_csv=tmp_path / "none_nu.csv", igr_ranking_csv=tmp_path / "none_ig.csv",
+        catalogue_csv=tmp_path / "none_c.csv", out_dir=tmp_path,
     )
     assert list(table["rung"]) == [1, 2, 3, 4]
     assert (table["block"] == "").all()  # nothing matched → all configs are the FT-mean only

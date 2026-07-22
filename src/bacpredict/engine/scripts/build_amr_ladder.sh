@@ -1,9 +1,10 @@
 #!/bin/bash
 # AMR concat LADDER — per drug, the four score configs vs the catalogue one-hot ceiling:
-#   ft_mean  |  + best baclm coding gene  |  + best baclm CORE non-coding  |  + both
-# The non-coding block is the best-recovering CORE region (prevalence >= CORE_PREV, n_pos >= CORE_NPOS)
-# across the upstream promoter ranking (upstream_lr_ranking_reembed) and the per-unit named-body ranking
-# (per_unit_lr_ranking) on the baclm re-embed store; the coding block comes from per_gene_lr_ranking_baclm.
+#   ft_mean  |  + best baclm coding gene  |  + best baclm non-coding  |  + both
+# The non-coding block is the top-imputed-AUROC region (NO prevalence gate) across three IMPUTED full-band
+# rankings on the baclm re-embed store — upstream promoter (upstream_lr_ranking_imputed_full), per-unit
+# named body (per_unit_lr_ranking_imputed), and per-IGR flank pair incl. merged convergent regions
+# (per_igr_lr_ranking_imputed_full); the coding block comes from per_gene_lr_ranking_imputed_baclm.
 # Each config is re-scored by the same zero-imputed OOF k-fold LR over the FT eval-holdout universe.
 # Raw AUROC recovery — NO lineage netting (rif/cipro are coding-determinant controls). CPU-only.
 #
@@ -12,7 +13,8 @@
 #       src/bacpredict/engine/scripts/build_amr_ladder.sh                                   # TB diag
 #   SPECIES=kp sbatch --export=ALL,SPECIES=kp,REPO=$SCRATCHDIR/worktrees/concat --array=5,20 \
 #       src/bacpredict/engine/scripts/build_amr_ladder.sh                                   # Kp diag (cipro,azithro)
-# Full panel: --array=0-9 (TB) / --array=0-21 (Kp). CORE_PREV / CORE_NPOS override the core band.
+# Full panel: --array=0-9 (TB) / --array=0-21 (Kp). Needs the imputed full-band non-coding rankings
+# (build_upstream_region_lr_ranking.sh / build_per_igr_lr_ranking.sh FEATURE=imputed_full + per_unit imputed).
 #
 #SBATCH --job-name=amr_ladder
 #SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
@@ -57,13 +59,11 @@ DRUG=${DRUGS[$SLURM_ARRAY_TASK_ID]}
 # (e.g. Kp ciprofloxacin's CP-0 cache lives under ft_amr_cache/, not ft_bacformer_cache/).
 FT_CACHE="${FT_CACHE:-$D/processed/train_${TASK}/pangena_predict/ft_bacformer_cache/$DRUG}"
 OUT=$D/processed/train_${TASK}/pangena_predict/amr_ladder/$DRUG
-CORE_PREV="${CORE_PREV:-0.9}"
-CORE_NPOS="${CORE_NPOS:-50}"
 
 echo "========================================================================"
 echo "AMR ladder — species=$SPECIES drug=$DRUG (array task $SLURM_ARRAY_TASK_ID)"
 echo "FT cache: $FT_CACHE"
-echo "Out dir:  $OUT   (core band: prevalence >= $CORE_PREV, n_pos >= $CORE_NPOS)"
+echo "Out dir:  $OUT   (non-coding rung: top imputed AUROC, no gate, over upstream/per_unit/per_igr)"
 echo "Job ID:   ${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 echo "========================================================================"
 if [[ ! -f "$FT_CACHE/ft_genome_mean_${DRUG}.npz" ]]; then
@@ -75,8 +75,6 @@ fi
     --species "$SPECIES" \
     --drug "$DRUG" \
     --ft-cache-dir "$FT_CACHE" \
-    --core-min-prevalence "$CORE_PREV" \
-    --core-min-n-pos "$CORE_NPOS" \
     --out-dir "$OUT"
 
 echo "=== ladder table ($DRUG) ==="

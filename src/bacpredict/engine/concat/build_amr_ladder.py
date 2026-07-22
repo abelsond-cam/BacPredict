@@ -7,10 +7,11 @@ the ladder plot renders against the RED catalogue one-hot ceiling:
   :mod:`bacpredict.engine.concat.bacformer_token_cache`).
 * **``+ baclm gene``**: ft_mean ⊕ the single best **baclm** coding-gene block (from the per-gene ranking,
   loaded live from the ``baclm/`` store and zero-imputed onto the FT universe).
-* **``+ baclm noncoding``**: ft_mean ⊕ the single best **CORE** non-coding block — the best-recovering core
-  region (prevalence ≥ ``core_min_prevalence``, with an ``n_pos`` floor) across the upstream promoter
-  (``upstream:<gene>``) and per-unit named-body (``rrna:rrs``/``rrl``, regulatory) rankings on the
-  ``baclm_reembed/`` store: promoters where the determinant is a promoter, rRNA where it is a body.
+* **``+ baclm noncoding``**: ft_mean ⊕ the single best non-coding block — the **top-imputed-AUROC** region
+  (no prevalence gate) across the upstream promoter (``upstream:<gene>``), per-unit named-body
+  (``rrna:rrs``/``rrl``, regulatory), and per-IGR flank-pair (incl. merged convergent regions like the
+  *rrn* operon) rankings on the ``baclm_reembed/`` store. Selection is on the zero-imputed whole-cohort
+  AUROC (selection = usage), so the winner is usually a core region but can be a higher-imputed accessory one.
 * **``+ both``**: ft_mean ⊕ gene ⊕ non-coding.
 
 The scientific question is how much AUROC these simple blocks RECOVER toward the catalogue ceiling for the
@@ -39,6 +40,7 @@ from sklearn.metrics import average_precision_score
 from bacpredict.engine.concat.concat_ingredients import (
     impute_block,
     load_baclm_gene_block,
+    load_baclm_igr_block,
     load_baclm_unit_block,
     load_baclm_upstream_block,
     load_ft_mean,
@@ -77,57 +79,33 @@ def _best_from_ranking(csv_path: Path, *, key_col: str) -> tuple[str, float] | N
     return str(top[key_col]), float(top[au])
 
 
-def _best_core_from_ranking(
-    csv_path: Path, *, key_col: str, min_prevalence: float, min_n_pos: int,
-) -> tuple[str, float] | None:
-    """Best **core** row of a non-coding ranking → ``(key, auroc)``, else ``None``.
-
-    "Core" = the region is present in ≥ ``min_prevalence`` of genomes (the determinants — promoters,
-    rRNA bodies — are near-ubiquitous, prevalence > 0.98, so the concat's non-coding rung selects among
-    them, not the low-prevalence accessory band). The ``n_pos`` floor drops the low-n
-    conditional-on-carriage artifacts a plain arg-max would grab (a CRISPR array at prevalence 0.003
-    scoring a spurious 1.0 on n=6). Selection AUROC prefers the held-out ``eval_auroc_*`` col, else the
-    OOF ``lr_auroc_*``. Absent/empty CSV or no core survivor → ``None``.
-    """
-    if not Path(csv_path).exists():
-        return None
-    df = pd.read_csv(csv_path)
-    if df.empty or key_col not in df.columns or "prevalence" not in df.columns:
-        return None
-    au_cols = ([c for c in df.columns if c.startswith("eval_auroc_") and df[c].notna().any()]
-               or [c for c in df.columns if c.startswith("lr_auroc_")])
-    if not au_cols:
-        return None
-    au = au_cols[0]
-    df = df[df[au].notna() & (df["prevalence"] >= min_prevalence)]
-    if "n_pos" in df.columns:
-        df = df[df["n_pos"] >= min_n_pos]
-    if df.empty:
-        return None
-    top = df.sort_values(au, ascending=False).iloc[0]
-    return str(top[key_col]), float(top[au])
-
-
-def _select_core_noncoding(
-    upstream_csv: Path, unit_csv: Path, *, min_prevalence: float, min_n_pos: int,
+def _select_noncoding(
+    upstream_csv: Path, unit_csv: Path, igr_csv: Path,
 ) -> tuple[str, str, float] | None:
-    """Pick the single best-recovering **core** non-coding region across the two keying schemes.
+    """Pick the single best-recovering non-coding region across the three keying schemes by IMPUTED AUROC.
 
-    Returns ``(kind, key, select_auroc)`` — ``kind`` ∈ {``"upstream"``, ``"per_unit"``} names both the
-    ranking it came from and the block loader to use; ``key`` is the ranking's ``gene`` (upstream anchor)
-    or ``unit`` (``<type>:<name>`` body). The **upstream** ranking recovers promoter determinants
-    (ethionamide ``upstream:fabg1``, kanamycin ``upstream:eis``); the **per_unit** ranking recovers the
-    rRNA bodies (streptomycin/kanamycin ``rrna:rrs``, azithromycin ``rrna:rrl``) the synteny keys cannot
-    see. We take whichever core region recovers the most AUROC — raw recovery, no mechanism/lineage
-    filtering (see the plan's raw-recovery framing). ``None`` if neither ranking has a core hit.
+    Returns ``(kind, key, select_auroc)`` — ``kind`` ∈ {``"upstream"``, ``"per_unit"``, ``"igr"``} names both
+    the ranking it came from and the block loader to use; ``key`` is the ranking's ``gene`` (upstream anchor →
+    ``upstream:<gene>``), ``unit`` (``<type>:<name>`` named body), or ``igr_pair`` (the canonical flank pair,
+    which now includes merged convergent regions like the *rrn*/``rrs`` operon between ``murA``/``ogt``). The
+    **upstream** ranking recovers promoter determinants (ethionamide ``upstream:fabg1``, kanamycin
+    ``upstream:eis``); **per_unit** recovers the rRNA bodies (``rrna:rrs``/``rrl``); **igr** recovers the
+    convergent regions no 5′ anchor can name.
+
+    **No prevalence/n_pos gate — select on imputed AUROC, exactly like the coding rung.** Each ranking is
+    zero-imputed over the whole cohort (selection = usage — the concat feeds a zero-imputed block), so the
+    zeros already penalise low-prevalence regions and a plain arg-max cannot be fooled by a rare high-carrier
+    artifact (a region in n=6 genomes is ~0 for everyone → it can't separate → low imputed AUROC). The winner
+    is *usually* a near-universal core region, but the dropped gate now lets a genuinely higher-imputed
+    accessory region win. Raw recovery, no mechanism/lineage filtering. ``None`` if no ranking has a row.
     """
     cands: list[tuple[str, str, float]] = []
-    up = _best_core_from_ranking(upstream_csv, key_col="gene", min_prevalence=min_prevalence, min_n_pos=min_n_pos)
-    if up is not None:
-        cands.append(("upstream", up[0], up[1]))
-    un = _best_core_from_ranking(unit_csv, key_col="unit", min_prevalence=min_prevalence, min_n_pos=min_n_pos)
-    if un is not None:
-        cands.append(("per_unit", un[0], un[1]))
+    for csv_path, key_col, kind in ((upstream_csv, "gene", "upstream"),
+                                    (unit_csv, "unit", "per_unit"),
+                                    (igr_csv, "igr_pair", "igr")):
+        hit = _best_from_ranking(csv_path, key_col=key_col)
+        if hit is not None:
+            cands.append((kind, hit[0], hit[1]))
     if not cands:
         return None
     return max(cands, key=lambda c: c[2])
@@ -146,23 +124,24 @@ def run(
     gene_ranking_csv: Path,
     upstream_ranking_csv: Path,
     unit_ranking_csv: Path,
+    igr_ranking_csv: Path,
     catalogue_csv: Path,
     out_dir: Path,
-    core_min_prevalence: float = 0.9,
-    core_min_n_pos: int = 50,
     n_folds: int = 5,
     seed: int = 1,
 ) -> pd.DataFrame:
     """Build the ladder for one drug; write ``<drug>_amr_ladder_table.csv`` and return it.
 
     Four configs, each scored by the SAME zero-imputed OOF k-fold LR over the FT eval-holdout universe:
-    ``ft_mean`` (baseline) → ``+ baclm gene`` (best coding block) → ``+ baclm noncoding`` (best CORE
-    non-coding block, alone) → ``+ both``. The coding block reads ``baclm_dir`` (the ``baclm/`` store);
-    the non-coding block reads ``noncoding_dir`` (the ``baclm_reembed/`` store) and is the best-recovering
-    core region across the upstream (promoter, ``upstream:<gene>``) and per-unit (named body,
-    ``rrna:rrs``/``rrl``) rankings — ``core_min_prevalence`` + ``core_min_n_pos`` gate out the
-    low-prevalence conditional-on-carriage artifacts. Best-gene / best-noncoding are *selected* from the
-    train-fit rankings (no holdout leakage); the RED catalogue one-hot ceiling is read from ``catalogue_csv``.
+    ``ft_mean`` (baseline) → ``+ baclm gene`` (best coding block) → ``+ baclm noncoding`` (best non-coding
+    block, alone) → ``+ both``. The coding block reads ``baclm_dir`` (the ``baclm/`` store); the non-coding
+    block reads ``noncoding_dir`` (the ``baclm_reembed/`` store) and is the **top-imputed-AUROC** region
+    across the upstream (promoter, ``upstream:<gene>``), per-unit (named body, ``rrna:rrs``/``rrl``), and
+    per-IGR (canonical flank pair, incl. merged convergent regions) rankings. Selection is on the zero-imputed
+    whole-cohort AUROC with **no prevalence gate** (selection = usage — the concat feeds a zero-imputed block,
+    which mirrors the coding rung); the winner is usually core but a higher-imputed accessory region can win.
+    Best-gene / best-noncoding are *selected* from the train-fit rankings (no holdout leakage); the RED
+    catalogue one-hot ceiling is read from ``catalogue_csv``.
     """
     label_map, _tr, _va, _evaluate_ids, _info = resolve_clean_splits(ast_sheet, drug)
     all_ids, mean_block = load_ft_mean(Path(ft_cache_dir), drug, label_map)
@@ -196,16 +175,18 @@ def run(
             logger.warning("%s: best gene %s carried by 0 holdout genomes — coding rung == FT-mean",
                            drug, best_gene[0])
 
-    # ---- best CORE non-coding block across upstream ∪ per_unit (re-embed store), or None ------------
+    # ---- best non-coding block across upstream ∪ per_unit ∪ igr (imputed rankings, re-embed store) -----
     igr_block, igr_lbl, igr_kind, igr_sel, igr_n = None, "", "", float("nan"), 0
-    best_nc = _select_core_noncoding(upstream_ranking_csv, unit_ranking_csv,
-                                     min_prevalence=core_min_prevalence, min_n_pos=core_min_n_pos)
+    best_nc = _select_noncoding(upstream_ranking_csv, unit_ranking_csv, igr_ranking_csv)
     if best_nc is not None:
         kind, key, igr_sel = best_nc
         if kind == "upstream":
             i_ids, i_vecs = load_baclm_upstream_block(all_ids, key, baclm_dir=noncoding_dir, sample_gff=sample_gff)
             lbl = f"upstream:{key}"
-        else:
+        elif kind == "igr":
+            i_ids, i_vecs = load_baclm_igr_block(all_ids, key, baclm_dir=noncoding_dir, sample_gff=sample_gff)
+            lbl = key
+        else:  # per_unit named body
             i_ids, i_vecs = load_baclm_unit_block(all_ids, key, baclm_dir=noncoding_dir)
             lbl = key
         if len(i_ids):
@@ -335,15 +316,14 @@ def main() -> None:
                    help="Dir holding ft_genome_mean_<drug>.npz (bacformer_token_cache output for this drug).")
     p.add_argument("--gene-ranking-csv", type=Path, default=None, help="coding per-gene ranking (best-gene rung).")
     p.add_argument("--upstream-ranking-csv", type=Path, default=None,
-                   help="promoter upstream:<gene> ranking on the re-embed store (default: upstream_lr_ranking_reembed).")
+                   help="IMPUTED full-band promoter upstream:<gene> ranking (default: upstream_lr_ranking_imputed_full).")
     p.add_argument("--unit-ranking-csv", type=Path, default=None,
-                   help="per-unit named-body ranking on the re-embed store (default: per_unit_lr_ranking).")
+                   help="IMPUTED per-unit named-body ranking (default: per_unit_lr_ranking_imputed).")
+    p.add_argument("--igr-ranking-csv", type=Path, default=None,
+                   help="IMPUTED full-band per-IGR flank-pair ranking incl. merged convergent regions "
+                        "(default: per_igr_lr_ranking_imputed_full).")
     p.add_argument("--noncoding-dir", type=Path, default=None,
                    help="baclm re-embed store for the non-coding blocks (default: <data_root>/baclm_reembed).")
-    p.add_argument("--core-min-prevalence", type=float, default=0.9,
-                   help="non-coding rung selects among CORE regions with prevalence >= this (default 0.9).")
-    p.add_argument("--core-min-n-pos", type=int, default=50,
-                   help="drop ranking rows with fewer resistant carriers than this (kills low-n artifacts).")
     p.add_argument("--catalogue-csv", type=Path, default=None)
     p.add_argument("--out-dir", type=Path, default=None)
     p.add_argument("--n-folds", type=int, default=5)
@@ -359,17 +339,19 @@ def main() -> None:
     else:
         gene_csv, _ = default_gene_ranking(rank, args.drug)  # raises if the zero-imputed ranking is absent
     upstream_csv = (args.upstream_ranking_csv or
-                    rank / "upstream_lr_ranking_reembed" / args.drug / f"per_upstream_lr_{args.drug}.csv")
-    unit_csv = args.unit_ranking_csv or rank / "per_unit_lr_ranking" / args.drug / f"per_unit_lr_{args.drug}.csv"
+                    rank / "upstream_lr_ranking_imputed_full" / args.drug / f"per_upstream_lr_{args.drug}.csv")
+    unit_csv = (args.unit_ranking_csv or
+                rank / "per_unit_lr_ranking_imputed" / args.drug / f"per_unit_lr_{args.drug}.csv")
+    igr_csv = (args.igr_ranking_csv or
+               rank / "per_igr_lr_ranking_imputed_full" / args.drug / f"per_igr_lr_{args.drug}.csv")
     out_dir = args.out_dir or data_root / "pangena_predict" / "amr_ladder" / args.drug
     run(
         species=args.species, drug=args.drug, ast_sheet=sp.ast_sheet, ft_cache_dir=args.ft_cache_dir,
         baclm_dir=sp.baclm_dir, noncoding_dir=args.noncoding_dir or data_root / "baclm_reembed",
         parquet_dir=sp.parquet_dir, input_csv=sp.input_csv,
         gene_ranking_csv=gene_csv, upstream_ranking_csv=upstream_csv, unit_ranking_csv=unit_csv,
-        catalogue_csv=args.catalogue_csv or _catalogue_csv(args.species, args.drug),
-        out_dir=out_dir, core_min_prevalence=args.core_min_prevalence, core_min_n_pos=args.core_min_n_pos,
-        n_folds=args.n_folds, seed=args.seed,
+        igr_ranking_csv=igr_csv, catalogue_csv=args.catalogue_csv or _catalogue_csv(args.species, args.drug),
+        out_dir=out_dir, n_folds=args.n_folds, seed=args.seed,
     )
 
 

@@ -5,12 +5,13 @@ core **genes** by "does this gene's own embedding predict resistance?", this ran
 regions** by "does this region's baclm non-coding embedding predict resistance?" — and the top region
 is the best-IGR block for the 3-way concat (``bacformerFT-mean ⊕ baclm-best-gene ⊕ baclm-best-IGR``).
 
-**IGR identity = ordered 5′→3′ flanking-gene pair** ``left_gene→right_gene`` (ascending genome
-coordinate, i.e. the forward strand — *oblivious to coding direction*; a finer strand/operon-aware
-naming comes from the sister Nuna project). A region is named only when **both** directly-abutting
-flanks are consistently-named ``gene=`` symbols (mirrors the per-gene "recurring symbol" rule — a CDS
-with only a per-genome locus-tag never recurs, so it can't seed a core pair). Regions abutting an
-unnamed CDS, an RNA, or a contig end are left unnamed and dropped.
+**IGR identity = canonical (sorted) flanking-gene pair** ``a→b`` (the two flank names sorted, so the key
+is invariant to the arbitrary contig orientation — *oblivious to coding direction*; a finer strand/operon
+-aware naming comes from the sister Nuna project). Sorting merges the two half-prevalence keys a convergent
+region would otherwise split into (``ogt→mura`` + ``mura→ogt`` → one ``mura→ogt``). A region is named only
+when **both** directly-abutting flanks are consistently-named ``gene=`` symbols (mirrors the per-gene
+"recurring symbol" rule — a CDS with only a per-genome locus-tag never recurs, so it can't seed a core
+pair). Regions abutting an unnamed CDS, an RNA, or a contig end are left unnamed and dropped.
 
 For every core IGR pair (single-copy in > ``--min-prevalence`` of the *train* genomes) we fit a
 stand-alone out-of-fold ``LogisticRegression`` on that region's 960-d baclm embedding predicting the
@@ -106,13 +107,20 @@ def _read_intergenic(pt_path: Path) -> tuple[np.ndarray, list[str], list[int], l
 def _flank_pair(
     genes_here: list[tuple[int, int, str]], igr_start: int, igr_end: int, *, boundary_tol: int
 ) -> tuple[str, str] | None:
-    """Ordered 5′→3′ flanking-gene pair for one IGR, or ``None`` if either flank is unnamed/absent.
+    """Canonical (orientation-invariant) flanking-gene pair for one IGR, or ``None`` if a flank is unnamed.
 
-    ``left`` = the named gene directly abutting the region's low-coordinate boundary (``end`` closest
-    below ``igr_start``, within ``boundary_tol``); ``right`` = the named gene abutting the high boundary
-    (``start`` closest above ``igr_end``). Requiring abutment within a few bp is what enforces the
-    "consistently-named flank" rule: if the immediately-adjacent CDS is unnamed (locus-tag only) the
-    nearest *named* gene lies beyond it, its gap exceeds the tolerance, and the region is dropped.
+    Finds the two named genes directly abutting the region (``end`` closest below ``igr_start`` and ``start``
+    closest above ``igr_end``, each within ``boundary_tol``) and returns them **sorted** — ``(min, max)`` by
+    name. Abutment within a few bp enforces the "consistently-named flank" rule: if the immediately-adjacent
+    CDS is unnamed (locus-tag only) the nearest *named* gene lies beyond it, its gap exceeds the tolerance,
+    and the region is dropped.
+
+    **Why sorted, not 5′→3′:** a contig is stored in an arbitrary orientation (≡ its reverse complement), so
+    the *same physical* region flanked by two convergent genes appears as ``a→b`` in some genomes and ``b→a``
+    in others — which split one region into two half-prevalence keys (the *rrn*/``rrs`` operon between ``murA``
+    and ``ogt`` was ``ogt→mura`` + ``mura→ogt`` at ~50% each). Sorting collapses those into one key. The
+    single-copy gate bounds the mis-merge risk (a pair flanking two distinct regions in one genome is dropped);
+    the ``→`` now denotes adjacency, not 5′→3′ direction (finer strand/operon naming is the sister project's).
     """
     left, left_gap = None, boundary_tol + 1
     right, right_gap = None, boundary_tol + 1
@@ -127,7 +135,8 @@ def _flank_pair(
                 right, right_gap = gname, gap
     if left is None or right is None:
         return None
-    return left, right
+    lo, hi = sorted((left, right))
+    return lo, hi
 
 
 def _genome_igr_records(

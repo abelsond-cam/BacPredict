@@ -76,6 +76,8 @@ fi
 #               best-IGR block for the 3-way concat;
 #   imputed   = the SAME 960-d embedding but ZERO-IMPUTING absent genomes over the accessory band (0.01, 0.99]
 #               — the selection metric the concat's zero-imputed block actually consumes (selection = usage);
+#   imputed_full = the same zero-imputed embedding over the FULL band (0.01, 1.0] incl. core regions — what
+#               the concat LADDER's non-coding rung selects from (gate-free top imputed AUROC);
 #   presence  = the presence/absence one-hot control ("does merely HAVING this IGR adjacency predict
 #               resistance?" — the lineage/synteny signal), same accessory band.
 FEATURE=${FEATURE:-embedding}
@@ -91,6 +93,12 @@ case "$FEATURE" in
         TABLE=per_igr_lr_${DRUG}.csv
         FEATURE_ARGS=(--impute-absent-zero --min-prevalence 0.01 --max-prevalence 0.99)
         BAND="960-d embedding zero-imputed, prevalence band (0.01, 0.99]"
+        ;;
+    imputed_full)
+        RANK_DIR=per_igr_lr_ranking_imputed_full
+        TABLE=per_igr_lr_${DRUG}.csv
+        FEATURE_ARGS=(--impute-absent-zero --min-prevalence 0.01 --max-prevalence 1.0)
+        BAND="960-d embedding zero-imputed, FULL band (0.01, 1.0] incl. core — the ladder non-coding rung"
         ;;
     *)
         RANK_DIR=per_igr_lr_ranking

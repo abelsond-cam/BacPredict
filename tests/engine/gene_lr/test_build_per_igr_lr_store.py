@@ -24,10 +24,22 @@ DIM = 6
 # ---------------------------------------------------------------------------
 
 
-def test_flank_pair_names_abutting_neighbours_in_coordinate_order() -> None:
-    """Both flanks directly abut the region → ordered (low-coord, high-coord) pair."""
+def test_flank_pair_names_abutting_neighbours_in_canonical_order() -> None:
+    """Both flanks directly abut the region → the two names sorted (min, max)."""
     genes = [(1, 100, "gyra"), (151, 250, "gyrb")]  # sorted (start, end, name)
     assert bigr._flank_pair(genes, igr_start=101, igr_end=150, boundary_tol=3) == ("gyra", "gyrb")
+
+
+def test_flank_pair_canonicalizes_reversed_orientation() -> None:
+    """The SAME convergent region on the opposite contig orientation collapses to ONE key, not two.
+
+    ``ogt`` and ``mura`` flank the *rrn*/``rrs`` operon; whichever sits at the low coordinate depends on the
+    arbitrary contig orientation. Sorting the pair merges the two half-prevalence keys into ``mura→ogt``.
+    """
+    fwd = [(1, 100, "ogt"), (151, 250, "mura")]   # ogt at the low coordinate in this genome
+    rev = [(1, 100, "mura"), (151, 250, "ogt")]   # opposite orientation — mura at the low coordinate
+    assert bigr._flank_pair(fwd, 101, 150, boundary_tol=3) == ("mura", "ogt")
+    assert bigr._flank_pair(rev, 101, 150, boundary_tol=3) == ("mura", "ogt")
 
 
 def test_flank_pair_drops_region_with_far_flank() -> None:
