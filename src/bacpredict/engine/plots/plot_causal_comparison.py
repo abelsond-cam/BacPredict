@@ -63,16 +63,17 @@ for _anchor, _det in PROMOTER_GENE_TO_DETERMINANT.items():
 # parens, which are part of real acquired-gene names (e.g. AAC(6')-Ib-cr).
 _STATUS_SUFFIX = re.compile(r"\s*\((?:mut|wt)\)\s*$", re.IGNORECASE)
 
-_CAUSAL = "#08306b"     # dark blue: catalogue determinant (ranked, absent, or IGR — all one colour now)
-_LRONLY = "#6baed6"     # light blue: LR top hit the catalogue does not call causal
+_CAUSAL = "#4a1486"     # deep purple (blue/red mix): catalogue region — penetrance now rides on alpha
+_LRONLY = "#08306b"     # deep blue (same base darkness as _CAUSAL): non-catalogue genomic region
 _CAT_RED = "#c0392b"    # catalogue reference — per-determinant one-hot tick + all-determinant ceiling
-_CODING_MARK = "#08306b"  # ◆ over the coding gene the concat routes in (rung 2)
+_CODING_MARK = "#000000"  # ◆ over the coding gene the concat routes in (rung 2) — black reads on both bar hues
 _NC_MARK = "#d94801"    # ★ over the non-coding region the concat routes in (rung 3)
-_NC_HATCH = "////"      # line hatch = "includes IGR" (a non-coding promoter/RNA/convergent region)
+_NC_HATCH = "////"      # line hatch = "includes IGR" (a non-coding promoter/RNA region)
 _CHANCE = 0.5
 SPECIES_LABEL = {"tb": "TB", "kp": "Kp"}
-# Opacity ramp for the penetrance colourbar (faint = rare → solid = near-universal); matches _prev_alpha.
-_ALPHA_RAMP = LinearSegmentedColormap.from_list("prev_opacity", [(0.45, 0.5, 0.6, 0.2), (0.13, 0.19, 0.36, 1.0)])
+# Neutral-grey opacity ramp for the penetrance colourbar (faint = rare → solid = near-universal); the alpha,
+# not the hue, is the message now that two bar colours carry it. Matches _prev_alpha.
+_ALPHA_RAMP = LinearSegmentedColormap.from_list("prev_opacity", [(0.35, 0.35, 0.35, 0.2), (0.15, 0.15, 0.15, 1.0)])
 
 
 def _prev_alpha(prev: float | None) -> float:
@@ -345,16 +346,16 @@ def plot_causal_comparison(*, imputed: tuple[list[_CatBar], list[_LrBar]],
     sm = ScalarMappable(norm=Normalize(0.0, 1.0), cmap=_ALPHA_RAMP)
     sm.set_array([])
     cbar = fig.colorbar(sm, ax=[ax_top, ax_bot], pad=0.012, fraction=0.032)
-    cbar.set_label("carrier prevalence (balanced-train subsample) → bar opacity", fontsize=8)
+    cbar.set_label("Carrier prevalence annotated by grading bar opacity", fontsize=8)
 
     fig.suptitle("Logistic Regression on bacLM Genomic Regions (defined by Bakta)",
                  fontsize=12.5, fontweight="bold", x=0.5, y=0.995)
     fig.text(0.5, 0.955, f"{SPECIES_LABEL.get(species, species.upper())} {display_name(drug)} — "
-             "catalogue determinants (dark blue) vs LR-only regions (light blue)", ha="center", fontsize=9.5)
-    handles = [Patch(facecolor=_CAUSAL, edgecolor="black", label="catalogue determinant (LR AUROC)"),
-               Patch(facecolor=_LRONLY, edgecolor="black", label="LR-only region (not catalogue)"),
+             "catalogue regions (purple) vs non-catalogue regions (deep blue)", ha="center", fontsize=9.5)
+    handles = [Patch(facecolor=_CAUSAL, edgecolor="black", label="Catalogue regions"),
+               Patch(facecolor=_LRONLY, edgecolor="black", label="Non-catalogue genomic regions"),
                Patch(facecolor="0.8", edgecolor="black", hatch=_NC_HATCH,
-                     label="non-coding IGR (promoter / RNA / convergent)"),
+                     label="non-coding IGR (promoter / RNA)"),
                Line2D([0], [0], color=_CAT_RED, lw=2.2, label="catalogue one-hot AUROC (per determinant)"),
                Line2D([0], [0], color=_CAT_RED, lw=1.3, ls="--", label="all-determinant catalogue ceiling"),
                Line2D([0], [0], marker="D", color=_CODING_MARK, lw=0, markersize=7,
