@@ -24,14 +24,15 @@ def _table(**over) -> pd.DataFrame:
 
 def test_rung_labels_name_the_added_block():
     df = _table()
-    assert P._rung_label(df.iloc[0]) == "FT genome-mean"
-    assert P._rung_label(df.iloc[1]) == "+ baclm gene\n(ethA)"
-    assert P._rung_label(df.iloc[2]) == "+ baclm noncoding\n(upstream:fabg1)"
-    assert P._rung_label(df.iloc[3]) == "+ gene + noncoding\n(ethA | upstream:fabg1)"
-    # an unmatched block still labels the config
+    assert P._rung_bar_label(df.iloc[0]) == "FT"
+    assert P._rung_bar_label(df.iloc[1]) == "FT ⊕ gene\n(ethA)"
+    # the non-coding rung is relabelled by the shared region_label helper: upstream:fabg1 → "inhA promoter"
+    assert P._rung_bar_label(df.iloc[2]) == "FT ⊕ IGR\n(inhA promoter)"
+    assert P._rung_bar_label(df.iloc[3]) == "FT ⊕ gene ⊕ IGR\n(ethA | inhA promoter)"
+    # an empty block just labels the rung
     empty = df.iloc[2].copy()
     empty["block"] = ""
-    assert P._rung_label(empty) == "+ baclm noncoding\n(none)"
+    assert P._rung_bar_label(empty) == "FT ⊕ IGR"
 
 
 def test_plot_writes_png(tmp_path):

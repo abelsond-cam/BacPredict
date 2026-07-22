@@ -60,8 +60,38 @@ def test_panel_data_splits_determinants_and_lr_only():
     cat_bars, lr_only = C._panel_data([(coding, "gene_name", "coding"), (None, "upstream_gene", "upstream"),
                                        (None, "unit", "per_unit")], {"rpob"}, {"rpob": 0.95}, {},
                                       top_n_lr=10, min_n_pos=20)
-    assert cat_bars[0][0] == "rpob" and cat_bars[0][1] == 0.96 and cat_bars[0][4] == 0.98  # name, auroc, prev
-    assert ("rece", 0.94, 0.22) == next((t for t in lr_only if t[0] == "rece"), None)     # LR-only + prev
+    # _CatBar = (name, auroc, cat_ref, cov, prev, source, raw_key); coding determinant → source "coding".
+    assert cat_bars[0][0] == "rpob" and cat_bars[0][1] == 0.96 and cat_bars[0][4] == 0.98
+    assert cat_bars[0][5] == "coding"
+    # _LrBar = (name, auroc, prev, source, raw_key).
+    rece = next((t for t in lr_only if t[0] == "rece"), None)
+    assert rece[:3] == ("rece", 0.94, 0.22) and rece[3] == "coding" and rece[4] == "rece"
+
+
+def test_panel_data_carries_promoter_source_for_synonym_determinant():
+    """A determinant won by its promoter (inha via upstream:fabg1) carries source ``upstream`` + the full
+    ``upstream:fabg1`` raw key, so the bar is hatched and relabelled "inhA promoter" not "inha"."""
+    coding = pd.DataFrame([{"gene_name": "inhA", "lr_auroc_x": 0.565, "n_pos": 400, "prevalence": 0.99}])
+    upstream = pd.DataFrame([{"upstream_gene": "upstream:fabg1", "lr_auroc_x": 0.80, "n_pos": 900,
+                              "prevalence": 0.997}])
+    cat_bars, _ = C._panel_data([(coding, "gene_name", "coding"), (upstream, "upstream_gene", "upstream"),
+                                 (None, "unit", "per_unit")], {"inha"}, {"inha": 0.83}, {},
+                                top_n_lr=10, min_n_pos=20)
+    inha = next(t for t in cat_bars if t[0] == "inha")
+    assert inha[1] == 0.80 and inha[5] == "upstream" and inha[6] == "upstream:fabg1"
+
+
+def test_routed_marks_from_ladder_table(tmp_path):
+    """The ◆/★ bar-names resolve from the ladder table: rung-2 gene → the coding bar, rung-3 non-coding
+    block (upstream:fabg1) → the inha determinant bar that folded the promoter in."""
+    ladder = tmp_path / "ethionamide_amr_ladder_table.csv"
+    pd.DataFrame([{"rung": 1, "block": ""}, {"rung": 2, "block": "rpoB"},
+                  {"rung": 3, "block": "upstream:fabg1"},
+                  {"rung": 4, "block": "rpoB | upstream:fabg1"}]).to_csv(ladder, index=False)
+    cat = [("inha", 0.80, 0.83, float("nan"), 0.997, "upstream", "upstream:fabg1"),
+           ("rpob", 0.77, 0.77, float("nan"), 0.98, "coding", "rpob")]
+    coding_mark, noncoding_mark = C._routed_marks(ladder, cat, [])
+    assert coding_mark == "rpob" and noncoding_mark == "inha"
 
 
 def test_run_writes_two_panel_comparison(tmp_path):

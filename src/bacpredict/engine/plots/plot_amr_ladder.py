@@ -28,7 +28,7 @@ from matplotlib.patches import Patch
 
 from bacpredict.engine.config import organism, visualisations_dir
 from bacpredict.engine.plots.driver_panel import parse_driver_csv
-from bacpredict.engine.plots.labels import display_name
+from bacpredict.engine.plots.labels import display_name, region_label
 
 CATALOGUE_RED = "#c0392b"   # both catalogue bars (strongest single = hatched, ceiling = solid)
 FT_BLUE = "#4292c6"         # mid blue: Bacformer FT genome-mean
@@ -63,13 +63,15 @@ def _catalogue_refs(catalogue_csv: Path | None, metric: str) -> tuple[float, str
 _BLOCK_DISPLAY = {"oric": "OriC"}
 
 
-def _short_block(block: str, cap: int = 13) -> str:
-    """Compact a rung's chosen-block name for the x-tick: drop the ``upstream:`` type prefix, trim a
-    ``key:description`` region name to its key, cap each ``a | b`` part so long picks don't collide."""
+def _short_block(block: str, cap: int = 16) -> str:
+    """Compact a rung's chosen-block name for the x-tick via the shared :func:`region_label`.
+
+    One label per ``a | b`` part (``upstream:fabg1`` → "inhA promoter", ``rrna:rrs`` → "rrs rRNA") so the
+    ladder names the non-coding rung exactly as the causal plot does; cap each part so long picks don't collide.
+    """
     parts = []
     for tok in str(block).split("|"):
-        t = tok.strip().replace("upstream:", "")
-        t = t.split(":", 1)[0].strip() if ":" in t else t  # "oric:origin of replication" → "oric"
+        t = region_label(tok.strip())
         t = _BLOCK_DISPLAY.get(t.lower(), t)
         if t:
             parts.append(t if len(t) <= cap else t[: cap - 1] + "…")
@@ -121,7 +123,8 @@ def plot_amr_ladder(table: pd.DataFrame, out_path: Path, *, species: str, drug: 
     n_red = sum(c == CATALOGUE_RED for c in colours)
     gap = 0.7
     x = np.array(list(range(n_red)) + [n_red + gap + j for j in range(len(labels) - n_red)])
-    fig, ax = plt.subplots(figsize=(max(7.6, 1.02 * len(labels) + 2.0), 5.2))
+    # Wider per-bar spacing so long two-line rung labels ("(rpoB | inhA promoter)") don't collide.
+    fig, ax = plt.subplots(figsize=(max(8.0, 1.4 * len(labels) + 3.0), 5.2))
     bars = ax.bar(x, heights, width=0.66, color=colours, edgecolor="black", linewidth=0.7, zorder=3)
     for b, h in zip(bars, hatched, strict=True):
         if h:
