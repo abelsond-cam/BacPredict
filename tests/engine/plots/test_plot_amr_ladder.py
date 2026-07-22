@@ -55,3 +55,36 @@ def test_plot_survives_missing_ceiling(tmp_path):
     out = tmp_path / "no_ceiling.png"
     P.plot_amr_ladder(df, out, species="kp", drug="colistin")
     assert out.exists() and out.stat().st_size > 0
+
+
+def test_catalogue_has_noncoding_gates_the_red_hatch(tmp_path):
+    """The red-bar "includes IGR" hatch is conditional: a non-coding determinant → True, coding-only → False."""
+    nc = tmp_path / "eth.csv"
+    pd.DataFrame([
+        {"gene_name": "__ALL_WHO_one_hot__", "region": "all", "mut_auroc": 0.90, "mut_auprc": 0.9,
+         "is_noncoding": False, "is_rrna": False},
+        {"gene_name": "inhA", "region": "non-coding", "mut_auroc": 0.83, "mut_auprc": 0.7,
+         "is_noncoding": True, "is_rrna": False},
+        {"gene_name": "ethA", "region": "coding", "mut_auroc": 0.60, "mut_auprc": 0.4,
+         "is_noncoding": False, "is_rrna": False},
+    ]).to_csv(nc, index=False)
+    assert P._catalogue_refs(nc, "auroc")[3] is True  # ethionamide catalogue includes the inhA promoter
+
+    coding = tmp_path / "rif.csv"
+    pd.DataFrame([
+        {"gene_name": "__ALL_WHO_one_hot__", "region": "all", "mut_auroc": 0.95, "mut_auprc": 0.9,
+         "is_noncoding": False, "is_rrna": False},
+        {"gene_name": "rpoB", "region": "coding", "mut_auroc": 0.94, "mut_auprc": 0.9,
+         "is_noncoding": False, "is_rrna": False},
+    ]).to_csv(coding, index=False)
+    assert P._catalogue_refs(coding, "auroc")[3] is False  # rifampin catalogue is coding-only → no red hatch
+    assert P._catalogue_refs(tmp_path / "missing.csv", "auroc")[3] is False
+
+
+def test_plot_accepts_conditional_catalogue_hatch(tmp_path):
+    """plot_amr_ladder renders with the hatch gate both on and off (draw-level smoke)."""
+    for has_nc in (True, False):
+        out = tmp_path / f"ladder_{has_nc}.png"
+        P.plot_amr_ladder(_table(), out, species="tb", drug="ethionamide", strongest_single=0.83,
+                          ceiling=0.9, catalogue_has_noncoding=has_nc)
+        assert out.exists() and out.stat().st_size > 0
