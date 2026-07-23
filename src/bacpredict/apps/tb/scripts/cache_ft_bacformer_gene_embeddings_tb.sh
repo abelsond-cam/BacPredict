@@ -66,6 +66,9 @@ echo "Job ID: $SLURM_JOB_ID  Node: $SLURMD_NODENAME  GPU: $CUDA_VISIBLE_DEVICES"
     --bacformer-checkpoint "$CKPT" \
     --ranking-csv "$RANK" \
     --out-dir "$OUT" \
-    --auroc-threshold 0.6 --top-n 50 --device cuda:0 --scope trainholdout
+    --auroc-threshold 0.6 --top-n 50 --device cuda:0 --scope trainholdout --skip-existing
+# --skip-existing makes fan-out re-runs idempotent: a drug with a VALID corrected (scope=trainholdout)
+# cache is skipped, but the pre-fix leaky un-scoped caches are always re-forwarded. `rm` the cache dir to
+# force a rebuild of a corrected one.
 
 echo "TB FT Bacformer cache ($drug) finished — $OUT"

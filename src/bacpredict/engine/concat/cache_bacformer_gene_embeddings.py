@@ -58,6 +58,33 @@ def _sanitize(gene: str) -> str:
     return re.sub(r"[^A-Za-z0-9]", "_", str(gene))
 
 
+def _corrected_cache_exists(out_dir: Path, drug: str, scope: str) -> bool:
+    """True iff a VALID corrected cache is already on disk (for ``--skip-existing`` idempotent fan-out).
+
+    Requires the scope-tagged ``ft_genome_mean_<drug>_<scope>.npz`` AND a ``cache_summary_<drug>.json`` whose
+    ``scope`` matches and whose holdout coverage is complete (``n_holdout >= 0.95 * n_evaluate_expected``).
+
+    Deliberately does NOT match the pre-fix **leaky** caches: those wrote the un-scoped
+    ``ft_genome_mean_<drug>.npz`` and a summary with no ``scope`` field, so this returns ``False`` for them
+    and ``--skip-existing`` re-forwards them (they are the bug). A partial/aborted corrected forward (short
+    holdout) is also rebuilt.
+    """
+    npz = out_dir / f"ft_genome_mean_{drug}_{scope}.npz"
+    summ = out_dir / f"cache_summary_{drug}.json"
+    if not npz.exists() or not summ.exists():
+        return False
+    try:
+        s = json.loads(summ.read_text())
+    except (json.JSONDecodeError, OSError):
+        return False
+    if s.get("scope") != scope:
+        return False
+    n_exp, n_hold = s.get("n_evaluate_expected"), s.get("n_holdout")
+    if n_exp and n_hold is not None and n_hold < 0.95 * n_exp:
+        return False  # partial / aborted forward — rebuild it
+    return True
+
+
 def run(
     *,
     ast_sheet: Path,
@@ -75,6 +102,7 @@ def run(
     max_samples: int | None = None,
     scope: str = "trainholdout",
     max_train_sample: int | None = 4000,
+    skip_existing: bool = False,
 ) -> None:
     """Forward the deployed model's genomes through the FT backbone; cache the scope-tagged genome-mean + top-gene tokens.
 
@@ -87,8 +115,14 @@ def run(
     - ``eval`` — the holdout only (honest, ~5x cheaper, but no train side for a fit-on-train probe).
 
     Writes ``ft_genome_mean_<drug>_<scope>.npz`` + ``cache_summary_<drug>.json`` (scope + checkpoint +
-    holdout provenance the ladder's coverage guard reads).
+    holdout provenance the ladder's coverage guard reads). ``skip_existing`` returns early (no GPU forward)
+    when a VALID corrected cache is already present — for idempotent fan-out re-runs; it never skips the
+    pre-fix leaky caches.
     """
+    if skip_existing and _corrected_cache_exists(out_dir, drug, scope):
+        logger.info("%s: a valid corrected cache (scope=%s) already exists in %s — skipping the GPU forward "
+                    "(--skip-existing). Delete it to force a rebuild.", drug, scope, out_dir)
+        return
     label_map, train_ids, validate_ids, evaluate_ids, split_info = (
         resolve_clean_splits(ast_sheet, drug, checkpoint_dir=checkpoint) if checkpoint
         else resolve_clean_splits(ast_sheet, drug)
@@ -224,6 +258,10 @@ def main() -> None:
                         help="Cap the class-balanced deployed-train sample in scope=trainholdout (default 4000; "
                              "plenty for a 960-d LR — keeps the TB ~30k train side cheap). The holdout is full.")
     parser.add_argument("--max-samples", type=int, default=None, help="Cap total forwarded genomes (smoke).")
+    parser.add_argument("--skip-existing", action="store_true",
+                        help="Skip the GPU forward when a VALID corrected cache (scope-tagged npz + summary "
+                             "with full holdout coverage) already exists. Never skips the pre-fix leaky "
+                             "un-scoped caches — those are re-forwarded. For idempotent fan-out re-runs.")
     args = parser.parse_args()
     if args.mode == "finetuned" and args.bacformer_checkpoint is None:
         parser.error("--bacformer-checkpoint is required for --mode finetuned")
@@ -232,6 +270,7 @@ def main() -> None:
         esm_store_dir=args.esm_store_dir, checkpoint=args.bacformer_checkpoint, ranking_csv=args.ranking_csv,
         out_dir=args.out_dir, threshold=args.auroc_threshold, top_n=args.top_n, device=args.device,
         mode=args.mode, max_samples=args.max_samples, scope=args.scope, max_train_sample=args.max_train_sample,
+        skip_existing=args.skip_existing,
     )
 
 

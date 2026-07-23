@@ -68,6 +68,9 @@ echo "ckpt=$CKPT"; echo "rank=$RANK"; echo "out=$OUT"
     --bacformer-checkpoint "$CKPT" \
     --ranking-csv "$RANK" \
     --out-dir "$OUT" \
-    --auroc-threshold 0.6 --top-n 50 --device cuda:0 --scope trainholdout
+    --auroc-threshold 0.6 --top-n 50 --device cuda:0 --scope trainholdout --skip-existing
+# --skip-existing makes fan-out re-runs idempotent: a drug with a VALID corrected (scope=trainholdout)
+# cache is skipped, but the pre-fix leaky un-scoped caches are always re-forwarded. `rm` the cache dir to
+# force a rebuild of a corrected one.
 
 echo "Kp FT Bacformer cache ($DRUG) finished — $OUT"
