@@ -68,6 +68,6 @@ echo "ckpt=$CKPT"; echo "rank=$RANK"; echo "out=$OUT"
     --bacformer-checkpoint "$CKPT" \
     --ranking-csv "$RANK" \
     --out-dir "$OUT" \
-    --auroc-threshold 0.6 --top-n 50 --device cuda:0 --eval-only
+    --auroc-threshold 0.6 --top-n 50 --device cuda:0 --scope trainholdout
 
 echo "Kp FT Bacformer cache ($DRUG) finished — $OUT"

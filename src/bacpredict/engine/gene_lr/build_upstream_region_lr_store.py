@@ -42,7 +42,8 @@ import numpy as np
 import pandas as pd
 
 from bacpredict.engine.config import store_paths
-from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_per_gene, load_splits, subsample_balanced
+from bacpredict.engine.finetune.holdout import load_splits
+from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_per_gene, subsample_balanced
 from bacpredict.engine.gene_lr.build_per_igr_lr_store import _flank_pair, _read_intergenic
 from bacpredict.engine.gene_lr.igr_amr_lr import _parse_gff
 

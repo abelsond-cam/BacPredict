@@ -37,7 +37,7 @@ import torch
 from bacpredict.engine.config import store_paths
 from bacpredict.engine.embedding.extract_proteins_from_gff_fna import _open_text
 from bacpredict.engine.gene_lr.coding_amr_lr import ladder_over_frames
-from bacpredict.engine.gene_lr.snp_vs_esm_prediction import resolve_clean_splits
+from bacpredict.engine.finetune.holdout import resolve_clean_splits
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

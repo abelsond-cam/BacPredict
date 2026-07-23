@@ -14,7 +14,7 @@ Two **modes** (``--bacformer-checkpoint`` selects):
 - **fine-tuned** — the backbone of a deployed AMR checkpoint (the 0.905 mean-pool model), via
   ``load_finetuned_bacformer_backbone``.
 
-Both feed linear probes in :mod:`bacpredict.engine.gene_lr.snp_vs_esm_prediction` (``bacformer_gene_token`` /
+Both feed linear probes in :mod:`bacpredict.engine.gene_lr.linear_probe` (``bacformer_gene_token`` /
 ``bacformer_mean``) and the concat driver
 :mod:`bacpredict.engine.concat.concatenate_bacformer_genome_esm_protein_emb` (genome mean ⊕ ESM gene vector).
 
@@ -39,8 +39,9 @@ import torch
 
 from bacpredict.engine.embedding.generate_embeddings import bacformer_last_hidden_state, load_bacformer_model
 from bacpredict.engine.finetune.evaluate import resolve_checkpoint_dir
+from bacpredict.engine.finetune.holdout import resolve_clean_splits
 from bacpredict.engine.gene_lr.locate_gene import build_gene_presence_table
-from bacpredict.engine.gene_lr.snp_vs_esm_prediction import real_protein_indices, resolve_clean_splits
+from bacpredict.engine.gene_lr.protein_rows import real_protein_indices
 
 # Default cohort drug (TB rpoB/rifampicin). Superseded by OrganismConfig in a later refactor step.
 RIFAMPIN_COLUMN = "rifampin"

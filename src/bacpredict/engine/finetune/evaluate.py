@@ -34,20 +34,19 @@ import json
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import torch
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 from transformers import AutoModelForSequenceClassification
 
 from bacpredict.engine.finetune.datasets import LabelInjectingFileDataset
+from bacpredict.engine.finetune.holdout import resolve_holdouts
 from bacpredict.engine.finetune.metrics import (
     build_results_payload,
     compute_full_metrics,
     write_results_json,
     youden_threshold,
 )
-from bacpredict.engine.finetune.split_utils import generate_kfold_splits
 
 # The file-based dataset + DataLoader workers open many .pt files; the default
 # file_descriptor sharing strategy exhausts FDs on large evaluate splits
@@ -70,66 +69,6 @@ def collate_fn(samples: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor
     if "panel" in samples[0]:
         batch["panel"] = pad_sequence([s["panel"].squeeze(0) for s in samples], batch_first=True, padding_value=0.0)
     return batch
-
-
-def resolve_holdouts(
-    ast_sheet_path: str,
-    drug: str,
-    n_folds: int | None,
-    fold: int,
-    seed: int,
-    evaluate_seed: int,
-) -> tuple[list[str], list[str], dict[str, int], str]:
-    """Reconstruct (evaluate_ids, validation_ids, label_map, source) for a drug.
-
-    Mirrors ``train_amr.py``: k-fold mode derives the fixed evaluate holdout from
-    ``evaluate_seed`` and the validation set from ``folds[fold]`` (with ``seed``);
-    CSV mode reads ``train_val_eval``. Validation is needed to pick an operating
-    threshold without peeking at the evaluate set.
-    """
-    df = pd.read_csv(ast_sheet_path, low_memory=False)
-    if "Sample" not in df.columns:
-        if "phenotype-BioSample_ID" in df.columns:
-            df["Sample"] = df["phenotype-BioSample_ID"].astype(str)
-        else:
-            raise ValueError("AST sheet must contain 'Sample' or 'phenotype-BioSample_ID'.")
-    if drug not in df.columns:
-        raise ValueError(f"Drug column {drug!r} not found in AST sheet.")
-
-    labeled = df[df[drug].notna()].copy()
-    labeled["Sample"] = labeled["Sample"].astype(str)
-    label_map = {row["Sample"]: int(row[drug]) for _, row in labeled.iterrows()}
-    order = labeled["Sample"].tolist()
-
-    if n_folds is not None:
-        evaluate_set, folds = generate_kfold_splits(labeled, n_folds=n_folds, seed=seed, evaluate_seed=evaluate_seed)
-        _, val_set = folds[fold]
-        evaluate_ids = [sid for sid in order if sid in evaluate_set]
-        validation_ids = [sid for sid in order if sid in val_set]
-        return evaluate_ids, validation_ids, label_map, "kfold"
-
-    if "train_val_eval" not in labeled.columns:
-        raise ValueError("CSV has no 'train_val_eval' column; pass --n-folds to derive the holdout.")
-    evaluate_ids = labeled[labeled["train_val_eval"] == "evaluate"]["Sample"].tolist()
-    validation_ids = labeled[labeled["train_val_eval"] == "validate"]["Sample"].tolist()
-    return evaluate_ids, validation_ids, label_map, "csv"
-
-
-def resolve_evaluate_ids(
-    ast_sheet_path: str,
-    drug: str,
-    n_folds: int | None,
-    seed: int,
-    evaluate_seed: int,
-) -> tuple[list[str], dict[str, int], str]:
-    """Back-compat shim: evaluate IDs + label map + source (no validation set).
-
-    Evaluate IDs are independent of ``fold``, so fold 0 is used internally.
-    """
-    evaluate_ids, _validation_ids, label_map, source = resolve_holdouts(
-        ast_sheet_path, drug, n_folds, fold=0, seed=seed, evaluate_seed=evaluate_seed
-    )
-    return evaluate_ids, label_map, source
 
 
 def resolve_checkpoint_dir(checkpoint: Path) -> Path:

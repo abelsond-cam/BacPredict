@@ -57,8 +57,10 @@ from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 
+from bacpredict.engine.finetune.holdout import load_splits
+from bacpredict.engine.gene_lr.linear_probe import LOGREG_KW
 from bacpredict.engine.gene_lr.locate_gene import flatten_proteins
-from bacpredict.engine.gene_lr.snp_vs_esm_prediction import LOGREG_KW, real_protein_indices
+from bacpredict.engine.gene_lr.protein_rows import real_protein_indices
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -73,42 +75,9 @@ EMBEDDING_STORES: dict[str, str] = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Split + label resolution (from a train_val_eval CSV — manifest sheet or
-# binary_ast_with_split.csv both carry the column)
-# ---------------------------------------------------------------------------
-
-
-def load_splits(
-    split_csv: str | Path, drug: str
-) -> tuple[dict[str, int], list[str], list[str], list[str]]:
-    """Resolve ``(label_map, train_ids, validate_ids, evaluate_ids)`` from a split CSV.
-
-    The CSV must carry a ``Sample`` (or ``phenotype-BioSample_ID``) id column, the binary
-    ``drug`` label column, and a ``train_val_eval`` split column. Ambiguous (non-0/1, e.g. the
-    0.5 intermediate) labels are dropped; duplicate Samples keep the first row.
-    """
-    df = pd.read_csv(split_csv, low_memory=False)
-    if "Sample" not in df.columns:
-        if "phenotype-BioSample_ID" not in df.columns:
-            raise ValueError("Split CSV must contain 'Sample' or 'phenotype-BioSample_ID'.")
-        df["Sample"] = df["phenotype-BioSample_ID"].astype(str)
-    df["Sample"] = df["Sample"].astype(str)
-    for col in (drug, "train_val_eval"):
-        if col not in df.columns:
-            raise ValueError(f"Split CSV is missing required column {col!r}; has {list(df.columns)[:20]}")
-
-    clean = df[df[drug].isin([0, 1])].drop_duplicates(subset="Sample", keep="first")
-    label_map = {row["Sample"]: int(row[drug]) for _, row in clean.iterrows()}
-
-    def _ids(value: str) -> list[str]:
-        return [s for s in clean.loc[clean["train_val_eval"] == value, "Sample"] if s in label_map]
-
-    train_ids, validate_ids, evaluate_ids = _ids("train"), _ids("validate"), _ids("evaluate")
-    logger.info(
-        "splits (clean 0/1): train=%d validate=%d evaluate=%d", len(train_ids), len(validate_ids), len(evaluate_ids)
-    )
-    return label_map, train_ids, validate_ids, evaluate_ids
+# Split + label resolution (the CSV ``train_val_eval`` reader ``load_splits``) now lives in the canonical
+# :mod:`bacpredict.engine.finetune.holdout` module — imported above — so there is one home for "who is in
+# which split".
 
 
 # ---------------------------------------------------------------------------
@@ -329,15 +298,20 @@ def fit_one_gene(
         "n_train": len(y_fit),
         "n_pos": n_pos,
         "eval_auroc": float("nan"),
+        "eval_prob": {},
         "n_eval": 0,
         "n_eval_pos": 0,
     }
     if is_eval.any():
         x_ev, y_ev = x[is_eval], y[is_eval]
+        eval_ids_list = [s for s, e in zip(ids, is_eval, strict=True) if e]
         n_ev_pos = int(y_ev.sum())
         result["n_eval"], result["n_eval_pos"] = int(len(y_ev)), n_ev_pos
+        # Full-fit probabilities on the held-out evaluate genomes (present-conditioned, exactly like the
+        # OOF metric) — keyed by Sample so a caller can compute AUPRC / any metric on the same holdout.
+        p_ev = full_clf.predict_proba(full_scaler.transform(x_ev))[:, 1]
+        result["eval_prob"] = {s: float(p) for s, p in zip(eval_ids_list, p_ev, strict=True)}
         if 0 < n_ev_pos < len(y_ev):  # need both classes for a held-out AUROC
-            p_ev = full_clf.predict_proba(full_scaler.transform(x_ev))[:, 1]
             result["eval_auroc"] = float(roc_auc_score(y_ev, p_ev))
     return result
 

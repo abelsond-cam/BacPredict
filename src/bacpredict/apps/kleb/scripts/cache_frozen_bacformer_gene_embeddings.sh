@@ -22,7 +22,9 @@
 #SBATCH --open-mode=append
 # CSD3/UoHPC variant (when it returns): --partition=ampere --account=FLOTO-SL2-GPU,
 #   logs → a project-tier logs dir, and `module load cuda/12.4 cudnn/8.9_cuda-12.4`.
-# Same cost profile as the FT gene cache (~0.5 s/genome on GPU, eval-only); no checkpoint (base backbone).
+# Same cost profile as the FT gene cache (~0.5 s/genome on GPU); --scope eval = the k-fold holdout only.
+# NOTE: frozen mode has no checkpoint, so the holdout falls back to the CSV single-split (logged warning) —
+# aligning the frozen cache to the deployed FT k-fold holdout is a fan-out follow-up (pass the FT run dir).
 
 set -uo pipefail
 
@@ -55,6 +57,6 @@ echo "rank=$RANK"; echo "out=$OUT"
     --esm-store-dir "$D/processed/train_kleb_ast/esm" \
     --ranking-csv "$RANK" \
     --out-dir "$OUT" \
-    --mode frozen --auroc-threshold 0.6 --top-n 50 --device cuda:0 --eval-only
+    --mode frozen --auroc-threshold 0.6 --top-n 50 --device cuda:0 --scope eval
 
 echo "Kp FROZEN Bacformer gene cache ($DRUG) finished — $OUT"

@@ -60,7 +60,8 @@ import pandas as pd
 import torch
 
 from bacpredict.engine.config import store_paths
-from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_per_gene, load_splits, subsample_balanced
+from bacpredict.engine.finetune.holdout import load_splits
+from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_per_gene, subsample_balanced
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

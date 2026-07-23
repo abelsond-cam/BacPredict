@@ -16,7 +16,7 @@ Two axes, both parameters (default = the rifampicin/rpoB setup that hit 0.975):
   AMR checkpoint (``--bacformer-checkpoint``; the ~0.905 mean-pool model — A.1.i).
 
 Three steps, all scored on the **same canonical evaluate fold** (``binary_ast_with_split.csv`` via
-:func:`bacpredict.engine.gene_lr.snp_vs_esm_prediction.resolve_clean_splits`) over the **same sample
+:func:`bacpredict.engine.finetune.holdout.resolve_clean_splits`) over the **same sample
 intersection**, so the numbers are directly comparable:
 
 ============================  ===============================================  ======
@@ -46,17 +46,40 @@ import numpy as np
 import pandas as pd
 
 from bacpredict.engine.concat.bacformer_genome_vectors import RIFAMPIN_COLUMN, compute_bacformer_vectors
+from bacpredict.engine.finetune.holdout import resolve_clean_splits
 from bacpredict.engine.gene_lr.kfold_probe import FeatureSpec, run_kfold_probe, summarise_kfold
+from bacpredict.engine.gene_lr.linear_probe import fit_score_step
 from bacpredict.engine.gene_lr.locate_gene import build_gene_presence_table
-from bacpredict.engine.gene_lr.snp_vs_esm_prediction import (
-    fit_score_step,
-    load_bacformer_vectors,
-    load_pooled_gene_vectors,
-    resolve_clean_splits,
-)
+from bacpredict.engine.gene_lr.pooled_cds_vectors import load_pooled_gene_vectors
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+# Bacformer NPZ reader — the ONLY live user of the token-vector loader, kept local so it retires with this
+# (concluded rpoB/rifampicin diagnostic) module. Token-vector NPZ keys, newest first — a gene-token request
+# resolves to whichever the NPZ carries.
+_TOKEN_KEY_ALIASES = ("gene_token_vectors", "rpob_vectors", "vectors")
+
+
+def load_bacformer_vectors(path: str | Path, key: str = "gene_token_vectors") -> pd.DataFrame:
+    """Load Bacformer vectors written by the GPU pass.
+
+    Expects an ``.npz`` with ``sample_ids`` (str array) plus ``gene_token_vectors`` and ``mean_vectors``
+    ([N, 960] each), as produced by :mod:`bacpredict.engine.concat.bacformer_genome_vectors`. ``key``
+    selects which (``"gene_token_vectors"`` for the contextualised gene token, ``"mean_vectors"`` for the
+    genome mean). A token request back-compat-resolves to whichever token alias the NPZ carries (legacy
+    ``"rpob_vectors"`` / ``"vectors"``).
+    """
+    data = np.load(path, allow_pickle=False)
+    ids = [str(s) for s in data["sample_ids"]]
+    if key not in data.files:
+        for alt in _TOKEN_KEY_ALIASES:
+            if alt in data.files:
+                key = alt
+                break
+    if key not in data.files:
+        raise KeyError(f"{key!r} not in {path} (has {list(data.files)})")
+    return pd.DataFrame(data[key], index=pd.Index(ids, name="Sample"))
 
 # rpoB-only ladder targets the ablations must reproduce before the concat is believed (full run only).
 # The esm-gene target (0.971) and the mean target (0.788 frozen / 0.905 FT) are rifampicin/rpoB-specific.

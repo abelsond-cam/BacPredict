@@ -17,11 +17,11 @@ the ladder plot renders against the RED catalogue one-hot ceiling:
 The scientific question is how much AUROC these simple blocks RECOVER toward the catalogue ceiling for the
 **weak, non-coding-determinant** drugs (ethionamide, streptomycin, kanamycin). It is a raw-recovery test — we
 do NOT net out lineage/structure (rif/cipro are coding-determinant controls that show the baseline lift).
-Every config is scored by the *same* zero-imputed out-of-fold k-fold LR
-(:func:`build_per_gene_lr_store.fit_one_gene`) over the FT eval-holdout universe — a genuine held-out estimate
-(the FT model never trained on these genomes; the LR head is cross-fit). Best-gene / best-noncoding are
-*selected* from the train-fit rankings (no holdout leakage). CPU/login for small cohorts, a short sbatch for
-the ~38k TB set.
+Every config is scored by the *same* zero-imputed LR (:func:`build_per_gene_lr_store.fit_one_gene`), fit on
+the **FT-train** genomes and tested on the **FT k-fold holdout** (the genomes the deployed fine-tuned backbone
+never trained on) — a genuine held-out estimate that mirrors how the deployed head was trained-then-evaluated.
+Best-gene / best-noncoding are *selected* from the **train-OOF** rankings (leakage-free w.r.t. that holdout).
+CPU/login for small cohorts, a short sbatch for the ~38k TB set.
 
 Reuses the concat primitives (:func:`impute_block`, :func:`load_ft_mean`, the baclm block loaders in
 :mod:`bacpredict.engine.concat.concat_ingredients`), :func:`fit_one_gene`, and the ceiling split
@@ -30,6 +30,7 @@ Reuses the concat primitives (:func:`impute_block`, :func:`load_ft_mean`, the ba
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 from pathlib import Path
 
@@ -46,8 +47,8 @@ from bacpredict.engine.concat.concat_ingredients import (
     load_ft_mean,
 )
 from bacpredict.engine.config import organism, store_paths, visualisations_dir
+from bacpredict.engine.finetune.holdout import resolve_clean_splits
 from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_one_gene
-from bacpredict.engine.gene_lr.snp_vs_esm_prediction import resolve_clean_splits
 from bacpredict.engine.plots.driver_panel import parse_driver_csv
 from bacpredict.engine.plots.labels import display_name
 
@@ -56,19 +57,21 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 
 def _best_from_ranking(csv_path: Path, *, key_col: str) -> tuple[str, float] | None:
-    """Top row of a per-gene/per-IGR ranking → ``(key, auroc)``; prefers the held-out ``eval_auroc_*`` col.
+    """Top row of a per-gene/per-IGR ranking → ``(key, auroc)``; selects on the **train-OOF** ``lr_auroc_*`` col.
 
-    ``key_col`` is ``gene_name`` (coding), ``igr_pair`` (per-IGR), or ``gene`` (upstream anchor). The
-    selection AUROC is the held-out-test ``eval_auroc_<drug>`` when present, else the OOF ``lr_auroc_<drug>``
-    — matching the "select by held-out signal" intent; ``None`` when the CSV is absent/empty.
+    ``key_col`` is ``gene_name`` (coding), ``igr_pair`` (per-IGR), or ``gene`` (upstream anchor). Selection is
+    on the train out-of-fold ``lr_auroc_<drug>`` — leakage-free with respect to the FT holdout the ladder
+    reports on (selecting on a ``eval_auroc_`` test column would let the block be chosen on the very holdout
+    we then score, tainting the number). Falls back to ``eval_auroc_`` only when no OOF column exists.
+    ``None`` when the CSV is absent/empty.
     """
     if not Path(csv_path).exists():
         return None
     df = pd.read_csv(csv_path)
     if df.empty or key_col not in df.columns:
         return None
-    au_cols = ([c for c in df.columns if c.startswith("eval_auroc_") and df[c].notna().any()]
-               or [c for c in df.columns if c.startswith("lr_auroc_")])
+    au_cols = ([c for c in df.columns if c.startswith("lr_auroc_") and df[c].notna().any()]
+               or [c for c in df.columns if c.startswith("eval_auroc_")])
     if not au_cols:
         return None
     au = au_cols[0]
@@ -111,6 +114,23 @@ def _select_noncoding(
     return max(cands, key=lambda c: c[2])
 
 
+def _load_cache_summary(ft_cache_dir: Path, drug: str) -> dict:
+    """Read the FT genome-mean cache's ``cache_summary_<drug>.json`` (checkpoint + scope + holdout provenance).
+
+    The ladder resolves the deployed k-fold holdout from this — the FT cache was built by forwarding exactly
+    those genomes, so the summary is the record of which split it scoped to. A missing summary means a
+    pre-provenance (suspect) cache; refuse rather than silently score whatever it holds.
+    """
+    p = Path(ft_cache_dir) / f"cache_summary_{drug}.json"
+    if not p.exists():
+        raise FileNotFoundError(
+            f"{drug}: no cache_summary at {p}. The ladder needs the FT cache's split provenance "
+            f"(checkpoint + scope) to reproduce the deployed k-fold holdout. Re-cache with the corrected "
+            f"cache_bacformer_gene_embeddings (scope=trainholdout on the deployed checkpoint)."
+        )
+    return json.loads(p.read_text())
+
+
 def run(
     *,
     species: str,
@@ -127,38 +147,78 @@ def run(
     igr_ranking_csv: Path,
     catalogue_csv: Path,
     out_dir: Path,
+    checkpoint: Path | None = None,
     n_folds: int = 5,
     seed: int = 1,
 ) -> pd.DataFrame:
     """Build the ladder for one drug; write ``<drug>_amr_ladder_table.csv`` and return it.
 
-    Four configs, each scored by the SAME zero-imputed OOF k-fold LR over the FT eval-holdout universe:
-    ``ft_mean`` (baseline) → ``+ baclm gene`` (best coding block) → ``+ baclm noncoding`` (best non-coding
-    block, alone) → ``+ both``. The coding block reads ``baclm_dir`` (the ``baclm/`` store); the non-coding
-    block reads ``noncoding_dir`` (the ``baclm_reembed/`` store) and is the **top-imputed-AUROC** region
-    across the upstream (promoter, ``upstream:<gene>``), per-unit (named body, ``rrna:rrs``/``rrl``), and
-    per-IGR (canonical flank pair, incl. merged convergent regions) rankings. Selection is on the zero-imputed
-    whole-cohort AUROC with **no prevalence gate** (selection = usage — the concat feeds a zero-imputed block,
-    which mirrors the coding rung); the winner is usually core but a higher-imputed accessory region can win.
-    Best-gene / best-noncoding are *selected* from the train-fit rankings (no holdout leakage); the RED
-    catalogue one-hot ceiling is read from ``catalogue_csv``.
+    Four configs, each scored by fitting a zero-imputed LR on the **FT-train** genomes and testing it on the
+    **FT k-fold holdout** (the genomes the deployed fine-tuned backbone never trained on) — a genuinely
+    held-out number that mirrors how the deployed head was trained-then-evaluated. ``ft_mean`` (baseline) →
+    ``+ baclm gene`` (best coding block) → ``+ baclm noncoding`` (best non-coding block, alone) → ``+ both``.
+    The coding block reads ``baclm_dir`` (the ``baclm/`` store); the non-coding block reads ``noncoding_dir``
+    (the ``baclm_reembed/`` store) and is the **top-imputed-AUROC** region across the upstream (promoter,
+    ``upstream:<gene>``), per-unit (named body, ``rrna:rrs``/``rrl``), and per-IGR (canonical flank pair,
+    incl. merged convergent regions) rankings. Selection is on the zero-imputed whole-cohort **train-OOF**
+    AUROC with **no prevalence gate** (selection = usage — the concat feeds a zero-imputed block, which
+    mirrors the coding rung); the winner is usually core but a higher-imputed accessory region can win.
+    Best-gene / best-noncoding are *selected* from the train-OOF rankings (leakage-free w.r.t. the holdout);
+    the RED catalogue one-hot ceiling is read from ``catalogue_csv``.
+
+    The deployed holdout is reproduced from the FT cache's own provenance (``cache_summary_<drug>.json`` →
+    its ``checkpoint``'s ``results.json`` split block); ``checkpoint`` overrides that. A guard refuses a cache
+    that does not contain that holdout (the pre-fix leak signature: a CSV-single-split / eval-only cache).
     """
-    label_map, _tr, _va, _evaluate_ids, _info = resolve_clean_splits(ast_sheet, drug)
-    all_ids, mean_block = load_ft_mean(Path(ft_cache_dir), drug, label_map)
+    summary = _load_cache_summary(Path(ft_cache_dir), drug)
+    run_dir = checkpoint or summary.get("checkpoint")
+    scope = summary.get("scope")
+    if not run_dir:
+        raise ValueError(
+            f"{drug}: cache_summary has no 'checkpoint' and none was passed — cannot resolve the deployed "
+            f"k-fold holdout. Re-cache with the corrected cacher, or pass --checkpoint."
+        )
+    label_map, _train, _val, holdout_ids, info = resolve_clean_splits(ast_sheet, drug, checkpoint_dir=run_dir)
+    if info["source"] != "kfold":
+        logger.warning("%s: deployed split source is %r (expected 'kfold' for a deployed AMR model)",
+                       drug, info["source"])
+    holdout_set = set(holdout_ids)
+    all_ids, mean_block = load_ft_mean(Path(ft_cache_dir), drug, label_map, scope=scope)
     y = np.array([label_map[s] for s in all_ids], dtype=int)
+
+    # GUARD (#2 scope collision): the cache MUST contain the deployed k-fold holdout, or the ladder scores on
+    # whatever set the cache happens to hold. A stale eval-only / CSV-single-split cache holds ~none of the
+    # true holdout and fails here (azithromycin: 69 of 384) — the exact leak this rebuild fixes.
+    holdout_in_cache = [s for s in all_ids if s in holdout_set]
+    if len(holdout_in_cache) < 0.9 * max(len(holdout_ids), 1):
+        raise ValueError(
+            f"{drug}: FT cache holds only {len(holdout_in_cache)}/{len(holdout_ids)} of the deployed k-fold "
+            f"holdout (scope={scope!r}). This is the leak signature — a cache built on the CSV single-split or "
+            f"eval-only. Re-cache scope=trainholdout on the deployed checkpoint before building the ladder."
+        )
+    n_train_universe = len(all_ids) - len(holdout_in_cache)
+    if n_train_universe == 0:
+        raise ValueError(
+            f"{drug}: cache has no FT-train genomes (scope={scope!r}) — the LR cannot fit on train then test "
+            f"on the holdout. Re-cache scope=trainholdout."
+        )
     if len(all_ids) == 0 or y.sum() == 0 or y.sum() == len(y):
         raise ValueError(f"{drug}: FT-mean universe empty or single-class (n={len(all_ids)}, pos={int(y.sum())})")
-    logger.info("%s %s: FT eval-holdout universe n=%d (pos=%d), mean dim=%d",
-                species, drug, len(all_ids), int(y.sum()), mean_block.shape[1])
+    logger.info("%s %s: FT universe n=%d (train=%d, holdout=%d, pos=%d), mean dim=%d",
+                species, drug, len(all_ids), n_train_universe, len(holdout_in_cache), int(y.sum()),
+                mean_block.shape[1])
 
     def _score(x: np.ndarray) -> tuple[float, float]:
-        """(AUROC, AUPRC) of the zero-imputed out-of-fold k-fold LR over the holdout universe."""
-        fit = fit_one_gene(all_ids, x.astype(np.float32), y, n_folds=n_folds, seed=seed)
-        if not fit:
+        """(AUROC, AUPRC) of the zero-imputed LR fit on the FT-train genomes and tested on the FT holdout."""
+        fit = fit_one_gene(all_ids, x.astype(np.float32), y, n_folds=n_folds, seed=seed, eval_ids=holdout_set)
+        if not fit or fit["n_eval"] == 0:
             return float("nan"), float("nan")
-        p = np.array([fit["oof_prob"].get(s, np.nan) for s in all_ids])
-        ap = float(average_precision_score(y, p)) if not np.isnan(p).any() else float("nan")
-        return float(fit["auroc"]), ap
+        ev_ids = [s for s in all_ids if s in holdout_set]
+        p = np.array([fit["eval_prob"].get(s, np.nan) for s in ev_ids])
+        yv = np.array([label_map[s] for s in ev_ids], dtype=int)
+        ap = (float(average_precision_score(yv, p))
+              if not np.isnan(p).any() and 0 < int(yv.sum()) < len(yv) else float("nan"))
+        return float(fit["eval_auroc"]), ap
 
     inp = pd.read_csv(input_csv, usecols=["Sample", "sr_gff_file"])
     sample_gff = dict(zip(inp["Sample"].astype(str), inp["sr_gff_file"].astype(str), strict=True))
@@ -313,7 +373,11 @@ def main() -> None:
     p.add_argument("--species", required=True, choices=["tb", "kp"])
     p.add_argument("--drug", required=True)
     p.add_argument("--ft-cache-dir", type=Path, required=True,
-                   help="Dir holding ft_genome_mean_<drug>.npz (bacformer_token_cache output for this drug).")
+                   help="Dir holding ft_genome_mean_<drug>_<scope>.npz + cache_summary_<drug>.json "
+                        "(cache_bacformer_gene_embeddings output, scope=trainholdout, for this drug).")
+    p.add_argument("--checkpoint", type=Path, default=None,
+                   help="Deployed FT run dir (holds results.json) to reproduce the k-fold holdout from. "
+                        "Default: the checkpoint recorded in the cache's cache_summary_<drug>.json.")
     p.add_argument("--gene-ranking-csv", type=Path, default=None, help="coding per-gene ranking (best-gene rung).")
     p.add_argument("--upstream-ranking-csv", type=Path, default=None,
                    help="IMPUTED full-band promoter upstream:<gene> ranking (default: upstream_lr_ranking_imputed_full).")
@@ -351,7 +415,7 @@ def main() -> None:
         parquet_dir=sp.parquet_dir, input_csv=sp.input_csv,
         gene_ranking_csv=gene_csv, upstream_ranking_csv=upstream_csv, unit_ranking_csv=unit_csv,
         igr_ranking_csv=igr_csv, catalogue_csv=args.catalogue_csv or _catalogue_csv(args.species, args.drug),
-        out_dir=out_dir, n_folds=args.n_folds, seed=args.seed,
+        out_dir=out_dir, checkpoint=args.checkpoint, n_folds=args.n_folds, seed=args.seed,
     )
 
 

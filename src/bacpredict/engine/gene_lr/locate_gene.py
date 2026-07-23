@@ -10,7 +10,7 @@ to reconstruct the *flat* protein index that matches the embedding tensor.
 The flat order is the concatenation of every contig's ``protein_sequence`` list
 in ``contig_idx`` order — exactly the order ``compute_genome_protein_embeddings``
 feeds ESM-C and that ``protein_embeddings_to_inputs`` preserves (real proteins
-carry the ``PROT_EMB`` token; see :mod:`bacpredict.engine.gene_lr.snp_vs_esm_prediction` for
+carry the ``PROT_EMB`` token; see :mod:`bacpredict.engine.gene_lr.protein_rows` for
 how the matching rows are selected back out of the stored tensor).
 """
 

@@ -34,13 +34,13 @@ import numpy as np
 import pandas as pd
 
 from bacpredict.engine.config import KP
+from bacpredict.engine.finetune.holdout import resolve_clean_splits
 from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_one_gene_imputed
 from bacpredict.engine.gene_lr.reliable_gene_vectors import (
     MIN_CARRIERS,
     GeneCall,
     collect_reliable_gene_vectors,
 )
-from bacpredict.engine.gene_lr.snp_vs_esm_prediction import resolve_clean_splits
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

@@ -10,9 +10,8 @@ from bacpredict.engine.finetune.evaluate import (
     plot_auroc_bar,
     plot_roc_pr_grid,
     resolve_checkpoint_dir,
-    resolve_evaluate_ids,
-    resolve_holdouts,
 )
+from bacpredict.engine.finetune.holdout import resolve_evaluate_ids, resolve_holdouts
 from bacpredict.engine.finetune.split_utils import generate_kfold_splits
 
 

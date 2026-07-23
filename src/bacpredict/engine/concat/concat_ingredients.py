@@ -23,15 +23,22 @@ def impute_block(present_ids: list[str], present_vecs: np.ndarray, all_ids: list
 
 
 def load_genome_mean(
-    cache_dir: Path, drug: str, label_map: dict[str, int], *, prefix: str = "ft"
+    cache_dir: Path, drug: str, label_map: dict[str, int], *, prefix: str = "ft", scope: str | None = None
 ) -> tuple[list[str], np.ndarray]:
-    """Cached genome-mean over the eval holdout → ``(all_ids, mean_block)`` restricted to labelled genomes.
+    """Cached genome-mean → ``(all_ids, mean_block)`` restricted to labelled genomes.
 
     ``prefix`` selects the backbone whose mean was cached — ``ft`` (fine-tuned) reads
-    ``ft_genome_mean_<drug>.npz``, ``frozen`` reads ``frozen_genome_mean_<drug>.npz``; the two stores are
-    identical in layout ({sample_ids, mean_vectors}), differing only in the file prefix.
+    ``ft_genome_mean_<drug>[...].npz``, ``frozen`` reads ``frozen_genome_mean_<drug>[...].npz``; the two
+    stores are identical in layout ({sample_ids, mean_vectors}), differing only in the file prefix.
+
+    ``scope`` names **which genomes were forwarded**, and is part of the filename so the two are never
+    confused (the pre-fix bug: a scope-blind reader silently accepted a leaky cache). ``"trainholdout"``
+    = the deployed model's train-sample ∪ its k-fold evaluate holdout (the corrected scope, so the ladder
+    LR can fit on train and test on the FT-unseen holdout); ``"eval"`` = holdout only. ``None`` reads the
+    legacy un-scoped ``<prefix>_genome_mean_<drug>.npz`` (pre-scope caches — treat as suspect).
     """
-    npz = np.load(cache_dir / f"{prefix}_genome_mean_{drug}.npz", allow_pickle=True)
+    stem = f"{prefix}_genome_mean_{drug}" + (f"_{scope}" if scope else "")
+    npz = np.load(cache_dir / f"{stem}.npz", allow_pickle=True)
     ids = [str(s) for s in npz["sample_ids"]]
     vecs = npz["mean_vectors"]
     pos = {s: i for i, s in enumerate(ids)}
@@ -39,14 +46,18 @@ def load_genome_mean(
     return all_ids, np.vstack([vecs[pos[s]] for s in all_ids]).astype(np.float32)
 
 
-def load_ft_mean(ft_cache_dir: Path, drug: str, label_map: dict[str, int]) -> tuple[list[str], np.ndarray]:
-    """FT genome-mean over the eval holdout — :func:`load_genome_mean` with ``prefix="ft"``."""
-    return load_genome_mean(ft_cache_dir, drug, label_map, prefix="ft")
+def load_ft_mean(
+    ft_cache_dir: Path, drug: str, label_map: dict[str, int], *, scope: str | None = None
+) -> tuple[list[str], np.ndarray]:
+    """FT genome-mean — :func:`load_genome_mean` with ``prefix="ft"`` (see it for ``scope``)."""
+    return load_genome_mean(ft_cache_dir, drug, label_map, prefix="ft", scope=scope)
 
 
-def load_frozen_mean(frozen_cache_dir: Path, drug: str, label_map: dict[str, int]) -> tuple[list[str], np.ndarray]:
-    """Frozen-Bacformer genome-mean over the eval holdout — :func:`load_genome_mean` with ``prefix="frozen"``."""
-    return load_genome_mean(frozen_cache_dir, drug, label_map, prefix="frozen")
+def load_frozen_mean(
+    frozen_cache_dir: Path, drug: str, label_map: dict[str, int], *, scope: str | None = None
+) -> tuple[list[str], np.ndarray]:
+    """Frozen-Bacformer genome-mean — :func:`load_genome_mean` with ``prefix="frozen"``."""
+    return load_genome_mean(frozen_cache_dir, drug, label_map, prefix="frozen", scope=scope)
 
 
 def load_ft_gene(ft_cache_dir: Path, sanitized: str) -> tuple[list[str], np.ndarray]:

@@ -36,7 +36,7 @@ import pandas as pd
 from bacpredict.engine.concat.concat_ingredients import impute_block, load_ft_mean
 from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_one_gene
 from bacpredict.engine.gene_lr.per_gene_esm_vs_ft import collect_esm_blocks
-from bacpredict.engine.gene_lr.snp_vs_esm_prediction import resolve_clean_splits
+from bacpredict.engine.finetune.holdout import resolve_clean_splits
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

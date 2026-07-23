@@ -16,7 +16,7 @@ same protein row in each. The only new code here is the baclm reader: baclm's ``
 ``protein_embeddings`` as a plain ``[n_cds, 960]`` matrix (one row per CDS in flat order, **no** batch
 dim / attention mask / special tokens), so its row selection is a direct ``[flat_index]`` — unlike the
 ESM store, which interleaves/pads and needs
-:func:`bacpredict.engine.gene_lr.snp_vs_esm_prediction.real_protein_indices`.
+:func:`bacpredict.engine.gene_lr.protein_rows.real_protein_indices`.
 
 CPU-only (sklearn LR over precomputed embeddings) — Stage-A smoke (``--n 10``) runs on a login node;
 the full cohort is a CPU sbatch (tens of thousands of single-row mmap reads; use ``--pool-workers``).
@@ -35,14 +35,12 @@ import pandas as pd
 import torch
 
 from bacpredict.engine.config import StorePaths, store_paths
+from bacpredict.engine.finetune.holdout import resolve_clean_splits
 from bacpredict.engine.finetune.split_utils import generate_kfold_splits
 from bacpredict.engine.gene_lr.kfold_probe import FeatureSpec, run_kfold_probe, summarise_kfold
+from bacpredict.engine.gene_lr.linear_probe import fit_score_step
 from bacpredict.engine.gene_lr.locate_gene import build_gene_presence_table, flatten_proteins
-from bacpredict.engine.gene_lr.snp_vs_esm_prediction import (
-    fit_score_step,
-    load_pooled_gene_vectors,
-    resolve_clean_splits,
-)
+from bacpredict.engine.gene_lr.pooled_cds_vectors import load_pooled_gene_vectors
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -185,7 +183,7 @@ def load_baclm_gene_vectors(
     pt_suffix: str = "_baclm_embeddings.pt",
     pool_workers: int = 1,
 ) -> pd.DataFrame:
-    """baclm analogue of :func:`snp_vs_esm_prediction.load_pooled_gene_vectors`.
+    """Baclm analogue of :func:`pooled_cds_vectors.load_pooled_gene_vectors`.
 
     Same signature/semantics — pulls each sample's pooled gene vector from the baclm store, mmap'd,
     one row materialised, dropping samples whose ``.pt`` is missing or whose index fails the guards.

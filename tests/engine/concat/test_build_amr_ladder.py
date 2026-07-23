@@ -1,9 +1,10 @@
 """Stage-A smoke for the AMR concat ladder (ft_mean, +baclm gene, +baclm noncoding, +both vs ceiling).
 
 The heavy store loaders (FT-mean NPZ, baclm ``.pt`` + parquet + GFF) are monkeypatched so the test
-exercises the ladder ASSEMBLY, scoring, ceiling parse, and table shape on tiny synthetic vectors — no
-cluster stores. Separate tests pin the ranking selection (``_best_from_ranking`` prefers held-out eval
-AUROC; ``_select_noncoding`` picks the top-imputed-AUROC region across upstream ∪ per_unit ∪ igr, no gate).
+exercises the ladder ASSEMBLY, fit-on-train/test-on-holdout scoring, the cache-coverage guard, ceiling
+parse, and table shape on tiny synthetic vectors — no cluster stores. Separate tests pin the ranking
+selection (``_best_from_ranking`` selects on the **train-OOF** ``lr_auroc`` — leakage-free w.r.t. the FT
+holdout; ``_select_noncoding`` picks the top-imputed-AUROC region across upstream ∪ per_unit ∪ igr, no gate).
 """
 from __future__ import annotations
 
@@ -18,22 +19,23 @@ def _rng(seed: int) -> np.random.Generator:
     return np.random.default_rng(seed)
 
 
-def test_best_from_ranking_prefers_eval_auroc(tmp_path):
+def test_best_from_ranking_prefers_lr_auroc(tmp_path):
     csv = tmp_path / "per_gene_lr_rifampin.csv"
     pd.DataFrame([
         {"gene_name": "rpoB", "lr_auroc_rifampin": 0.90, "eval_auroc_rifampin": 0.97},
         {"gene_name": "katG", "lr_auroc_rifampin": 0.95, "eval_auroc_rifampin": 0.60},
     ]).to_csv(csv, index=False)
-    # eval_auroc preferred → rpoB (0.97) wins even though katG has the higher OOF lr_auroc.
-    assert L._best_from_ranking(csv, key_col="gene_name") == ("rpoB", 0.97)
+    # train-OOF lr_auroc preferred (leakage-free w.r.t. the FT holdout) → katG (0.95) wins even though rpoB
+    # has the higher held-out eval_auroc. Selecting on eval_auroc would taint the number with the test set.
+    assert L._best_from_ranking(csv, key_col="gene_name") == ("katG", 0.95)
 
     csv2 = tmp_path / "oof_only.csv"
     pd.DataFrame([{"gene_name": "a", "lr_auroc_x": 0.7}, {"gene_name": "b", "lr_auroc_x": 0.8}]).to_csv(csv2, index=False)
     assert L._best_from_ranking(csv2, key_col="gene_name") == ("b", 0.8)
-    # an eval_auroc column that is ALL-NaN (an OOF ranking) must fall back to lr_auroc, not empty the frame.
-    csv3 = tmp_path / "empty_eval.csv"
-    pd.DataFrame([{"gene_name": "a", "lr_auroc_x": 0.7, "eval_auroc_x": np.nan},
-                  {"gene_name": "b", "lr_auroc_x": 0.8, "eval_auroc_x": np.nan}]).to_csv(csv3, index=False)
+    # an lr_auroc column that is ALL-NaN must fall back to eval_auroc, not empty the frame.
+    csv3 = tmp_path / "empty_lr.csv"
+    pd.DataFrame([{"gene_name": "a", "lr_auroc_x": np.nan, "eval_auroc_x": 0.7},
+                  {"gene_name": "b", "lr_auroc_x": np.nan, "eval_auroc_x": 0.8}]).to_csv(csv3, index=False)
     assert L._best_from_ranking(csv3, key_col="gene_name") == ("b", 0.8)
     assert L._best_from_ranking(tmp_path / "missing.csv", key_col="gene_name") is None
 
@@ -62,11 +64,19 @@ def test_select_noncoding_picks_top_imputed_across_keys(tmp_path):
     assert L._select_noncoding(tmp_path / "n1.csv", tmp_path / "n2.csv", tmp_path / "n3.csv") is None
 
 
+def _write_cache_summary(tmp_path, drug, scope="trainholdout"):
+    """The FT cache provenance the ladder reads (the checkpoint value is ignored — resolve_clean_splits is patched)."""
+    (tmp_path / f"cache_summary_{drug}.json").write_text(
+        f'{{"checkpoint": "{tmp_path}/ckpt", "scope": "{scope}"}}'
+    )
+
+
 def test_run_builds_four_config_ladder_with_ceiling(tmp_path, monkeypatch):
     n = 60
     all_ids = [f"g{i}" for i in range(n)]
     y = np.array([1 if i % 2 == 0 else 0 for i in range(n)])
     label_map = dict(zip(all_ids, y.tolist(), strict=True))
+    holdout_ids = all_ids[:20]  # 10 pos / 10 neg; the other 40 are the FT-train the LR fits on
 
     def _signal(ids_subset, strength, seed):
         r = _rng(seed)
@@ -74,10 +84,13 @@ def test_run_builds_four_config_ladder_with_ceiling(tmp_path, monkeypatch):
         x[:, 0] += np.array([strength if label_map[s] else -strength for s in ids_subset])
         return x.astype(np.float32)
 
-    # FT-mean over the whole holdout universe (weak signal).
+    # FT-mean over the whole train+holdout universe (weak signal).
     mean_block = _signal(all_ids, 0.6, 0)
-    monkeypatch.setattr(L, "resolve_clean_splits", lambda *a, **k: (label_map, [], [], all_ids, {}))
-    monkeypatch.setattr(L, "load_ft_mean", lambda cache, drug, lm: (all_ids, mean_block))
+    monkeypatch.setattr(L, "resolve_clean_splits",
+                        lambda *a, **k: (label_map, all_ids[20:], [], holdout_ids,
+                                         {"source": "kfold", "n_evaluate_expected": len(holdout_ids)}))
+    monkeypatch.setattr(L, "load_ft_mean", lambda cache, drug, lm, scope=None: (all_ids, mean_block))
+    _write_cache_summary(tmp_path, "ethionamide")
     # best gene carried by 45 genomes; best upstream region by 50; the per-unit loader is unused here.
     gene_ids = all_ids[:45]
     igr_ids = all_ids[:50]
@@ -130,15 +143,39 @@ def test_run_builds_four_config_ladder_with_ceiling(tmp_path, monkeypatch):
     assert (tmp_path / "ethionamide_amr_ladder_table.csv").exists()
 
 
+def test_run_guards_against_leaky_cache(tmp_path, monkeypatch):
+    """The cache MUST contain the deployed k-fold holdout; a cache holding ~none of it (the leak signature) raises."""
+    n = 40
+    all_ids = [f"g{i}" for i in range(n)]
+    label_map = {s: i % 2 for i, s in enumerate(all_ids)}
+    mean_block = _rng(3).normal(size=(n, 4)).astype(np.float32)
+    # The deployed k-fold holdout is 30 genomes NOT present in the cache (the CSV-vs-kfold mismatch, azithro's
+    # 69-of-384 leak signature) → coverage 0/30 → the ladder must refuse rather than score a leaky set.
+    holdout_ids = [f"h{i}" for i in range(30)]
+    monkeypatch.setattr(L, "resolve_clean_splits",
+                        lambda *a, **k: (label_map, [], [], holdout_ids, {"source": "kfold"}))
+    monkeypatch.setattr(L, "load_ft_mean", lambda *a, **k: (all_ids, mean_block))
+    _write_cache_summary(tmp_path, "azithromycin")
+    with pytest.raises(ValueError, match="leak signature"):
+        L.run(species="kp", drug="azithromycin", ast_sheet=tmp_path / "s.csv", ft_cache_dir=tmp_path,
+              baclm_dir=tmp_path, noncoding_dir=tmp_path, parquet_dir=tmp_path, input_csv=tmp_path / "i.csv",
+              gene_ranking_csv=tmp_path / "g.csv", upstream_ranking_csv=tmp_path / "u.csv",
+              unit_ranking_csv=tmp_path / "nu.csv", igr_ranking_csv=tmp_path / "ig.csv",
+              catalogue_csv=tmp_path / "c.csv", out_dir=tmp_path)
+
+
 def test_run_survives_missing_rankings(tmp_path, monkeypatch):
     """No gene/upstream/unit/igr ranking on disk → all four configs fall back to the FT-mean features (no crash)."""
     n = 40
     all_ids = [f"g{i}" for i in range(n)]
     y = np.array([i % 2 for i in range(n)])
     label_map = dict(zip(all_ids, y.tolist(), strict=True))
+    holdout_ids = all_ids[:16]  # the other 24 are FT-train the LR fits on
     mean_block = _rng(3).normal(size=(n, 4)).astype(np.float32)
-    monkeypatch.setattr(L, "resolve_clean_splits", lambda *a, **k: (label_map, [], [], all_ids, {}))
+    monkeypatch.setattr(L, "resolve_clean_splits",
+                        lambda *a, **k: (label_map, all_ids[16:], [], holdout_ids, {"source": "kfold"}))
     monkeypatch.setattr(L, "load_ft_mean", lambda *a, **k: (all_ids, mean_block))
+    _write_cache_summary(tmp_path, "kanamycin")
     inp = tmp_path / "input.csv"
     pd.DataFrame({"Sample": all_ids, "sr_gff_file": ["/dev/null"] * n}).to_csv(inp, index=False)
 

@@ -27,6 +27,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from bacpredict.engine.finetune.holdout import resolve_clean_splits
 from bacpredict.engine.gene_lr.card_gene_locator import build_card_presence, sidecar_dir_available
 from bacpredict.engine.gene_lr.coding_amr_lr import (
     SpeciesPaths,
@@ -35,7 +36,7 @@ from bacpredict.engine.gene_lr.coding_amr_lr import (
     load_baclm_gene_vectors,
 )
 from bacpredict.engine.gene_lr.kfold_probe import FeatureSpec, run_kfold_probe
-from bacpredict.engine.gene_lr.snp_vs_esm_prediction import load_pooled_gene_vectors, resolve_clean_splits
+from bacpredict.engine.gene_lr.pooled_cds_vectors import load_pooled_gene_vectors
 
 logger = logging.getLogger(__name__)
 

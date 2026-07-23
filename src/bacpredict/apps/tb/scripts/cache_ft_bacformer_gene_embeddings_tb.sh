@@ -28,7 +28,9 @@
 # CSD3/UoHPC variant (when it returns): --partition=ampere --account=FLOTO-SL2-GPU,
 #   logs → a project-tier logs dir, and `module load cuda/12.4 cudnn/8.9_cuda-12.4`.
 # The FT forward over each drug's evaluate-holdout is the cost (~0.5 s/genome on GPU);
-# --cpus-per-task=8 keeps the DataLoader feeding the GPU. --eval-only keeps it to the FT-unseen split.
+# --cpus-per-task=8 keeps the DataLoader feeding the GPU. --scope trainholdout forwards the deployed
+# k-fold holdout PLUS a class-balanced train sample, so the ladder can fit the read-out LR on FT-train and
+# test on the FT-unseen holdout (the honest, non-leaky scope).
 
 set -uo pipefail
 
@@ -64,6 +66,6 @@ echo "Job ID: $SLURM_JOB_ID  Node: $SLURMD_NODENAME  GPU: $CUDA_VISIBLE_DEVICES"
     --bacformer-checkpoint "$CKPT" \
     --ranking-csv "$RANK" \
     --out-dir "$OUT" \
-    --auroc-threshold 0.6 --top-n 50 --device cuda:0 --eval-only
+    --auroc-threshold 0.6 --top-n 50 --device cuda:0 --scope trainholdout
 
 echo "TB FT Bacformer cache ($drug) finished — $OUT"

@@ -33,8 +33,10 @@ import torch
 
 from bacpredict.engine.concat.bacformer_genome_vectors import forward_inputs, load_model
 from bacpredict.engine.embedding.generate_embeddings import bacformer_last_hidden_state
+from bacpredict.engine.finetune.holdout import resolve_clean_splits
+from bacpredict.engine.gene_lr.build_per_gene_lr_store import subsample_balanced
 from bacpredict.engine.gene_lr.locate_gene import flatten_proteins
-from bacpredict.engine.gene_lr.snp_vs_esm_prediction import real_protein_indices, resolve_clean_splits
+from bacpredict.engine.gene_lr.protein_rows import real_protein_indices
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -71,18 +73,44 @@ def run(
     mode: str = "finetuned",
     pt_suffix: str = "_esm_embeddings.pt",
     max_samples: int | None = None,
-    eval_only: bool = False,
+    scope: str = "trainholdout",
+    max_train_sample: int | None = 4000,
 ) -> None:
-    """Forward each labelled genome through the FT backbone; save the genome-mean + top-gene tokens.
+    """Forward the deployed model's genomes through the FT backbone; cache the scope-tagged genome-mean + top-gene tokens.
 
-    ``eval_only`` restricts the forward to the canonical evaluate split — the FT-unseen genomes, which is
-    the honest scope for an FT (train-leaky) backbone and ~5x cheaper than all labelled.
+    The holdout is the **deployed model's own** k-fold evaluate set — resolved from ``checkpoint``'s
+    ``results.json`` (never the CSV single-split, the leak the AMR-ladder rebuild fixes). ``scope``:
+
+    - ``trainholdout`` (default) — a class-balanced sample of the deployed **train** (capped at
+      ``max_train_sample``) PLUS the **full** k-fold holdout. What the corrected ladder needs: fit the
+      read-out LR on FT-train genome-means, test on the FT-unseen holdout.
+    - ``eval`` — the holdout only (honest, ~5x cheaper, but no train side for a fit-on-train probe).
+
+    Writes ``ft_genome_mean_<drug>_<scope>.npz`` + ``cache_summary_<drug>.json`` (scope + checkpoint +
+    holdout provenance the ladder's coverage guard reads).
     """
-    _lm, train_ids, validate_ids, evaluate_ids, _info = resolve_clean_splits(ast_sheet, drug)
-    all_ids = list(evaluate_ids) if eval_only else [*train_ids, *validate_ids, *evaluate_ids]
+    label_map, train_ids, validate_ids, evaluate_ids, split_info = (
+        resolve_clean_splits(ast_sheet, drug, checkpoint_dir=checkpoint) if checkpoint
+        else resolve_clean_splits(ast_sheet, drug)
+    )
+    if checkpoint is None:
+        logger.warning("%s: no checkpoint — falling back to the CSV single-split holdout, which may not match "
+                       "the deployed FT model. Pass the deployed checkpoint for the honest k-fold holdout.", drug)
+    holdout_ids = list(evaluate_ids)
+    holdout_set = set(holdout_ids)
+    if scope == "trainholdout":
+        train_sample = subsample_balanced([*train_ids, *validate_ids], label_map, max_n=max_train_sample, seed=1)
+        all_ids = [*holdout_ids, *train_sample]  # holdout first so a --max-samples smoke keeps the guarded set
+    elif scope == "eval":
+        all_ids = list(holdout_ids)
+    else:
+        raise ValueError(f"scope must be 'trainholdout' or 'eval', got {scope!r}")
     if max_samples is not None:
         all_ids = all_ids[:max_samples]
-    logger.info("Forwarding %d genomes for %s (eval_only=%s)", len(all_ids), drug, eval_only)
+    n_holdout_planned = sum(1 for s in all_ids if s in holdout_set)
+    logger.info("Forwarding %d genomes for %s (scope=%s: holdout=%d, train=%d; deployed source=%s, "
+                "n_eval_expected=%s)", len(all_ids), drug, scope, n_holdout_planned,
+                len(all_ids) - n_holdout_planned, split_info["source"], split_info.get("n_evaluate_expected"))
 
     top = select_top_genes(ranking_csv, drug, threshold=threshold, top_n=top_n)
     top_set = set(top["gene_name"].astype(str))
@@ -141,9 +169,11 @@ def run(
         raise RuntimeError("No genomes forwarded — check paths / .pt suffix.")
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    mean_npz = out_dir / f"ft_genome_mean_{drug}.npz"
+    mean_npz = out_dir / f"ft_genome_mean_{drug}_{scope}.npz"
     np.savez(mean_npz, sample_ids=np.array(mean_ids), mean_vectors=np.vstack(mean_vecs).astype(np.float32))
-    logger.info("Wrote FT genome-mean (%d genomes) -> %s", len(mean_ids), mean_npz)
+    n_holdout_cached = sum(1 for s in mean_ids if s in holdout_set)
+    logger.info("Wrote FT genome-mean (%d genomes: holdout=%d, train=%d) -> %s",
+                len(mean_ids), n_holdout_cached, len(mean_ids) - n_holdout_cached, mean_npz)
 
     gene_dir = out_dir / "gene_emb"
     gene_dir.mkdir(parents=True, exist_ok=True)
@@ -160,7 +190,11 @@ def run(
     pd.DataFrame(manifest).to_csv(out_dir / f"top_gene_manifest_{drug}.csv", index=False)
     (out_dir / f"cache_summary_{drug}.json").write_text(json.dumps({
         "drug": drug, "mode": mode, "checkpoint": str(checkpoint) if checkpoint else None,
-        "n_genomes": len(mean_ids), "n_top_genes": len(manifest), "threshold": threshold, "top_n": top_n,
+        "scope": scope, "split_source": split_info["source"],
+        "n_evaluate_expected": split_info.get("n_evaluate_expected"),
+        "n_genomes": len(mean_ids), "n_holdout": n_holdout_cached,
+        "holdout_ids": [s for s in mean_ids if s in holdout_set],
+        "n_top_genes": len(manifest), "threshold": threshold, "top_n": top_n,
         "ranking_csv": str(ranking_csv),
     }, indent=2))
     logger.info("Wrote %d per-gene FT Bacformer stores -> %s", len(manifest), gene_dir)
@@ -183,9 +217,13 @@ def main() -> None:
     parser.add_argument("--auroc-threshold", type=float, default=0.6, help="Floor for top-gene selection.")
     parser.add_argument("--top-n", type=int, default=50, help="Cap on the number of top genes cached.")
     parser.add_argument("--device", type=str, default="cuda:0")
-    parser.add_argument("--eval-only", action="store_true",
-                        help="Forward only the canonical evaluate split (FT-unseen; honest scope, ~5x cheaper).")
-    parser.add_argument("--max-samples", type=int, default=None, help="Cap genomes (smoke).")
+    parser.add_argument("--scope", choices=["trainholdout", "eval"], default="trainholdout",
+                        help="trainholdout (default): deployed train-sample + full k-fold holdout (for the "
+                             "fit-on-train/test-on-holdout ladder). eval: the k-fold holdout only.")
+    parser.add_argument("--max-train-sample", type=int, default=4000,
+                        help="Cap the class-balanced deployed-train sample in scope=trainholdout (default 4000; "
+                             "plenty for a 960-d LR — keeps the TB ~30k train side cheap). The holdout is full.")
+    parser.add_argument("--max-samples", type=int, default=None, help="Cap total forwarded genomes (smoke).")
     args = parser.parse_args()
     if args.mode == "finetuned" and args.bacformer_checkpoint is None:
         parser.error("--bacformer-checkpoint is required for --mode finetuned")
@@ -193,7 +231,7 @@ def main() -> None:
         ast_sheet=args.ast_sheet_path, drug=args.drug, parquet_dir=args.parquet_dir,
         esm_store_dir=args.esm_store_dir, checkpoint=args.bacformer_checkpoint, ranking_csv=args.ranking_csv,
         out_dir=args.out_dir, threshold=args.auroc_threshold, top_n=args.top_n, device=args.device,
-        mode=args.mode, max_samples=args.max_samples, eval_only=args.eval_only,
+        mode=args.mode, max_samples=args.max_samples, scope=args.scope, max_train_sample=args.max_train_sample,
     )
 
 
