@@ -34,9 +34,9 @@ import torch
 
 from bacpredict.engine.concat.bacformer_genome_vectors import forward_inputs, load_model
 from bacpredict.engine.embedding.generate_embeddings import bacformer_last_hidden_state
+from bacpredict.engine.embedding.protein_pooling import genome_mean_pool, real_protein_indices, real_protein_rows
 from bacpredict.engine.finetune.holdout import resolve_clean_splits
 from bacpredict.engine.gene_lr.locate_gene import flatten_proteins
-from bacpredict.engine.gene_lr.protein_rows import real_protein_indices
 from bacpredict.engine.gene_lr.reliable_gene_vectors import CallsFn
 
 logger = logging.getLogger(__name__)
@@ -85,7 +85,6 @@ def run(
     gene_bakta: dict[str, list[bool]] = {}
     gene_source: dict[str, str] = {}
     skips: dict[str, int] = {}
-    length_checked = False
 
     for k, sid in enumerate(all_ids, 1):
         pq = parquet_dir / f"{sid}_protein_sequences.parquet"
@@ -103,17 +102,11 @@ def run(
 
         inputs = forward_inputs(store, device, model_dtype)
         lhs = bacformer_last_hidden_state(model, inputs)
-        lhs = lhs[0] if lhs.dim() == 3 else lhs
-        if not length_checked:
-            if lhs.shape[0] != store["protein_embeddings"].shape[1]:
-                raise RuntimeError(
-                    f"last_hidden_state length {lhs.shape[0]} != input {store['protein_embeddings'].shape[1]} "
-                    f"for {sid}: gene-token indexing would be misaligned. Aborting.")
-            length_checked = True
-        real_rows = lhs[real_idx].float().cpu().numpy()  # [n_real, dim], flat-aligned
+        # [n_real, dim] numpy, flat-aligned — materialised for the per-call token indexing below.
+        real_rows = real_protein_rows(lhs, real_idx, input_len=store["protein_embeddings"].shape[1]).cpu().numpy()
 
         mean_ids.append(str(sid))
-        mean_vecs.append(real_rows.mean(axis=0))
+        mean_vecs.append(genome_mean_pool(real_rows))
 
         for call in calls_fn(str(sid), n_real):
             gene_ids.setdefault(call.label, []).append(str(sid))

@@ -38,10 +38,10 @@ import numpy as np
 import torch
 
 from bacpredict.engine.embedding.generate_embeddings import bacformer_last_hidden_state, load_bacformer_model
+from bacpredict.engine.embedding.protein_pooling import genome_mean_pool, real_protein_indices, real_protein_rows
 from bacpredict.engine.finetune.evaluate import resolve_checkpoint_dir
 from bacpredict.engine.finetune.holdout import resolve_clean_splits
 from bacpredict.engine.gene_lr.locate_gene import build_gene_presence_table
-from bacpredict.engine.gene_lr.protein_rows import real_protein_indices
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -127,7 +127,6 @@ def _extract_gene_token_and_mean(
     mean_vectors: list[np.ndarray] = []
     kept: list[str] = []
     skips: dict[str, int] = {}
-    length_checked = False
     for sample_id, row in gene_table.iterrows():
         pt_path = esm_store_dir / f"{sample_id}{pt_suffix}"
         if not pt_path.exists():
@@ -147,21 +146,10 @@ def _extract_gene_token_and_mean(
 
         inputs = forward_inputs(store, device, model_dtype)
         lhs = bacformer_last_hidden_state(model, inputs)
-        lhs = lhs[0] if lhs.dim() == 3 else lhs
-        if not length_checked:
-            # Day-one guard: the output must align 1:1 with the input rows, or the
-            # gene flat index points at the wrong token (e.g. an injected CLS).
-            if lhs.shape[0] != input_len:
-                raise RuntimeError(
-                    f"Bacformer last_hidden_state length {lhs.shape[0]} != input length {input_len} "
-                    f"for {sample_id}: the gene token index would be misaligned. Aborting."
-                )
-            length_checked = True
-        real_rows = lhs[real_idx].float()  # contextualised real-protein tokens
-        raw = int(real_idx[flat_index])
-        token_vectors.append(lhs[raw].float().cpu().numpy())
+        real_rows = real_protein_rows(lhs, real_idx, input_len=input_len)  # contextualised real-protein tokens
+        token_vectors.append(real_rows[flat_index].cpu().numpy())
         # Genome mean = the mask-normalised mean the classification head pools over.
-        mean_vectors.append(real_rows.mean(dim=0).cpu().numpy())
+        mean_vectors.append(genome_mean_pool(real_rows))
         kept.append(str(sample_id))
 
     if skips:

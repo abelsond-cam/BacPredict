@@ -52,9 +52,9 @@ import numpy as np
 import pandas as pd
 import torch
 
+from bacpredict.engine.embedding.protein_pooling import real_protein_indices
 from bacpredict.engine.finetune.holdout import load_splits
 from bacpredict.engine.gene_lr.locate_gene import flatten_proteins
-from bacpredict.engine.gene_lr.protein_rows import real_protein_indices
 from bacpredict.engine.segment_amr_lr.fit_lr import fit_per_segment
 
 logger = logging.getLogger(__name__)

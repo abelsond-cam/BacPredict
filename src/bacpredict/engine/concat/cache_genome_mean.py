@@ -29,7 +29,7 @@ import torch
 
 from bacpredict.engine.concat.bacformer_genome_vectors import forward_inputs, load_model
 from bacpredict.engine.embedding.generate_embeddings import bacformer_last_hidden_state
-from bacpredict.engine.gene_lr.protein_rows import real_protein_indices
+from bacpredict.engine.embedding.protein_pooling import genome_mean_pool, real_protein_indices, real_protein_rows
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -61,7 +61,6 @@ def compute_genome_means(
     means: list[np.ndarray] = []
     kept: list[str] = []
     skips: dict[str, int] = {}
-    length_checked = False
     for k, sid in enumerate(sample_ids, 1):
         pt_path = esm_store_dir / f"{sid}{pt_suffix}"
         if not pt_path.exists():
@@ -76,15 +75,7 @@ def compute_genome_means(
 
         inputs = forward_inputs(store, device, model_dtype)
         lhs = bacformer_last_hidden_state(model, inputs)
-        lhs = lhs[0] if lhs.dim() == 3 else lhs
-        if not length_checked:
-            if lhs.shape[0] != input_len:
-                raise RuntimeError(
-                    f"Bacformer last_hidden_state length {lhs.shape[0]} != input length {input_len} "
-                    f"for {sid}: the real-protein mask would be misaligned. Aborting."
-                )
-            length_checked = True
-        means.append(lhs[real_idx].float().mean(dim=0).cpu().numpy())
+        means.append(genome_mean_pool(real_protein_rows(lhs, real_idx, input_len=input_len)))
         kept.append(str(sid))
         if k % 500 == 0:
             logger.info("  genome-mean: %d/%d genomes (kept %d)", k, len(sample_ids), len(kept))

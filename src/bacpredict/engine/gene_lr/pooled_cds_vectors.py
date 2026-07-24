@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from bacpredict.engine.gene_lr.protein_rows import real_protein_indices
+from bacpredict.engine.embedding.protein_pooling import real_protein_indices
 
 logger = logging.getLogger(__name__)
 

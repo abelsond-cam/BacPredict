@@ -21,9 +21,9 @@ import torch
 
 from bacpredict.engine.concat.bacformer_genome_vectors import forward_inputs, load_model
 from bacpredict.engine.embedding.generate_embeddings import bacformer_last_hidden_state
+from bacpredict.engine.embedding.protein_pooling import real_protein_indices, real_protein_rows
 from bacpredict.engine.gene_lr.card_gene_locator import build_card_presence, sidecar_dir_available
 from bacpredict.engine.gene_lr.coding_amr_lr import build_multi_gene_presence
-from bacpredict.engine.gene_lr.protein_rows import real_protein_indices
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -57,7 +57,6 @@ def sweep_gene_tokens(
     tokens: dict[str, list[np.ndarray]] = {}
     ids: dict[str, list[str]] = {}
     skips: dict[str, int] = {}
-    length_checked = False
 
     for i, (sample_id, genes) in enumerate(per_sample.items(), 1):
         pt_path = esm_store_dir / f"{sample_id}{pt_suffix}"
@@ -74,17 +73,9 @@ def sweep_gene_tokens(
             continue
         inputs = forward_inputs(store, device, model_dtype)
         lhs = bacformer_last_hidden_state(model, inputs)
-        lhs = lhs[0] if lhs.dim() == 3 else lhs
-        if not length_checked:
-            if lhs.shape[0] != input_len:
-                raise RuntimeError(
-                    f"Bacformer last_hidden_state length {lhs.shape[0]} != input length {input_len} "
-                    f"for {sample_id}: gene token indices would be misaligned. Aborting."
-                )
-            length_checked = True
+        real_rows = real_protein_rows(lhs, real_idx, input_len=input_len)
         for gene, flat_index in usable.items():
-            raw = int(real_idx[flat_index])
-            tokens.setdefault(gene, []).append(lhs[raw].float().cpu().numpy())
+            tokens.setdefault(gene, []).append(real_rows[flat_index].cpu().numpy())
             ids.setdefault(gene, []).append(str(sample_id))
         if device.startswith("cuda"):
             torch.cuda.empty_cache()

@@ -33,10 +33,10 @@ import torch
 
 from bacpredict.engine.concat.bacformer_genome_vectors import forward_inputs, load_model
 from bacpredict.engine.embedding.generate_embeddings import bacformer_last_hidden_state
+from bacpredict.engine.embedding.protein_pooling import genome_mean_pool, real_protein_indices, real_protein_rows
 from bacpredict.engine.finetune.holdout import resolve_clean_splits
 from bacpredict.engine.gene_lr.build_per_gene_lr_store import subsample_balanced
 from bacpredict.engine.gene_lr.locate_gene import flatten_proteins
-from bacpredict.engine.gene_lr.protein_rows import real_protein_indices
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -159,7 +159,6 @@ def run(
     gene_ids: dict[str, list[str]] = {g: [] for g in top_set}
     gene_vecs: dict[str, list[np.ndarray]] = {g: [] for g in top_set}
     skips: dict[str, int] = {}
-    length_checked = False
 
     for k, sid in enumerate(all_ids, 1):
         pq = parquet_dir / f"{sid}_protein_sequences.parquet"
@@ -179,17 +178,11 @@ def run(
 
         inputs = forward_inputs(store, device, model_dtype)
         lhs = bacformer_last_hidden_state(model, inputs)
-        lhs = lhs[0] if lhs.dim() == 3 else lhs
-        if not length_checked:
-            if lhs.shape[0] != store["protein_embeddings"].shape[1]:
-                raise RuntimeError(
-                    f"last_hidden_state length {lhs.shape[0]} != input {store['protein_embeddings'].shape[1]} "
-                    f"for {sid}: gene-token indexing would be misaligned. Aborting.")
-            length_checked = True
-        real_rows = lhs[real_idx].float().cpu().numpy()  # [n_real, dim], flat-aligned with gene_names
+        # [n_real, dim] numpy, flat-aligned with gene_names — materialised for per-gene token indexing below.
+        real_rows = real_protein_rows(lhs, real_idx, input_len=store["protein_embeddings"].shape[1]).cpu().numpy()
 
         mean_ids.append(str(sid))
-        mean_vecs.append(real_rows.mean(axis=0))
+        mean_vecs.append(genome_mean_pool(real_rows))
         for i, g in enumerate(gene_names):
             if g in top_set and counts[g] == 1:  # single-copy occurrence only
                 gene_vecs[g].append(real_rows[i])
