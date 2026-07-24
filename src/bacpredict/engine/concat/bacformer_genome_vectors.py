@@ -43,9 +43,6 @@ from bacpredict.engine.finetune.holdout import resolve_clean_splits
 from bacpredict.engine.gene_lr.locate_gene import build_gene_presence_table
 from bacpredict.engine.gene_lr.protein_rows import real_protein_indices
 
-# Default cohort drug (TB rpoB/rifampicin). Superseded by OrganismConfig in a later refactor step.
-RIFAMPIN_COLUMN = "rifampin"
-
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -206,7 +203,7 @@ def main() -> None:
                              "(consumed by --steps bacformer_gene_token / bacformer_mean).")
     parser.add_argument("--gene", type=str, default="rpoB", help="Gene whose contextualised token to extract (default rpoB).")
     parser.add_argument("--gene-aliases", type=str, nargs="*", default=[], help="Alternative accepted gene symbols.")
-    parser.add_argument("--drug", type=str, default=RIFAMPIN_COLUMN, help="Phenotype column defining the cohort (default rifampin).")
+    parser.add_argument("--drug", type=str, default="rifampin", help="Phenotype column defining the cohort (default rifampin).")
     parser.add_argument("--device", type=str, default="cuda:0", help="Torch device (default cuda:0).")
     parser.add_argument("--bacformer-checkpoint", type=Path, default=None,
                         help="Fine-tuned AMR checkpoint dir: extract the *fine-tuned* backbone's gene token + "

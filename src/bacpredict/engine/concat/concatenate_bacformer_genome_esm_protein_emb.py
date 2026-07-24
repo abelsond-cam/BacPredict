@@ -45,7 +45,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from bacpredict.engine.concat.bacformer_genome_vectors import RIFAMPIN_COLUMN, compute_bacformer_vectors
+from bacpredict.engine.concat.bacformer_genome_vectors import compute_bacformer_vectors
 from bacpredict.engine.finetune.holdout import resolve_clean_splits
 from bacpredict.engine.gene_lr.kfold_probe import FeatureSpec, run_kfold_probe, summarise_kfold
 from bacpredict.engine.gene_lr.linear_probe import fit_score_step
@@ -400,7 +400,7 @@ def main() -> None:
     parser.add_argument("--parquet-dir", type=Path, required=True, help="Dir of *_protein_sequences.parquet.")
     parser.add_argument("--esm-store-dir", type=Path, required=True, help="Dir of *_esm_embeddings.pt.")
     parser.add_argument("--output-json", type=Path, required=True, help="Where to write the results JSON.")
-    parser.add_argument("--drug", type=str, default=RIFAMPIN_COLUMN, help="Phenotype column (default rifampin).")
+    parser.add_argument("--drug", type=str, default="rifampin", help="Phenotype column (default rifampin).")
     parser.add_argument("--gene", type=str, default="rpoB",
                         help="Gene whose ESM-C vector to concat with the Bacformer mean (default rpoB).")
     parser.add_argument("--gene-from-ranking", type=Path, default=None,
