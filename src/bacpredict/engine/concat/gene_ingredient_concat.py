@@ -30,9 +30,9 @@ from bacpredict.engine.concat.concat_ingredients import (
     load_ft_gene,
     load_ft_mean,
 )
-from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_one_gene, fit_one_gene_imputed
-from bacpredict.engine.gene_lr.reliable_gene_vectors import MIN_CARRIERS, CallsFn, collect_reliable_gene_vectors
 from bacpredict.engine.finetune.holdout import resolve_clean_splits
+from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_one_segment, fit_one_segment_imputed
+from bacpredict.engine.gene_lr.reliable_gene_vectors import MIN_CARRIERS, CallsFn, collect_reliable_gene_vectors
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -45,7 +45,7 @@ def _best_gene(blocks: dict[str, tuple[list[str], np.ndarray]], universe: list[s
     for gene, (ids, vecs) in blocks.items():
         if len(ids) < MIN_CARRIERS:
             continue
-        fit = fit_one_gene_imputed(ids, vecs.astype(np.float32), universe, y, vecs.shape[1],
+        fit = fit_one_segment_imputed(ids, vecs.astype(np.float32), universe, y, vecs.shape[1],
                                     n_folds=n_folds, seed=seed)
         au = float(fit["auroc"]) if fit else float("nan")
         if not np.isnan(au) and au > best_au:
@@ -93,7 +93,7 @@ def run(*, ast_sheet: Path, drug: str, ft_cache_dir: Path, frozen_cache_dir: Pat
     logger.info("%s: best genes -> %s", drug, {k: v[0] for k, v in best.items()})
 
     def _score(x: np.ndarray) -> float:
-        fit = fit_one_gene(universe, x.astype(np.float32), y, n_folds=n_folds, seed=seed)
+        fit = fit_one_segment(universe, x.astype(np.float32), y, n_folds=n_folds, seed=seed)
         return float(fit["auroc"]) if fit else float("nan")
 
     means = {"frozen_mean": fr_mean, "ft_mean": ft_mean}

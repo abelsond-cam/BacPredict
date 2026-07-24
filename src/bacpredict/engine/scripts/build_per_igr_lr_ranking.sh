@@ -1,7 +1,7 @@
 #!/bin/bash
 # Per-IGR LR ranking — wide IGR×drug table of "does this intergenic region's baclm embedding predict
 # resistance?" The non-coding sibling of build_per_gene_lr_ranking.sh (same out-of-fold LR machinery,
-# reused from build_per_gene_lr_store.fit_per_gene).
+# reused from build_per_gene_lr_store.fit_per_segment).
 #
 # For every core intergenic region — named by its ordered 5'->3' flanking-gene pair left_gene->right_gene
 # (both flanks consistently-named gene= symbols), single-copy in >10% of genomes — fit a stand-alone

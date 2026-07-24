@@ -1,4 +1,4 @@
-"""Stage 2a — does baclm embed CODING regions with the information ESM holds?
+"""Does baclm embed CODING regions with the information ESM holds?
 
 A like-for-like, per-gene logistic-regression probe. For a target gene + drug it pulls each
 sample's pooled gene 960-vector from **both** the ESM-C store and the baclm store and scores them
@@ -7,7 +7,7 @@ head-to-head through the canonical k=5 × s=3 harness
 evaluate holdout, plus the **paired** ``baclm − ESM`` delta run-for-run.
 
 Why first: baclm's coding channel reusing ESM's information is the precondition for trusting its
-**non-coding** (IGR / RNA) channel (Stages 2b–2e). If baclm-coding ≈ ESM-coding here, the non-coding
+**non-coding** (IGR / RNA) channel. If baclm-coding ≈ ESM-coding here, the non-coding
 work is on solid ground; if not, the embedding — not the read-out — is the problem.
 
 Both stores are 960-dim and share the same ``*_protein_sequences.parquet`` flat order, so a gene's

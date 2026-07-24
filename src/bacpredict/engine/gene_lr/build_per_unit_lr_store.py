@@ -24,8 +24,8 @@ stable representation, and one-row-per-genome avoids the pseudo-replication that
 inject into the LR). Prevalence is then simply the fraction of read genomes carrying the unit at all
 (≥1 copy).
 
-Everything else is reused verbatim from the per-gene harness (:func:`fit_per_gene` /
-:func:`fit_one_gene` / :func:`fit_one_gene_imputed`) and mirrors the upstream sibling's three fit modes:
+Everything else is reused verbatim from the per-gene harness (:func:`fit_per_segment` /
+:func:`fit_one_segment` / :func:`fit_one_segment_imputed`) and mirrors the upstream sibling's three fit modes:
 carrier-only (default; drop-absent, present-conditioned), ``--impute-absent-zero`` (fit over the full
 read universe, zero-imputing absent genomes — the selection = usage AUROC the concat's zero-imputed
 block consumes), and ``--feature presence`` (the presence/absence one-hot lineage control). Imputed and
@@ -61,7 +61,7 @@ import torch
 
 from bacpredict.engine.config import store_paths
 from bacpredict.engine.finetune.holdout import load_splits
-from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_per_gene, subsample_balanced
+from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_per_segment, subsample_balanced
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -236,7 +236,7 @@ def run(
         (out_dir / "per_unit_lr_build_summary.json").write_text(json.dumps(summary, indent=2))
         return summary
 
-    fitted = fit_per_gene(matrices, label_map, n_folds=n_folds, seed=seed, n_jobs=n_jobs,
+    fitted = fit_per_segment(matrices, label_map, n_folds=n_folds, seed=seed, n_jobs=n_jobs,
                           all_ids=read_ids, impute_absent_zero=impute_absent_zero, eval_ids=eval_set)
     filtered = {k for k, f in fitted.items() if f["auroc"] > auroc_filter}
 

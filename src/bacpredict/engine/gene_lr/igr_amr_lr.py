@@ -1,4 +1,4 @@
-"""Stage 2c — does a baclm PROMOTER (intergenic) embedding carry AMR signal?
+"""Does a baclm PROMOTER (intergenic) embedding carry AMR signal?
 
 For a target *flanking gene* + drug this locates the intergenic region **immediately 5′ of the gene**
 (the promoter), pulls that region's baclm ``intergenic_embeddings`` row, and scores it against the drug
@@ -13,7 +13,7 @@ Anchoring (per assembly, from the Bakta GFF — coords are per-assembly, NOT H37
     5′ end — ``end == gene_start-1`` on ``+``, ``start == gene_end+1`` on ``−`` (both self-describing
     in the ``.pt`` via ``intergenic_seqid/start/end``). No parquet needed.
 
-Build-defect audit folded in (Stage 2b): each promoter's **far-flank feature type** (CDS vs RNA) and
+Build-defect audit folded in: each promoter's **far-flank feature type** (CDS vs RNA) and
 **length** are recorded — a promoter abutting a tRNA/rRNA is a fragment baclm may have seen
 out-of-distribution, and a region > 2048 bp was truncated then mean-pooled. Both are reported per
 locus so a weak AUROC can be read against build quality rather than mistaken for absent signal.
@@ -36,8 +36,8 @@ import torch
 
 from bacpredict.engine.config import store_paths
 from bacpredict.engine.embedding.extract_proteins_from_gff_fna import _open_text
-from bacpredict.engine.gene_lr.coding_amr_lr import ladder_over_frames
 from bacpredict.engine.finetune.holdout import resolve_clean_splits
+from bacpredict.engine.gene_lr.coding_amr_lr import ladder_over_frames
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

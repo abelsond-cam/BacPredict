@@ -16,7 +16,7 @@ pair). Regions abutting an unnamed CDS, an RNA, or a contig end are left unnamed
 For every core IGR pair (single-copy in > ``--min-prevalence`` of the *train* genomes) we fit a
 stand-alone out-of-fold ``LogisticRegression`` on that region's 960-d baclm embedding predicting the
 binary resistance label, and rank pairs by out-of-fold train AUROC. The leakage discipline and the LR
-itself are **reused verbatim** from the per-gene store (:func:`fit_per_gene`): train genomes get an
+itself are **reused verbatim** from the per-gene store (:func:`fit_per_segment`): train genomes get an
 out-of-fold probability (K-fold within train), so the AUROC is a held-out estimate, never in-sample.
 
 The baclm intergenic store lives inside each ``{sample}_baclm_embeddings.pt`` as ``noncoding_*`` (the
@@ -50,7 +50,7 @@ import torch
 
 from bacpredict.engine.config import store_paths
 from bacpredict.engine.gene_lr.build_per_gene_lr_store import (
-    fit_per_gene,
+    fit_per_segment,
     load_splits,
     subsample_balanced,
 )
@@ -189,10 +189,10 @@ def collect_igr_matrices(
         (str(s), sample_gff.get(str(s), ""), str(Path(baclm_dir) / f"{s}{baclm_suffix}"))
         for s in train_ids if str(s) in sample_gff
     ]
-    # Serial sweep, deliberately (mirrors build_per_gene_lr_store.assemble_gene_matrices). Each task
+    # Serial sweep, deliberately (mirrors build_per_gene_lr_store.assemble_segment_matrices). Each task
     # calls torch.load(mmap=True); parallelising the sweep with either mp.Pool or a joblib thread/loky
     # backend leaves torch/OpenMP multi-threaded in the main process, and the subsequent fork for the
-    # process-parallel fit (fit_per_gene, n_jobs) then segfaults on aarch64 (Grace). The reads are fast
+    # process-parallel fit (fit_per_segment, n_jobs) then segfaults on aarch64 (Grace). The reads are fast
     # and I/O-bound, so serial here + a process-parallel fit is both safe and quick.
     results = [_genome_igr_records(sid, gff, pt, boundary_tol) for sid, gff, pt in tasks]
 
@@ -321,7 +321,7 @@ def run(
     auroc_col = f"presence_lr_auroc_{drug}" if presence else f"lr_auroc_{drug}"
     table_name = f"per_igr_presence_lr_{drug}.csv" if presence else f"per_igr_lr_{drug}.csv"
 
-    fitted = fit_per_gene(
+    fitted = fit_per_segment(
         core_matrices, label_map, n_folds=n_folds, seed=seed, n_jobs=n_jobs,
         all_ids=read_ids, impute_absent_zero=impute_absent_zero,
     )

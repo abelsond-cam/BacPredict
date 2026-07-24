@@ -13,7 +13,7 @@ catalogues call it ("inhA promoter").
 For each named gene in a genome we take the region **abutting its 5′ end** (on ``-`` strand the region
 just above the gene end; on ``+`` strand just below the gene start, within ``--boundary-tol`` bp), key it
 ``upstream:<gene>``, keep the **single-copy** anchors, and fit the same out-of-fold LR harness
-(``fit_per_gene``) → per-anchor AUROC. Writes ``per_upstream_lr_<drug>.csv``
+(``fit_per_segment``) → per-anchor AUROC. Writes ``per_upstream_lr_<drug>.csv``
 (``upstream_gene, gene, prevalence, lr_auroc_<drug>, n_train, n_pos, kept_filtered``).
 
 Like the flank-pair sibling this supports two **absence modes** beyond the default carrier-only
@@ -43,7 +43,7 @@ import pandas as pd
 
 from bacpredict.engine.config import store_paths
 from bacpredict.engine.finetune.holdout import load_splits
-from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_per_gene, subsample_balanced
+from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_per_segment, subsample_balanced
 from bacpredict.engine.gene_lr.build_per_igr_lr_store import _flank_pair, _read_intergenic
 from bacpredict.engine.gene_lr.igr_amr_lr import _parse_gff
 
@@ -143,7 +143,7 @@ def collect_upstream_matrices(
     **Two-pass, streamed** (one genome at a time — never materialise every genome's records at once): pass
     1 tallies each anchor's single-copy prevalence over the fit genomes and keeps only anchors above
     ``min_prevalence`` (the *core* set); pass 2 re-reads and stores the 960-d vectors for **core anchors
-    only**. This mirrors the coding side (:func:`assemble_gene_matrices` collects vectors only for
+    only**. This mirrors the coding side (:func:`assemble_segment_matrices` collects vectors only for
     pre-discovered core genes) and is essential at the full cohort — holding *every* named gene's region
     (mostly rare accessory anchors) needs >440 GB, while the ~1–2 k core anchors fit easily. The serial
     read (torch.load mmap can't be forked before the process-parallel fit on aarch64) costs two passes over
@@ -249,7 +249,7 @@ def run(
     auroc_col = f"presence_lr_auroc_{drug}" if presence else f"lr_auroc_{drug}"
     table_name = f"per_upstream_presence_lr_{drug}.csv" if presence else f"per_upstream_lr_{drug}.csv"
 
-    fitted = fit_per_gene(core_matrices, label_map, n_folds=n_folds, seed=seed, n_jobs=n_jobs,
+    fitted = fit_per_segment(core_matrices, label_map, n_folds=n_folds, seed=seed, n_jobs=n_jobs,
                           all_ids=read_ids, impute_absent_zero=impute_absent_zero, eval_ids=eval_set)
     filtered = {k for k, f in fitted.items() if f["auroc"] > auroc_filter}
 

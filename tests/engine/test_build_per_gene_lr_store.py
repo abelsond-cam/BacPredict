@@ -34,12 +34,12 @@ def _label_map(n_pos: int, n_neg: int) -> tuple[list[str], dict[str, int]]:
     return ids, {s: (1 if s.startswith("R") else 0) for s in ids}
 
 
-def test_fit_per_gene_oof_is_leakage_safe(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fit_per_segment_oof_is_leakage_safe(monkeypatch: pytest.MonkeyPatch) -> None:
     """A separable gene yields high OOF AUROC; OOF probs cover every train id; full fit is stored."""
     ids, label_map = _label_map(12, 12)
     x = _separable_matrix(ids, label_map, sep=4.0, seed=0)
 
-    fitted = bplr.fit_per_gene({"rpoB": (ids, x)}, label_map, n_folds=5, seed=1)
+    fitted = bplr.fit_per_segment({"rpoB": (ids, x)}, label_map, n_folds=5, seed=1)
 
     assert "rpoB" in fitted
     f = fitted["rpoB"]
@@ -48,7 +48,7 @@ def test_fit_per_gene_oof_is_leakage_safe(monkeypatch: pytest.MonkeyPatch) -> No
     assert hasattr(f["clf"], "predict_proba") and hasattr(f["scaler"], "transform")
 
 
-def test_fit_one_gene_eval_holdout_splits_fit_and_scores_evaluate() -> None:
+def test_fit_one_segment_eval_holdout_splits_fit_and_scores_evaluate() -> None:
     """With ``eval_ids`` the LR is fit on the non-eval genomes and scored on the held-out evaluate split.
 
     A separable gene → strong held-out AUROC; the eval genomes are excluded from ``oof_prob`` (they were
@@ -59,7 +59,7 @@ def test_fit_one_gene_eval_holdout_splits_fit_and_scores_evaluate() -> None:
     y = np.array([label_map[s] for s in ids], dtype=int)
     eval_ids = {ids[0], ids[1], ids[20], ids[21]}  # 2 pos (R0,R1) + 2 neg (S0,S1)
 
-    f = bplr.fit_one_gene(ids, x, y, n_folds=5, seed=1, eval_ids=eval_ids)
+    f = bplr.fit_one_segment(ids, x, y, n_folds=5, seed=1, eval_ids=eval_ids)
 
     assert f is not None
     assert f["n_train"] == len(ids) - len(eval_ids)  # fit on the non-eval genomes only
@@ -69,51 +69,51 @@ def test_fit_one_gene_eval_holdout_splits_fit_and_scores_evaluate() -> None:
     assert f["eval_auroc"] > 0.9  # separable → strong on the held-out test too
 
 
-def test_fit_one_gene_accepts_float16_storage() -> None:
+def test_fit_one_segment_accepts_float16_storage() -> None:
     """float16 design-matrix storage still fits (upcast to float32) — the whole-cohort memory path."""
     ids, label_map = _label_map(12, 12)
     x = _separable_matrix(ids, label_map, sep=4.0, seed=1).astype(np.float16)
     y = np.array([label_map[s] for s in ids], dtype=int)
 
-    f = bplr.fit_one_gene(ids, x, y, n_folds=5, seed=1)
+    f = bplr.fit_one_segment(ids, x, y, n_folds=5, seed=1)
     assert f is not None and f["auroc"] > 0.9
 
 
-def test_fit_one_gene_no_eval_ids_is_backcompat() -> None:
+def test_fit_one_segment_no_eval_ids_is_backcompat() -> None:
     """``eval_ids=None`` reproduces the original OOF-only result: all ids fit, eval fields empty."""
     ids, label_map = _label_map(10, 10)
     x = _separable_matrix(ids, label_map, sep=4.0, seed=3)
     y = np.array([label_map[s] for s in ids], dtype=int)
 
-    f = bplr.fit_one_gene(ids, x, y, n_folds=5, seed=1)
+    f = bplr.fit_one_segment(ids, x, y, n_folds=5, seed=1)
 
     assert set(f["oof_prob"]) == set(ids)  # every genome is a fit genome, as before
     assert f["n_train"] == len(ids) and f["n_eval"] == 0 and f["n_eval_pos"] == 0
     assert np.isnan(f["eval_auroc"])
 
 
-def test_fit_per_gene_threads_eval_ids() -> None:
-    """``fit_per_gene(..., eval_ids=...)`` yields the eval columns for every gene."""
+def test_fit_per_segment_threads_eval_ids() -> None:
+    """``fit_per_segment(..., eval_ids=...)`` yields the eval columns for every gene."""
     ids, label_map = _label_map(20, 20)
     x = _separable_matrix(ids, label_map, sep=4.0, seed=5)
     eval_ids = {ids[0], ids[20]}  # 1 pos + 1 neg
 
-    fitted = bplr.fit_per_gene({"rpoB": (ids, x)}, label_map, n_folds=5, seed=1, eval_ids=eval_ids)
+    fitted = bplr.fit_per_segment({"rpoB": (ids, x)}, label_map, n_folds=5, seed=1, eval_ids=eval_ids)
 
     f = fitted["rpoB"]
     assert f["n_eval"] == 2 and f["n_eval_pos"] == 1
     assert 0.0 <= f["eval_auroc"] <= 1.0
 
 
-def test_fit_per_gene_drops_single_class() -> None:
+def test_fit_per_segment_drops_single_class() -> None:
     """A gene whose train labels are all one class has no resistance contrast and is dropped."""
     ids = [f"S{i}" for i in range(8)]
     label_map = dict.fromkeys(ids, 0)
     x = np.random.default_rng(0).normal(size=(8, DIM))
-    assert bplr.fit_per_gene({"g": (ids, x)}, label_map, n_folds=5, seed=1) == {}
+    assert bplr.fit_per_segment({"g": (ids, x)}, label_map, n_folds=5, seed=1) == {}
 
 
-def test_fit_per_gene_impute_absent_recovers_presence_signal() -> None:
+def test_fit_per_segment_impute_absent_recovers_presence_signal() -> None:
     """Zero-imputing absent genomes lets the LR use the presence/absence signal the drop-absent fit can't.
 
     The acquired-gene case: the gene is present *only* in the resistant genomes (presence == resistance).
@@ -128,9 +128,9 @@ def test_fit_per_gene_impute_absent_recovers_presence_signal() -> None:
     x_present = np.random.default_rng(0).normal(loc=5.0, size=(len(present_ids), DIM))
     gene_matrices = {"acq": (present_ids, x_present)}
 
-    assert bplr.fit_per_gene(gene_matrices, label_map, n_folds=5, seed=1) == {}  # drop-absent: single-class
+    assert bplr.fit_per_segment(gene_matrices, label_map, n_folds=5, seed=1) == {}  # drop-absent: single-class
 
-    fitted = bplr.fit_per_gene(
+    fitted = bplr.fit_per_segment(
         gene_matrices, label_map, n_folds=5, seed=1, all_ids=ids, impute_absent_zero=True
     )
     assert "acq" in fitted
@@ -142,7 +142,7 @@ def test_prob_for_routes_train_to_oof_unseen_to_full_fit() -> None:
     """``_prob_for`` returns the stored OOF value for a fit train id, else a full-fit prediction."""
     ids, label_map = _label_map(10, 10)
     x = _separable_matrix(ids, label_map, sep=4.0, seed=2)
-    fitted = bplr.fit_per_gene({"rpoB": (ids, x)}, label_map, n_folds=5, seed=1)
+    fitted = bplr.fit_per_segment({"rpoB": (ids, x)}, label_map, n_folds=5, seed=1)
 
     train_id = ids[0]
     assert bplr._prob_for("rpoB", train_id, x[0], fitted) == fitted["rpoB"]["oof_prob"][train_id]
@@ -156,7 +156,7 @@ def test_build_panels_filtered_zeroes_low_auroc_gene(tmp_path: Path, monkeypatch
     ids, label_map = _label_map(12, 12)
     x_good = _separable_matrix(ids, label_map, sep=4.0, seed=3)
     x_noise = np.random.default_rng(4).normal(size=(len(ids), DIM))  # label-independent -> ~0.5 AUROC
-    fitted = bplr.fit_per_gene({"rpoB": (ids, x_good), "noise": (ids, x_noise)}, label_map, n_folds=5, seed=1)
+    fitted = bplr.fit_per_segment({"rpoB": (ids, x_good), "noise": (ids, x_noise)}, label_map, n_folds=5, seed=1)
     assert fitted["rpoB"]["auroc"] > fitted["noise"]["auroc"]
     filtered_genes = {"rpoB"}  # only the strong gene clears a realistic filter
 

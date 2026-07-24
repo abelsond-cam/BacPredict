@@ -17,14 +17,14 @@ the ladder plot renders against the RED catalogue one-hot ceiling:
 The scientific question is how much AUROC these simple blocks RECOVER toward the catalogue ceiling for the
 **weak, non-coding-determinant** drugs (ethionamide, streptomycin, kanamycin). It is a raw-recovery test — we
 do NOT net out lineage/structure (rif/cipro are coding-determinant controls that show the baseline lift).
-Every config is scored by the *same* zero-imputed LR (:func:`build_per_gene_lr_store.fit_one_gene`), fit on
+Every config is scored by the *same* zero-imputed LR (:func:`build_per_gene_lr_store.fit_one_segment`), fit on
 the **FT-train** genomes and tested on the **FT k-fold holdout** (the genomes the deployed fine-tuned backbone
 never trained on) — a genuine held-out estimate that mirrors how the deployed head was trained-then-evaluated.
 Best-gene / best-noncoding are *selected* from the **train-OOF** rankings (leakage-free w.r.t. that holdout).
 CPU/login for small cohorts, a short sbatch for the ~38k TB set.
 
 Reuses the concat primitives (:func:`impute_block`, :func:`load_ft_mean`, the baclm block loaders in
-:mod:`bacpredict.engine.concat.concat_ingredients`), :func:`fit_one_gene`, and the ceiling split
+:mod:`bacpredict.engine.concat.concat_ingredients`), :func:`fit_one_segment`, and the ceiling split
 :func:`bacpredict.engine.plots.driver_panel.parse_driver_csv`.
 """
 from __future__ import annotations
@@ -48,7 +48,7 @@ from bacpredict.engine.concat.concat_ingredients import (
 )
 from bacpredict.engine.config import organism, store_paths, visualisations_dir
 from bacpredict.engine.finetune.holdout import resolve_clean_splits
-from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_one_gene
+from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_one_segment
 from bacpredict.engine.plots.driver_panel import parse_driver_csv
 from bacpredict.engine.plots.labels import display_name
 
@@ -210,7 +210,7 @@ def run(
 
     def _score(x: np.ndarray) -> tuple[float, float]:
         """(AUROC, AUPRC) of the zero-imputed LR fit on the FT-train genomes and tested on the FT holdout."""
-        fit = fit_one_gene(all_ids, x.astype(np.float32), y, n_folds=n_folds, seed=seed, eval_ids=holdout_set)
+        fit = fit_one_segment(all_ids, x.astype(np.float32), y, n_folds=n_folds, seed=seed, eval_ids=holdout_set)
         if not fit or fit["n_eval"] == 0:
             return float("nan"), float("nan")
         ev_ids = [s for s in all_ids if s in holdout_set]

@@ -37,7 +37,7 @@ The channel is **drug-specific** (the LR predicts that drug's label) — rifampi
 
 Scale note: the per-gene training matrices are held in memory (≈ ``n_train × n_core × 960`` floats
 ≈ 8 GB for the 1000-genome manifest). The full ~38k cohort would need gene-batching in
-:func:`assemble_gene_matrices`; out of scope for the manifest prototype.
+:func:`assemble_segment_matrices`; out of scope for the manifest prototype.
 """
 
 from __future__ import annotations
@@ -85,7 +85,7 @@ EMBEDDING_STORES: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
-def _genome_gene_records(sample_id: str, parquet_dir: Path) -> list[dict]:
+def _genome_segment_records(sample_id: str, parquet_dir: Path) -> list[dict]:
     """Flat per-protein records (``gene_name`` + ``protein_name`` …) for one genome (parquet only)."""
     pq = parquet_dir / f"{sample_id}_protein_sequences.parquet"
     if not pq.exists():
@@ -187,7 +187,7 @@ def discover_core_genes(
     single_copy_genomes: Counter[str] = Counter()
     annotation: dict[str, str] = {}
     for k, sid in enumerate(train_ids, 1):
-        records = _genome_gene_records(sid, parquet_dir)
+        records = _genome_segment_records(sid, parquet_dir)
         counts = Counter(r["gene_name"] for r in records if r["gene_name"])
         single_copy_genomes.update(g for g, c in counts.items() if c == 1)
         for r in records:
@@ -210,7 +210,7 @@ def discover_core_genes(
 # ---------------------------------------------------------------------------
 
 
-def assemble_gene_matrices(
+def assemble_segment_matrices(
     train_ids: list[str], core_genes: list[str], embed_dir: Path, parquet_dir: Path, *,
     store_kind: str = "esm", store_dtype: str = "float32",
 ) -> tuple[dict[str, tuple[list[str], np.ndarray]], list[str]]:
@@ -223,7 +223,7 @@ def assemble_gene_matrices(
     genome has no data and must not be imputed as absent).
 
     ``store_dtype`` sets the stored embedding precision. ``float16`` halves the in-memory footprint of the
-    full-cohort collection (the design matrices, not the fit — :func:`fit_one_gene` upcasts to float32), so
+    full-cohort collection (the design matrices, not the fit — :func:`fit_one_segment` upcasts to float32), so
     a whole-cohort screen fits one node; the LR itself is unaffected (StandardScaler solves in float64).
     """
     core_set = set(core_genes)
@@ -257,7 +257,7 @@ def assemble_gene_matrices(
 # ---------------------------------------------------------------------------
 
 
-def fit_one_gene(
+def fit_one_segment(
     ids: list[str], x: np.ndarray, y: np.ndarray, *, n_folds: int, seed: int,
     eval_ids: set[str] | None = None,
 ) -> dict | None:
@@ -316,7 +316,7 @@ def fit_one_gene(
     return result
 
 
-def fit_one_gene_imputed(
+def fit_one_segment_imputed(
     present_ids: list[str], x_present: np.ndarray, all_ids: list[str], y_all: np.ndarray, dim: int,
     *, n_folds: int, seed: int, eval_ids: set[str] | None = None,
 ) -> dict | None:
@@ -332,10 +332,10 @@ def fit_one_gene_imputed(
     rows = [pos[s] for s in present_ids if s in pos]
     if rows:
         x[rows] = x_present[: len(rows)]
-    return fit_one_gene(list(all_ids), x, y_all, n_folds=n_folds, seed=seed, eval_ids=eval_ids)
+    return fit_one_segment(list(all_ids), x, y_all, n_folds=n_folds, seed=seed, eval_ids=eval_ids)
 
 
-def fit_per_gene(
+def fit_per_segment(
     gene_matrices: dict[str, tuple[list[str], np.ndarray]],
     label_map: dict[str, int],
     *,
@@ -369,7 +369,7 @@ def fit_per_gene(
         y_all = np.array([label_map[s] for s in all_ids], dtype=int)
         dim = next(iter(gene_matrices.values()))[1].shape[1]
         results = Parallel(n_jobs=n_jobs)(
-            delayed(fit_one_gene_imputed)(
+            delayed(fit_one_segment_imputed)(
                 gene_matrices[g][0], gene_matrices[g][1], all_ids, y_all, dim,
                 n_folds=n_folds, seed=seed, eval_ids=eval_ids)
             for g in genes
@@ -377,7 +377,7 @@ def fit_per_gene(
     else:
         ys = {g: np.array([label_map[s] for s in gene_matrices[g][0]], dtype=int) for g in genes}
         results = Parallel(n_jobs=n_jobs)(
-            delayed(fit_one_gene)(gene_matrices[g][0], gene_matrices[g][1], ys[g],
+            delayed(fit_one_segment)(gene_matrices[g][0], gene_matrices[g][1], ys[g],
                                   n_folds=n_folds, seed=seed, eval_ids=eval_ids)
             for g in genes
         )
@@ -584,10 +584,10 @@ def run(
     core_genes, prevalence_table, annotation = discover_core_genes(
         fit_train_ids, parquet_dir, min_prevalence=min_prevalence
     )
-    gene_matrices, read_ids = assemble_gene_matrices(
+    gene_matrices, read_ids = assemble_segment_matrices(
         sweep_ids, core_genes, embed_dir, parquet_dir, store_kind=store_kind, store_dtype=store_dtype
     )
-    fitted = fit_per_gene(gene_matrices, label_map, n_folds=n_folds, seed=seed, n_jobs=n_jobs,
+    fitted = fit_per_segment(gene_matrices, label_map, n_folds=n_folds, seed=seed, n_jobs=n_jobs,
                           all_ids=read_ids, impute_absent_zero=impute_absent_zero, eval_ids=eval_set)
     filtered_genes = {g for g, f in fitted.items() if f["auroc"] > auroc_filter}
     logger.info("Filter (AUROC > %.2f): %d of %d fitted genes kept", auroc_filter, len(filtered_genes), len(fitted))

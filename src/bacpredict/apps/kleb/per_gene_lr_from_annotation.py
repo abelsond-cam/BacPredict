@@ -15,7 +15,7 @@ protein vector ESM-C embedded), differing only in the carrier set:
   the old Bakta-keyed analysis would have found). The difference is the carriers Bakta missed/mislabelled.
 
 For one drug, over the canonical **evaluate holdout**, per AMR gene-family: zero-imputed out-of-fold k-fold
-LR (:func:`bacpredict.engine.gene_lr.build_per_gene_lr_store.fit_one_gene_imputed`) on each carrier set →
+LR (:func:`bacpredict.engine.gene_lr.build_per_gene_lr_store.fit_one_segment_imputed`) on each carrier set →
 ``reliable_per_gene_esm_lr_<drug>.csv`` (gene_family, amr_source, n_carriers_reliable, n_carriers_bakta,
 carrier_recovery, prevalence, esm_lr_auroc_reliable, esm_lr_auroc_bakta, delta_auroc). CPU only, no forward
 pass. The FT side (does the *fine-tuned* token learn the gene) is the GPU follow-on
@@ -35,7 +35,7 @@ import pandas as pd
 
 from bacpredict.engine.config import KP
 from bacpredict.engine.finetune.holdout import resolve_clean_splits
-from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_one_gene_imputed
+from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_one_segment_imputed
 from bacpredict.engine.gene_lr.reliable_gene_vectors import (
     MIN_CARRIERS,
     GeneCall,
@@ -145,14 +145,14 @@ def run(
             continue
         x = np.vstack(vecs).astype(np.float32)
         dim = x.shape[1]
-        rel = fit_one_gene_imputed(ids, x, read_ids, y_all, dim, n_folds=n_folds, seed=seed)
+        rel = fit_one_segment_imputed(ids, x, read_ids, y_all, dim, n_folds=n_folds, seed=seed)
 
         bakta_ids = [s for s in ids if s in ent["bakta_ids"]]
         bakta_au = float("nan")
         if len(bakta_ids) >= MIN_CARRIERS:
             pos = {s: i for i, s in enumerate(ids)}
             bx = np.vstack([vecs[pos[s]] for s in bakta_ids]).astype(np.float32)
-            bfit = fit_one_gene_imputed(bakta_ids, bx, read_ids, y_all, dim, n_folds=n_folds, seed=seed)
+            bfit = fit_one_segment_imputed(bakta_ids, bx, read_ids, y_all, dim, n_folds=n_folds, seed=seed)
             bakta_au = float(bfit["auroc"]) if bfit else float("nan")
 
         rel_au = float(rel["auroc"]) if rel else float("nan")
