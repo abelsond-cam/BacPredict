@@ -16,6 +16,7 @@ import pytest
 pytest.importorskip("sklearn")
 
 import bacpredict.engine.gene_lr.build_per_gene_lr_store as bplr
+from bacpredict.engine.segment_amr_lr.fit_lr import fit_one_segment  # relocated out of the coding module
 
 DIM = 6
 
@@ -59,7 +60,7 @@ def test_fit_one_segment_eval_holdout_splits_fit_and_scores_evaluate() -> None:
     y = np.array([label_map[s] for s in ids], dtype=int)
     eval_ids = {ids[0], ids[1], ids[20], ids[21]}  # 2 pos (R0,R1) + 2 neg (S0,S1)
 
-    f = bplr.fit_one_segment(ids, x, y, n_folds=5, seed=1, eval_ids=eval_ids)
+    f = fit_one_segment(ids, x, y, n_folds=5, seed=1, eval_ids=eval_ids)
 
     assert f is not None
     assert f["n_train"] == len(ids) - len(eval_ids)  # fit on the non-eval genomes only
@@ -75,7 +76,7 @@ def test_fit_one_segment_accepts_float16_storage() -> None:
     x = _separable_matrix(ids, label_map, sep=4.0, seed=1).astype(np.float16)
     y = np.array([label_map[s] for s in ids], dtype=int)
 
-    f = bplr.fit_one_segment(ids, x, y, n_folds=5, seed=1)
+    f = fit_one_segment(ids, x, y, n_folds=5, seed=1)
     assert f is not None and f["auroc"] > 0.9
 
 
@@ -85,7 +86,7 @@ def test_fit_one_segment_no_eval_ids_is_backcompat() -> None:
     x = _separable_matrix(ids, label_map, sep=4.0, seed=3)
     y = np.array([label_map[s] for s in ids], dtype=int)
 
-    f = bplr.fit_one_segment(ids, x, y, n_folds=5, seed=1)
+    f = fit_one_segment(ids, x, y, n_folds=5, seed=1)
 
     assert set(f["oof_prob"]) == set(ids)  # every genome is a fit genome, as before
     assert f["n_train"] == len(ids) and f["n_eval"] == 0 and f["n_eval_pos"] == 0

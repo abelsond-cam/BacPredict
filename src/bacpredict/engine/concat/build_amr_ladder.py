@@ -48,9 +48,9 @@ from bacpredict.engine.concat.concat_ingredients import (
 )
 from bacpredict.engine.config import organism, store_paths, visualisations_dir
 from bacpredict.engine.finetune.holdout import resolve_clean_splits
-from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_one_segment
 from bacpredict.engine.plots.driver_panel import parse_driver_csv
 from bacpredict.engine.plots.labels import display_name
+from bacpredict.engine.segment_amr_lr.fit_lr import fit_one_segment
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

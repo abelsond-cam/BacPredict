@@ -43,9 +43,10 @@ import pandas as pd
 
 from bacpredict.engine.config import store_paths
 from bacpredict.engine.finetune.holdout import load_splits
-from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_per_segment, subsample_balanced
+from bacpredict.engine.gene_lr.build_per_gene_lr_store import subsample_balanced
 from bacpredict.engine.gene_lr.build_per_igr_lr_store import _flank_pair, _read_intergenic
 from bacpredict.engine.gene_lr.igr_amr_lr import _parse_gff
+from bacpredict.engine.segment_amr_lr.fit_lr import fit_per_segment
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

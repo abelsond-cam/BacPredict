@@ -35,7 +35,8 @@ import numpy as np
 import pandas as pd
 
 from bacpredict.engine.finetune.holdout import resolve_clean_splits
-from bacpredict.engine.gene_lr.build_per_gene_lr_store import fit_one_segment_imputed, read_genome
+from bacpredict.engine.gene_lr.build_per_gene_lr_store import read_genome
+from bacpredict.engine.segment_amr_lr.fit_lr import fit_one_segment_imputed
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
