@@ -1,7 +1,9 @@
 """Unit tests for the concat probe's small pure helpers.
 
-Covers ``_top_gene_from_ranking`` (auto-pick the causal gene per drug from a per-gene LR ranking CSV).
-The heavy ``run_concat_probe`` path needs HPC embeddings and is exercised by the Stage-A smoke, not here.
+Covers ``_top_gene_from_ranking`` (auto-pick the causal gene per drug from a per-gene LR ranking CSV) and
+``_resolve_concat_splits`` (a FINE-TUNED mean must resolve the deployed k-fold holdout, never the CSV
+single-split — the train/test leak). The heavy ``run_concat_probe`` path needs HPC embeddings and is
+exercised by the Stage-A smoke, not here.
 """
 
 from __future__ import annotations
@@ -44,3 +46,45 @@ def test_top_gene_from_ranking_rejects_a_non_ranking_csv(tmp_path: Path) -> None
     pd.DataFrame({"gene_name": ["rpoB"], "value": [1.0]}).to_csv(csv, index=False)
     with pytest.raises(ValueError, match="no lr_auroc"):
         concat._top_gene_from_ranking(csv)
+
+
+def test_resolve_concat_splits_frozen_uses_csv_holdout(monkeypatch, tmp_path: Path) -> None:
+    """A FROZEN mean is label-blind → resolve the CSV single-split (no checkpoint_dir)."""
+    seen: dict = {}
+
+    def fake_resolve(ast, drug, **kw):
+        seen["kw"] = kw
+        return ({"s1": 1}, ["s1"], [], ["s2"], {"source": "csv"})
+
+    monkeypatch.setattr(concat, "resolve_clean_splits", fake_resolve)
+    out = concat._resolve_concat_splits("sheet.csv", "rifampin", finetuned=False, holdout_run_dir=None)
+    assert "checkpoint_dir" not in seen["kw"]  # CSV single-split, not the deployed holdout
+    assert out[0] == {"s1": 1}
+
+
+def test_resolve_concat_splits_finetuned_uses_deployed_holdout(monkeypatch, tmp_path: Path) -> None:
+    """A FINE-TUNED mean routes through the deployed run's results.json (checkpoint_dir=run dir)."""
+    seen: dict = {}
+
+    def fake_resolve(ast, drug, **kw):
+        seen["kw"] = kw
+        return ({"s1": 1}, ["s1"], [], ["s2"], {"source": "kfold"})
+
+    monkeypatch.setattr(concat, "resolve_clean_splits", fake_resolve)
+    run_dir = tmp_path / "ft_run"
+    concat._resolve_concat_splits("sheet.csv", "rifampin", finetuned=True, holdout_run_dir=run_dir)
+    assert seen["kw"].get("checkpoint_dir") == run_dir  # deployed k-fold holdout, not CSV
+
+
+def test_resolve_concat_splits_finetuned_without_run_dir_raises(monkeypatch) -> None:
+    """A FINE-TUNED mean with no holdout run dir MUST fail loud — never silently fall back to CSV (the leak)."""
+    called = {"n": 0}
+
+    def fake_resolve(*a, **k):
+        called["n"] += 1
+        return ({}, [], [], [], {})
+
+    monkeypatch.setattr(concat, "resolve_clean_splits", fake_resolve)
+    with pytest.raises(ValueError, match="deployed model's k-fold holdout"):
+        concat._resolve_concat_splits("sheet.csv", "rifampin", finetuned=True, holdout_run_dir=None)
+    assert called["n"] == 0  # raised before touching the resolver — no silent CSV fallback

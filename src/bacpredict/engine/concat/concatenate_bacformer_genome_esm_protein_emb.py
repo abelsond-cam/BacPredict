@@ -147,6 +147,40 @@ def _bacformer_mean_df(
     return pd.DataFrame(mean_mat, index=pd.Index(kept, name="Sample"))
 
 
+def _resolve_concat_splits(
+    ast_sheet_path: str | Path,
+    drug: str,
+    *,
+    finetuned: bool,
+    holdout_run_dir: Path | None,
+) -> tuple[dict[str, int], list[str], list[str], list[str], dict]:
+    """Resolve the split, forcing a FINE-TUNED mean onto the deployed model's own k-fold holdout.
+
+    A fine-tuned genome-mean is the FT model's own output, so its read-out must be evaluated on the exact
+    holdout the backbone was held out from — the deployed run's ``results.json`` split, replayed via
+    ``holdout_run_dir`` (:func:`resolve_clean_splits` with ``checkpoint_dir``). The CSV single-split overlaps
+    FT-train, so scoring an FT mean on it is the train/test leak this module family exists to prevent
+    (azithromycin read 0.918 leaked vs 0.799 honest; 81% of the CSV "evaluate" were k-fold TRAIN/VAL). A
+    FROZEN mean is label-blind, so the CSV single-split is a fine (consistent-if-different) holdout and no
+    run dir is needed.
+
+    Raises
+    ------
+    ValueError
+        If ``finetuned`` but ``holdout_run_dir is None`` — refuse to silently fall back to the CSV holdout.
+    """
+    if finetuned:
+        if holdout_run_dir is None:
+            raise ValueError(
+                "A fine-tuned genome-mean must be scored on the deployed model's k-fold holdout, but no run "
+                "dir was given to read it from. Pass --bacformer-checkpoint (to compute the FT mean) or, for a "
+                "cached FT NPZ, --holdout-checkpoint <the FT run dir with results.json>. Falling back to the "
+                "CSV single-split would score FT-train genomes as 'held out' — the train/test leak."
+            )
+        return resolve_clean_splits(ast_sheet_path, drug, checkpoint_dir=holdout_run_dir)
+    return resolve_clean_splits(ast_sheet_path, drug)
+
+
 def run_concat_probe(
     ast_sheet_path: Path,
     parquet_dir: Path,
@@ -165,6 +199,7 @@ def run_concat_probe(
     max_samples: int | None,
     kfold: dict | None = None,
     kfold_on_eval_holdout: bool = False,
+    holdout_checkpoint: Path | None = None,
 ) -> dict:
     """Run the three steps (ESM-gene, Bacformer-mean, concat) on the canonical eval fold.
 
@@ -183,7 +218,14 @@ def run_concat_probe(
     finetuned = bacformer_checkpoint is not None or mean_is_finetuned
     mode = "finetuned" if bacformer_checkpoint is not None else "frozen"
 
-    label_map, train_ids, validate_ids, evaluate_ids, split_info = resolve_clean_splits(ast_sheet_path, drug)
+    # A FINE-TUNED mean is the FT model's own output → it must be tested on the deployed k-fold holdout
+    # (results.json), never the CSV single-split, which overlaps FT-train (the leak). Frozen means are
+    # label-blind, so the CSV split is fine. The FT run dir is the compute checkpoint, or --holdout-checkpoint
+    # for a loaded FT NPZ.
+    holdout_run_dir = bacformer_checkpoint or holdout_checkpoint
+    label_map, train_ids, validate_ids, evaluate_ids, split_info = _resolve_concat_splits(
+        ast_sheet_path, drug, finetuned=finetuned, holdout_run_dir=holdout_run_dir,
+    )
     if max_samples is not None:
         train_ids, validate_ids, evaluate_ids = _slice_splits(train_ids, validate_ids, evaluate_ids, max_samples)
         keep = set(train_ids) | set(validate_ids) | set(evaluate_ids)
@@ -375,6 +417,9 @@ def main() -> None:
                              "instead of the frozen base. GPU; mutually exclusive with --bacformer-vectors.")
     parser.add_argument("--mean-is-finetuned", action="store_true",
                         help="Mark a loaded --bacformer-vectors NPZ as fine-tuned (sanity target 0.905 not 0.788).")
+    parser.add_argument("--holdout-checkpoint", type=Path, default=None,
+                        help="FT run dir (with results.json) whose deployed k-fold holdout to score a loaded FT "
+                             "NPZ on. Required with --mean-is-finetuned; --bacformer-checkpoint supplies its own.")
     parser.add_argument("--qc-log", type=Path, default=Path("gene_presence_qc.log"),
                         help="Where to write the gene-presence QC log (default: ./gene_presence_qc.log).")
     parser.add_argument("--pool-workers", type=int, default=1,
@@ -398,6 +443,9 @@ def main() -> None:
         parser.error("Pass either --bacformer-vectors (load a cached NPZ) or --bacformer-checkpoint (compute FT), not both.")
     if args.kfold_on_eval_holdout and args.kfold is None:
         parser.error("--kfold-on-eval-holdout requires --kfold N.")
+    if args.mean_is_finetuned and args.holdout_checkpoint is None:
+        parser.error("--mean-is-finetuned (a cached FT NPZ) needs --holdout-checkpoint <FT run dir with "
+                     "results.json> to score on the deployed k-fold holdout, not the CSV single-split (the leak).")
     if args.gene_from_ranking is not None:
         args.gene = _top_gene_from_ranking(args.gene_from_ranking)
 
@@ -414,7 +462,7 @@ def main() -> None:
         bacformer_vectors=args.bacformer_vectors, save_bacformer_vectors=args.save_bacformer_vectors,
         bacformer_checkpoint=args.bacformer_checkpoint, mean_is_finetuned=args.mean_is_finetuned,
         qc_log_path=args.qc_log, pool_workers=args.pool_workers, max_samples=args.max_samples,
-        kfold=kfold, kfold_on_eval_holdout=args.kfold_on_eval_holdout,
+        kfold=kfold, kfold_on_eval_holdout=args.kfold_on_eval_holdout, holdout_checkpoint=args.holdout_checkpoint,
     )
 
     _write_probs_sidecar(args.output_json, payload)
