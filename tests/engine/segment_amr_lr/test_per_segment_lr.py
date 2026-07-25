@@ -281,3 +281,94 @@ def test_rank_segments_core_returns_mode_and_core_count(monkeypatch: pytest.Monk
     assert n_core == 1 and impute_mode == "imputed_zero" and set(read_ids) == set(ids)
     assert "seg" in fitted and fitted["seg"]["auroc"] > 0.9
     assert prev is prevalence
+
+
+# ---------------------------------------------------------------------------
+# coding (protein) — gene_name + annotation table, no presence, panel side-output
+# ---------------------------------------------------------------------------
+
+_CODING_COLUMNS = [
+    "gene_name", "annotation", "prevalence", f"lr_auroc_{_DRUG}", f"eval_auroc_{_DRUG}",
+    "n_train", "n_pos", "n_eval", "n_eval_pos", "kept_filtered", "impute_mode",
+]
+
+
+def test_run_coding_table_schema_top_and_annotation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Coding: ``per_gene_lr_<drug>.csv`` matches write_gene_drug_table (gene_name + annotation); top gene wins.
+
+    The sweep keys prevalence by ``gene``; the ranking table keys ``gene_name`` and joins a parquet
+    ``annotation`` (product) column (here monkeypatched) — the one type whose table key ≠ prevalence key.
+    """
+    ids, label_map = _cohort()
+    matrices = {"rpoB": (ids, _separable_matrix(ids, label_map, 1)),
+                "hkA": (ids, np.random.default_rng(2).normal(size=(len(ids), DIM)))}
+    prevalence = psl.pd.DataFrame([  # sweep schema, id_column="gene"
+        {"gene": "rpoB", "n_single_copy": len(ids), "prevalence": 1.0},
+        {"gene": "hkA", "n_single_copy": len(ids), "prevalence": 1.0},
+    ])
+    _patch_collect(monkeypatch, matrices, prevalence, ids)
+    monkeypatch.setattr(psl, "_coding_annotation", lambda fit_ids, pq: {"rpoB": "DNA-directed RNA polymerase subunit beta"})
+
+    split_table = _write_split_table(tmp_path, label_map, dict.fromkeys(ids, "train"))
+    summary = psl.run("coding", split_table=split_table, drug=_DRUG, out_dir=tmp_path / "out",
+                      embed_dir=tmp_path / "emb", parquet_dir=tmp_path / "pq", store_kind="esm", min_prevalence=0.5)
+
+    assert summary["segment_type"] == "coding" and summary["embedding_store"] == "esm"
+    assert summary["best_segment"] == "rpoB" and summary["best_auroc"] > 0.9
+    table = psl.pd.read_csv(tmp_path / "out" / f"per_gene_lr_{_DRUG}.csv")
+    assert list(table.columns) == _CODING_COLUMNS
+    top = table.iloc[0]
+    assert top["gene_name"] == "rpoB" and top["annotation"] == "DNA-directed RNA polymerase subunit beta"
+    assert (table["impute_mode"] == "carrier_only").all()
+    prev = psl.pd.read_csv(tmp_path / "out" / "gene_prevalence.csv")
+    assert list(prev.columns) == ["gene", "n_single_copy", "prevalence"]  # sweep schema, no enrichment
+
+
+def test_run_coding_rejects_presence(tmp_path: Path) -> None:
+    """Coding has no presence one-hot mode → ``feature='presence'`` is a fail-fast ValueError."""
+    ids, label_map = _cohort(n=8)
+    split_table = _write_split_table(tmp_path, label_map, dict.fromkeys(ids, "train"))
+    with pytest.raises(ValueError, match="presence"):
+        psl.run("coding", split_table=split_table, drug=_DRUG, out_dir=tmp_path / "out",
+                embed_dir=tmp_path / "emb", parquet_dir=tmp_path / "pq", feature="presence")
+
+
+def test_run_coding_requires_embed_and_parquet(tmp_path: Path) -> None:
+    """Coding needs the embedding-store + parquet dirs (fail-fast if omitted)."""
+    ids, label_map = _cohort(n=8)
+    split_table = _write_split_table(tmp_path, label_map, dict.fromkeys(ids, "train"))
+    with pytest.raises(ValueError, match="embed_dir"):
+        psl.run("coding", split_table=split_table, drug=_DRUG, out_dir=tmp_path / "out")
+
+
+def test_run_coding_write_panels_invokes_builder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """write_panels wires build_panels over train+validate+holdout, standardising on the fit-train subsample."""
+    train_ids, train_labels = _cohort(24)
+    hold_ids = [f"H{i}" for i in range(4)]
+    hold_labels = {s: (i % 2) for i, s in enumerate(hold_ids)}
+    all_ids = train_ids + hold_ids
+    label_map = {**train_labels, **hold_labels}
+    split_of = {**dict.fromkeys(train_ids, "train"), **dict.fromkeys(hold_ids, "holdout")}
+
+    matrices = {"rpoB": (all_ids, _separable_matrix(all_ids, label_map, 1))}
+    prevalence = psl.pd.DataFrame([{"gene": "rpoB", "n_single_copy": len(train_ids), "prevalence": 1.0}])
+    _patch_collect(monkeypatch, matrices, prevalence, all_ids)
+    monkeypatch.setattr(psl, "_coding_annotation", lambda fit_ids, pq: {})
+
+    captured: dict = {}
+
+    def fake_build_panels(a_ids, fitted, filtered, embed_dir, parquet_dir, *, train_set, filtered_dir,
+                          unfiltered_dir, store_kind):
+        captured.update(all_ids=list(a_ids), train_set=set(train_set), store_kind=store_kind, genes=set(fitted))
+        return len(a_ids)
+
+    monkeypatch.setattr("bacpredict.engine.gene_lr.build_per_gene_lr_store.build_panels", fake_build_panels)
+
+    split_table = _write_split_table(tmp_path, label_map, split_of)
+    summary = psl.run("coding", split_table=split_table, drug=_DRUG, out_dir=tmp_path / "out",
+                      embed_dir=tmp_path / "emb", parquet_dir=tmp_path / "pq", store_kind="baclm",
+                      write_panels=True, min_prevalence=0.5)
+
+    assert summary["wrote_panels"] is True and summary["n_genomes_written"] == len(all_ids)
+    assert set(captured["all_ids"]) == set(all_ids)  # panels cover train + validate + holdout
+    assert captured["store_kind"] == "baclm" and "rpoB" in captured["genes"]
