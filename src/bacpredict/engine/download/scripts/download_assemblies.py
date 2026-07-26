@@ -39,7 +39,6 @@ Never mutates the input CSV.
 
 import argparse
 import gzip
-import io
 import os
 import sys
 import time
@@ -252,6 +251,7 @@ def resolve_biosamples_via_entrez(biosamples: list[str]) -> list[dict]:
 
 
 def extract_biosample_id(record: dict) -> str | None:
+    """Pull the BioSample accession out of a datasets assembly record (``None`` if absent)."""
     info = record.get("assembly_info") or {}
     bs = info.get("biosample")
     if isinstance(bs, dict):
@@ -351,12 +351,14 @@ def write_batches(
 
 
 def write_mapping_tsv(rows: list[dict], path: Path) -> None:
+    """Write the biosample→assembly mapping TSV."""
     path.parent.mkdir(parents=True, exist_ok=True)
     cols = ["biosample", "assembly_accession", "source", "assembly_level", "release_date"]
     pd.DataFrame(rows, columns=cols).to_csv(path, sep="\t", index=False)
 
 
 def write_manifest_tsv(rows: list[dict], path: Path) -> None:
+    """Write the download manifest TSV (one row per file to fetch)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     cols = ["biosample", "source", "filename", "ncbi_accession"]
     pd.DataFrame(rows, columns=cols).to_csv(path, sep="\t", index=False)
@@ -367,6 +369,7 @@ def write_missing_sidecar(
     full_df: pd.DataFrame,
     path: Path,
 ) -> None:
+    """Write the missing-BioSamples sidecar TSV (samples with no assembly found)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     if not missing_biosamples:
         pd.DataFrame(columns=[BIOSAMPLE_COL]).to_csv(path, sep="\t", index=False)
@@ -484,6 +487,7 @@ def run(
 
 
 def main() -> None:
+    """CLI entry point: plan TB assembly downloads from ATB (primary) + NCBI (fallback)."""
     parser = argparse.ArgumentParser(
         description=(
             "Plan TB assembly downloads from ATB (primary) and NCBI (fallback). "

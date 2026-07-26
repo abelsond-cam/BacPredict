@@ -26,16 +26,16 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
-import pandas as pd  # noqa: E402
-from matplotlib.cm import ScalarMappable  # noqa: E402
-from matplotlib.colors import Normalize  # noqa: E402
-from matplotlib.patches import Patch  # noqa: E402
-from scipy.stats import gaussian_kde  # noqa: E402
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from matplotlib.cm import ScalarMappable
+from matplotlib.colors import Normalize
+from matplotlib.patches import Patch
+from scipy.stats import gaussian_kde
 
-from bacpredict.engine.config import visualisations_dir  # noqa: E402
-from bacpredict.engine.plots.labels import display_name  # noqa: E402
+from bacpredict.engine.config import visualisations_dir
+from bacpredict.engine.plots.labels import display_name
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)

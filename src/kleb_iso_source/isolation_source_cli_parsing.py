@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from typing import Set, Tuple
 
 import pandas as pd
 
@@ -24,7 +23,7 @@ def find_matching_categories(
     df: pd.DataFrame,
     token: str,
     isolation_col: str = "isolation_source_category",
-) -> Set[str]:
+) -> set[str]:
     """Find all isolation-source categories that contain a token as a whole word."""
     if isolation_col not in df.columns:
         return set()
@@ -32,7 +31,7 @@ def find_matching_categories(
     categories = df[isolation_col].dropna().unique()
     token_lower = token.strip().lower()
 
-    matches: Set[str] = set()
+    matches: set[str] = set()
     for category in categories:
         words = re.findall(r"[a-z0-9]+", str(category).lower())
         if token_lower in words:
@@ -83,7 +82,7 @@ def validate_and_resolve_tokens(
     token1: str,
     token2: str,
     isolation_col: str = "isolation_source_category",
-) -> Tuple[str, str]:
+) -> tuple[str, str]:
     """Validate two tokens and resolve them to two different category values."""
     category1 = resolve_isolation_source_token(df, token1, isolation_col=isolation_col)
     category2 = resolve_isolation_source_token(df, token2, isolation_col=isolation_col)

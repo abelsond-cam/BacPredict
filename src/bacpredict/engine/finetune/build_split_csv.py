@@ -43,9 +43,10 @@ def validate_embeddings_and_prune(
     df_with_splits: pd.DataFrame,
     embeddings_dir: Path,
 ) -> tuple[pd.DataFrame, list[str]]:
-    """
-    Check which samples have embedding files. Return pruned dataframe (only samples
-    with embeddings) and list of missing sample IDs for reporting.
+    """Check which samples have embedding files; return the pruned frame + missing-ID list.
+
+    Return the dataframe restricted to samples that have an embedding file, plus the list of
+    missing sample IDs for reporting.
     """
     grouped = df_with_splits.groupby("Sample", as_index=False).first()
     missing_ids = []
@@ -69,9 +70,10 @@ def write_split_files(
     output_base: Path,
     skip_existing: bool = False,
 ) -> None:
-    """
-    For each Sample, load pytorch (.pt) embeddings and write a per-sample pytorch (.pt) file
-    with native PyTorch tensors and AST labels. No conversion to parquet.
+    """Write per-sample ``.pt`` files with native tensors + AST labels (no parquet conversion).
+
+    For each Sample, load its ESMc embeddings and re-save a per-sample ``.pt`` with native PyTorch
+    tensors and AST labels.
     """
     antibiotic_cols = get_antibiotic_columns(df_with_splits)
 
@@ -131,6 +133,7 @@ def write_split_files(
 
 
 def main() -> None:
+    """CLI entry point: prepare ESMc embeddings + AST labels as ``.pt`` splits for fine-tuning."""
     parser = argparse.ArgumentParser(
         description="Prepare TB ESMc embeddings and AST labels as pytorch (.pt) splits for finetuning. "
         "Integrated pruning: samples without embedding files are removed from the AST sheet."

@@ -120,11 +120,11 @@ def compute_metrics_binary_genome_pred(
         acc = accuracy_score(y_true, y_pred)
         try:
             auroc_val = roc_auc_score(y_true, y_prob)
-        except Exception:
+        except ValueError:  # roc_auc_score raises when y_true is single-class
             auroc_val = float("nan")
         try:
             auprc = average_precision_score(y_true, y_prob)
-        except Exception:
+        except ValueError:  # average_precision_score raises when y_true is single-class
             auprc = float("nan")
         f1 = f1_score(y_true, y_pred, average="binary")
 
@@ -292,7 +292,7 @@ def run(
         emb = sample["protein_embeddings"]
         print(f"protein_embeddings shape: {emb.shape if hasattr(emb, 'shape') else len(emb)}")
         print(f"labels shape: {sample['labels'].shape}, value: {sample['labels'].item()}")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 (debug inspection only — warn and continue on any failure)
         print(f"WARNING: Could not inspect sample: {e}")
 
     # bf16 master weights — the deployed AST setting (matches bacpredict.engine.finetune.finetune_amr,

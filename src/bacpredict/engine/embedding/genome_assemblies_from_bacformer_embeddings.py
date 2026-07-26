@@ -95,7 +95,7 @@ def process_embedding_file(filepath: Path) -> tuple[str, np.ndarray, int] | None
 
         return (sample_id, genome_embedding, num_embeddings)
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 (robustness: log the bad file and skip it)
         logger.error(f"Failed to process {filepath}: {e}")
         return None
 
@@ -201,7 +201,7 @@ def main():
         avg_embeddings = np.mean(num_embeddings_list)
         min_embeddings = np.min(num_embeddings_list)
         max_embeddings = np.max(num_embeddings_list)
-        logger.info(f"Embeddings per file statistics:")
+        logger.info("Embeddings per file statistics:")
         logger.info(f"  - Average: {avg_embeddings:.1f}")
         logger.info(f"  - Min: {min_embeddings}")
         logger.info(f"  - Max: {max_embeddings}")
@@ -224,7 +224,7 @@ def main():
         index=sample_ids,
         columns=[f"dim_{i}" for i in range(EXPECTED_EMBEDDING_DIM)],
     )
-    
+
     # Name the index so it's clear when loading
     df.index.name = "sample_id"
 

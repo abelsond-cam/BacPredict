@@ -67,7 +67,7 @@ def main(argv: list[str] | None = None) -> None:
     bins = DEFAULT_BINS
     if args.bins:
         edges = [float(x) for x in args.bins.split(",")]
-        bins = tuple(zip(edges[:-1], edges[1:]))  # equal-length slices by construction (no strict= → py3.8-safe)
+        bins = tuple(zip(edges[:-1], edges[1:], strict=True))  # equal-length slices by construction
 
     out_rows: list[dict] = []
     for spec in args.assoc:

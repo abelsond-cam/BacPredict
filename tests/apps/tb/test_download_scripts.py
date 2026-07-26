@@ -220,7 +220,7 @@ def test_atb_routes_present_biosamples_and_falls_back_for_the_rest(tmp_path):
     # records for BioSamples we passed to it (2/3/99999999), and SAMN99999999
     # has no hits.
     acc_map = pd.read_csv(tmp_path / "acc_map.tsv", sep="\t")
-    got_pairs = dict(zip(acc_map["biosample"], acc_map["assembly_accession"]))
+    got_pairs = dict(zip(acc_map["biosample"], acc_map["assembly_accession"], strict=True))
     assert got_pairs == {
         "SAMN00000002": "GCA_000000002.2",
         "SAMN00000003": "GCA_000000003.2",

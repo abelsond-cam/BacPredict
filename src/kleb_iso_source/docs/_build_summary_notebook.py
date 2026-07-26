@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 def md(*lines: str) -> dict:
-    """Markdown cell from variadic line strings (joined with \\n)."""
+    r"""Markdown cell from variadic line strings (joined with \n)."""
     src = "\n".join(lines)
     return {"cell_type": "markdown", "metadata": {}, "source": src.splitlines(keepends=True)}
 

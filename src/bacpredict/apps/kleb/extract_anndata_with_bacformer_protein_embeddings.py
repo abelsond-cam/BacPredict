@@ -247,12 +247,12 @@ def create_anndata_with_metadata(
     sample_metadata_filtered = sample_metadata.loc[
         sample_metadata.index.isin(selected_sample_ids)
     ].copy()
-    
+
     # Convert object columns to strings to avoid h5py serialization issues
     for col in sample_metadata_filtered.columns:
         if sample_metadata_filtered[col].dtype == "object":
             sample_metadata_filtered[col] = sample_metadata_filtered[col].astype(str)
-    
+
     adata.uns["sample_metadata"] = sample_metadata_filtered
 
     logger.info(f"AnnData X shape: {adata.X.shape}")
@@ -422,7 +422,7 @@ def main():
     # Save to .h5ad format
     logger.info(f"Saving AnnData to {output_path}")
     adata.write_h5ad(output_path)
-    logger.info(f"Successfully saved AnnData object")
+    logger.info("Successfully saved AnnData object")
 
     # Summary
     logger.info("=" * 80)

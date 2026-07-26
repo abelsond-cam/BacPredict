@@ -1,4 +1,4 @@
-"""Canonical EBI AST parser — **organism-agnostic** (TB, Klebsiella, any EBI-format cohort).
+r"""Canonical EBI AST parser — **organism-agnostic** (TB, Klebsiella, any EBI-format cohort).
 
 Turns a raw EBI AMR records CSV (long format: one row per sample × antibiotic × test) into the
 `binary_ast.csv` pivot the AMR pipeline consumes, plus `regression_log_mic.csv`, a metadata table,
@@ -37,12 +37,12 @@ VIS_SUB = "results_visualisations"
 
 def read_ast_data(mic_data_path=None):
     """Read AST data from file path.
-    
+
     Parameters
     ----------
     mic_data_path : Path or str, optional
         Path to the AST data CSV file. If None, uses default path.
-        
+
     Returns
     -------
     pandas.DataFrame
@@ -55,6 +55,7 @@ def read_ast_data(mic_data_path=None):
 
 def parse_number_section(number_section):
     """Parse the 'number' part of a MIC string (e.g. '32', '.25', '64/4').
+
     - Takes anything up to '/' if present and discards the rest.
     - If the number starts with '.', prepends '0' for clarity.
     Returns float or None on invalid input.
@@ -292,7 +293,7 @@ def antibiogram_by_species(resistance_df, figsize=(14, 8), title=None):
                 alpha_values.append(0)  # Don't plot bars for species with less than 100 samples
 
         # Plot bars for this antibiotic with varying transparency
-        for k, (x, y, alpha) in enumerate(zip(x_positions, resistance_values, alpha_values, strict=True)):
+        for x, y, alpha in zip(x_positions, resistance_values, alpha_values, strict=True):
             # Always plot a bar, but use a small value (0.5) for zero values to make them visible as a tiny stub
             plot_height = max(0.5, y) if alpha > 0 else 0  # Only plot if alpha > 0 (enough samples)
 
@@ -363,34 +364,34 @@ def antibiogram_by_species(resistance_df, figsize=(14, 8), title=None):
 
 def convert_resistance_to_binary(ast_data, resistance_column="phenotype-resistance_phenotype"):
     """Convert resistance phenotype to binary values.
-    
+
     Parameters
     ----------
     ast_data : pandas.DataFrame
         DataFrame containing AST data
     resistance_column : str, default="phenotype-resistance_phenotype"
         Column name containing resistance phenotype values
-        
+
     Returns
     -------
     pandas.DataFrame
         DataFrame with added binary_resistance column (1=resistant, 0=susceptible, NaN=intermediate)
     """
-    print(f"\n=== Converting Resistance Phenotype to Binary ===")
+    print("\n=== Converting Resistance Phenotype to Binary ===")
     print(f"Distribution of {resistance_column}:")
     print(ast_data[resistance_column].value_counts(dropna=False))
-    
+
     # Create binary resistance column
     ast_data['binary_resistance'] = pd.NA
     ast_data.loc[ast_data[resistance_column].str.lower() == 'resistant', 'binary_resistance'] = 1
     ast_data.loc[ast_data[resistance_column].str.lower() == 'susceptible', 'binary_resistance'] = 0
     # intermediate stays as NaN
-    
-    print(f"\nBinary resistance distribution:")
+
+    print("\nBinary resistance distribution:")
     print(f"  Resistant (1): {(ast_data['binary_resistance'] == 1).sum()}")
     print(f"  Susceptible (0): {(ast_data['binary_resistance'] == 0).sum()}")
     print(f"  Intermediate/NaN: {ast_data['binary_resistance'].isna().sum()}")
-    
+
     return ast_data
 
 
@@ -440,7 +441,7 @@ def filter_antibiotics_by_count(ast_data, antibiotic_column="phenotype-antibioti
     # Print all dropped antibiotics with count > 500, as "antibiotic (n=...)"
     dropped_gt_500 = dropped_with_count[dropped_with_count > 500]
     if len(dropped_gt_500) > 0:
-        print(f"\nDropped antibiotics with n > 500:")
+        print("\nDropped antibiotics with n > 500:")
         for ab, count in dropped_gt_500.items():
             print(f"  {ab} (n={count:,})")
 
@@ -516,19 +517,19 @@ def compute_antibiotic_testing_stats(ast_data, antibiotics, resistance_column="p
 
 def create_metadata_table(ast_data):
     """Create metadata table with one row per sample.
-    
+
     Parameters
     ----------
     ast_data : pandas.DataFrame
         DataFrame containing AST data
-        
+
     Returns
     -------
     pandas.DataFrame
         Metadata table with one row per sample_accession
     """
-    print(f"\n=== Creating Metadata Table ===")
-    
+    print("\n=== Creating Metadata Table ===")
+
     metadata_columns = {
         "sample_accession": "phenotype-BioSample_ID",
         "sample_name": "phenotype-assembly_ID",
@@ -544,24 +545,24 @@ def create_metadata_table(ast_data):
         "region": "phenotype-geographical_region",
         "subregion": "phenotype-geographical_subregion",
     }
-    
+
     # Select relevant columns and rename
     metadata_df = ast_data[list(metadata_columns.values())].copy()
     metadata_df.columns = list(metadata_columns.keys())
-    
+
     # Group by sample_accession and take first value
     metadata_df = metadata_df.groupby('sample_accession').first().reset_index()
-    
+
     print(f"Total unique samples: {len(metadata_df)}")
     print(f"Metadata columns: {', '.join(metadata_df.columns)}")
-    
+
     return metadata_df
 
 
-def create_antibiotic_pivot_tables(ast_data, value_column, index_col="phenotype-BioSample_ID", 
+def create_antibiotic_pivot_tables(ast_data, value_column, index_col="phenotype-BioSample_ID",
                                    antibiotic_col="phenotype-antibiotic_name"):
     """Create pivot table with samples as rows and antibiotics as columns.
-    
+
     Parameters
     ----------
     ast_data : pandas.DataFrame
@@ -572,14 +573,14 @@ def create_antibiotic_pivot_tables(ast_data, value_column, index_col="phenotype-
         Column to use as index (sample identifier)
     antibiotic_col : str, default="phenotype-antibiotic_name"
         Column to use as columns (antibiotic names)
-        
+
     Returns
     -------
     pandas.DataFrame
         Pivot table with samples as rows, antibiotics as columns
     """
     print(f"\n=== Creating Pivot Table for {value_column} ===")
-    
+
     # Create pivot table, taking mean if there are multiple measurements
     pivot_df = ast_data.pivot_table(
         index=index_col,
@@ -587,17 +588,17 @@ def create_antibiotic_pivot_tables(ast_data, value_column, index_col="phenotype-
         values=value_column,
         aggfunc='mean'
     )
-    
+
     print(f"Pivot table shape: {pivot_df.shape[0]} samples x {pivot_df.shape[1]} antibiotics")
-    
+
     # Calculate sparsity
     total_cells = pivot_df.shape[0] * pivot_df.shape[1]
     nan_cells = pivot_df.isna().sum().sum()
     sparsity = (nan_cells / total_cells) * 100
-    
+
     print(f"Sparsity: {sparsity:.1f}% NaN values")
     print(f"Non-NaN values: {total_cells - nan_cells:,} / {total_cells:,}")
-    
+
     return pivot_df
 
 
@@ -784,12 +785,12 @@ def parse_ebi_ast_to_binary(
     print("=" * 80)
     print("EBI AST → BINARY RESISTANCE PIPELINE (organism-agnostic)")
     print("=" * 80)
-    
+
     # Step 1: Load data
     print("\n[STEP 1] Loading AST data...")
     ast_data = read_ast_data(input_file)
     print(f"Loaded {len(ast_data)} rows")
-    
+
     # Step 2: Convert resistance to binary
     print("\n[STEP 2] Converting resistance phenotype to binary...")
     ast_data = convert_resistance_to_binary(ast_data)
@@ -801,7 +802,7 @@ def parse_ebi_ast_to_binary(
         print(f"\nUnparsable MIC rows ({len(unparsable)}):")
         for u in unparsable:
             print(f"  index={u['index']!r} raw={u['raw']!r} reason={u['reason']}")
-    
+
     # Step 4: Filter antibiotics
     print("\n[STEP 4] Filtering antibiotics...")
     ast_data, kept_antibiotics = filter_antibiotics_by_count(
@@ -809,21 +810,21 @@ def parse_ebi_ast_to_binary(
         min_count=min_antibiotic_count,
         top_n=top_n,
     )
-    
+
     # Step 5: Create metadata table
     print("\n[STEP 5] Creating metadata table...")
     metadata_df = create_metadata_table(ast_data)
-    
+
     # Step 6: Create pivot tables
     print("\n[STEP 6] Creating pivot tables...")
     binary_ast_df = create_antibiotic_pivot_tables(ast_data, 'binary_resistance')
     regression_log_mic_df = create_antibiotic_pivot_tables(ast_data, 'log_mic')
-    
+
     # Step 7: Print comprehensive statistics
     print("\n" + "=" * 80)
     print("COMPREHENSIVE STATISTICS")
     print("=" * 80)
-    
+
     # Sample Statistics
     print("\n--- SAMPLE STATISTICS ---")
     print(f"Total unique samples: {len(metadata_df)}")
@@ -832,7 +833,7 @@ def parse_ebi_ast_to_binary(
         if len(valid_years) > 0:
             print(f"Collection year range: {valid_years.min():.0f} - {valid_years.max():.0f}")
             print(f"Samples with collection year: {len(valid_years)} ({len(valid_years)/len(metadata_df)*100:.1f}%)")
-    
+
     # Host Information
     print("\n--- HOST INFORMATION ---")
     host_counts = metadata_df['host'].value_counts()
@@ -842,7 +843,7 @@ def parse_ebi_ast_to_binary(
         print(f"  {i:2d}. {host}: {count:,} ({pct:.1f}%)")
     nan_hosts = metadata_df['host'].isna().sum()
     print(f"NaN host values: {nan_hosts} ({nan_hosts/len(metadata_df)*100:.1f}%)")
-    
+
     # Species Distribution
     if 'species' in metadata_df.columns:
         print("\n--- SPECIES DISTRIBUTION ---")
@@ -863,7 +864,7 @@ def parse_ebi_ast_to_binary(
         print(f"  {i:2d}. {cat}: {count:,} ({pct:.1f}%)")
     nan_iso = metadata_df['isolation_source_category'].isna().sum()
     print(f"NaN values: {nan_iso} ({nan_iso/len(metadata_df)*100:.1f}%)")
-    
+
     # Country Distribution
     print("\n--- COUNTRY DISTRIBUTION ---")
     country_counts = metadata_df['country'].value_counts()
@@ -873,7 +874,7 @@ def parse_ebi_ast_to_binary(
         print(f"  {i:2d}. {country}: {count:,} ({pct:.1f}%)")
     nan_countries = metadata_df['country'].isna().sum()
     print(f"NaN country values: {nan_countries} ({nan_countries/len(metadata_df)*100:.1f}%)")
-    
+
     # Geographic Regions
     print("\n--- GEOGRAPHIC REGIONS ---")
     region_counts = metadata_df['region'].value_counts()
@@ -883,7 +884,7 @@ def parse_ebi_ast_to_binary(
         print(f"  {i:2d}. {region}: {count:,} ({pct:.1f}%)")
     nan_regions = metadata_df['region'].isna().sum()
     print(f"NaN region values: {nan_regions} ({nan_regions/len(metadata_df)*100:.1f}%)")
-    
+
     print("\nTop 10 subregions:")
     subregion_counts = metadata_df['subregion'].value_counts()
     for i, (subregion, count) in enumerate(subregion_counts.head(10).items(), 1):
@@ -891,7 +892,7 @@ def parse_ebi_ast_to_binary(
         print(f"  {i:2d}. {subregion}: {count:,} ({pct:.1f}%)")
     nan_subregions = metadata_df['subregion'].isna().sum()
     print(f"NaN subregion values: {nan_subregions} ({nan_subregions/len(metadata_df)*100:.1f}%)")
-    
+
     # Antibiotic Testing Statistics
     print("\n--- ANTIBIOTIC TESTING STATISTICS ---")
     antibiotic_stats_df = compute_antibiotic_testing_stats(ast_data, kept_antibiotics)
@@ -899,25 +900,25 @@ def parse_ebi_ast_to_binary(
 
     # Pivot Table Summaries
     print("\n--- PIVOT TABLE SUMMARIES ---")
-    print(f"\nBinary AST Table:")
+    print("\nBinary AST Table:")
     print(f"  Dimensions: {binary_ast_df.shape[0]:,} samples × {binary_ast_df.shape[1]} antibiotics")
     total_cells = binary_ast_df.shape[0] * binary_ast_df.shape[1]
     nan_cells = binary_ast_df.isna().sum().sum()
     print(f"  Sparsity: {(nan_cells/total_cells)*100:.1f}% NaN")
     print(f"  Non-NaN values: {total_cells - nan_cells:,} / {total_cells:,}")
-    
-    print(f"\nRegression log_mic Table:")
+
+    print("\nRegression log_mic Table:")
     print(f"  Dimensions: {regression_log_mic_df.shape[0]:,} samples × {regression_log_mic_df.shape[1]} antibiotics")
     total_cells_reg = regression_log_mic_df.shape[0] * regression_log_mic_df.shape[1]
     nan_cells_reg = regression_log_mic_df.isna().sum().sum()
     print(f"  Sparsity: {(nan_cells_reg/total_cells_reg)*100:.1f}% NaN")
     print(f"  Non-NaN values: {total_cells_reg - nan_cells_reg:,} / {total_cells_reg:,}")
-    
+
     # Step 8: Save outputs
     print("\n" + "=" * 80)
     print("[STEP 8] Saving output files...")
     print("=" * 80)
-    
+
     # Ensure directories exist
     output_dir.mkdir(parents=True, exist_ok=True)
     viz_dir.mkdir(parents=True, exist_ok=True)
@@ -946,7 +947,7 @@ def parse_ebi_ast_to_binary(
     # Step 9: Generate antibiogram (filtered to antibiogram_min_samples)
     print(f"\n[STEP 9] Generating antibiogram (min_samples={antibiogram_min_samples})...")
     antibiogram_path = viz_dir / "antibiogram.png"
-    fig = create_klebsiella_antibiogram(
+    create_klebsiella_antibiogram(
         antibiotic_stats_df, antibiogram_path, min_samples=antibiogram_min_samples
     )
 

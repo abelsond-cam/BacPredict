@@ -75,7 +75,7 @@ def main():
         print(f"\nError details: {e}")
         return 1
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 (top-level CLI guard: report any failure and exit non-zero)
         print("\n" + "=" * 80)
         print("ERROR: PROCESSING FAILED!")
         print("=" * 80)

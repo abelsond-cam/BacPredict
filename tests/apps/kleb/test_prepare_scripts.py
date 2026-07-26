@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import pandas as pd
-import pytest
 import torch
 
 from bacpredict.engine.finetune.build_split_csv import (

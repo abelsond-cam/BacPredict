@@ -117,7 +117,7 @@ def process_single_genome(args_tuple: tuple) -> tuple[str, bool, str, float]:
         save_to_parquet(genome_info, protein_output_path)
         elapsed = time.time() - start_time
         return sample_id, True, "", elapsed
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 (robustness: record the per-sample failure and continue the batch)
         elapsed = time.time() - start_time
         error_msg = f"Error processing {sample_id}: {e}"
         logger.error(error_msg)

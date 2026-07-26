@@ -153,7 +153,9 @@ line-length = 120
 src = [ "src" ]
 extend-include = [ "*.ipynb" ]
 # Frozen concluded strands — a snapshot of what was run, not maintained code.
-extend-exclude = [ "**/_archive/**" ]
+# Exploratory docs notebooks aren't shipped library code (matplotlib `;`, mid-cell imports, terse
+# helpers are all normal there), so they're excluded from linting rather than reformatted.
+extend-exclude = [ "**/_archive/**", "**/docs/**/*.ipynb" ]
 
 format.docstring-code-format = true
 

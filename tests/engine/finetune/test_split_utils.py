@@ -141,7 +141,7 @@ def test_kfold_reproducible():
     eval1, folds1 = generate_kfold_splits(df, n_folds=4, seed=3, evaluate_seed=9)
     eval2, folds2 = generate_kfold_splits(df, n_folds=4, seed=3, evaluate_seed=9)
     assert eval1 == eval2
-    for (t1, v1), (t2, v2) in zip(folds1, folds2):
+    for (t1, v1), (t2, v2) in zip(folds1, folds2, strict=True):
         assert t1 == t2
         assert v1 == v2
 
@@ -152,5 +152,5 @@ def test_kfold_different_seeds_give_different_folds():
     _, folds1 = generate_kfold_splits(df, n_folds=5, seed=1)
     _, folds2 = generate_kfold_splits(df, n_folds=5, seed=2)
     # At least one fold's validate set should differ
-    any_diff = any(v1 != v2 for (_, v1), (_, v2) in zip(folds1, folds2))
+    any_diff = any(v1 != v2 for (_, v1), (_, v2) in zip(folds1, folds2, strict=True))
     assert any_diff

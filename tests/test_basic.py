@@ -6,9 +6,9 @@ def test_distribution_has_version():
 
 
 def test_top_level_packages_importable():
-    import bacpredict.apps.kleb  # noqa: F401
-    import bacpredict.apps.tb  # noqa: F401
-    import bacpredict.engine.download  # noqa: F401
-    import bacpredict.engine.embedding  # noqa: F401
+    import bacpredict.apps.kleb
+    import bacpredict.apps.tb
+    import bacpredict.engine.download
+    import bacpredict.engine.embedding
     import bacpredict.engine.finetune  # noqa: F401
     import kleb_iso_source  # noqa: F401

@@ -228,6 +228,8 @@ def load_baclm_gene_vectors(
 
 @dataclass
 class ComparisonResult:
+    """One (gene, drug) ESM-vs-baclm comparison result (carrying the per-fold k-fold metrics)."""
+
     gene: str
     drug: str
     n_esm: int
@@ -555,6 +557,7 @@ def plot_ladder(payload: dict, png_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    """CLI entry point: run one (or the whole panel of) gene ESM-vs-baclm comparison(s)."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--species", choices=["tb", "kp"], default="tb")
     ap.add_argument("--panel", action="store_true", help="run every gene in the species panel")

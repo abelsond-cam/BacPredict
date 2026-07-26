@@ -38,7 +38,7 @@ def _make_fixtures(root, n=30, signal=2.5):
         sid = f"s{i:03d}"
         label = i % 2
 
-        def gene_vec(sig):
+        def gene_vec(sig, label=label):  # bind label per-iteration (called immediately below)
             v = rng.normal(0, 1, (len(GENES), DIM)).astype(np.float32)
             v[RPOB, :20] += sig * label
             return v

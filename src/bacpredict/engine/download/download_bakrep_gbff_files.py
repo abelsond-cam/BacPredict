@@ -166,7 +166,7 @@ def update_metadata_flags(
     missing_output: Path | None = None,
 ) -> None:
     """Scan output dir, update metadata flags, and report missing samples.
-    
+
     Args:
         metadata_path: Path to metadata TSV
         output_dir: Directory containing downloaded files
@@ -320,7 +320,7 @@ def main() -> None:
 
     # Determine if we should run collection
     run_collection = args.batch_dir is not None or args.output is not None
-    
+
     # Run collection if requested
     if run_collection:
         collect_cmd(args)

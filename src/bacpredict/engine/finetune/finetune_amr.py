@@ -260,7 +260,7 @@ def run(
         emb = sample["protein_embeddings"]
         print(f"protein_embeddings shape: {emb.shape if hasattr(emb, 'shape') else len(emb)}")
         print(f"labels shape: {sample['labels'].shape}, value: {sample['labels'].item()}")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 (debug inspection only — warn and continue on any failure)
         print(f"WARNING: Could not inspect sample: {e}")
 
     # Load model (AutoModelForSequenceClassification loads BacformerLargeForGenomeClassification via auto_map).

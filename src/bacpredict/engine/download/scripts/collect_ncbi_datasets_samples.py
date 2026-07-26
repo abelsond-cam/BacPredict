@@ -209,6 +209,7 @@ def write_batches(
 
 
 def main() -> None:
+    """CLI entry point: collect NCBI GCF/GCA genome accessions for datasets-CLI batching."""
     parser = argparse.ArgumentParser(
         description="Collect NCBI GCF/GCA genome accessions (for datasets CLI batching)."
     )

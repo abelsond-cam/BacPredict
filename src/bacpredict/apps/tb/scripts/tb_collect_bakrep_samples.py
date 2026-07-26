@@ -166,6 +166,7 @@ def verify_cmd(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    """CLI entry point: collect BioSamples for BakRep GFF3 downloads (standalone, pandas only)."""
     parser = argparse.ArgumentParser(
         description="Collect BioSamples for BakRep GFF3 downloads (standalone, pandas only)."
     )

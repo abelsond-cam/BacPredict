@@ -22,6 +22,7 @@ def collect_sample_ids(
     n: int = 10,
     filetype: str = "gbff",
 ) -> list[str]:
+    """Return up to ``n`` sample IDs from the metadata TSV (skipping already-downloaded ``filetype`` if asked)."""
     df = pd.read_csv(metadata_path, sep="\t", low_memory=False)
     initial_count = len(df)
     df_all = df.copy()
@@ -73,6 +74,7 @@ def collect_sample_ids(
 
 
 def collect_cmd(args: argparse.Namespace) -> None:
+    """CLI subcommand: print the collected sample IDs (one per line) to stdout."""
     filetype = getattr(args, "filetype", "gbff")
     col = _downloaded_column(filetype)
     print("Filtering metadata with Python...", file=sys.stderr)
@@ -115,6 +117,7 @@ def collect_cmd(args: argparse.Namespace) -> None:
 
 
 def collect_sample_accessions_from_files(output_dir: Path, filetype: str = "gbff") -> set[str]:
+    """Scan ``output_dir`` for downloaded ``*.bakta.<filetype>.gz`` files → the set of their sample accessions."""
     pattern = f"*.bakta.{filetype}.gz"
     files = list(output_dir.rglob(pattern))
     return {f.parent.name for f in files}
@@ -126,6 +129,7 @@ def update_metadata_flags(
     filetype: str,
     missing_output: Path | None = None,
 ) -> None:
+    """Refresh the ``bakta_<filetype>_downloaded`` metadata flag from disk; optionally write a missing-samples sidecar."""
     col = _downloaded_column(filetype)
     pattern = f"*.bakta.{filetype}.gz"
 
@@ -194,6 +198,7 @@ def update_metadata_flags(
 
 
 def main() -> None:
+    """CLI entry point: BakRep collect + update-flags (standalone, pandas only)."""
     parser = argparse.ArgumentParser(description="BakRep collect and update-flags (standalone, pandas only)")
     parser.add_argument("--metadata", type=Path, required=True, help="Path to metadata TSV")
     parser.add_argument("--n", type=int, default=10, help="Number of samples (10=test, -1=all)")

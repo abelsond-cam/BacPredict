@@ -1,4 +1,4 @@
-"""Stratification plots for iso-source cohorts.
+r"""Stratification plots for iso-source cohorts.
 
 Two paired-bar plots per cohort (country and Sublineage):
 
@@ -33,13 +33,13 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
-import pandas as pd  # noqa: E402
-from matplotlib.cm import ScalarMappable  # noqa: E402
-from matplotlib.colors import LogNorm  # noqa: E402
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from matplotlib.cm import ScalarMappable
+from matplotlib.colors import LogNorm
 
-from kleb_iso_source.isolation_source_cli_parsing import validate_and_resolve_tokens  # noqa: E402
+from kleb_iso_source.isolation_source_cli_parsing import validate_and_resolve_tokens
 
 DEFAULT_MIN_SAMPLES = 100
 RATIO_VMIN = 0.25  # log-symmetric around 1.0 (0.25 = 4× faeces, 4.0 = 4× blood)
@@ -157,6 +157,7 @@ def plot_by_country(
     out_path: Path,
     min_samples: int = DEFAULT_MIN_SAMPLES,
 ) -> None:
+    """Paired-bar plot of the cohort by parsed country (pool n vs accepted n, coloured by ratio)."""
     s1, s2 = isolation_sources
     plot_paired_bars(
         pool_df, final_df, isolation_sources,
@@ -176,6 +177,7 @@ def plot_by_sublineage(
     min_samples: int = DEFAULT_MIN_SAMPLES,
     sl_col: str = "Sublineage",
 ) -> None:
+    """Paired-bar plot of the cohort by Sublineage (pool n vs accepted n, coloured by ratio)."""
     s1, s2 = isolation_sources
     plot_paired_bars(
         pool_df, final_df, isolation_sources,
@@ -195,6 +197,7 @@ def make_plots(
     country_min_samples: int = DEFAULT_MIN_SAMPLES,
     sl_min_samples: int = DEFAULT_MIN_SAMPLES,
 ) -> None:
+    """Write both paired-bar PNGs (country.png + sublineage.png) for the cohort into ``out_dir``."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     plot_by_country(pool_df, final_df, isolation_sources, out_dir / "country.png",
