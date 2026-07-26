@@ -65,10 +65,8 @@ def test_select_noncoding_picks_top_imputed_across_keys(tmp_path):
 
 
 def _write_cache_summary(tmp_path, drug, scope="trainholdout"):
-    """The FT cache provenance the ladder reads (the checkpoint value is ignored — resolve_clean_splits is patched)."""
-    (tmp_path / f"cache_summary_{drug}.json").write_text(
-        f'{{"checkpoint": "{tmp_path}/ckpt", "scope": "{scope}"}}'
-    )
+    """The FT cache provenance the ladder reads — only ``scope`` now (the holdout comes from the split table)."""
+    (tmp_path / f"cache_summary_{drug}.json").write_text(f'{{"scope": "{scope}"}}')
 
 
 def test_run_builds_four_config_ladder_with_ceiling(tmp_path, monkeypatch):
@@ -86,9 +84,7 @@ def test_run_builds_four_config_ladder_with_ceiling(tmp_path, monkeypatch):
 
     # FT-mean over the whole train+holdout universe (weak signal).
     mean_block = _signal(all_ids, 0.6, 0)
-    monkeypatch.setattr(L, "resolve_clean_splits",
-                        lambda *a, **k: (label_map, all_ids[20:], [], holdout_ids,
-                                         {"source": "kfold", "n_evaluate_expected": len(holdout_ids)}))
+    monkeypatch.setattr(L, "load_splits", lambda t: (label_map, all_ids[20:], [], holdout_ids))
     monkeypatch.setattr(L, "load_ft_mean", lambda cache, drug, lm, scope=None: (all_ids, mean_block))
     _write_cache_summary(tmp_path, "ethionamide")
     # best gene carried by 45 genomes; best upstream region by 50; the per-unit loader is unused here.
@@ -121,7 +117,7 @@ def test_run_builds_four_config_ladder_with_ceiling(tmp_path, monkeypatch):
     pd.DataFrame({"Sample": all_ids, "sr_gff_file": ["/dev/null"] * n}).to_csv(inp, index=False)
 
     table = L.run(
-        species="tb", drug="ethionamide", ast_sheet=tmp_path / "sheet.csv", ft_cache_dir=tmp_path,
+        species="tb", drug="ethionamide", split_table=tmp_path / "split.csv", ft_cache_dir=tmp_path,
         baclm_dir=tmp_path, noncoding_dir=tmp_path, parquet_dir=tmp_path, input_csv=inp,
         gene_ranking_csv=gcsv, upstream_ranking_csv=ucsv, unit_ranking_csv=nucsv, igr_ranking_csv=igcsv,
         catalogue_csv=ccsv, out_dir=tmp_path,
@@ -152,12 +148,11 @@ def test_run_guards_against_leaky_cache(tmp_path, monkeypatch):
     # The deployed k-fold holdout is 30 genomes NOT present in the cache (the CSV-vs-kfold mismatch, azithro's
     # 69-of-384 leak signature) → coverage 0/30 → the ladder must refuse rather than score a leaky set.
     holdout_ids = [f"h{i}" for i in range(30)]
-    monkeypatch.setattr(L, "resolve_clean_splits",
-                        lambda *a, **k: (label_map, [], [], holdout_ids, {"source": "kfold"}))
+    monkeypatch.setattr(L, "load_splits", lambda t: (label_map, [], [], holdout_ids))
     monkeypatch.setattr(L, "load_ft_mean", lambda *a, **k: (all_ids, mean_block))
     _write_cache_summary(tmp_path, "azithromycin")
     with pytest.raises(ValueError, match="leak signature"):
-        L.run(species="kp", drug="azithromycin", ast_sheet=tmp_path / "s.csv", ft_cache_dir=tmp_path,
+        L.run(species="kp", drug="azithromycin", split_table=tmp_path / "s.csv", ft_cache_dir=tmp_path,
               baclm_dir=tmp_path, noncoding_dir=tmp_path, parquet_dir=tmp_path, input_csv=tmp_path / "i.csv",
               gene_ranking_csv=tmp_path / "g.csv", upstream_ranking_csv=tmp_path / "u.csv",
               unit_ranking_csv=tmp_path / "nu.csv", igr_ranking_csv=tmp_path / "ig.csv",
@@ -172,15 +167,14 @@ def test_run_survives_missing_rankings(tmp_path, monkeypatch):
     label_map = dict(zip(all_ids, y.tolist(), strict=True))
     holdout_ids = all_ids[:16]  # the other 24 are FT-train the LR fits on
     mean_block = _rng(3).normal(size=(n, 4)).astype(np.float32)
-    monkeypatch.setattr(L, "resolve_clean_splits",
-                        lambda *a, **k: (label_map, all_ids[16:], [], holdout_ids, {"source": "kfold"}))
+    monkeypatch.setattr(L, "load_splits", lambda t: (label_map, all_ids[16:], [], holdout_ids))
     monkeypatch.setattr(L, "load_ft_mean", lambda *a, **k: (all_ids, mean_block))
     _write_cache_summary(tmp_path, "kanamycin")
     inp = tmp_path / "input.csv"
     pd.DataFrame({"Sample": all_ids, "sr_gff_file": ["/dev/null"] * n}).to_csv(inp, index=False)
 
     table = L.run(
-        species="tb", drug="kanamycin", ast_sheet=tmp_path / "s.csv", ft_cache_dir=tmp_path,
+        species="tb", drug="kanamycin", split_table=tmp_path / "s.csv", ft_cache_dir=tmp_path,
         baclm_dir=tmp_path, noncoding_dir=tmp_path, parquet_dir=tmp_path, input_csv=inp,
         gene_ranking_csv=tmp_path / "none_g.csv", upstream_ranking_csv=tmp_path / "none_u.csv",
         unit_ranking_csv=tmp_path / "none_nu.csv", igr_ranking_csv=tmp_path / "none_ig.csv",
