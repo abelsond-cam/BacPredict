@@ -10,15 +10,17 @@ head-to-head and the concat are computed on the *reliable* carrier sets, not Bak
 
 Saved per drug to ``<out>/<drug>/`` (``prefix`` = ``ft`` or ``frozen``):
 
-- ``<prefix>_genome_mean_<drug>.npz`` — {sample_ids, mean_vectors}: the mask-mean over real proteins.
+- ``<prefix>_genome_mean_<drug>_<scope>.npz`` — {sample_ids, mean_vectors}: the mask-mean over real proteins.
 - ``<prefix>_amr_emb/<label>.npz`` — {sample_ids, vectors, bakta_match}: per label, its token for each
   single-copy carrier, plus ``tag_match`` (whether Bakta also named it — the reliable-vs-Bakta split).
 - ``amr_gene_manifest_<drug>.csv`` (FT) / ``frozen_amr_gene_manifest_<drug>.csv`` (frozen) — label,
   sanitized, amr_source, n_carriers, n_bakta.
 
-Eval-holdout only (the FT-unseen, honest scope). Reuses the engine forward helpers. GPU; one drug per run.
-The Kp CARD ``calls_fn`` + data-root defaults live in the thin ``apps/kleb`` CLIs
-(``cache_ft_amr_proteins`` / ``cache_frozen_amr_proteins``).
+Split scope from the deployed ``<drug>_split.csv`` table (:func:`load_splits`): ``scope="trainholdout"``
+(default) forwards a class-balanced deployed-train sample ∪ the full FT-unseen holdout, so the
+reliable-concat read-out can fit on train and test on the holdout; ``scope="eval"`` = holdout only. Reuses
+the engine forward helpers. GPU; one drug per run. The Kp CARD ``calls_fn`` + data-root defaults live in
+the thin ``apps/kleb`` CLIs (``cache_ft_amr_proteins`` / ``cache_frozen_amr_proteins``).
 """
 
 from __future__ import annotations
@@ -35,9 +37,10 @@ import torch
 from bacpredict.engine.concat.bacformer_genome_vectors import forward_inputs, load_model
 from bacpredict.engine.embedding.generate_embeddings import bacformer_last_hidden_state
 from bacpredict.engine.embedding.protein_pooling import genome_mean_pool, real_protein_indices, real_protein_rows
-from bacpredict.engine.finetune.holdout import resolve_clean_splits
 from bacpredict.engine.gene_lr.locate_gene import flatten_proteins
 from bacpredict.engine.gene_lr.reliable_gene_vectors import CallsFn
+from bacpredict.engine.splits.load_splits import load_splits
+from bacpredict.engine.splits.subsample import subsample_balanced
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -50,7 +53,7 @@ def _sanitize(gene: str) -> str:
 
 def run(
     *,
-    ast_sheet: Path,
+    split_table: Path,
     drug: str,
     parquet_dir: Path,
     esm_store_dir: Path,
@@ -63,17 +66,31 @@ def run(
     grain: str = "family",
     pt_suffix: str = "_esm_embeddings.pt",
     max_samples: int | None = None,
+    scope: str = "trainholdout",
+    max_train_sample: int | None = 4000,
 ) -> None:
-    """Forward each eval genome through the ``mode`` backbone; save the genome-mean + per-label tokens.
+    """Forward the deployed model's genomes through the ``mode`` backbone; save the genome-mean + per-label tokens.
 
     ``prefix`` (``ft``/``frozen``) names the output stores; ``calls_fn(sid, n_real)`` yields the reliable
     carrier calls (label + flat index + source + ``tag_match``) — identical selection to the CPU collector.
+    Split scope comes from the deployed ``<drug>_split.csv`` table (:func:`load_splits`): ``trainholdout``
+    (default) = a class-balanced deployed-train sample (capped at ``max_train_sample``) ∪ the full holdout,
+    so the read-out can fit on train and test on the FT-unseen holdout; ``eval`` = holdout only.
     """
-    _lm, _train, _val, evaluate_ids, _info = resolve_clean_splits(ast_sheet, drug)
-    all_ids = list(evaluate_ids)
+    label_map, train_ids, validate_ids, holdout_ids = load_splits(split_table)
+    holdout_set = set(holdout_ids)
+    if scope == "trainholdout":
+        train_sample = subsample_balanced([*train_ids, *validate_ids], label_map, max_n=max_train_sample, seed=1)
+        all_ids = [*holdout_ids, *train_sample]  # holdout first so a --max-samples smoke keeps the guarded set
+    elif scope == "eval":
+        all_ids = list(holdout_ids)
+    else:
+        raise ValueError(f"scope must be 'trainholdout' or 'eval', got {scope!r}")
     if max_samples is not None:
         all_ids = all_ids[:max_samples]
-    logger.info("Forwarding %d eval genomes for %s (mode=%s, grain=%s)", len(all_ids), drug, mode, grain)
+    n_holdout_planned = sum(1 for s in all_ids if s in holdout_set)
+    logger.info("Forwarding %d genomes for %s (mode=%s, grain=%s, scope=%s: holdout=%d, train=%d)",
+                len(all_ids), drug, mode, grain, scope, n_holdout_planned, len(all_ids) - n_holdout_planned)
 
     model = load_model(device, mode=mode, checkpoint=checkpoint if mode == "finetuned" else None)
     model_dtype = next(model.parameters()).dtype
@@ -124,9 +141,11 @@ def run(
 
     out_dir = out_dir / drug
     out_dir.mkdir(parents=True, exist_ok=True)
-    mean_npz = out_dir / f"{prefix}_genome_mean_{drug}.npz"
+    mean_npz = out_dir / f"{prefix}_genome_mean_{drug}_{scope}.npz"
     np.savez(mean_npz, sample_ids=np.array(mean_ids), mean_vectors=np.vstack(mean_vecs).astype(np.float32))
-    logger.info("Wrote %s genome-mean (%d genomes) -> %s", prefix, len(mean_ids), mean_npz)
+    n_holdout_cached = sum(1 for s in mean_ids if s in holdout_set)
+    logger.info("Wrote %s genome-mean (%d genomes: holdout=%d, train=%d) -> %s", prefix, len(mean_ids),
+                n_holdout_cached, len(mean_ids) - n_holdout_cached, mean_npz)
 
     gene_dir = out_dir / f"{prefix}_amr_emb"
     gene_dir.mkdir(parents=True, exist_ok=True)
@@ -144,6 +163,7 @@ def run(
     pd.DataFrame(manifest).sort_values("n_carriers", ascending=False).to_csv(out_dir / manifest_name, index=False)
     (out_dir / summary_name).write_text(json.dumps({
         "drug": drug, "mode": mode, "checkpoint": str(checkpoint) if checkpoint else None,
-        "n_genomes": len(mean_ids), "n_families": len(manifest), "grain": grain,
+        "scope": scope, "split_table": str(split_table), "n_evaluate_expected": len(holdout_ids),
+        "n_genomes": len(mean_ids), "n_holdout": n_holdout_cached, "n_families": len(manifest), "grain": grain,
     }, indent=2))
     logger.info("Wrote %d per-label %s token stores -> %s", len(manifest), prefix, gene_dir)
