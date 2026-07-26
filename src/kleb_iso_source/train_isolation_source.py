@@ -295,9 +295,12 @@ def run(
     except Exception as e:
         print(f"WARNING: Could not inspect sample: {e}")
 
-    # dtype="auto" lets HF pick precision per device — bf16 on GPU, fp32 on CPU — so Stage A
-    # CPU smoke tests stay viable (the previous unconditional .to(torch.bfloat16) crashed in
-    # Bacformer's classifier einsum on CPU with float-vs-bf16 mismatch).
+    # bf16 master weights — the deployed AST setting (matches bacpredict.engine.finetune.finetune_amr,
+    # where bf16 beat fp32 by ~7pp AUROC on TB rifampin in a controlled A/B). Load the native weights
+    # then cast uniformly to bf16, unconditionally: this is a GPU-only workflow. The previous dtype="auto"
+    # loaded *fp32* master weights on this model (the underperforming pre-b047ed8 / CSD3 condition). CPU
+    # Stage-A smokes are deliberately unsupported here — this task's CLAUDE.md running notes record that
+    # "Every BacPredict Stage A needs a short ampere GPU sbatch" (login-node CPU never produced metrics).
     bacformer_model = AutoModelForSequenceClassification.from_pretrained(
         model_name_or_path,
         num_labels=1,
@@ -305,7 +308,7 @@ def run(
         return_dict=True,
         trust_remote_code=True,
         dtype="auto",
-    )
+    ).to(torch.bfloat16)
 
     if freeze_encoder:
         for param in bacformer_model.bacformer.parameters():
