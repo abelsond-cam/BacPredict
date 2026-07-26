@@ -24,7 +24,7 @@
 > per-isolate calls cannot, and CARD is *also* the acquired-gene **locator** (`card_gene_locator` supplies
 > the flat protein index of blaKPC/armA/… that Bakta under-annotates — you cannot embed a gene you cannot
 > locate). **Kleborate (`kleborate_determinant_lr`) is retained as a comparator** for readers who treat it
-> as the gold standard. Both ceiling runners share `engine.catalogue.base.score_onehot_frame`. (Memory
+> as the gold standard. Both ceiling runners share `engine.ref_catalogues.base.score_onehot_frame`. (Memory
 > `kleborate-ceiling-vs-amr-tools` updated to match.)
 
 See the root [CLAUDE.md](../../../CLAUDE.md) for §0 global conventions (base model, three-stage protocol, paths, reporting requirements). Cross-task status lives in [ToDo.md](../../../ToDo.md).

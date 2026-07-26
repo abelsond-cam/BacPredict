@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from bacpredict.engine.catalogue.base import score_onehot_frame
+from bacpredict.engine.ref_catalogues.base import score_onehot_frame
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

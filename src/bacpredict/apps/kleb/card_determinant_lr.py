@@ -35,8 +35,8 @@ from bacpredict.apps.kleb.kleborate_determinant_lr import (
     tokenize_cell,
 )
 from bacpredict.apps.kleb.validate_amr_annotation import default_metadata, default_sidecar_dir
-from bacpredict.engine.catalogue.base import score_onehot_frame
 from bacpredict.engine.config import KP, visualisations_dir
+from bacpredict.engine.ref_catalogues.base import score_onehot_frame
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
