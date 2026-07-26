@@ -19,8 +19,10 @@ from bacpredict.engine.segment_amr_lr.concat.reliable_concat import run
 def main() -> None:
     """CLI entry point — build the CARD calls_fn and run the engine reliable-concat driver."""
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--ast-sheet-path", type=Path, default=None,
-                   help="AST split sheet (default: <data-root>/processed/train_kleb_ast/binary_ast_with_split.csv).")
+    p.add_argument("--split-table", type=Path, required=True,
+                   help="Deployed per-drug <drug>_split.csv (Sample, ast_label, split) from splits.load_splits.")
+    p.add_argument("--scope", choices=["trainholdout", "eval"], default="trainholdout",
+                   help="FT-cache scope to score: trainholdout (deployed-train + full holdout) or eval (holdout only).")
     p.add_argument("--drug", type=str, required=True)
     p.add_argument("--ft-cache-dir", type=Path, required=True,
                    help="ft_amr_cache/<drug>/ from cache_ft_amr_proteins (ft_genome_mean + ft_amr_emb/ + manifest).")
@@ -38,12 +40,11 @@ def main() -> None:
     p.add_argument("--n-folds", type=int, default=5)
     p.add_argument("--seed", type=int, default=1)
     args = p.parse_args()
-    ast_sheet = args.ast_sheet_path or KP.data_root() / "binary_ast_with_split.csv"
     esm_dir = args.esm_store_dir or KP.data_root() / "esm"
     parquet_dir = args.parquet_dir or KP.data_root() / "protein_sequences"
     sidecar_dir = args.sidecar_dir or KP.data_root() / "amr_annotation"
     run(
-        ast_sheet=ast_sheet, drug=args.drug, ft_cache_dir=args.ft_cache_dir,
+        split_table=args.split_table, scope=args.scope, drug=args.drug, ft_cache_dir=args.ft_cache_dir,
         esm_dir=esm_dir, parquet_dir=parquet_dir,
         calls_fn=card_amr_calls(sidecar_dir, grain=args.grain),
         out_dir=args.out_dir, frozen_cache_dir=args.frozen_cache_dir,
