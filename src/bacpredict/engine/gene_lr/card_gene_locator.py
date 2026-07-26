@@ -10,7 +10,7 @@ flat-order validation guard.
 
 This module turns those sidecars into the **same presence-table schema** that
 :func:`bacpredict.engine.gene_lr.coding_amr_lr.build_multi_gene_presence` produces (a ``DataFrame`` per gene,
-indexed by ``Sample``, with ``gene_flat_index`` / ``n_proteins`` / ``gene_name`` / ``annotation``) — so
+indexed by ``Sample``, with ``protein_index`` / ``n_proteins`` / ``gene_name`` / ``annotation``) — so
 ``load_baclm_gene_vectors`` / ``load_pooled_gene_vectors`` and the Bacformer sweep consume it unchanged.
 The only difference from the Bakta path is *how the flat index is found* (CARD family match, not gene
 name). Single-copy only, mirroring the Bakta locator; ``flat_index < 0`` (Bakta-missed, no CDS) rows
@@ -52,7 +52,7 @@ def _card_presence_one(sid: str, amr_pq: Path, protein_pq: Path, wanted_by_famil
         if len(flat_ids) == 1:
             best = rows.iloc[0]
             per_family[family] = {
-                "gene_flat_index": flat_ids[0], "n_proteins": n_prot,
+                "protein_index": flat_ids[0], "n_proteins": n_prot,
                 "gene_name": family, "annotation": best.get("amr_allele"),
             }
         else:
@@ -99,7 +99,7 @@ def build_card_presence(
         for family, hit in per_family.items():
             if hit is not None:
                 rows_by_family[family].append({"Sample": sid, **hit})
-    empty = pd.DataFrame(columns=["gene_flat_index", "n_proteins", "gene_name", "annotation"]).rename_axis("Sample")
+    empty = pd.DataFrame(columns=["protein_index", "n_proteins", "gene_name", "annotation"]).rename_axis("Sample")
     tables = {f: (pd.DataFrame(rows).set_index("Sample") if rows else empty.copy()) for f, rows in rows_by_family.items()}
     for f, t in tables.items():
         logger.info("CARD presence: %s single-copy in %d/%d genomes (missing sidecar=%d)",

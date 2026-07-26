@@ -12,7 +12,7 @@ import pandas as pd
 import torch
 
 from bacpredict.engine.gene_lr.coding_amr_lr import (
-    GeneTarget,
+    ProteinTarget,
     SpeciesPaths,
     _baclm_minus_esm,
     _ladder_grid,
@@ -72,14 +72,14 @@ def _make_fixtures(root, n=30, signal=2.5):
 def test_baclm_reader_reads_correct_row(tmp_path):
     paths = _make_fixtures(tmp_path, n=6)
     table = build_gene_presence_table([f"s{i:03d}" for i in range(6)], paths.parquet_dir, "rpoB")
-    assert (table["gene_flat_index"] == RPOB).all()
+    assert (table["protein_index"] == RPOB).all()
     vecs = load_baclm_gene_vectors(table, paths.baclm_dir)
     assert vecs.shape == (6, DIM)  # one 960-vector per sample
 
 
 def test_esm_vs_baclm_comparison_recovers_signal(tmp_path):
     paths = _make_fixtures(tmp_path, n=30)
-    res = run_gene_comparison(GeneTarget("rpoB", "testdrug"), paths, n_folds=3, seeds=(1, 2))
+    res = run_gene_comparison(ProteinTarget("rpoB", "testdrug"), paths, n_folds=3, seeds=(1, 2))
     assert res.error is None
     assert res.n_esm == 30 and res.n_baclm == 30
     for name in ("esm", "baclm"):
@@ -91,11 +91,11 @@ def test_multi_gene_presence_matches_single_gene(tmp_path):
     ids = [f"s{i:03d}" for i in range(8)]
     tables = build_multi_gene_presence(ids, paths.parquet_dir, [("rpoB", ()), ("geneC", ())])
     # one sweep locates every gene at its true flat index (rpoB=1, geneC=2)
-    assert (tables["rpoB"]["gene_flat_index"] == 1).all()
-    assert (tables["geneC"]["gene_flat_index"] == 2).all()
+    assert (tables["rpoB"]["protein_index"] == 1).all()
+    assert (tables["geneC"]["protein_index"] == 2).all()
     # agrees row-for-row with the per-gene builder
     single = build_gene_presence_table(ids, paths.parquet_dir, "rpoB")
-    assert tables["rpoB"]["gene_flat_index"].equals(single["gene_flat_index"])
+    assert tables["rpoB"]["protein_index"].equals(single["protein_index"])
 
 
 def test_ladder_grid_dense_then_coarse_and_endpoint():
@@ -124,7 +124,7 @@ def test_stratified_order_prefix_preserves_class_ratio():
 
 def test_ladder_recovers_signal_and_endpoint_matches_kfold(tmp_path):
     paths = _make_fixtures(tmp_path, n=60)
-    lad = run_gene_ladder(GeneTarget("rpoB", "testdrug"), paths, seeds=(1, 2),
+    lad = run_gene_ladder(ProteinTarget("rpoB", "testdrug"), paths, seeds=(1, 2),
                           step=10, fine_until=1000)
     assert lad.get("error") is None
     assert lad["rungs"][0]["n_train"] == 10

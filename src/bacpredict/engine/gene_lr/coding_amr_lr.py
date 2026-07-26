@@ -11,7 +11,7 @@ Why first: baclm's coding channel reusing ESM's information is the precondition 
 work is on solid ground; if not, the embedding — not the read-out — is the problem.
 
 Both stores are 960-dim and share the same ``*_protein_sequences.parquet`` flat order, so a gene's
-``gene_flat_index`` (from :func:`bacpredict.engine.gene_lr.locate_gene.build_gene_presence_table`) indexes the
+``protein_index`` (from :func:`bacpredict.engine.gene_lr.locate_gene.build_gene_presence_table`) indexes the
 same protein row in each. The only new code here is the baclm reader: baclm's ``.pt`` holds
 ``protein_embeddings`` as a plain ``[n_cds, 960]`` matrix (one row per CDS in flat order, **no** batch
 dim / attention mask / special tokens), so its row selection is a direct ``[flat_index]`` — unlike the
@@ -56,7 +56,7 @@ SCHEMA_VERSION = 1
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
-class GeneTarget:
+class ProteinTarget:
     """One (gene, drug) probe. ``aliases`` are alternative gene symbols matched case-insensitively."""
 
     gene: str
@@ -65,19 +65,19 @@ class GeneTarget:
     note: str = ""
 
 
-PANEL: dict[str, list[GeneTarget]] = {
+PANEL: dict[str, list[ProteinTarget]] = {
     "tb": [
-        GeneTarget("rpoB", "rifampin", note="RRDR anchor — the whole TB story"),
-        GeneTarget("katG", "isoniazid", note="catalase-peroxidase LoF"),
-        GeneTarget("gyrA", "moxifloxacin", note="fluoroquinolone QRDR"),
-        GeneTarget("pncA", "pyrazinamide", note="pncA gene-body LoF (promoter is the 2c IGR target)"),
-        GeneTarget("embB", "ethambutol", note="arabinosyltransferase"),
-        GeneTarget("rpoC", "rifampin", note="compensatory — weak signal expected"),
+        ProteinTarget("rpoB", "rifampin", note="RRDR anchor — the whole TB story"),
+        ProteinTarget("katG", "isoniazid", note="catalase-peroxidase LoF"),
+        ProteinTarget("gyrA", "moxifloxacin", note="fluoroquinolone QRDR"),
+        ProteinTarget("pncA", "pyrazinamide", note="pncA gene-body LoF (promoter is the 2c IGR target)"),
+        ProteinTarget("embB", "ethambutol", note="arabinosyltransferase"),
+        ProteinTarget("rpoC", "rifampin", note="compensatory — weak signal expected"),
     ],
     # Kp: chromosomal single-copy mutation targets. Paths + drug columns need Isambard confirmation.
     "kp": [
-        GeneTarget("gyrA", "ciprofloxacin", note="QRDR"),
-        GeneTarget("parC", "ciprofloxacin", note="QRDR"),
+        ProteinTarget("gyrA", "ciprofloxacin", note="QRDR"),
+        ProteinTarget("parC", "ciprofloxacin", note="QRDR"),
     ],
 }
 
@@ -131,7 +131,7 @@ def _scan_one_parquet_multi(sid, pq_path, wanted_by_gene):
     for gene, wanted in wanted_by_gene.items():
         hits = [r for r in records if r["gene_name"] is not None and str(r["gene_name"]).lower() in wanted]
         per_gene[gene] = (
-            {"gene_flat_index": int(hits[0]["flat_index"]), "n_proteins": n_prot,
+            {"protein_index": int(hits[0]["flat_index"]), "n_proteins": n_prot,
              "gene_name": hits[0]["gene_name"], "annotation": hits[0].get("protein_name")}
             if len(hits) == 1 else None
         )
@@ -167,7 +167,7 @@ def build_multi_gene_presence(sample_ids, parquet_dir, gene_specs, *,
         for gene, hit in per_gene.items():
             if hit is not None:
                 rows_by_gene[gene].append({"Sample": sid, **hit})
-    empty = pd.DataFrame(columns=["gene_flat_index", "n_proteins", "gene_name", "annotation"]).rename_axis("Sample")
+    empty = pd.DataFrame(columns=["protein_index", "n_proteins", "gene_name", "annotation"]).rename_axis("Sample")
     tables = {g: (pd.DataFrame(rows).set_index("Sample") if rows else empty.copy()) for g, rows in rows_by_gene.items()}
     for g, t in tables.items():
         logger.info("multi-gene presence: %s single-copy in %d/%d genomes (missing parquet=%d)",
@@ -179,7 +179,7 @@ def load_baclm_gene_vectors(
     gene_table: pd.DataFrame,
     baclm_dir: Path,
     *,
-    flat_index_col: str = "gene_flat_index",
+    flat_index_col: str = "protein_index",
     pt_suffix: str = "_baclm_embeddings.pt",
     pool_workers: int = 1,
 ) -> pd.DataFrame:
@@ -239,7 +239,7 @@ class ComparisonResult:
 
 
 def _build_frames(
-    target: GeneTarget,
+    target: ProteinTarget,
     paths: SpeciesPaths,
     *,
     pool_workers: int = 1,
@@ -284,7 +284,7 @@ def _build_frames(
 
 
 def run_gene_comparison(
-    target: GeneTarget,
+    target: ProteinTarget,
     paths: SpeciesPaths,
     *,
     n_folds: int = 5,
@@ -473,7 +473,7 @@ def ladder_over_frames(
 
 
 def run_gene_ladder(
-    target: GeneTarget,
+    target: ProteinTarget,
     paths: SpeciesPaths,
     *,
     seeds: tuple[int, ...] = (1, 2, 3),
@@ -594,7 +594,7 @@ def main() -> None:
     if args.gene:
         if not args.drug:
             ap.error("--gene requires --drug")
-        targets = [GeneTarget(args.gene, args.drug, tuple(a for a in args.aliases.split(",") if a))]
+        targets = [ProteinTarget(args.gene, args.drug, tuple(a for a in args.aliases.split(",") if a))]
     else:
         targets = PANEL[args.species]
 

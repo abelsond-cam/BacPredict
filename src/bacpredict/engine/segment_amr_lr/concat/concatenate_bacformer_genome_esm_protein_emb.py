@@ -236,7 +236,7 @@ def run_concat_probe(
     gene_table = build_gene_presence_table(all_ids, parquet_dir, gene, aliases=gene_aliases, qc_log_path=qc_log_path)
     logger.info("Found %d single-copy %s genomes", len(gene_table), gene)
 
-    esm_df = load_pooled_gene_vectors(gene_table, esm_store_dir, flat_index_col="gene_flat_index", pool_workers=pool_workers)
+    esm_df = load_pooled_gene_vectors(gene_table, esm_store_dir, flat_index_col="protein_index", pool_workers=pool_workers)
     if esm_df.empty:
         raise RuntimeError(f"No ESM-C {gene} vectors recovered — check esm_store_dir / .pt suffix.")
     esm_df.columns = [f"esm_gene_{i}" for i in range(esm_df.shape[1])]

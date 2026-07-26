@@ -199,7 +199,7 @@ def build_gene_presence_table(
     Returns
     -------
     pandas.DataFrame
-        Indexed by ``Sample`` with ``gene_flat_index`` (index into the genome's ESM-C ``PROT_EMB``
+        Indexed by ``Sample`` with ``protein_index`` (index into the genome's ESM-C ``PROT_EMB``
         rows), ``n_proteins`` (flattened protein count — the alignment guard), ``gene_name`` (matched
         symbol), and ``annotation`` (the matched protein's ``protein_name`` / product). Empty if no
         single-copy genome is found.
@@ -224,7 +224,7 @@ def build_gene_presence_table(
         hit = hits[0]
         rows.append({
             "Sample": str(sid),
-            "gene_flat_index": int(hit["flat_index"]),
+            "protein_index": int(hit["flat_index"]),
             "n_proteins": len(records),
             "gene_name": hit["gene_name"],
             "annotation": hit["protein_name"],
@@ -238,5 +238,5 @@ def build_gene_presence_table(
         with Path(qc_log_path).open("a") as fh:
             fh.write(f"gene={gene} single_copy={n_kept} of={len(sample_ids)} skips={skips}\n")
     if not rows:
-        return pd.DataFrame(columns=["gene_flat_index", "n_proteins", "gene_name", "annotation"]).rename_axis("Sample")
+        return pd.DataFrame(columns=["protein_index", "n_proteins", "gene_name", "annotation"]).rename_axis("Sample")
     return pd.DataFrame(rows).set_index("Sample")

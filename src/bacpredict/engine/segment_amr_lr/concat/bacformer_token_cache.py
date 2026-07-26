@@ -3,7 +3,7 @@
 The unified primitive behind the fine-tuned and frozen per-AMR-gene token caches: one forward per eval
 genome through either the drug's FT checkpoint (``mode="finetuned"``) or the base backbone
 (``mode="frozen"``), and for every carrier call a ``calls_fn`` yields — one per genome, each a
-``(label, flat_index, source, tag_match)`` :class:`bacpredict.engine.gene_lr.reliable_gene_vectors.GeneCall`
+``(label, flat_index, source, tag_match)`` :class:`bacpredict.engine.gene_lr.reliable_gene_vectors.ProteinCall`
 (the sidecar-agnostic seam, CARD/Kleborate for Kp) — save the contextualised token
 ``last_hidden_state[flat_index]`` grouped by label. So the reliable per-gene ESM-vs-frozen-vs-FT
 head-to-head and the concat are computed on the *reliable* carrier sets, not Bakta's.

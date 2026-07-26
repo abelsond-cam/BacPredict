@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 import bacpredict.engine.gene_lr.reliable_gene_vectors as rgv
-from bacpredict.engine.gene_lr.reliable_gene_vectors import GeneCall
+from bacpredict.engine.gene_lr.reliable_gene_vectors import ProteinCall
 
 
 def test_collector_accumulates_per_label_ids_vecs_and_tag_subset(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -25,8 +25,8 @@ def test_collector_accumulates_per_label_ids_vecs_and_tag_subset(monkeypatch: py
 
     # G0 carries blaKPC (flat 0, tagged) + gyrA (flat 2, untagged); G1 carries blaKPC (flat 1, untagged).
     calls = {
-        "G0": [GeneCall("blaKPC", 0, "acquired", True), GeneCall("gyrA", 2, "chromosomal", False)],
-        "G1": [GeneCall("blaKPC", 1, "acquired", False)],
+        "G0": [ProteinCall("blaKPC", 0, "acquired", True), ProteinCall("gyrA", 2, "chromosomal", False)],
+        "G1": [ProteinCall("blaKPC", 1, "acquired", False)],
     }
     read_ids, by_label = rgv.collect_reliable_gene_vectors(
         ["G0", "G1"], Path("esm"), Path("pq"), lambda sid, n: calls[sid]
@@ -50,7 +50,7 @@ def test_collector_skips_unread_genomes(monkeypatch: pytest.MonkeyPatch) -> None
         lambda sid, e, p: None if sid == "MISS" else (None, np.zeros((1, 2), dtype=np.float32)),
     )
     read_ids, by_label = rgv.collect_reliable_gene_vectors(
-        ["OK", "MISS"], Path("e"), Path("p"), lambda sid, n: [GeneCall("g", 0, "acquired", False)]
+        ["OK", "MISS"], Path("e"), Path("p"), lambda sid, n: [ProteinCall("g", 0, "acquired", False)]
     )
     assert read_ids == ["OK"]
     assert by_label["g"]["ids"] == ["OK"]

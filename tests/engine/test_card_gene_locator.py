@@ -42,7 +42,7 @@ def test_build_card_presence_single_copy(tmp_path):
     tables = build_card_presence(["s1", "s2", "s3"], amr, pq, [("AAC(6')", ())])
     t = tables["AAC(6')"]
     assert list(t.index) == ["s1"]                       # s2 multi-copy dropped, s3 no sidecar
-    assert int(t.loc["s1", "gene_flat_index"]) == 3
+    assert int(t.loc["s1", "protein_index"]) == 3
     assert int(t.loc["s1", "n_proteins"]) == 10
     assert t.loc["s1", "gene_name"] == "AAC(6')"
 

@@ -50,7 +50,7 @@ def load_labels(ast_sheet: Path, drug: str) -> dict[str, int]:
     return {s: int(v) for s, v in zip(df["Sample"], df[drug], strict=True)}
 
 
-def _gene_onehot(sub: pd.DataFrame, labelled: list[str]) -> pd.DataFrame:
+def _who_gene_onehot(sub: pd.DataFrame, labelled: list[str]) -> pd.DataFrame:
     """Genomes × variant_id binary frame over ``labelled`` (genomes with no variant → all-zero rows)."""
     oh = pd.crosstab(sub["Sample"], sub["variant_id"]).clip(upper=1)
     return oh.reindex(labelled).fillna(0).astype(int)
@@ -84,7 +84,7 @@ def run(variants_parquet: Path, ast_sheet: Path, esm_rank_dir: Path, out_dir: Pa
             n_genomes = g["Sample"].nunique()
             if n_genomes < MIN_VARIANT_GENOMES:
                 continue
-            agg = score_onehot_frame(_gene_onehot(g, labelled), label_map, seeds)
+            agg = score_onehot_frame(_who_gene_onehot(g, labelled), label_map, seeds)
             if agg is None:
                 continue
             noncoding = region == "non-coding"
@@ -100,7 +100,7 @@ def run(variants_parquet: Path, ast_sheet: Path, esm_rank_dir: Path, out_dir: Pa
                 "is_rrna": gene in RRNA_GENES, "is_noncoding": noncoding,
             })
 
-        full = score_onehot_frame(_gene_onehot(dv, labelled), label_map, seeds)
+        full = score_onehot_frame(_who_gene_onehot(dv, labelled), label_map, seeds)
         if full is not None:
             rows.append({"gene_name": "__ALL_WHO_one_hot__", "region": "all", "site": "__ALL_WHO_one_hot__",
                          "mut_auroc": full["auroc"]["mean"], "mut_auroc_sd": full["auroc"]["sd"],

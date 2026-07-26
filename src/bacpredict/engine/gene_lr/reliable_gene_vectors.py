@@ -7,7 +7,7 @@ carrier ids + vectors (+ the tagged subset). It is deliberately blind to **how**
 Bakta gene names, a CARD/Kleborate AMR sidecar, or anything else — so both organisms' per-gene-LR and
 reliable-concat drivers share one collector, and the annotation that yields the calls stays in the app.
 
-A ``calls_fn(sample_id, n_real) -> Iterable[GeneCall]`` supplies the per-genome calls; the caller is
+A ``calls_fn(sample_id, n_real) -> Iterable[ProteinCall]`` supplies the per-genome calls; the caller is
 responsible for any label single-copy / source filtering *before* yielding (the collector just carries
 what it is given). ``tag_match`` flags a call for the optional tagged subset (e.g. "Bakta also named this
 family") — opaque here; the app decides its meaning.
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 MIN_CARRIERS = 8
 
 
-class GeneCall(NamedTuple):
+class ProteinCall(NamedTuple):
     """One per-genome gene call the collector carries into a per-label vector set.
 
     Attributes
@@ -50,7 +50,7 @@ class GeneCall(NamedTuple):
     tag_match: bool
 
 
-CallsFn = Callable[[str, int], Iterable[GeneCall]]
+CallsFn = Callable[[str, int], Iterable[ProteinCall]]
 
 
 def collect_reliable_gene_vectors(

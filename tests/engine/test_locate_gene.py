@@ -46,7 +46,7 @@ def test_single_copy_kept_absent_and_multicopy_skipped(tmp_path: Path) -> None:
 
     assert list(table.index) == ["g1"]
     row = table.loc["g1"]
-    assert row["gene_flat_index"] == 1
+    assert row["protein_index"] == 1
     assert row["n_proteins"] == 3
     assert row["gene_name"] == "rpoB"
     assert row["annotation"] == "RNA polymerase"
@@ -59,7 +59,7 @@ def test_case_insensitive_and_aliases(tmp_path: Path) -> None:
     _write_genome(tmp_path, "g2", [[("Rv0667", "RNA polymerase")]])    # locus-tag alias
     table = build_gene_presence_table(["g1", "g2"], tmp_path, "rpoB", aliases=("Rv0667",))
     assert set(table.index) == {"g1", "g2"}
-    assert (table["gene_flat_index"] == 0).all()
+    assert (table["protein_index"] == 0).all()
 
 
 def test_missing_parquet_is_skipped(tmp_path: Path) -> None:
@@ -74,4 +74,4 @@ def test_no_hits_returns_empty_framed_table(tmp_path: Path) -> None:
     _write_genome(tmp_path, "g1", [[("gyrA", "gyrase")]])
     table = build_gene_presence_table(["g1"], tmp_path, "rpoB")
     assert table.empty
-    assert list(table.columns) == ["gene_flat_index", "n_proteins", "gene_name", "annotation"]
+    assert list(table.columns) == ["protein_index", "n_proteins", "gene_name", "annotation"]

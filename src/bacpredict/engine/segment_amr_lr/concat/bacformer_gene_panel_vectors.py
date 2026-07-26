@@ -34,7 +34,7 @@ def _per_sample_genes(presence: dict[str, pd.DataFrame]) -> dict[str, dict[str, 
     per_sample: dict[str, dict[str, tuple[int, int]]] = {}
     for gene, table in presence.items():
         for sample_id, row in table.iterrows():
-            per_sample.setdefault(str(sample_id), {})[gene] = (int(row["gene_flat_index"]), int(row["n_proteins"]))
+            per_sample.setdefault(str(sample_id), {})[gene] = (int(row["protein_index"]), int(row["n_proteins"]))
     return per_sample
 
 

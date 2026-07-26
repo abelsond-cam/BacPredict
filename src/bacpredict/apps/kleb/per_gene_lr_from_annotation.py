@@ -37,7 +37,7 @@ from bacpredict.engine.config import KP
 from bacpredict.engine.finetune.holdout import resolve_clean_splits
 from bacpredict.engine.gene_lr.reliable_gene_vectors import (
     MIN_CARRIERS,
-    GeneCall,
+    ProteinCall,
     collect_reliable_gene_vectors,
 )
 from bacpredict.engine.segment_amr_lr.fit_lr import fit_one_segment_imputed
@@ -71,7 +71,7 @@ def card_amr_calls(sidecar_dir: Path, *, grain: str):
     The Kp/CARD-specific half of the old ``collect_reliable_amr``: returns a
     ``calls_fn(sample_id, n_real)`` that reads ``{sample}_amr.parquet``, keeps acquired/chromosomal calls
     whose ``flat_index`` is in range, applies the single-copy-per-label rule (mirrors the Bakta per-gene
-    rule), and yields one :class:`GeneCall` per surviving call — ``tag_match`` set when Bakta's gene name
+    rule), and yields one :class:`ProteinCall` per surviving call — ``tag_match`` set when Bakta's gene name
     also names the CARD family (the carrier the old Bakta-keyed analysis would have found).
     """
     label_col = "amr_gene_family" if grain == "family" else "amr_allele"
@@ -93,7 +93,7 @@ def card_amr_calls(sidecar_dir: Path, *, grain: str):
             tag = _bakta_matches_family(
                 r.get("bakta_gene_name"), str(r.get("amr_gene_family")), str(r.get("amr_allele"))
             )
-            yield GeneCall(label=label, flat_index=int(r["flat_index"]), source=r["amr_source"], tag_match=tag)
+            yield ProteinCall(label=label, flat_index=int(r["flat_index"]), source=r["amr_source"], tag_match=tag)
 
     return calls_fn
 

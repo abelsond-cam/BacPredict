@@ -74,8 +74,8 @@ def test_per_sample_genes_inverts_presence():
     from bacpredict.engine.segment_amr_lr.concat.bacformer_gene_panel_vectors import _per_sample_genes
 
     presence = {
-        "ethA": pd.DataFrame({"gene_flat_index": [10], "n_proteins": [4000]}, index=pd.Index(["s1"], name="Sample")),
-        "inhA": pd.DataFrame({"gene_flat_index": [20, 21], "n_proteins": [4000, 4100]},
+        "ethA": pd.DataFrame({"protein_index": [10], "n_proteins": [4000]}, index=pd.Index(["s1"], name="Sample")),
+        "inhA": pd.DataFrame({"protein_index": [20, 21], "n_proteins": [4000, 4100]},
                              index=pd.Index(["s1", "s2"], name="Sample")),
     }
     per = _per_sample_genes(presence)

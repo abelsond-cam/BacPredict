@@ -53,14 +53,14 @@ def load_pooled_gene_vectors(
     gene_table: pd.DataFrame,
     esm_store_dir: Path,
     *,
-    flat_index_col: str = "gene_flat_index",
+    flat_index_col: str = "protein_index",
     pt_suffix: str = "_esm_embeddings.pt",
     pool_workers: int = 1,
 ) -> pd.DataFrame:
     """Pull each sample's pooled ESM-C **segment** 960-vector out of the embedding store.
 
     Generic over the segment: ``flat_index_col`` names the column holding its flat protein index
-    (``"gene_flat_index"`` from :func:`bacpredict.engine.gene_lr.locate_gene.build_gene_presence_table`, or
+    (``"protein_index"`` from :func:`bacpredict.engine.gene_lr.locate_gene.build_gene_presence_table`, or
     ``"rpob_flat_index"`` from the rpoB genotype table). Lazy by construction — each ``.pt`` is mmap'd and
     only the single row is materialised. Returns a DataFrame of the recovered vectors indexed by Sample
     (samples whose ``.pt`` is missing or whose index fails the guards are dropped). ``pool_workers > 1``

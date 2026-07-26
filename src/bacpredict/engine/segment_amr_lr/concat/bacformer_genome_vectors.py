@@ -116,7 +116,7 @@ def _extract_gene_token_and_mean(
 ) -> tuple[np.ndarray, np.ndarray, list[str]]:
     """Run ``model`` forward per genome → contextualised gene token + genome mean.
 
-    ``gene_table`` is indexed by Sample and carries ``gene_flat_index`` + ``n_proteins`` (from
+    ``gene_table`` is indexed by Sample and carries ``protein_index`` + ``n_proteins`` (from
     :func:`bacpredict.engine.gene_lr.locate_gene.build_gene_presence_table`). Returns ``(token [N, dim],
     mean [N, dim], sample_ids)`` from one forward pass each, with the day-one length guard and the
     missing/misaligned-genome skips. The genome mean is gene-agnostic; only the token uses the index.
@@ -139,7 +139,7 @@ def _extract_gene_token_and_mean(
         if real_idx.numel() != n_expected:
             skips["count_mismatch"] = skips.get("count_mismatch", 0) + 1
             continue
-        flat_index = int(row["gene_flat_index"])
+        flat_index = int(row["protein_index"])
         if flat_index >= real_idx.numel():
             skips["out_of_range"] = skips.get("out_of_range", 0) + 1
             continue
