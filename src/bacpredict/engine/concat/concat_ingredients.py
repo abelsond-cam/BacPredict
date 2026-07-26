@@ -22,6 +22,35 @@ def impute_block(present_ids: list[str], present_vecs: np.ndarray, all_ids: list
     return block
 
 
+def assert_holdout_in_cache(
+    all_ids: list[str], holdout_ids: list[str], drug: str, scope: str | None, *, min_frac: float = 0.9,
+) -> tuple[int, int]:
+    """Refuse an FT cache that does not contain the deployed holdout — the leak signature.
+
+    Every corrected FT read-out (the ladder + the concat scorers) fits its LR on the cache's **FT-train**
+    genomes and tests on the deployed **holdout**; both must therefore be present in the cache. A stale
+    ``eval``-only or CSV-single-split cache holds ~none of the deployed k-fold holdout (azithromycin: 69 of
+    384), so scoring it silently reports a *leaked* number. Raises when the cache holds fewer than
+    ``min_frac`` of the deployed holdout, or has no FT-train genomes to fit on. Returns
+    ``(n_holdout_in_cache, n_train_in_cache)``.
+    """
+    holdout_set = set(holdout_ids)
+    n_holdout = sum(1 for s in all_ids if s in holdout_set)
+    if n_holdout < min_frac * max(len(holdout_ids), 1):
+        raise ValueError(
+            f"{drug}: FT cache holds only {n_holdout}/{len(holdout_ids)} of the deployed k-fold holdout "
+            f"(scope={scope!r}). This is the leak signature — a cache built on the CSV single-split or "
+            f"eval-only. Re-cache scope=trainholdout on the deployed checkpoint before scoring the read-out."
+        )
+    n_train = len(all_ids) - n_holdout
+    if n_train == 0:
+        raise ValueError(
+            f"{drug}: cache has no FT-train genomes (scope={scope!r}) — the LR cannot fit on train then test "
+            f"on the holdout. Re-cache scope=trainholdout."
+        )
+    return n_holdout, n_train
+
+
 def load_genome_mean(
     cache_dir: Path, drug: str, label_map: dict[str, int], *, prefix: str = "ft", scope: str | None = None
 ) -> tuple[list[str], np.ndarray]:

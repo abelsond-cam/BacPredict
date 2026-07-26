@@ -8,11 +8,12 @@ we score, on the reliable carriers (zero-imputed out-of-fold k-fold, same as the
 
     mean ∈ {frozen genome-mean, FT genome-mean}   ⊕   best gene ∈ {ESM, frozen-Bac, FT-Bac}
 
-(each gene picked unsupervised by its *own* per-gene LR), plus the two mean-only baselines → 8 rows in
-``gene_ingredient_concat_<drug>.csv`` (config, mean, ingredient, gene, auroc, delta_vs_its_mean). The ESM
-block comes from the store (``emb[flat_index]`` via ``calls_fn``), the frozen block from the frozen token
-cache, the FT block from the FT token cache. Sidecar-agnostic (the carrier ``calls_fn`` is supplied by the
-organism app). CPU.
+(each gene picked unsupervised by its *own* per-gene train-OOF LR), plus the two mean-only baselines → 8
+rows in ``gene_ingredient_concat_<drug>.csv`` (config, mean, ingredient, gene, auroc, delta_vs_its_mean).
+Each ``auroc`` is a **held-out** number: every LR fits on the cache's FT-train genomes and is tested on the
+FT-unseen holdout (the deployed ``<drug>_split.csv`` scope). The ESM block comes from the store
+(``emb[flat_index]`` via ``calls_fn``), the frozen block from the frozen token cache, the FT block from the
+FT token cache. Sidecar-agnostic (the carrier ``calls_fn`` is supplied by the organism app). CPU.
 """
 
 from __future__ import annotations
@@ -24,46 +25,59 @@ import numpy as np
 import pandas as pd
 
 from bacpredict.engine.concat.concat_ingredients import (
+    assert_holdout_in_cache,
     impute_block,
     load_frozen_gene,
     load_frozen_mean,
     load_ft_gene,
     load_ft_mean,
 )
-from bacpredict.engine.finetune.holdout import resolve_clean_splits
 from bacpredict.engine.gene_lr.reliable_gene_vectors import MIN_CARRIERS, CallsFn, collect_reliable_gene_vectors
 from bacpredict.engine.segment_amr_lr.fit_lr import fit_one_segment, fit_one_segment_imputed
+from bacpredict.engine.splits.load_splits import load_splits
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
 def _best_gene(blocks: dict[str, tuple[list[str], np.ndarray]], universe: list[str],
-               y: np.ndarray, *, n_folds: int, seed: int) -> tuple[str | None, float]:
-    """Pick the gene whose zero-imputed per-gene LR (over ``universe``) has the highest AUROC."""
+               y: np.ndarray, *, n_folds: int, seed: int,
+               eval_ids: set[str] | None = None) -> tuple[str | None, float]:
+    """Pick the gene whose zero-imputed per-gene LR has the highest **train-OOF** AUROC (holdout excluded).
+
+    ``eval_ids`` (the deployed holdout) is withheld from the fit so selection is leakage-free w.r.t. the
+    holdout the concat then reports on — picking the best gene by a held-out AUROC would taint the number.
+    """
     best, best_au = None, -1.0
     for gene, (ids, vecs) in blocks.items():
         if len(ids) < MIN_CARRIERS:
             continue
         fit = fit_one_segment_imputed(ids, vecs.astype(np.float32), universe, y, vecs.shape[1],
-                                    n_folds=n_folds, seed=seed)
-        au = float(fit["auroc"]) if fit else float("nan")
+                                    n_folds=n_folds, seed=seed, eval_ids=eval_ids)
+        au = float(fit["auroc"]) if fit else float("nan")  # train-OOF selection metric
         if not np.isnan(au) and au > best_au:
             best, best_au = gene, au
     return best, best_au
 
 
-def run(*, ast_sheet: Path, drug: str, ft_cache_dir: Path, frozen_cache_dir: Path, esm_dir: Path,
-        parquet_dir: Path, calls_fn: CallsFn, out_dir: Path, n_folds: int = 5, seed: int = 1) -> pd.DataFrame:
-    """Score every (mean × gene-ingredient) concat for one drug; write gene_ingredient_concat_<drug>.csv."""
-    label_map, _tr, _va, evaluate_ids, _info = resolve_clean_splits(ast_sheet, drug)
-    eval_ids = [s for s in evaluate_ids if s in label_map]
+def run(*, split_table: Path, drug: str, ft_cache_dir: Path, frozen_cache_dir: Path, esm_dir: Path,
+        parquet_dir: Path, calls_fn: CallsFn, out_dir: Path, n_folds: int = 5, seed: int = 1,
+        scope: str = "trainholdout") -> pd.DataFrame:
+    """Score every (mean × gene-ingredient) concat for one drug; write gene_ingredient_concat_<drug>.csv.
 
-    # ESM gene blocks (reliable carriers) + the canonical labelled universe (FT-mean genomes).
-    _read_ids, by_label = collect_reliable_gene_vectors(eval_ids, esm_dir, parquet_dir, calls_fn)
-    ft_ids_all, ft_mean = load_ft_mean(ft_cache_dir, drug, label_map)
-    fr_ids_all, fr_mean = load_frozen_mean(frozen_cache_dir, drug, label_map)
+    Split scope is the deployed ``<drug>_split.csv`` (:func:`load_splits`): each concat's ``auroc`` is the
+    zero-imputed LR fit on the cache's FT-train genomes and tested on the FT-unseen holdout; the best gene
+    per ingredient is SELECTED by its leakage-free train-OOF AUROC.
+    """
+    label_map, _train_ids, _validate_ids, holdout_ids = load_splits(split_table)
+    holdout_set = set(holdout_ids)
+
+    # ESM gene blocks (reliable carriers) + the canonical labelled universe (FT-mean genomes, train+holdout).
+    ft_ids_all, ft_mean = load_ft_mean(ft_cache_dir, drug, label_map, scope=scope)
+    fr_ids_all, fr_mean = load_frozen_mean(frozen_cache_dir, drug, label_map, scope=scope)
     universe = [s for s in ft_ids_all if s in set(fr_ids_all)]  # genomes present in both means
+    assert_holdout_in_cache(universe, holdout_ids, drug, scope)
+    _read_ids, by_label = collect_reliable_gene_vectors(universe, esm_dir, parquet_dir, calls_fn)
     pos_ft = {s: i for i, s in enumerate(ft_ids_all)}
     pos_fr = {s: i for i, s in enumerate(fr_ids_all)}
     ft_mean = np.vstack([ft_mean[pos_ft[s]] for s in universe]).astype(np.float32)
@@ -88,13 +102,15 @@ def run(*, ast_sheet: Path, drug: str, ft_cache_dir: Path, frozen_cache_dir: Pat
     common = {g for g in esm_blocks if g in ft_blocks and g in fr_blocks}
     esm_blocks = {g: v for g, v in esm_blocks.items() if g in common}
     ingredients = {"esm": esm_blocks, "frozen_bac": fr_blocks, "ft_bac": ft_blocks}
-    best = {name: _best_gene(blk, universe, y, n_folds=n_folds, seed=seed)
+    best = {name: _best_gene(blk, universe, y, n_folds=n_folds, seed=seed, eval_ids=holdout_set)
             for name, blk in ingredients.items()}
     logger.info("%s: best genes -> %s", drug, {k: v[0] for k, v in best.items()})
 
     def _score(x: np.ndarray) -> float:
-        fit = fit_one_segment(universe, x.astype(np.float32), y, n_folds=n_folds, seed=seed)
-        return float(fit["auroc"]) if fit else float("nan")
+        """Held-out eval AUROC: the zero-imputed LR fit on the FT-train genomes, tested on the holdout."""
+        fit = fit_one_segment(universe, x.astype(np.float32), y, n_folds=n_folds, seed=seed,
+                              eval_ids=holdout_set)
+        return float(fit["eval_auroc"]) if fit else float("nan")
 
     means = {"frozen_mean": fr_mean, "ft_mean": ft_mean}
     rows = []

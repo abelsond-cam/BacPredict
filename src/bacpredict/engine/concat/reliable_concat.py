@@ -4,20 +4,22 @@ Consumes an FT token cache (``cache_bacformer_token_cache``) + the ESM store to 
 **reliable per-genome gene calls** supplied by the caller (``calls_fn`` — CARD/Kleborate for Kp,
 TB-Profiler for TB, …), the two deliverables the Bakta-labelled pipeline produced unreliably:
 
-1. **Per-gene ESM-LR vs frozen-Bac-LR vs FT-LR** — for each gene label, the zero-imputed out-of-fold
-   k-fold LR on the raw ESM-C token (from the store, ``emb[flat_index]`` via ``calls_fn``), the **frozen**
-   Bacformer contextualised token (from the frozen token cache, when ``--frozen-cache-dir`` is given) and
-   the **fine-tuned** Bacformer token, on the *same* reliable carriers →
-   ``reliable_esm_vs_ft_per_gene_<drug>.csv`` (each block carries both AUROC and AUPRC). The progression
-   ESM → frozen → fine-tuned isolates how much context and then fine-tuning add per gene.
+1. **Per-gene ESM-LR vs frozen-Bac-LR vs FT-LR** — for each gene label, the zero-imputed LR **fit on the
+   FT-train genomes and tested on the FT-unseen holdout** on the raw ESM-C token (from the store,
+   ``emb[flat_index]`` via ``calls_fn``), the **frozen** Bacformer contextualised token (from the frozen
+   token cache, when ``--frozen-cache-dir`` is given) and the **fine-tuned** Bacformer token, on the *same*
+   reliable carriers → ``reliable_esm_vs_ft_per_gene_<drug>.csv``. Each block reports a held-out
+   ``*_eval_auroc`` (+ AUPRC) and keeps its leakage-free train-OOF ``*_lr_auroc`` for **selection**. The
+   progression ESM → frozen → fine-tuned isolates how much context and then fine-tuning add per gene.
 2. **FT-mean ⊕ best-gene concat** — genome-mean (FT) alone, then concatenated with the single best gene
-   (by its own reliable LR), as an ESM-gene block and as an FT-token block → ``reliable_concat_<drug>.csv``
-   (the FT + concat best-embedding number for the summary panel's third bar). Same zero-imputed k-fold LR
-   as the per-gene fits, so all AUROCs are comparable.
+   (**selected** by its train-OOF LR), as an ESM-gene block and as an FT-token block →
+   ``reliable_concat_<drug>.csv`` (the FT + concat best-embedding number for the summary panel's third bar).
+   Same fit-on-train / test-on-holdout LR as the per-gene fits, so all AUROCs are comparable held-out numbers.
 
 Sidecar-agnostic: the per-genome carrier calls come from a ``calls_fn`` (see
 :func:`bacpredict.engine.gene_lr.reliable_gene_vectors.collect_reliable_gene_vectors`); the annotation that
-produces them stays in the organism app. Login/CPU.
+produces them stays in the organism app. The split scope is the deployed ``<drug>_split.csv`` table
+(:func:`load_splits`) — for a fine-tuned feature the model's own holdout is the only honest scope. Login/CPU.
 
 :func:`aggregate` / :func:`aggregate_run` pivot the per-drug ``reliable_concat_<drug>.csv`` outputs into
 one cross-drug summary (the previously ad-hoc summary the ladder + combined panel read).
@@ -33,27 +35,43 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import average_precision_score
 
-from bacpredict.engine.concat.concat_ingredients import impute_block, load_frozen_gene, load_ft_gene, load_ft_mean
-from bacpredict.engine.finetune.holdout import resolve_clean_splits
+from bacpredict.engine.concat.concat_ingredients import (
+    assert_holdout_in_cache,
+    impute_block,
+    load_frozen_gene,
+    load_ft_gene,
+    load_ft_mean,
+)
 from bacpredict.engine.gene_lr.reliable_gene_vectors import MIN_CARRIERS, CallsFn, collect_reliable_gene_vectors
 from bacpredict.engine.segment_amr_lr.fit_lr import fit_one_segment, fit_one_segment_imputed
+from bacpredict.engine.splits.load_splits import load_splits
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
-def _fit_metrics(fit: dict | None, ids: list[str], y: np.ndarray) -> tuple[float, float]:
-    """``(AUROC, AUPRC)`` from a per-gene fit dict — AUPRC from its out-of-fold probabilities — or (nan, nan)."""
+def _fit_metrics(fit: dict | None, label_map: dict[str, int]) -> tuple[float, float, float]:
+    """``(train-OOF AUROC, held-out eval AUROC, held-out eval AUPRC)`` from a per-gene fit dict, or NaNs.
+
+    The **OOF AUROC** (``fit["auroc"]``, fit-set only) is the leakage-free **selection** metric; the **eval**
+    AUROC/AUPRC are the full-fit model scored on the FT-unseen holdout (``fit["eval_prob"]``, present-
+    conditioned) — the reported held-out numbers. AUPRC is over the same holdout genomes.
+    """
     if not fit:
-        return float("nan"), float("nan")
-    p = np.array([fit["oof_prob"].get(s, np.nan) for s in ids])
-    ap = float(average_precision_score(y, p)) if not np.isnan(p).any() else float("nan")
-    return float(fit["auroc"]), ap
+        return float("nan"), float("nan"), float("nan")
+    sel = float(fit["auroc"])
+    ev_ids = list(fit["eval_prob"])
+    if not ev_ids:
+        return sel, float("nan"), float("nan")
+    p = np.array([fit["eval_prob"][s] for s in ev_ids])
+    yv = np.array([label_map[s] for s in ev_ids], dtype=int)
+    ap = float(average_precision_score(yv, p)) if 0 < int(yv.sum()) < len(yv) else float("nan")
+    return sel, float(fit["eval_auroc"]), ap
 
 
 def run(
     *,
-    ast_sheet: Path,
+    split_table: Path,
     drug: str,
     ft_cache_dir: Path,
     esm_dir: Path,
@@ -63,66 +81,72 @@ def run(
     frozen_cache_dir: Path | None = None,
     n_folds: int = 5,
     seed: int = 1,
+    scope: str = "trainholdout",
 ) -> None:
     """Per-gene reliable ESM-LR vs FT-LR + the FT-mean ⊕ best-gene concat; write both CSVs.
 
     ``calls_fn`` yields each genome's reliable carrier calls (label + flat index; the sidecar-agnostic seam).
+    Split scope is the deployed ``<drug>_split.csv`` (:func:`load_splits`): every LR fits on the cache's
+    FT-**train** genomes and reports a held-out AUROC/AUPRC on the FT-unseen **holdout** (``*_eval_auroc``),
+    while the leakage-free train-OOF AUROC (``*_lr_auroc``) is kept for **selecting** the best concat gene.
     """
-    label_map, _tr, _va, evaluate_ids, _info = resolve_clean_splits(ast_sheet, drug)
-    eval_ids = [s for s in evaluate_ids if s in label_map]
+    label_map, _train_ids, _validate_ids, holdout_ids = load_splits(split_table)
+    holdout_set = set(holdout_ids)
 
-    # ESM side: reliable per-label carriers + ESM vectors (one pass over eval genomes).
-    read_ids, by_label = collect_reliable_gene_vectors(eval_ids, esm_dir, parquet_dir, calls_fn)
+    # FT universe = the labelled train+holdout genomes the cache forwarded (scope-tagged mean).
+    all_ids, mean_block = load_ft_mean(ft_cache_dir, drug, label_map, scope=scope)
+    assert_holdout_in_cache(all_ids, holdout_ids, drug, scope)
+    y_all = np.array([label_map[s] for s in all_ids], dtype=int)
+    dim = mean_block.shape[1]
+
+    # ESM side: reliable per-label carriers over the SAME train+holdout universe (one pass over the store),
+    # so the ESM LR fits on train and evaluates on the holdout exactly like the FT LR.
+    read_ids, by_label = collect_reliable_gene_vectors(all_ids, esm_dir, parquet_dir, calls_fn)
     y_read = np.array([label_map[s] for s in read_ids], dtype=int)
 
     manifest = pd.read_csv(ft_cache_dir / f"amr_gene_manifest_{drug}.csv")
     san_of = {str(r["gene_family"]): str(r["sanitized"]) for _, r in manifest.iterrows()}
 
-    # 1) per-gene ESM-LR vs FT-LR on the reliable carriers (FT universe = labelled FT-mean genomes).
-    all_ids, mean_block = load_ft_mean(ft_cache_dir, drug, label_map)
-    y_all = np.array([label_map[s] for s in all_ids], dtype=int)
-    dim = mean_block.shape[1]
-
+    # 1) per-gene ESM-LR vs frozen-LR vs FT-LR on the reliable carriers — each fit-on-train / eval-on-holdout.
     rows = []
     for label, ent in by_label.items():
         if len(ent["ids"]) < MIN_CARRIERS or label not in san_of:
             continue
         esm_x = np.vstack(ent["vecs"]).astype(np.float32)
         esm_fit = fit_one_segment_imputed(ent["ids"], esm_x, read_ids, y_read, esm_x.shape[1],
-                                        n_folds=n_folds, seed=seed)
+                                        n_folds=n_folds, seed=seed, eval_ids=holdout_set)
         ft_ids, ft_vec = load_ft_gene(ft_cache_dir, san_of[label])
         ft_fit = fit_one_segment_imputed(ft_ids, ft_vec, all_ids, y_all, ft_vec.shape[1],
-                                       n_folds=n_folds, seed=seed)
-        # frozen Bacformer per-gene LR (same imputed k-fold, FT-mean universe) — from the frozen token cache
+                                       n_folds=n_folds, seed=seed, eval_ids=holdout_set)
+        # frozen Bacformer per-gene LR (same imputed fit, FT-mean universe) — from the frozen token cache
         fr_fit = None
         if frozen_cache_dir is not None and (frozen_cache_dir / "frozen_amr_emb" / f"{san_of[label]}.npz").exists():
             fr_ids, fr_vec = load_frozen_gene(frozen_cache_dir, san_of[label])
             fr_fit = fit_one_segment_imputed(fr_ids, fr_vec, all_ids, y_all, fr_vec.shape[1],
-                                           n_folds=n_folds, seed=seed)
-        esm_au, esm_ap = _fit_metrics(esm_fit, read_ids, y_read)
-        ft_au, ft_ap = _fit_metrics(ft_fit, all_ids, y_all)
-        fr_au, fr_ap = _fit_metrics(fr_fit, all_ids, y_all)
+                                           n_folds=n_folds, seed=seed, eval_ids=holdout_set)
+        esm_sel, esm_au, esm_ap = _fit_metrics(esm_fit, label_map)
+        ft_sel, ft_au, ft_ap = _fit_metrics(ft_fit, label_map)
+        fr_sel, fr_au, fr_ap = _fit_metrics(fr_fit, label_map)
         rows.append({
             "gene_family": label, "amr_source": ent["source"],
             "n_carriers": len(ent["ids"]), "prevalence": len(ent["ids"]) / max(len(read_ids), 1),
-            "esm_lr_auroc": esm_au, "esm_lr_auprc": esm_ap,
-            "frozen_lr_auroc": fr_au, "frozen_lr_auprc": fr_ap,
-            "ft_lr_auroc": ft_au, "ft_lr_auprc": ft_ap, "delta_ft_minus_esm": ft_au - esm_au,
+            "esm_lr_auroc": esm_sel, "esm_eval_auroc": esm_au, "esm_lr_auprc": esm_ap,
+            "frozen_lr_auroc": fr_sel, "frozen_eval_auroc": fr_au, "frozen_lr_auprc": fr_ap,
+            "ft_lr_auroc": ft_sel, "ft_eval_auroc": ft_au, "ft_lr_auprc": ft_ap,
+            "delta_ft_minus_esm": ft_au - esm_au,  # held-out eval delta — the reported ESM→FT claim
         })
     per_gene = pd.DataFrame(rows).sort_values("n_carriers", ascending=False).reset_index(drop=True)
     out_dir.mkdir(parents=True, exist_ok=True)
     per_gene.to_csv(out_dir / f"reliable_esm_vs_ft_per_gene_{drug}.csv", index=False)
     logger.info("%s: %d AMR families scored (ESM vs FT)", drug, len(per_gene))
 
-    # 2) concat: mean-only, mean ⊕ best ESM gene, mean ⊕ best FT gene (best by each one's reliable LR).
+    # 2) concat: mean-only, mean ⊕ best ESM gene, mean ⊕ best FT gene (each SELECTED by its train-OOF LR).
     def _score(x: np.ndarray) -> tuple[float, float]:
-        """(AUROC, AUPRC) of the zero-imputed k-fold LR; AUPRC from the fit's out-of-fold probabilities."""
-        fit = fit_one_segment(all_ids, x.astype(np.float32), y_all, n_folds=n_folds, seed=seed)
-        if not fit:
-            return float("nan"), float("nan")
-        p = np.array([fit["oof_prob"].get(s, np.nan) for s in all_ids])
-        auprc = float(average_precision_score(y_all, p)) if not np.isnan(p).any() else float("nan")
-        return float(fit["auroc"]), auprc
+        """(eval AUROC, eval AUPRC) of the zero-imputed LR fit on the FT-train genomes, tested on the holdout."""
+        fit = fit_one_segment(all_ids, x.astype(np.float32), y_all, n_folds=n_folds, seed=seed,
+                              eval_ids=holdout_set)
+        _sel, au, ap = _fit_metrics(fit, label_map)
+        return au, ap
 
     m_au, m_ap = _score(mean_block)
     crows = [{"config": "mean_only", "gene": "", "n_features": dim, "auroc": m_au, "auprc": m_ap}]

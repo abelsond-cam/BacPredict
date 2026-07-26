@@ -8,20 +8,22 @@ panel beat the ESM-gene panel that the existing concat read-out already uses?
 
 Everything is CPU from the cache — **no forward pass**:
 
-- FT genome-mean : ``ft_genome_mean_<drug>.npz`` ({sample_ids, mean_vectors}) — eval holdout, all genomes.
+- FT genome-mean : ``ft_genome_mean_<drug>_<scope>.npz`` ({sample_ids, mean_vectors}) — the deployed
+  train+holdout genomes the FT backbone forwarded (``scope=trainholdout``).
 - FT per-gene    : ``gene_emb/<sanitized>.npz`` ({sample_ids, vectors}) — carriers, the top genes (by ESM-LR).
-- ESM per-gene   : extracted from the ESM store + parquet (single-copy carriers), eval holdout.
+- ESM per-gene   : extracted from the ESM store + parquet (single-copy carriers), same train+holdout universe.
 
-The two panels rank their genes by the **matching** per-gene LR AUROC, read from
+The two panels rank their genes by the **matching train-OOF** per-gene LR AUROC, read from
 ``esm_vs_ft_per_gene_<drug>.csv``: the **FT panel = top-k by ``ft_lr_auroc``**, the **ESM panel = top-k by
-``esm_lr_auroc``**. Each gene block is zero-imputed for non-carriers (so the LR sees presence/absence),
-concatenated with the always-present genome-mean, and scored with the **same zero-imputed out-of-fold
-k-fold LR** (:func:`bacpredict.engine.segment_amr_lr.fit_lr.fit_one_segment`) the per-gene comparison used —
-so every AUROC here is directly comparable to the histogram numbers.
+``esm_lr_auroc``** (both leakage-free w.r.t. the holdout — selection is never on a test column). Each gene
+block is zero-imputed for non-carriers (so the LR sees presence/absence), concatenated with the
+always-present genome-mean, and scored with the shared LR
+(:func:`bacpredict.engine.segment_amr_lr.fit_lr.fit_one_segment`) **fit on the FT-train genomes and tested
+on the FT-unseen holdout** — so every AUROC here is a held-out number comparable to the histogram's.
 
 Configs per drug: ``mean_only`` · ``ft_top{k}`` · ``esm_top{k}`` for k in ``--panel-sizes`` (default 1 3 5
 10). Writes ``concat_panel_<drug>.csv`` (config, gene_source, k, genes, n_eval, n_features, auroc,
-delta_vs_mean).
+delta_vs_mean); ``n_eval`` is the held-out holdout genome count the AUROC is computed on.
 """
 
 from __future__ import annotations
@@ -33,10 +35,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from bacpredict.engine.concat.concat_ingredients import impute_block, load_ft_mean
-from bacpredict.engine.finetune.holdout import resolve_clean_splits
+from bacpredict.engine.concat.concat_ingredients import assert_holdout_in_cache, impute_block, load_ft_mean
 from bacpredict.engine.gene_lr.per_gene_esm_vs_ft import collect_esm_blocks
 from bacpredict.engine.segment_amr_lr.fit_lr import fit_one_segment
+from bacpredict.engine.splits.load_splits import load_splits
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -50,7 +52,7 @@ def _rank(comparison: pd.DataFrame, auroc_col: str, top_n: int) -> list[str]:
 
 def run(
     *,
-    ast_sheet: Path,
+    split_table: Path,
     drug: str,
     parquet_dir: Path,
     esm_dir: Path,
@@ -61,16 +63,26 @@ def run(
     n_folds: int = 5,
     seed: int = 1,
     max_samples: int | None = None,
+    scope: str = "trainholdout",
 ) -> pd.DataFrame:
-    """Score mean-only and the FT / ESM top-k panels over the eval holdout; write the comparison CSV."""
-    label_map, _tr, _va, _evaluate_ids, _info = resolve_clean_splits(ast_sheet, drug)
-    all_ids, mean_block = load_ft_mean(ft_cache_dir, drug, label_map)
+    """Score mean-only and the FT / ESM top-k panels; write the comparison CSV.
+
+    Split scope is the deployed ``<drug>_split.csv`` (:func:`load_splits`); every panel LR fits on the
+    cache's FT-train genomes and reports a held-out AUROC on the FT-unseen holdout, and the panels are
+    ordered by the leakage-free train-OOF ``*_lr_auroc`` columns of ``comparison_csv``.
+    """
+    label_map, _train_ids, _validate_ids, holdout_ids = load_splits(split_table)
+    holdout_set = set(holdout_ids)
+    all_ids, mean_block = load_ft_mean(ft_cache_dir, drug, label_map, scope=scope)
     if max_samples is not None and max_samples < len(all_ids):
         all_ids, mean_block = all_ids[:max_samples], mean_block[:max_samples]
+    assert_holdout_in_cache(all_ids, holdout_ids, drug, scope)
     y = np.array([label_map[s] for s in all_ids], dtype=int)
     dim = mean_block.shape[1]
-    logger.info("%s: %d eval-holdout genomes (%d pos / %d neg), mean dim=%d",
-                drug, len(all_ids), int(y.sum()), int(len(y) - y.sum()), dim)
+    n_holdout = sum(1 for s in all_ids if s in holdout_set)
+    logger.info("%s: %d genomes (train=%d, holdout=%d; %d pos / %d neg), mean dim=%d",
+                drug, len(all_ids), len(all_ids) - n_holdout, n_holdout,
+                int(y.sum()), int(len(y) - y.sum()), dim)
 
     comparison = pd.read_csv(comparison_csv)
     manifest = pd.read_csv(ft_cache_dir / f"top_gene_manifest_{drug}.csv")
@@ -99,16 +111,18 @@ def run(
     esm_order = [g for g in esm_order if g in esm_blocks]
 
     def _score(x: np.ndarray) -> dict | None:
-        return fit_one_segment(all_ids, x.astype(np.float32), y, n_folds=n_folds, seed=seed)
+        """Zero-imputed LR fit on the FT-train genomes, evaluated on the FT-unseen holdout."""
+        return fit_one_segment(all_ids, x.astype(np.float32), y, n_folds=n_folds, seed=seed,
+                               eval_ids=holdout_set)
 
     rows: list[dict] = []
 
     def _add(config: str, source: str, k: int, genes: list[str], x: np.ndarray) -> None:
         fit = _score(x)
-        au = float(fit["auroc"]) if fit else float("nan")
+        au = float(fit["eval_auroc"]) if fit else float("nan")  # held-out (holdout genomes only)
         rows.append({"config": config, "gene_source": source, "k": k, "genes": ";".join(genes),
-                     "n_eval": len(all_ids), "n_features": int(x.shape[1]), "auroc": au})
-        logger.info("%s: AUROC=%.4f (n_feat=%d, genes=%s)", config, au, x.shape[1], ";".join(genes) or "—")
+                     "n_eval": n_holdout, "n_features": int(x.shape[1]), "auroc": au})
+        logger.info("%s: eval AUROC=%.4f (n_feat=%d, genes=%s)", config, au, x.shape[1], ";".join(genes) or "—")
 
     _add("mean_only", "none", 0, [], mean_block)
     for k in sorted(panel_sizes):
@@ -132,25 +146,29 @@ def run(
 def main() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--ast-sheet-path", type=Path, required=True)
+    parser.add_argument("--split-table", type=Path, required=True,
+                        help="<drug>_split.csv (Sample, ast_label, split) — the deployed split; the LR fits on "
+                             "its train genomes and reports on its holdout.")
     parser.add_argument("--drug", type=str, required=True)
     parser.add_argument("--parquet-dir", type=Path, required=True)
     parser.add_argument("--esm-store-dir", type=Path, required=True)
     parser.add_argument("--ft-cache-dir", type=Path, required=True,
-                        help="ft_bacformer_cache/<drug>/ (ft_genome_mean_<drug>.npz + gene_emb/ + manifest).")
+                        help="ft_bacformer_cache/<drug>/ (ft_genome_mean_<drug>_<scope>.npz + gene_emb/ + manifest).")
     parser.add_argument("--comparison-csv", type=Path, required=True,
                         help="esm_vs_ft_per_gene_<drug>.csv — supplies the FT-LR and ESM-LR panel rankings.")
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--panel-sizes", type=int, nargs="+", default=[1, 3, 5, 10])
     parser.add_argument("--n-folds", type=int, default=5)
     parser.add_argument("--seed", type=int, default=1)
-    parser.add_argument("--max-samples", type=int, default=None, help="Cap holdout genomes (smoke).")
+    parser.add_argument("--scope", choices=["trainholdout", "eval"], default="trainholdout",
+                        help="Which scope-tagged FT genome-mean cache to read (default trainholdout).")
+    parser.add_argument("--max-samples", type=int, default=None, help="Cap forwarded genomes (smoke).")
     args = parser.parse_args()
     run(
-        ast_sheet=args.ast_sheet_path, drug=args.drug, parquet_dir=args.parquet_dir,
+        split_table=args.split_table, drug=args.drug, parquet_dir=args.parquet_dir,
         esm_dir=args.esm_store_dir, ft_cache_dir=args.ft_cache_dir, comparison_csv=args.comparison_csv,
         out_dir=args.out_dir, panel_sizes=args.panel_sizes, n_folds=args.n_folds, seed=args.seed,
-        max_samples=args.max_samples,
+        max_samples=args.max_samples, scope=args.scope,
     )
 
 
