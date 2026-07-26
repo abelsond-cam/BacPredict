@@ -1,17 +1,19 @@
-"""Rank AMR segments of one type by a per-segment logistic regression — the unified non-coding screen.
+"""Rank AMR segments of one type by a per-segment logistic regression — the unified screen.
 
-Folds the three non-coding ``gene_lr.build_*`` ranking stores into ONE driver over a per-type
-:class:`bacpredict.engine.embedding.segment_locator.SegmentLocator`:
+ONE driver over a per-type :class:`bacpredict.engine.embedding.segment_locator.SegmentLocator`, covering
+all four segment types:
 
-* :mod:`bacpredict.engine.gene_lr.build_per_igr_lr_store` — intergenic regions keyed by flank pair ``a→b``;
-* :mod:`bacpredict.engine.gene_lr.build_upstream_region_lr_store` — 5′-anchored ``upstream:<gene>`` regions;
-* :mod:`bacpredict.engine.gene_lr.build_per_unit_lr_store` — named non-CDS bodies ``<type>:<name>``.
+* ``igr`` — intergenic regions keyed by flank pair ``a→b`` (baclm non-coding);
+* ``upstream`` — 5′-anchored ``upstream:<gene>`` regions (baclm non-coding);
+* ``unit`` — named non-CDS bodies ``<type>:<name>`` (baclm re-embed);
+* ``coding`` — a gene's ESM-C or baclm coding vector keyed ``gene_name`` (the protein screen).
 
-Each was the SAME operation — locate every segment of a type in each genome, keep the single-copy (for units,
+Each is the SAME operation — locate every segment of a type in each genome, keep the single-copy (for units,
 mean-pooled) occurrences in a prevalence band, fit one LR per segment, rank by out-of-fold train AUROC. They
-differed only in the per-type keying / GFF / dedup, which now lives entirely in the locator and the uniform
+differ only in the per-type keying / GFF / dedup, which lives entirely in the locator and the uniform
 two-pass sweep (:func:`bacpredict.engine.embedding.segment_embedding_extractor.collect_segment_matrices`); the
-fit is the one shared engine (:func:`bacpredict.engine.segment_amr_lr.fit_lr.fit_per_segment`).
+fit is the one shared engine (:func:`bacpredict.engine.segment_amr_lr.fit_lr.fit_per_segment`). This driver
+replaced the four copy-forked ``gene_lr.build_*`` ranking stores.
 
 **The correctness spine.** Every segment's LR fits on the deployed ``train`` split, selects by its
 out-of-fold train AUROC, and is scored on the deployed ``holdout`` — read from the one materialized
@@ -51,9 +53,9 @@ from bacpredict.engine.embedding.segment_locator import (
     UnitLocator,
     UpstreamLocator,
 )
-from bacpredict.engine.gene_lr.build_per_gene_lr_store import subsample_balanced  # relocates in c3
 from bacpredict.engine.segment_amr_lr.fit_lr import fit_per_segment
 from bacpredict.engine.splits.load_splits import load_splits
+from bacpredict.engine.splits.subsample import subsample_balanced
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -283,11 +285,10 @@ def _coding_annotation(fit_ids: list[str], parquet_dir: Path) -> dict[str, str]:
     """``gene_name -> product`` from the fit genomes' parquet (the ``annotation`` column of the coding table).
 
     The uniform sweep keys only by ``gene_name``, so the human-readable product is recovered here in one
-    light parquet-only pass over the fit genomes (first product seen per gene wins) — reproducing the
-    ``annotation`` map :func:`build_per_gene_lr_store.discover_core_genes` built inline. (The record
-    extractor it reads relocates into the locator in c3.)
+    light parquet-only pass over the fit genomes (first product seen per gene wins) — the ``annotation`` map
+    the coding screen has always carried, via the parquet record extractor in the locator module.
     """
-    from bacpredict.engine.gene_lr.build_per_gene_lr_store import _genome_segment_records
+    from bacpredict.engine.embedding.segment_locator import _genome_segment_records
 
     annotation: dict[str, str] = {}
     for sid in fit_ids:
@@ -310,9 +311,9 @@ def _write_coding_table(
 ) -> None:
     """Write the coding ``per_gene_lr_<drug>.csv`` (keyed ``gene_name`` + a parquet ``annotation`` column).
 
-    Reproduces :func:`build_per_gene_lr_store.write_gene_drug_table` exactly — the coding ranking table is the
-    one type whose id column (``gene_name``) differs from its prevalence key (``gene``) and which carries a
-    free-text ``annotation`` (product) column, so it has a bespoke writer rather than the generic one.
+    The coding ranking table is the one type whose id column (``gene_name``) differs from its prevalence key
+    (``gene``) and which carries a free-text ``annotation`` (product) column, so it has a bespoke writer
+    rather than the generic one — the ``per_gene_lr_<drug>.csv`` schema the ladder + catalogue plots read.
     """
     prev_by_gene = dict(zip(prevalence["gene"], prevalence["prevalence"], strict=False))
     columns = [
@@ -478,7 +479,7 @@ def run(
         _write_coding_table(fitted, prevalence, annotation, drug=drug, filtered=filtered,
                             impute_mode=impute_mode, out_path=out_dir / f"per_gene_lr_{drug}.csv")
         if write_panels:
-            from bacpredict.engine.gene_lr.build_per_gene_lr_store import build_panels  # relocates in c3
+            from bacpredict.engine.segment_amr_lr.panel_store import build_panels
 
             filtered_dir, unfiltered_dir = out_dir / "filtered", out_dir / "unfiltered"
             for d in (filtered_dir, unfiltered_dir):

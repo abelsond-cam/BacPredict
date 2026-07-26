@@ -35,8 +35,8 @@ from bacpredict.engine.concat.bacformer_genome_vectors import forward_inputs, lo
 from bacpredict.engine.embedding.generate_embeddings import bacformer_last_hidden_state
 from bacpredict.engine.embedding.protein_pooling import genome_mean_pool, real_protein_indices, real_protein_rows
 from bacpredict.engine.finetune.holdout import resolve_clean_splits
-from bacpredict.engine.gene_lr.build_per_gene_lr_store import subsample_balanced
 from bacpredict.engine.gene_lr.locate_gene import flatten_proteins
+from bacpredict.engine.splits.subsample import subsample_balanced
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

@@ -86,12 +86,12 @@ def load_baclm_gene_block(
 ) -> tuple[list[str], np.ndarray]:
     """Carrier ``(ids, [n, dim])`` for ONE ``gene``'s single-copy baclm coding vector across ``sample_ids``.
 
-    Reuses :func:`build_per_gene_lr_store.read_genome` (``store_kind="baclm"``) — the parquet gene list
-    aligned to the baclm ``[n_cds, dim]`` matrix — and keeps the row where ``gene`` occurs exactly once
-    (single-copy), the same carrier universe the per-gene ranking fits. Non-carriers are dropped here;
-    the caller zero-imputes them onto the full universe.
+    Reuses :func:`bacpredict.engine.embedding.segment_locator.read_genome` (``store_kind="baclm"``) — the
+    parquet gene list aligned to the baclm ``[n_cds, dim]`` matrix — and keeps the row where ``gene`` occurs
+    exactly once (single-copy), the same carrier universe the per-gene ranking fits. Non-carriers are dropped
+    here; the caller zero-imputes them onto the full universe.
     """
-    from bacpredict.engine.gene_lr.build_per_gene_lr_store import read_genome
+    from bacpredict.engine.embedding.segment_locator import read_genome
 
     ids: list[str] = []
     vecs: list[np.ndarray] = []
@@ -113,11 +113,11 @@ def load_baclm_igr_block(
 ) -> tuple[list[str], np.ndarray]:
     """Carrier ``(ids, [n, dim])`` for ONE ``left→right`` IGR pair's baclm non-coding vector.
 
-    Reuses :func:`build_per_igr_lr_store._genome_igr_records` (GFF flank-join over the ``noncoding_*``
-    store rows) and keeps the genome iff the pair occurs exactly once. ``igr_pair`` is the ``left→right``
-    key exactly as written in ``per_igr_lr_<drug>.csv``.
+    Reuses :func:`bacpredict.engine.embedding.segment_locator._genome_igr_records` (GFF flank-join over the
+    ``noncoding_*`` store rows) and keeps the genome iff the pair occurs exactly once. ``igr_pair`` is the
+    ``left→right`` key exactly as written in ``per_igr_lr_<drug>.csv``.
     """
-    from bacpredict.engine.gene_lr.build_per_igr_lr_store import _genome_igr_records
+    from bacpredict.engine.embedding.segment_locator import _genome_igr_records
 
     ids: list[str] = []
     vecs: list[np.ndarray] = []
@@ -142,11 +142,11 @@ def load_baclm_upstream_block(
     """Carrier ``(ids, [n, dim])`` for the region 5′ of ONE ``gene`` (the ``upstream:<gene>`` anchor).
 
     The promoter-anchored sibling of :func:`load_baclm_igr_block`, reusing
-    :func:`build_upstream_region_lr_store._genome_upstream_records`. This is the loader for the recovered
-    operon promoters (e.g. ``upstream:fabg1`` = the mabA-inhA promoter for ethionamide) the flank-pair
-    scheme drops. ``gene`` is the bare downstream gene (the ranking's ``gene`` column, e.g. ``fabg1``).
+    :func:`bacpredict.engine.embedding.segment_locator._genome_upstream_records`. This is the loader for the
+    recovered operon promoters (e.g. ``upstream:fabg1`` = the mabA-inhA promoter for ethionamide) the
+    flank-pair scheme drops. ``gene`` is the bare downstream gene (the ranking's ``gene`` column, e.g. ``fabg1``).
     """
-    from bacpredict.engine.gene_lr.build_upstream_region_lr_store import _genome_upstream_records
+    from bacpredict.engine.embedding.segment_locator import _genome_upstream_records
 
     key = f"upstream:{gene}"
     ids: list[str] = []
@@ -171,14 +171,14 @@ def load_baclm_unit_block(
     """Carrier ``(ids, [n, dim])`` for ONE named body ``unit_key`` (``<type>:<name>``, e.g. ``rrna:rrs``).
 
     The named-body sibling of :func:`load_baclm_upstream_block`, reusing
-    :func:`build_per_unit_lr_store._genome_unit_records` — which **mean-pools** a unit's several copies
-    (the multiple *rrn* operons of ``rrna:rrs``) into one per-genome vector, so a carrier contributes
-    exactly one row (the relaxed single-copy gate rRNA needs). ``unit_key`` is the ``unit`` column of
-    ``per_unit_lr_<drug>.csv``. Reads the ``feature_*`` channel, so ``baclm_dir`` **must** be the re-embed
+    :func:`bacpredict.engine.embedding.segment_locator._genome_unit_records` — which **mean-pools** a unit's
+    several copies (the multiple *rrn* operons of ``rrna:rrs``) into one per-genome vector, so a carrier
+    contributes exactly one row (the relaxed single-copy gate rRNA needs). ``unit_key`` is the ``unit`` column
+    of ``per_unit_lr_<drug>.csv``. Reads the ``feature_*`` channel, so ``baclm_dir`` **must** be the re-embed
     store (the legacy ``baclm/`` store has no named bodies). Non-carriers are dropped; the caller
     zero-imputes them onto the full universe.
     """
-    from bacpredict.engine.gene_lr.build_per_unit_lr_store import _genome_unit_records
+    from bacpredict.engine.embedding.segment_locator import _genome_unit_records
 
     ids: list[str] = []
     vecs: list[np.ndarray] = []

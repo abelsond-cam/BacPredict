@@ -1,10 +1,11 @@
 """Unit tests for the uniform segment-locator seam (``…embedding.segment_locator``).
 
-Each per-type locator is a thin facade over its record extractor; these assert it delegates with the
+Each per-type locator is a thin class over a local record extractor; these assert it delegates with the
 right arguments, drops unnamed coding rows, and — critically — returns the ``None`` vs ``[]``
 ``discover_ids`` signal that encodes the per-type prevalence denominator (``protein`` counts a
-missing-parquet genome; the non-coding types skip an unreadable one). Synthetic delegates via
-monkeypatch — no HPC data / ``.pt`` / GFF on disk. Skipped where numpy is unavailable.
+missing-parquet genome; the non-coding types skip an unreadable one). The extractor bodies themselves are
+covered in :mod:`tests.engine.embedding.test_record_extractors`. Synthetic delegates via monkeypatch — no
+HPC data / ``.pt`` / GFF on disk.
 """
 
 from __future__ import annotations
@@ -14,10 +15,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import bacpredict.engine.gene_lr.build_per_gene_lr_store as bpg
-import bacpredict.engine.gene_lr.build_per_igr_lr_store as bigr
-import bacpredict.engine.gene_lr.build_per_unit_lr_store as bpu
-import bacpredict.engine.gene_lr.build_upstream_region_lr_store as bur
+import bacpredict.engine.embedding.segment_locator as sl
 from bacpredict.engine.embedding.segment_locator import (
     IgrLocator,
     ProteinLocator,
@@ -49,7 +47,7 @@ def test_ids_from_records_none_propagates() -> None:
 def test_protein_locator_records_drops_unnamed_and_keeps_flat_order(monkeypatch: pytest.MonkeyPatch) -> None:
     """``records`` emits ``(gene, vector)`` for every named CDS in flat order; unnamed rows are dropped."""
     emb = np.arange(3 * DIM, dtype=float).reshape(3, DIM)
-    monkeypatch.setattr(bpg, "read_genome", lambda sid, e, p, *, store_kind="esm": (["rpoB", None, "katG"], emb))
+    monkeypatch.setattr(sl, "read_genome", lambda sid, e, p, *, store_kind="esm": (["rpoB", None, "katG"], emb))
 
     loc = ProteinLocator(embed_dir=Path("emb"), parquet_dir=Path("pq"), store_kind="baclm")
     assert isinstance(loc, SegmentLocator)  # satisfies the runtime-checkable Protocol
@@ -62,7 +60,7 @@ def test_protein_locator_records_drops_unnamed_and_keeps_flat_order(monkeypatch:
 
 def test_protein_locator_records_none_when_unreadable(monkeypatch: pytest.MonkeyPatch) -> None:
     """A missing/misaligned store (``read_genome`` → ``None``) makes ``records`` return ``None`` (skip)."""
-    monkeypatch.setattr(bpg, "read_genome", lambda *a, **k: None)
+    monkeypatch.setattr(sl, "read_genome", lambda *a, **k: None)
     assert ProteinLocator(embed_dir=Path("e"), parquet_dir=Path("p")).records("G") is None
 
 
@@ -70,14 +68,14 @@ def test_protein_locator_discover_ids_is_parquet_only_and_never_none(monkeypatch
     """``discover_ids`` reads the parquet gene list (no ``.pt``); a missing parquet yields ``[]``, not ``None``.
 
     The ``[]`` (never ``None``) is the load-bearing bit: a missing-parquet genome still counts toward the
-    coding prevalence denominator (``discover_core_genes``'s ``n = len(train_ids)``).
+    coding prevalence denominator (the coding screen's ``n = len(train_ids)``).
     """
-    monkeypatch.setattr(bpg, "_genome_segment_records",
+    monkeypatch.setattr(sl, "_genome_segment_records",
                         lambda sid, pq: [{"gene_name": "rpoB"}, {"gene_name": None}, {"gene_name": "katG"}])
     loc = ProteinLocator(embed_dir=Path("e"), parquet_dir=Path("p"))
     assert loc.discover_ids("G") == ["rpoB", "katG"]  # unnamed dropped, order kept
 
-    monkeypatch.setattr(bpg, "_genome_segment_records", lambda sid, pq: [])  # missing parquet
+    monkeypatch.setattr(sl, "_genome_segment_records", lambda sid, pq: [])  # missing parquet
     assert loc.discover_ids("G") == []  # counts toward the denominator, never None
 
 
@@ -94,7 +92,7 @@ def test_igr_locator_delegates_with_pt_path_and_tol(monkeypatch: pytest.MonkeyPa
         seen.update(sid=sid, gff=gff, pt=pt, tol=boundary_tol)
         return sid, [("gyra→gyrb", np.ones(DIM))]
 
-    monkeypatch.setattr(bigr, "_genome_igr_records", fake)
+    monkeypatch.setattr(sl, "_genome_igr_records", fake)
     loc = IgrLocator(baclm_dir=Path("/b"), sample_gff={"G": "/gff/G.gff"}, boundary_tol=5)
     sid, recs = loc.records("G")
     assert sid == "G" and [k for k, _ in recs] == ["gyra→gyrb"]
@@ -104,7 +102,7 @@ def test_igr_locator_delegates_with_pt_path_and_tol(monkeypatch: pytest.MonkeyPa
 
 def test_igr_locator_none_when_gff_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     """A genome absent from ``sample_gff`` is unreadable → ``records``/``discover_ids`` both ``None`` (skip)."""
-    monkeypatch.setattr(bigr, "_genome_igr_records", lambda *a, **k: (_ for _ in ()).throw(AssertionError("called")))
+    monkeypatch.setattr(sl, "_genome_igr_records", lambda *a, **k: (_ for _ in ()).throw(AssertionError("called")))
     loc = IgrLocator(baclm_dir=Path("/b"), sample_gff={})
     assert loc.records("G") is None
     assert loc.discover_ids("G") is None  # None (uncounted), not [] — the extractor is never called
@@ -123,7 +121,7 @@ def test_upstream_locator_passes_include_convergent(monkeypatch: pytest.MonkeyPa
         seen.update(tol=boundary_tol, conv=include_convergent)
         return sid, [("upstream:katg", np.ones(DIM))]
 
-    monkeypatch.setattr(bur, "_genome_upstream_records", fake)
+    monkeypatch.setattr(sl, "_genome_upstream_records", fake)
     loc = UpstreamLocator(baclm_dir=Path("/b"), sample_gff={"G": "/g.gff"}, boundary_tol=2, include_convergent=True)
     _sid, recs = loc.records("G")
     assert [k for k, _ in recs] == ["upstream:katg"]
@@ -149,7 +147,7 @@ def test_unit_locator_delegates_and_passes_type_filter(monkeypatch: pytest.Monke
         seen.update(pt=pt, tf=type_filter)
         return sid, [("rrna:rrs", np.ones(DIM))]
 
-    monkeypatch.setattr(bpu, "_genome_unit_records", fake)
+    monkeypatch.setattr(sl, "_genome_unit_records", fake)
     loc = UnitLocator(baclm_dir=Path("/b"), unit_types=frozenset({"rrna"}))
     _sid, recs = loc.records("G")
     assert [k for k, _ in recs] == ["rrna:rrs"]
@@ -159,7 +157,7 @@ def test_unit_locator_delegates_and_passes_type_filter(monkeypatch: pytest.Monke
 
 def test_unit_locator_none_type_filter_stays_none(monkeypatch: pytest.MonkeyPatch) -> None:
     """No ``unit_types`` → ``type_filter=None`` (every named body kept); unreadable store → ``None``."""
-    monkeypatch.setattr(bpu, "_genome_unit_records", lambda sid, pt, tf: None if tf is None else (sid, []))
+    monkeypatch.setattr(sl, "_genome_unit_records", lambda sid, pt, tf: None if tf is None else (sid, []))
     loc = UnitLocator(baclm_dir=Path("/b"))
     assert loc.records("G") is None  # our fake returns None for tf=None — confirms None is forwarded
     assert loc.discover_ids("G") is None

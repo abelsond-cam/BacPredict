@@ -362,7 +362,7 @@ def test_run_coding_write_panels_invokes_builder(tmp_path: Path, monkeypatch: py
         captured.update(all_ids=list(a_ids), train_set=set(train_set), store_kind=store_kind, genes=set(fitted))
         return len(a_ids)
 
-    monkeypatch.setattr("bacpredict.engine.gene_lr.build_per_gene_lr_store.build_panels", fake_build_panels)
+    monkeypatch.setattr("bacpredict.engine.segment_amr_lr.panel_store.build_panels", fake_build_panels)
 
     split_table = _write_split_table(tmp_path, label_map, split_of)
     summary = psl.run("coding", split_table=split_table, drug=_DRUG, out_dir=tmp_path / "out",

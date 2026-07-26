@@ -20,7 +20,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import NamedTuple
 
-from bacpredict.engine.gene_lr.build_per_gene_lr_store import read_genome
+from bacpredict.engine.embedding.segment_locator import read_genome
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ def collect_reliable_gene_vectors(
 ) -> tuple[list[str], dict[str, dict]]:
     """One pass over ``eval_ids`` → per label, its carriers + ESM vectors (+ the tagged subset).
 
-    For each genome, :func:`bacpredict.engine.gene_lr.build_per_gene_lr_store.read_genome` gives the flat
+    For each genome, :func:`bacpredict.engine.embedding.segment_locator.read_genome` gives the flat
     ESM matrix; ``calls_fn(sample_id, n_real)`` yields that genome's gene calls, and each call's
     ``emb[flat_index]`` is appended under its label. Returns ``(read_ids, by_label)`` where ``read_ids``
     is the genomes successfully read (the zero-impute universe) and

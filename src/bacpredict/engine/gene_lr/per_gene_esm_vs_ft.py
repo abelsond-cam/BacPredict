@@ -14,7 +14,7 @@ gene annotations — read from the FT cache manifest):
 - **FT-LR**  — LR on the gene's fine-tuned Bacformer embedding (loaded from the FT cache).
 
 Both are fit identically — zero-imputed over the full eval holdout, out-of-fold k-fold
-(:func:`bacpredict.engine.gene_lr.build_per_gene_lr_store.fit_one_segment_imputed`) — so the two AUROCs are directly
+(:func:`bacpredict.engine.segment_amr_lr.fit_lr.fit_one_segment_imputed`) — so the two AUROCs are directly
 comparable on the same samples. Writes ``esm_vs_ft_per_gene_<drug>.csv``
 (gene_name, esm_lr_auroc, ft_lr_auroc, delta_ft_minus_esm, prevalence, n_carriers_*). CPU only — no forward
 pass (the FT embeddings are already cached by ``cache_bacformer_gene_embeddings.py``).
@@ -34,8 +34,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from bacpredict.engine.embedding.segment_locator import read_genome
 from bacpredict.engine.finetune.holdout import resolve_clean_splits
-from bacpredict.engine.gene_lr.build_per_gene_lr_store import read_genome
 from bacpredict.engine.segment_amr_lr.fit_lr import fit_one_segment_imputed
 
 logger = logging.getLogger(__name__)
