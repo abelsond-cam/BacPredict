@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from bacpredict.engine.plots import plot_per_gene_lr_ranking as P
+from bacpredict.engine.plots import plot_segment_ranking as P
 
 
 def _ranking(tmp_path, n_eval):

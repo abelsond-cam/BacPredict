@@ -11,8 +11,9 @@
 >
 > **Concat/cache consolidation (2026-07-15).** The per-gene ESM-vs-FT LR, the concat drivers, and the
 > Bacformer GPU token/mean cachers are now organism-agnostic engine modules under
-> `bacpredict.engine.{gene_lr,concat}` (`per_gene_esm_vs_ft`, `concat_gene_panel`, `reliable_concat`,
-> `gene_ingredient_concat`, `cache_bacformer_gene_embeddings`, `bacformer_token_cache`, `cache_genome_mean`).
+> `bacpredict.engine.gene_lr` (`segment_vs_ft`) + `bacpredict.engine.segment_amr_lr.concat`
+> (`concat_segment_panel`, `reliable_concat`, `segment_ingredient_concat`, `cache_bacformer_gene_embeddings`,
+> `bacformer_token_cache`, `cache_genome_mean`).
 > The CARD/Kleborate half stays here: `per_gene_lr_from_annotation.card_amr_calls` supplies the sidecar
 > `calls_fn` seam, and the `apps/kleb/{reliable_ft_concat,gene_ingredient_concat,aggregate_reliable_concat,
 > cache_ft_amr_proteins,cache_frozen_amr_proteins,cache_bacformer_genome_mean}` modules are now **thin CLIs**

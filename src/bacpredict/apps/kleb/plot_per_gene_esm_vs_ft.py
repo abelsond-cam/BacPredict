@@ -1,6 +1,6 @@
 """Per-drug histogram: per-gene ESM-C LR vs fine-tuned Bacformer LR (the concat-ingredient head-to-head).
 
-Reads ``esm_vs_ft_per_gene_<drug>.csv`` (from :mod:`bacpredict.engine.gene_lr.per_gene_esm_vs_ft`) and draws, for the
+Reads ``esm_vs_ft_per_gene_<drug>.csv`` (from :mod:`bacpredict.engine.gene_lr.segment_vs_ft`) and draws, for the
 top-N genes (by ESM-LR), two bars per gene — **ESM-LR (purple)** and **Bacformer-FT-LR (indigo)** — on the
 same axes, with a chance line and (optionally) the Kleborate determinant ceiling. Where the indigo bar
 clears the purple, the fine-tuned Bacformer per-gene representation predicts resistance better than the raw

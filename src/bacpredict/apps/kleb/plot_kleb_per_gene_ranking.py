@@ -1,6 +1,6 @@
 """Bar-plot the Kp per-gene ESM-C LR ranking — which single gene's ESM-C vector predicts AST.
 
-The Kp analogue of ``bacpredict.engine.plots.plot_per_gene_lr_ranking``. Reads a per-gene ranking table
+The Kp analogue of ``bacpredict.engine.plots.plot_segment_ranking``. Reads a per-gene ranking table
 (``per_gene_lr_<drug>.csv`` from ``bacpredict.engine.gene_lr.build_per_gene_lr_store`` driven on the Kp cohort) and
 renders the top-N genes by out-of-fold train AUROC, ascending (highest on the right). This is the
 auto-discovery step that picks the causal gene the concat probe injects: for the chromosomal/intrinsic

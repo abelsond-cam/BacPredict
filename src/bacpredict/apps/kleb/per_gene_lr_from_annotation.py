@@ -1,6 +1,6 @@
 """Per-gene ESM-LR on reliable Kleborate/CARD AMR labels — does correct identification change the story?
 
-The earlier per-gene analysis (:mod:`bacpredict.engine.gene_lr.per_gene_esm_vs_ft`) keyed carriers on **Bakta**
+The earlier per-gene analysis (:mod:`bacpredict.engine.gene_lr.segment_vs_ft`) keyed carriers on **Bakta**
 ``gene_name``. Bakta misses or mislabels ~29% of acquired AMR genes (cohort validation), so those
 acquired-gene AUROCs were biased by missing carriers and wrong proteins. Now that every AMR protein has an
 authoritative **CARD allele / gene-family** label (the ``{Sample}_amr.parquet`` sidecars from
