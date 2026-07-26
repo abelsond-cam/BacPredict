@@ -14,8 +14,8 @@ import argparse
 import sys
 from pathlib import Path
 
+from bacpredict.engine.ast_labels.parse_ebi_ast_to_binary import parse_ebi_ast_to_binary as process_klebsiella_ast_data
 from bacpredict.engine.config import raw_root
-from bacpredict.engine.labels.parse_ebi_ast_to_binary import parse_ebi_ast_to_binary as process_klebsiella_ast_data
 
 DEFAULT_INPUT_LEAF = "klebsiella_ebi_amr_records_20260216.csv"
 

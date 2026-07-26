@@ -4,8 +4,8 @@
 # runs (and RNA bodies) exceed MAX_LEN (= how many get windowed — the number for the baclm devs), and
 # how often a run fuses IGR + RNA into one embedding. CPU-only (NO --gres; --mem required).
 #
-#   sbatch --export=ALL,TASK=tb   -J audit-nc-tb   src/bacpredict/engine/scripts/audit_noncoding_regions.sh
-#   sbatch --export=ALL,TASK=kleb -J audit-nc-kleb src/bacpredict/engine/scripts/audit_noncoding_regions.sh
+#   sbatch --export=ALL,TASK=tb   -J audit-nc-tb   src/bacpredict/engine/scripts/non_coding_segment_audit.sh
+#   sbatch --export=ALL,TASK=kleb -J audit-nc-kleb src/bacpredict/engine/scripts/non_coding_segment_audit.sh
 #SBATCH --partition=workq
 #SBATCH --account=brics.u6fp
 #SBATCH --qos=normal
@@ -30,7 +30,7 @@ IN="$S/processed/$DIR/embedding_input.csv"
 OUT="$S/processed/$DIR/pangena_predict/audit_noncoding/audit_${SPECIES}_${SLURM_JOB_ID:-local}.json"
 
 echo "=== non-coding audit: species=$SPECIES input=$IN workers=${SLURM_CPUS_PER_TASK:-8} ==="
-"$PY" "$HOME/BacPredict/src/bacpredict/engine/labels/audit_noncoding_regions.py" \
+"$PY" "$HOME/BacPredict/src/bacpredict/engine/embedding/non_coding_segment_audit.py" \
   --input-csv "$IN" --output "$OUT" \
   --workers "${SLURM_CPUS_PER_TASK:-8}"
 echo "AUDIT JSON -> $OUT"

@@ -15,7 +15,7 @@ History: this was ``kleb_ast/convert_ast_data.py`` (misleadingly named; ``proces
 is aliased at the bottom for back-compat). It is the single source of truth for EBI AST → binary labels.
 
 Run it (any species) via the CLI, pointing ``--input``/``--output-dir`` at the cohort:
-    uv run python src/bacpredict/engine/labels/parse_ebi_ast_to_binary.py \\
+    uv run python src/bacpredict/engine/ast_labels/parse_ebi_ast_to_binary.py \\
         --input <root>/raw/<cohort>/ebi_..._records.csv --output-dir <root>/processed/train_<cohort>_ast
 """
 

@@ -30,7 +30,7 @@ OUT="$S/processed/train_kleb_ast"
 VIZ="$S/processed/train_kleb_ast/label_prep_viz"
 
 echo "=== [1/2] parse EBI AST -> binary_ast.csv ($RAW) ==="
-"$PY" "$HOME/BacPredict/src/bacpredict/engine/labels/parse_ebi_ast_to_binary.py" \
+"$PY" "$HOME/BacPredict/src/bacpredict/engine/ast_labels/parse_ebi_ast_to_binary.py" \
   --input "$RAW" --output-dir "$OUT" --viz-dir "$VIZ"
 
 echo "=== [2/2] add 70/10/20 split (seed 1) + prune to embedded samples ==="
