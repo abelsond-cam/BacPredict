@@ -31,10 +31,10 @@ import numpy as np
 import pandas as pd
 import torch
 
-from bacpredict.engine.concat.bacformer_genome_vectors import forward_inputs, load_model
 from bacpredict.engine.embedding.generate_embeddings import bacformer_last_hidden_state
 from bacpredict.engine.embedding.protein_pooling import genome_mean_pool, real_protein_indices, real_protein_rows
 from bacpredict.engine.gene_lr.locate_gene import flatten_proteins
+from bacpredict.engine.segment_amr_lr.concat.bacformer_genome_vectors import forward_inputs, load_model
 from bacpredict.engine.splits.load_splits import load_splits
 from bacpredict.engine.splits.subsample import subsample_balanced
 

@@ -11,7 +11,7 @@ top-ranked model, so the panel reports it against the catalogue and nothing else
 
 Everything is read from the per-drug ladder tables
 (``visualisations/<org>/<drug>/<drug>_amr_ladder_table.csv``) produced by
-:mod:`bacpredict.engine.concat.build_amr_ladder`; a drug is included if its ladder table exists. Pure
+:mod:`bacpredict.engine.segment_amr_lr.concat.build_amr_ladder`; a drug is included if its ladder table exists. Pure
 matplotlib over small CSVs — login/CPU. Figures + a CSV go into the TB visualisation dir root.
 """
 

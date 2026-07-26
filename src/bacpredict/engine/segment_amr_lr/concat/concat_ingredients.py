@@ -3,7 +3,7 @@
 The "ESM/Bacformer gene vector ⊕ genome mean" concat probes each need to (a) place a gene's vector at
 the right genome rows and zero-fill the non-carriers, and (b) read the cached fine-tuned genome-mean /
 per-gene token stores. These were copy-pasted across the concat drivers (``reliable_concat``, ``concat_gene_panel``,
-``gene_ingredient_concat``, all now under :mod:`bacpredict.engine.concat`); they live here once.
+``gene_ingredient_concat``, all now under :mod:`bacpredict.engine.segment_amr_lr.concat`); they live here once.
 """
 from __future__ import annotations
 

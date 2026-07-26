@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from bacpredict.engine.concat.concat_ingredients import assert_holdout_in_cache
+from bacpredict.engine.segment_amr_lr.concat.concat_ingredients import assert_holdout_in_cache
 
 
 def test_full_coverage_returns_counts():

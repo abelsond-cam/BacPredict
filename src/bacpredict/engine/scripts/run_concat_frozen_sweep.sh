@@ -77,7 +77,7 @@ echo "Frozen NPZ: $BAC_NPZ"
 echo "Out JSON: $OUT_JSON"
 echo "========================================================================"
 
-"$PY" -m bacpredict.engine.concat.concatenate_bacformer_genome_esm_protein_emb \
+"$PY" -m bacpredict.engine.segment_amr_lr.concat.concatenate_bacformer_genome_esm_protein_emb \
     --ast-sheet-path "$SHEET" \
     --parquet-dir "$PARQUET_DIR" \
     --esm-store-dir "$ESM_STORE_DIR" \

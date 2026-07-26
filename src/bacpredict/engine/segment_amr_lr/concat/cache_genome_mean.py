@@ -3,10 +3,10 @@
 The **genome mean** is the mask-normalised mean of Bacformer's ``last_hidden_state`` over the real
 protein tokens — exactly the pool the genome-classification head averages, and **gene/drug-agnostic**.
 Computing it once over a whole cohort lets every per-drug concat probe + ladder
-(:mod:`bacpredict.engine.concat.concatenate_bacformer_genome_esm_protein_emb`) run **CPU-only** via
+(:mod:`bacpredict.engine.segment_amr_lr.concat.concatenate_bacformer_genome_esm_protein_emb`) run **CPU-only** via
 ``--bacformer-vectors``, the lesson from the TB sweep.
 
-Parquet-free: unlike :mod:`bacpredict.engine.concat.bacformer_genome_vectors` (which also extracts a gene token
+Parquet-free: unlike :mod:`bacpredict.engine.segment_amr_lr.concat.bacformer_genome_vectors` (which also extracts a gene token
 at a gene's flat index, needing the protein parquet and a single-copy filter), the genome mean needs only
 the ESM-C store's real-protein rows — so this covers *every* genome, with no gene-presence filter. Reuses
 the shared forward helpers (``load_model`` / ``forward_inputs`` / ``real_protein_indices`` /
@@ -27,9 +27,9 @@ import numpy as np
 import pandas as pd
 import torch
 
-from bacpredict.engine.concat.bacformer_genome_vectors import forward_inputs, load_model
 from bacpredict.engine.embedding.generate_embeddings import bacformer_last_hidden_state
 from bacpredict.engine.embedding.protein_pooling import genome_mean_pool, real_protein_indices, real_protein_rows
+from bacpredict.engine.segment_amr_lr.concat.bacformer_genome_vectors import forward_inputs, load_model
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

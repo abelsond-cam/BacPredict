@@ -50,7 +50,7 @@ if [[ ! -f "$FTC/ft_genome_mean_${DRUG}.npz" ]]; then echo "ERROR: FT mean npz m
 
 echo "=== Kp concat-panel — drug=$DRUG (task $SLURM_ARRAY_TASK_ID) ==="
 
-"$PY" -m bacpredict.engine.concat.concat_gene_panel \
+"$PY" -m bacpredict.engine.segment_amr_lr.concat.concat_segment_panel \
     --ast-sheet-path "$D/processed/train_kleb_ast/binary_ast_with_split.csv" \
     --drug "$DRUG" \
     --parquet-dir "$D/processed/train_kleb_ast/protein_sequences" \

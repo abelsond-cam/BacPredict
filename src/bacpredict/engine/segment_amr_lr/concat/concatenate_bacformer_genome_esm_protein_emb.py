@@ -45,12 +45,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from bacpredict.engine.concat.bacformer_genome_vectors import compute_bacformer_vectors
 from bacpredict.engine.finetune.holdout import resolve_clean_splits
 from bacpredict.engine.gene_lr.kfold_probe import FeatureSpec, run_kfold_probe, summarise_kfold
 from bacpredict.engine.gene_lr.linear_probe import fit_score_step
 from bacpredict.engine.gene_lr.locate_gene import build_gene_presence_table
 from bacpredict.engine.gene_lr.pooled_cds_vectors import load_pooled_gene_vectors
+from bacpredict.engine.segment_amr_lr.concat.bacformer_genome_vectors import compute_bacformer_vectors
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -65,7 +65,7 @@ def load_bacformer_vectors(path: str | Path, key: str = "gene_token_vectors") ->
     """Load Bacformer vectors written by the GPU pass.
 
     Expects an ``.npz`` with ``sample_ids`` (str array) plus ``gene_token_vectors`` and ``mean_vectors``
-    ([N, 960] each), as produced by :mod:`bacpredict.engine.concat.bacformer_genome_vectors`. ``key``
+    ([N, 960] each), as produced by :mod:`bacpredict.engine.segment_amr_lr.concat.bacformer_genome_vectors`. ``key``
     selects which (``"gene_token_vectors"`` for the contextualised gene token, ``"mean_vectors"`` for the
     genome mean). A token request back-compat-resolves to whichever token alias the NPZ carries (legacy
     ``"rpob_vectors"`` / ``"vectors"``).

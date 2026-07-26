@@ -23,7 +23,7 @@ RDS=$D/processed/train_tb_ast
 OUT_DIR=$RDS/pangena_predict/concat_rpob_mean_smoke
 mkdir -p "$OUT_DIR"
 
-"$PY" -m bacpredict.engine.concat.concatenate_bacformer_genome_esm_protein_emb \
+"$PY" -m bacpredict.engine.segment_amr_lr.concat.concatenate_bacformer_genome_esm_protein_emb \
     --ast-sheet-path "$RDS/binary_ast_with_split.csv" \
     --parquet-dir "$RDS/protein_sequences" \
     --esm-store-dir "$RDS/esm" \

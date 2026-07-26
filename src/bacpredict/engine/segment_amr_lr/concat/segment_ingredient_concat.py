@@ -24,7 +24,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from bacpredict.engine.concat.concat_ingredients import (
+from bacpredict.engine.gene_lr.reliable_gene_vectors import MIN_CARRIERS, CallsFn, collect_reliable_gene_vectors
+from bacpredict.engine.segment_amr_lr.concat.concat_ingredients import (
     assert_holdout_in_cache,
     impute_block,
     load_frozen_gene,
@@ -32,7 +33,6 @@ from bacpredict.engine.concat.concat_ingredients import (
     load_ft_gene,
     load_ft_mean,
 )
-from bacpredict.engine.gene_lr.reliable_gene_vectors import MIN_CARRIERS, CallsFn, collect_reliable_gene_vectors
 from bacpredict.engine.segment_amr_lr.fit_lr import fit_one_segment, fit_one_segment_imputed
 from bacpredict.engine.splits.load_splits import load_splits
 

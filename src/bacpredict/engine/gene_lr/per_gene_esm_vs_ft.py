@@ -21,7 +21,7 @@ Writes ``esm_vs_ft_per_gene_<drug>.csv`` (gene_name, the train-OOF ``*_lr_auroc`
 forward pass (the FT embeddings are already cached by ``cache_bacformer_gene_embeddings.py``).
 
 Organism-agnostic: the carrier collector :func:`collect_esm_vectors` / :func:`collect_esm_blocks` (the
-one-pass single-copy ESM gene-vector extract shared with :mod:`bacpredict.engine.concat.concat_gene_panel`)
+one-pass single-copy ESM gene-vector extract shared with :mod:`bacpredict.engine.segment_amr_lr.concat.concat_segment_panel`)
 lives here; a drug's genes come from a manifest, so nothing is Kp-specific.
 """
 
@@ -35,8 +35,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from bacpredict.engine.concat.concat_ingredients import assert_holdout_in_cache, load_ft_mean
 from bacpredict.engine.embedding.segment_locator import read_genome
+from bacpredict.engine.segment_amr_lr.concat.concat_ingredients import assert_holdout_in_cache, load_ft_mean
 from bacpredict.engine.segment_amr_lr.fit_lr import fit_one_segment_imputed
 from bacpredict.engine.splits.load_splits import load_splits
 

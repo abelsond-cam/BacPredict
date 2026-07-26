@@ -57,7 +57,7 @@ if [[ ! -f "$RANK" ]]; then echo "ERROR: ranking CSV missing: $RANK" >&2; exit 1
 echo "=== Kp FT-concat (CPU) — drug=$DRUG (task $SLURM_ARRAY_TASK_ID) ==="
 echo "ftnpz=$FTNPZ"; echo "rank=$RANK"
 
-"$PY" -m bacpredict.engine.concat.concatenate_bacformer_genome_esm_protein_emb \
+"$PY" -m bacpredict.engine.segment_amr_lr.concat.concatenate_bacformer_genome_esm_protein_emb \
     --ast-sheet-path "$SHEET" \
     --parquet-dir "$PARQUET" \
     --esm-store-dir "$EMB" \

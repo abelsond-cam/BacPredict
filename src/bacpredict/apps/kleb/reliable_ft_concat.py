@@ -1,4 +1,4 @@
-"""Thin Kp/CARD CLI over the engine reliable-concat driver (:mod:`bacpredict.engine.concat.reliable_concat`).
+"""Thin Kp/CARD CLI over the engine reliable-concat driver (:mod:`bacpredict.engine.segment_amr_lr.concat.reliable_concat`).
 
 The compute — per-gene reliable ESM-LR vs frozen-Bac-LR vs FT-LR, and the FT-mean ⊕ best-gene concat — is
 organism-agnostic and lives in the engine. This module supplies the Kp-specific half: the CARD/Kleborate
@@ -12,8 +12,8 @@ import argparse
 from pathlib import Path
 
 from bacpredict.apps.kleb.per_gene_lr_from_annotation import card_amr_calls
-from bacpredict.engine.concat.reliable_concat import run
 from bacpredict.engine.config import KP
+from bacpredict.engine.segment_amr_lr.concat.reliable_concat import run
 
 
 def main() -> None:

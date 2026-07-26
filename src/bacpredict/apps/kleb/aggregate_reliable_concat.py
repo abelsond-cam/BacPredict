@@ -1,6 +1,6 @@
 """Thin Kp CLI over the engine reliable-concat cross-drug aggregator.
 
-Engine aggregator: :func:`bacpredict.engine.concat.reliable_concat.aggregate_run`. The per-drug ``reliable_concat_<drug>.csv`` outputs (from :mod:`bacpredict.apps.kleb.reliable_ft_concat`) are
+Engine aggregator: :func:`bacpredict.engine.segment_amr_lr.concat.reliable_concat.aggregate_run`. The per-drug ``reliable_concat_<drug>.csv`` outputs (from :mod:`bacpredict.apps.kleb.reliable_ft_concat`) are
 pivoted to one row per drug — the summary the ladder + combined panel read. The pivot is generic and lives
 in the engine; this module only supplies the Kp default paths. Login/CPU.
 """
@@ -10,8 +10,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from bacpredict.engine.concat.reliable_concat import aggregate_run
 from bacpredict.engine.config import KP, visualisations_dir
+from bacpredict.engine.segment_amr_lr.concat.reliable_concat import aggregate_run
 
 
 def main() -> None:

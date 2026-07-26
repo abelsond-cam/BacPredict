@@ -16,7 +16,7 @@ Two **modes** (``--bacformer-checkpoint`` selects):
 
 Both feed linear probes in :mod:`bacpredict.engine.gene_lr.linear_probe` (``bacformer_gene_token`` /
 ``bacformer_mean``) and the concat driver
-:mod:`bacpredict.engine.concat.concatenate_bacformer_genome_esm_protein_emb` (genome mean ⊕ ESM gene vector).
+:mod:`bacpredict.engine.segment_amr_lr.concat.concatenate_bacformer_genome_esm_protein_emb` (genome mean ⊕ ESM gene vector).
 
 Indexing
 --------

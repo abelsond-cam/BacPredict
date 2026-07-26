@@ -31,7 +31,7 @@ if [[ -z "$CKPT" ]]; then
 fi
 echo "Fine-tuned checkpoint: $CKPT"
 
-"$PY" -m bacpredict.engine.concat.concatenate_bacformer_genome_esm_protein_emb \
+"$PY" -m bacpredict.engine.segment_amr_lr.concat.concatenate_bacformer_genome_esm_protein_emb \
     --ast-sheet-path "$RDS/binary_ast_with_split.csv" \
     --parquet-dir "$RDS/protein_sequences" \
     --esm-store-dir "$RDS/esm" \

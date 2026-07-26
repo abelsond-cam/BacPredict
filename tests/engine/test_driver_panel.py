@@ -71,7 +71,7 @@ def test_plot_drug_panel_renders(tmp_path):
 def test_per_sample_genes_inverts_presence():
     import pandas as pd
 
-    from bacpredict.engine.concat.bacformer_gene_panel_vectors import _per_sample_genes
+    from bacpredict.engine.segment_amr_lr.concat.bacformer_gene_panel_vectors import _per_sample_genes
 
     presence = {
         "ethA": pd.DataFrame({"gene_flat_index": [10], "n_proteins": [4000]}, index=pd.Index(["s1"], name="Sample")),

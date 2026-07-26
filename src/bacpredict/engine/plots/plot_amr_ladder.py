@@ -1,6 +1,6 @@
 """Render the AMR concat **ladder**: FT-mean → +baclm gene → +baclm IGR, against the catalogue.
 
-The figure for :mod:`bacpredict.engine.concat.build_amr_ladder`'s ``<drug>_amr_ladder_table.csv``. Two
+The figure for :mod:`bacpredict.engine.segment_amr_lr.concat.build_amr_ladder`'s ``<drug>_amr_ladder_table.csv``. Two
 **red** catalogue reference bars on the left, then the **blue** Bacformer bars in *additive* order (never
 re-sorted; the ladder's order is its meaning):
 
