@@ -3,10 +3,10 @@
 The driver panel needs Bacformer's contextualised token for many driver genes. A full Bacformer forward
 already produces every gene's token, so we sweep each genome **once** and extract the token of every
 panel gene present (single-copy) in it — not one full sweep per gene. Reuses the frozen-model loader,
-forward-input builder, and flat-index guards from :mod:`bacpredict.engine.segment_amr_lr.concat.bacformer_genome_vectors`.
+forward-input builder, and flat-index guards from :mod:`bacpredict.engine.concat.bacformer_genome_vectors`.
 
 Output NPZ carries, per gene, its sample list + token matrix: keys ``<gene>__ids`` (str array) and
-``<gene>__tok`` (``[N, dim]`` float32), consumed by :mod:`bacpredict.engine.plots.driver_panel`.
+``<gene>__tok`` (``[N, dim]`` float32), consumed by :mod:`bacpredict.engine.plots.plot_catalogue_vs_embeddings`.
 """
 
 from __future__ import annotations
@@ -19,11 +19,11 @@ import numpy as np
 import pandas as pd
 import torch
 
+from bacpredict.engine.concat.bacformer_genome_vectors import forward_inputs, load_model
 from bacpredict.engine.embedding.generate_embeddings import bacformer_last_hidden_state
 from bacpredict.engine.embedding.protein_pooling import real_protein_indices, real_protein_rows
 from bacpredict.engine.gene_lr.card_gene_locator import build_card_presence, sidecar_dir_available
 from bacpredict.engine.gene_lr.coding_amr_lr import build_multi_gene_presence
-from bacpredict.engine.segment_amr_lr.concat.bacformer_genome_vectors import forward_inputs, load_model
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

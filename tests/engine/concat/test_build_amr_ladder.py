@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from bacpredict.engine.segment_amr_lr.concat import build_amr_ladder as L
+from bacpredict.engine.concat import build_amr_ladder as L
 
 
 def _rng(seed: int) -> np.random.Generator:

@@ -4,7 +4,7 @@ The headline deliverable. For one ``(species, drug)`` it builds four score confi
 the ladder plot renders against the RED catalogue one-hot ceiling:
 
 * **``ft_mean``**: the fine-tuned Bacformer genome-mean alone (the FT ingredient, cached by
-  :mod:`bacpredict.engine.segment_amr_lr.concat.bacformer_token_cache`).
+  :mod:`bacpredict.engine.concat.bacformer_token_cache`).
 * **``+ baclm gene``**: ft_mean ⊕ the single best **baclm** coding-gene block (from the per-gene ranking,
   loaded live from the ``baclm/`` store and zero-imputed onto the FT universe).
 * **``+ baclm noncoding``**: ft_mean ⊕ the single best non-coding block — the **top-imputed-AUROC** region
@@ -25,8 +25,8 @@ Best-gene / best-noncoding are *selected* from the **train-OOF** rankings (leaka
 CPU/login for small cohorts, a short sbatch for the ~38k TB set.
 
 Reuses the concat primitives (:func:`impute_block`, :func:`load_ft_mean`, the baclm block loaders in
-:mod:`bacpredict.engine.segment_amr_lr.concat.concat_ingredients`), :func:`fit_one_segment`, and the ceiling split
-:func:`bacpredict.engine.plots.driver_panel.parse_driver_csv`.
+:mod:`bacpredict.engine.concat.concat_ingredients`), :func:`fit_one_segment`, and the ceiling split
+:func:`bacpredict.engine.plots.plot_catalogue_vs_embeddings.parse_driver_csv`.
 """
 from __future__ import annotations
 
@@ -39,10 +39,7 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import average_precision_score
 
-from bacpredict.engine.config import organism, store_paths, visualisations_dir
-from bacpredict.engine.plots.driver_panel import parse_driver_csv
-from bacpredict.engine.plots.labels import display_name
-from bacpredict.engine.segment_amr_lr.concat.concat_ingredients import (
+from bacpredict.engine.concat.concat_ingredients import (
     assert_holdout_in_cache,
     impute_block,
     load_baclm_gene_block,
@@ -51,6 +48,9 @@ from bacpredict.engine.segment_amr_lr.concat.concat_ingredients import (
     load_baclm_upstream_block,
     load_ft_mean,
 )
+from bacpredict.engine.config import organism, store_paths, visualisations_dir
+from bacpredict.engine.plots.display_labels import display_name
+from bacpredict.engine.plots.plot_catalogue_vs_embeddings import parse_driver_csv
 from bacpredict.engine.segment_amr_lr.fit_lr import fit_one_segment
 from bacpredict.engine.splits.load_splits import load_splits
 

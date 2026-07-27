@@ -3,7 +3,7 @@
 The deliverable the user asked for (2026-07-16): for each drug, one figure putting the resistance
 **catalogue's** per-determinant one-hot ceiling (WHO/TB-Profiler for TB, CARD for Kp — the ``mut_auroc``
 already computed in the committed ``visualisations/<sp>/<drug>/`` CSVs) next to **our baclm** per-region
-LR AUROC for the *same* determinant. Unlike :mod:`driver_panel` (which re-fits LRs live and skips
+LR AUROC for the *same* determinant. Unlike :mod:`plot_catalogue_vs_embeddings` (which re-fits LRs live and skips
 non-coding), this is a **pure join** over rankings already on disk, so it also covers the non-coding /
 promoter determinants the driver panel leaves blank:
 
@@ -40,8 +40,8 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
 from bacpredict.engine.config import organism, visualisations_dir
-from bacpredict.engine.plots.driver_panel import parse_driver_csv
-from bacpredict.engine.plots.labels import display_name
+from bacpredict.engine.plots.display_labels import display_name
+from bacpredict.engine.plots.plot_catalogue_vs_embeddings import parse_driver_csv
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)

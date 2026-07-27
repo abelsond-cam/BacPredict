@@ -1,6 +1,6 @@
 """Thin Kp/CARD CLI over the engine gene-ingredient-concat driver.
 
-Engine driver: :mod:`bacpredict.engine.segment_amr_lr.concat.segment_ingredient_concat`. The compute — (frozen/FT genome-mean) × (ESM / frozen-Bac / FT-Bac best gene) concat scoring — is
+Engine driver: :mod:`bacpredict.engine.concat.segment_ingredient_concat`. The compute — (frozen/FT genome-mean) × (ESM / frozen-Bac / FT-Bac best gene) concat scoring — is
 organism-agnostic and lives in the engine. This module supplies the Kp-specific half: the CARD/Kleborate
 AMR-sidecar ``calls_fn`` and the Kp data-root defaults. CPU.
 """
@@ -11,8 +11,8 @@ import argparse
 from pathlib import Path
 
 from bacpredict.apps.kleb.per_gene_lr_from_annotation import card_amr_calls
+from bacpredict.engine.concat.segment_ingredient_concat import run
 from bacpredict.engine.config import KP
-from bacpredict.engine.segment_amr_lr.concat.segment_ingredient_concat import run
 
 
 def main() -> None:

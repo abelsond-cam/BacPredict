@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from bacpredict.engine.plots.driver_panel import (
+from bacpredict.engine.plots.plot_catalogue_vs_embeddings import (
     _bacformer_frame_for_gene,
     _is_coding,
     _resolve_ast_column,
@@ -71,7 +71,7 @@ def test_plot_drug_panel_renders(tmp_path):
 def test_per_sample_genes_inverts_presence():
     import pandas as pd
 
-    from bacpredict.engine.segment_amr_lr.concat.bacformer_gene_panel_vectors import _per_sample_genes
+    from bacpredict.engine.concat.bacformer_gene_panel_vectors import _per_sample_genes
 
     presence = {
         "ethA": pd.DataFrame({"protein_index": [10], "n_proteins": [4000]}, index=pd.Index(["s1"], name="Sample")),

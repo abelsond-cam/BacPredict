@@ -36,7 +36,7 @@ OUT="$S/processed/train_${TASK}_ast/pangena_predict/driver_panel"
 NPZ_ARG=""; [ -n "${BACFORMER_NPZ:-}" ] && NPZ_ARG="--bacformer-npz ${BACFORMER_NPZ}"
 
 echo "=== driver panel: species=$SPECIES csv=$VIS/<drug> npz=${BACFORMER_NPZ:-none} ==="
-"$PY" -m bacpredict.engine.plots.driver_panel \
+"$PY" -m bacpredict.engine.plots.plot_catalogue_vs_embeddings \
   --species "$SPECIES" \
   --csv-dir "$VIS" --csv-prefix "$CSVPREFIX" --csv-suffix "$CSVSUFFIX" \
   --n-folds 5 --seeds 1,2,3 --pool-workers "${SLURM_CPUS_PER_TASK:-8}" \

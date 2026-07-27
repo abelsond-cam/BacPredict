@@ -27,7 +27,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from bacpredict.engine.config import visualisations_dir
-from bacpredict.engine.plots.labels import display_name
+from bacpredict.engine.plots.display_labels import display_name
 
 # WHO one-hot is the red family (consistent across plots). The top embeddable gene is the "pick" we
 # could inject; rRNA / un-embeddable causes are the same red but hatched (real cause, can't be embedded).

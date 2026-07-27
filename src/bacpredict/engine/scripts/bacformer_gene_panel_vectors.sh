@@ -35,7 +35,7 @@ PROC="$S/processed/$DIR"
 OUT="$PROC/pangena_predict/driver_panel/bacformer_panel_tokens_${FOLDER}.npz"
 
 echo "=== bacformer gene-panel sweep: task=$TASK ==="
-"$PY" -m bacpredict.engine.segment_amr_lr.concat.bacformer_gene_panel_vectors \
+"$PY" -m bacpredict.engine.concat.bacformer_gene_panel_vectors \
   --ast-sheet-path "$PROC/binary_ast_with_split.csv" \
   --parquet-dir "$PROC/protein_sequences" \
   --esm-store-dir "$PROC/esm" \

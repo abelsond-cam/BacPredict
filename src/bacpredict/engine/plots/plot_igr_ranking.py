@@ -35,7 +35,7 @@ from matplotlib.patches import Patch
 from scipy.stats import gaussian_kde
 
 from bacpredict.engine.config import visualisations_dir
-from bacpredict.engine.plots.labels import display_name
+from bacpredict.engine.plots.display_labels import display_name
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)

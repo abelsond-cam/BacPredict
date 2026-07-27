@@ -58,7 +58,7 @@ echo "=== TB FT Bacformer cache — drug=$drug ==="
 echo "ckpt=$CKPT"; echo "rank=$RANK"; echo "out=$OUT"
 echo "Job ID: $SLURM_JOB_ID  Node: $SLURMD_NODENAME  GPU: $CUDA_VISIBLE_DEVICES"
 
-"$PY" -m bacpredict.engine.segment_amr_lr.concat.cache_bacformer_gene_embeddings \
+"$PY" -m bacpredict.engine.concat.cache_bacformer_gene_embeddings \
     --ast-sheet-path "$D/processed/train_tb_ast/binary_ast_with_split.csv" \
     --drug "$drug" \
     --parquet-dir "$D/processed/train_tb_ast/protein_sequences" \

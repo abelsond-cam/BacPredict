@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from bacpredict.engine.segment_amr_lr.concat import concat_segment_panel as P
+from bacpredict.engine.concat import concat_segment_panel as P
 
 
 def _signal(ids_subset, label_map, strength, seed):

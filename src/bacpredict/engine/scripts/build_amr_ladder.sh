@@ -71,7 +71,7 @@ if [[ ! -f "$FT_CACHE/ft_genome_mean_${DRUG}.npz" ]]; then
     exit 1
 fi
 
-"$PY" -m bacpredict.engine.segment_amr_lr.concat.build_amr_ladder \
+"$PY" -m bacpredict.engine.concat.build_amr_ladder \
     --species "$SPECIES" \
     --drug "$DRUG" \
     --ft-cache-dir "$FT_CACHE" \

@@ -24,7 +24,7 @@ import pandas as pd
 from matplotlib.colors import to_rgba
 
 from bacpredict.engine.config import visualisations_dir
-from bacpredict.engine.plots.labels import display_name
+from bacpredict.engine.plots.display_labels import display_name
 
 logger = logging.getLogger(__name__)
 

@@ -11,7 +11,7 @@ import json
 
 import numpy as np
 
-from bacpredict.engine.segment_amr_lr.concat.cache_bacformer_gene_embeddings import _corrected_cache_exists
+from bacpredict.engine.concat.cache_bacformer_gene_embeddings import _corrected_cache_exists
 
 
 def _write(cache_dir, drug, *, scope_file, summary):

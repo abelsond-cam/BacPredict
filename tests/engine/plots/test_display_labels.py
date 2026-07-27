@@ -1,7 +1,7 @@
 """Unit tests for the shared plot label helpers (drug display + non-coding region labels)."""
 from __future__ import annotations
 
-from bacpredict.engine.plots.labels import display_name, region_label
+from bacpredict.engine.plots.display_labels import display_name, region_label
 
 
 def test_display_name_maps_rifampin_else_passthrough():

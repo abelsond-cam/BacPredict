@@ -43,9 +43,9 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
 from bacpredict.engine.config import visualisations_dir
-from bacpredict.engine.plots.driver_panel import parse_driver_csv
-from bacpredict.engine.plots.labels import PROMOTER_GENE_TO_DETERMINANT, display_name, region_label
-from bacpredict.engine.plots.plot_igr_lr_ranking import _auroc_col, _cap
+from bacpredict.engine.plots.display_labels import PROMOTER_GENE_TO_DETERMINANT, display_name, region_label
+from bacpredict.engine.plots.plot_catalogue_vs_embeddings import parse_driver_csv
+from bacpredict.engine.plots.plot_igr_ranking import _auroc_col, _cap
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -127,7 +127,7 @@ def _join_keys(name: str, alias_map: dict[str, tuple[frozenset[str], float]]) ->
 def _catalogue(csv: Path | None) -> tuple[set[str], dict[str, float], float | None]:
     """``(determinant set, {gene → best catalogue one-hot AUROC}, __ALL__ ceiling AUROC)`` from a driver CSV.
 
-    Reuses :func:`driver_panel.parse_driver_csv`, which reads both the TB-Profiler and CARD schemas
+    Reuses :func:`plot_catalogue_vs_embeddings.parse_driver_csv`, which reads both the TB-Profiler and CARD schemas
     (``gene_name``/``mut_auroc``) and splits out the all-determinant ``__ALL__`` ceiling row.
     """
     if not csv or not Path(csv).exists():

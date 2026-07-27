@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from bacpredict.engine.plots import plot_igr_lr_ranking as P
+from bacpredict.engine.plots import plot_igr_ranking as P
 
 
 def _ranking(n=40, drug="ciprofloxacin"):

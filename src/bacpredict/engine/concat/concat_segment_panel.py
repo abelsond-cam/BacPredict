@@ -35,12 +35,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from bacpredict.engine.gene_lr.segment_vs_ft import collect_esm_blocks
-from bacpredict.engine.segment_amr_lr.concat.concat_ingredients import (
+from bacpredict.engine.concat.concat_ingredients import (
     assert_holdout_in_cache,
     impute_block,
     load_ft_mean,
 )
+from bacpredict.engine.gene_lr.segment_vs_ft import collect_esm_blocks
 from bacpredict.engine.segment_amr_lr.fit_lr import fit_one_segment
 from bacpredict.engine.splits.load_splits import load_splits
 

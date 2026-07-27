@@ -60,7 +60,7 @@ if [[ ! -f "$RANK" ]]; then echo "ERROR: ranking CSV missing: $RANK" >&2; exit 1
 echo "=== Kp FT Bacformer cache — drug=$DRUG (task $SLURM_ARRAY_TASK_ID) ==="
 echo "ckpt=$CKPT"; echo "rank=$RANK"; echo "out=$OUT"
 
-"$PY" -m bacpredict.engine.segment_amr_lr.concat.cache_bacformer_gene_embeddings \
+"$PY" -m bacpredict.engine.concat.cache_bacformer_gene_embeddings \
     --ast-sheet-path "$D/processed/train_kleb_ast/binary_ast_with_split.csv" \
     --drug "$DRUG" \
     --parquet-dir "$D/processed/train_kleb_ast/protein_sequences" \

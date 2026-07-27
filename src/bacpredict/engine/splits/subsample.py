@@ -4,7 +4,7 @@ Per-segment LR fitting (and FT-mean caching) over the full ~24k train cohort is 
 pass we fit on a random, class-balanced subsample of the ``train`` ids returned by
 :func:`bacpredict.engine.splits.load_splits.load_splits`. This lives in ``splits/`` — the bottom layer —
 so both the ranking screens (:mod:`bacpredict.engine.segment_amr_lr.per_segment_lr`) and the embedding
-cache (:mod:`bacpredict.engine.segment_amr_lr.concat.cache_bacformer_gene_embeddings`) draw the same reducer.
+cache (:mod:`bacpredict.engine.concat.cache_bacformer_gene_embeddings`) draw the same reducer.
 """
 
 from __future__ import annotations

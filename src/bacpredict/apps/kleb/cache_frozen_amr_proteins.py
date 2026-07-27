@@ -1,10 +1,10 @@
 """Thin Kp/CARD GPU CLI — cache the FROZEN Bacformer genome-mean + per-AMR-gene tokens (reliable carriers).
 
 The ``mode="frozen"`` / ``prefix="frozen"`` counterpart of :mod:`bacpredict.apps.kleb.cache_ft_amr_proteins`:
-identical CARD-sidecar-keyed extraction (:mod:`bacpredict.engine.segment_amr_lr.concat.bacformer_token_cache`) but through
+identical CARD-sidecar-keyed extraction (:mod:`bacpredict.engine.concat.bacformer_token_cache`) but through
 the base ``macwiatrak/bacformer-large-masked-complete-genomes`` backbone (no checkpoint), so the per-gene
 token is the *frozen* Bacformer representation — the missing ingredient for the gene-ingredient concat
-(:mod:`bacpredict.engine.segment_amr_lr.concat.segment_ingredient_concat`). GPU; one drug per run.
+(:mod:`bacpredict.engine.concat.segment_ingredient_concat`). GPU; one drug per run.
 """
 
 from __future__ import annotations
@@ -13,8 +13,8 @@ import argparse
 from pathlib import Path
 
 from bacpredict.apps.kleb.per_gene_lr_from_annotation import card_amr_calls
+from bacpredict.engine.concat.bacformer_token_cache import run
 from bacpredict.engine.config import KP
-from bacpredict.engine.segment_amr_lr.concat.bacformer_token_cache import run
 
 
 def main() -> None:

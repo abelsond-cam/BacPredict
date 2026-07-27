@@ -1,7 +1,7 @@
 """Thin Kp/CARD GPU CLI — cache the drug's FINE-TUNED Bacformer genome-mean + per-AMR-gene tokens.
 
 The forward + token extraction is organism-agnostic and lives in
-:mod:`bacpredict.engine.segment_amr_lr.concat.bacformer_token_cache`; this module supplies the Kp-specific half: the
+:mod:`bacpredict.engine.concat.bacformer_token_cache`; this module supplies the Kp-specific half: the
 CARD/Kleborate AMR-sidecar ``calls_fn`` (:func:`bacpredict.apps.kleb.per_gene_lr_from_annotation.card_amr_calls`)
 and the Kp data-root defaults, with ``mode="finetuned"`` / ``prefix="ft"``. GPU; one drug per run.
 The CPU consumer (:mod:`bacpredict.apps.kleb.reliable_ft_concat`) reads these to compute reliable FT-LR + concat.
@@ -13,8 +13,8 @@ import argparse
 from pathlib import Path
 
 from bacpredict.apps.kleb.per_gene_lr_from_annotation import card_amr_calls
+from bacpredict.engine.concat.bacformer_token_cache import run
 from bacpredict.engine.config import KP
-from bacpredict.engine.segment_amr_lr.concat.bacformer_token_cache import run
 
 
 def main() -> None:

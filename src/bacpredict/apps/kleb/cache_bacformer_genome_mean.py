@@ -1,6 +1,6 @@
 """Thin Kp CLI over the engine frozen-Bacformer genome-mean cacher.
 
-Engine driver: :mod:`bacpredict.engine.segment_amr_lr.concat.cache_genome_mean`. The genome-mean forward is drug-agnostic and
+Engine driver: :mod:`bacpredict.engine.concat.cache_genome_mean`. The genome-mean forward is drug-agnostic and
 lives in the engine; this module only supplies the Kp data-root defaults. GPU; the CPU concat sweep reads the
 resulting ``{sample_ids, mean_vectors}`` NPZ via ``--bacformer-vectors``.
 """
@@ -10,8 +10,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from bacpredict.engine.concat.cache_genome_mean import run
 from bacpredict.engine.config import KP
-from bacpredict.engine.segment_amr_lr.concat.cache_genome_mean import run
 
 
 def main() -> None:

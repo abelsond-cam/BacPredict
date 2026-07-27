@@ -14,7 +14,7 @@ the same k-fold LR harness (``run_kfold_probe``, so the numbers are comparable t
   gaps and backfill them later.
 
 Emits a per-drug table CSV + a grouped column chart (AUROC and AUPRC). CPU except the optional Bacformer
-gene-token vectors, which are precomputed on GPU by :mod:`bacpredict.engine.segment_amr_lr.concat.bacformer_gene_panel_vectors`.
+gene-token vectors, which are precomputed on GPU by :mod:`bacpredict.engine.concat.bacformer_gene_panel_vectors`.
 """
 
 from __future__ import annotations

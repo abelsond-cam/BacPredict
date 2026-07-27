@@ -1,6 +1,6 @@
 """Render the AMR concat **ladder**: FT-mean → +baclm gene → +baclm IGR, against the catalogue.
 
-The figure for :mod:`bacpredict.engine.segment_amr_lr.concat.build_amr_ladder`'s ``<drug>_amr_ladder_table.csv``. Two
+The figure for :mod:`bacpredict.engine.concat.build_amr_ladder`'s ``<drug>_amr_ladder_table.csv``. Two
 **red** catalogue reference bars on the left, then the **blue** Bacformer bars in *additive* order (never
 re-sorted; the ladder's order is its meaning):
 
@@ -27,8 +27,8 @@ import pandas as pd
 from matplotlib.patches import Patch
 
 from bacpredict.engine.config import organism, visualisations_dir
-from bacpredict.engine.plots.driver_panel import parse_driver_csv
-from bacpredict.engine.plots.labels import display_name, region_label
+from bacpredict.engine.plots.display_labels import display_name, region_label
+from bacpredict.engine.plots.plot_catalogue_vs_embeddings import parse_driver_csv
 
 CATALOGUE_RED = "#c0392b"   # both catalogue bars (strongest single = hatched, ceiling = solid)
 FT_BLUE = "#4292c6"         # mid blue: Bacformer FT genome-mean
@@ -42,7 +42,7 @@ _RUNG_LABEL = {1: "FT", 2: "FT ⊕ gene", 3: "FT ⊕ IGR", 4: "FT ⊕ gene ⊕ I
 def _catalogue_has_noncoding(drivers: pd.DataFrame) -> bool:
     """True iff any catalogue determinant is a non-coding (promoter/rRNA) region.
 
-    Reads the TB-Profiler ``is_noncoding``/``is_rrna``/``region`` flags that :func:`driver_panel.parse_driver_csv`
+    Reads the TB-Profiler ``is_noncoding``/``is_rrna``/``region`` flags that :func:`plot_catalogue_vs_embeddings.parse_driver_csv`
     exposes. Marks whether the catalogue one-hot ceiling depends on IGR signal Bacformer FT cannot yet see —
     True for ethionamide (inhA promoter), kanamycin (rrs/eis); False for a coding-only catalogue (rifampin
     ``rpoB``, ciprofloxacin ``gyrA``). A CARD/Kp catalogue without these flags returns False (coding/acquired).
@@ -62,7 +62,7 @@ def _catalogue_has_noncoding(drivers: pd.DataFrame) -> bool:
 def _catalogue_refs(catalogue_csv: Path | None, metric: str) -> tuple[float, str | None, float, bool]:
     """``(strongest single AUROC, its name, all-determinant ceiling AUROC, catalogue_has_noncoding)``.
 
-    Reuses :func:`driver_panel.parse_driver_csv` (TB-Profiler + CARD schemas). The strongest single is the
+    Reuses :func:`plot_catalogue_vs_embeddings.parse_driver_csv` (TB-Profiler + CARD schemas). The strongest single is the
     max per-determinant one-hot AUROC; the ceiling is the split-out ``__ALL__`` row; the flag drives the
     conditional "includes IGR" hatch on the red catalogue bars. NaNs / False when unavailable.
     """
