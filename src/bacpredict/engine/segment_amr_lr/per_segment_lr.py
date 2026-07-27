@@ -37,6 +37,7 @@ not this fold-in.
 
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 from dataclasses import dataclass
@@ -45,6 +46,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from bacpredict.engine.config import store_paths
 from bacpredict.engine.embedding.segment_embedding_extractor import collect_segment_matrices
 from bacpredict.engine.embedding.segment_locator import (
     IgrLocator,
@@ -533,3 +535,74 @@ def run(
         json.dumps({k: summary[k] for k in ("n_core", "n_fitted", "n_filtered", "best_segment", "best_auroc")}),
     )
     return summary
+
+
+def main() -> None:
+    """CLI: rank one drug's segments of one type via the deployed ``<drug>_split.csv`` (fit-train / eval-holdout).
+
+    Store paths default off ``--species`` (:func:`bacpredict.engine.config.store_paths`) and are individually
+    overridable; the coding ``--embed-dir`` defaults to the ESM or baclm store per ``--store-kind``. The
+    non-coding types need ``--baclm-dir`` (pass the ``baclm_reembed`` store for the ladder's imputed rankings)
+    and igr/upstream additionally need ``--input-csv`` (the ``Sample -> sr_gff_file`` map).
+    """
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--segment-type", required=True, choices=sorted(SEGMENT_TYPES),
+                   help="coding (protein) / igr / upstream / unit.")
+    p.add_argument("--split-table", type=Path, required=True,
+                   help="Deployed per-drug <drug>_split.csv (Sample, ast_label, split) from splits.load_splits.")
+    p.add_argument("--drug", required=True, help="Drug name — names the AUROC columns + output table.")
+    p.add_argument("--out-dir", type=Path, required=True)
+    p.add_argument("--species", choices=["tb", "kp"], default=None, help="Resolve store-path defaults for this organism.")
+    p.add_argument("--baclm-dir", type=Path, default=None,
+                   help="baclm store for igr/upstream/unit (default: <species>.baclm_dir; pass baclm_reembed for the ladder).")
+    p.add_argument("--input-csv", type=Path, default=None, help="Sample->sr_gff_file map (required for igr/upstream).")
+    p.add_argument("--embed-dir", type=Path, default=None, help="coding per-protein store dir (default: <species> esm|baclm).")
+    p.add_argument("--parquet-dir", type=Path, default=None, help="coding protein-sequence parquet dir.")
+    p.add_argument("--store-kind", choices=["esm", "baclm"], default="esm", help="coding embedding store kind.")
+    p.add_argument("--feature", choices=["embedding", "presence"], default="embedding",
+                   help="embedding (fit the vector) or presence (a one-hot lineage control; invalid for coding).")
+    p.add_argument("--impute-absent-zero", action="store_true",
+                   help="Fit over the full read universe, zero-imputing absent genomes (selection = usage).")
+    p.add_argument("--write-panels", action="store_true", help="(coding) also write the per-protein panel store.")
+    p.add_argument("--include-convergent", action="store_true",
+                   help="(upstream) also emit between:<a>->'<b>' convergent regions with no 5' anchor.")
+    p.add_argument("--unit-types", nargs="*", default=None, help="(unit) restrict to these feature types, e.g. rrna.")
+    p.add_argument("--min-prevalence", type=float, default=0.0)
+    p.add_argument("--max-prevalence", type=float, default=1.0)
+    p.add_argument("--auroc-filter", type=float, default=0.8)
+    p.add_argument("--n-folds", type=int, default=5)
+    p.add_argument("--seed", type=int, default=1)
+    p.add_argument("--n-jobs", type=int, default=1)
+    p.add_argument("--max-train-genomes", type=int, default=None)
+    p.add_argument("--sample-seed", type=int, default=1)
+    p.add_argument("--boundary-tol", type=int, default=3)
+    p.add_argument("--baclm-suffix", default="_baclm_embeddings.pt")
+    p.add_argument("--store-dtype", default="float32")
+    args = p.parse_args()
+
+    sp = store_paths(args.species) if args.species else None
+    baclm_dir = args.baclm_dir or (sp.baclm_dir if sp else None)
+    input_csv = args.input_csv or (sp.input_csv if sp else None)
+    parquet_dir = args.parquet_dir or (sp.parquet_dir if sp else None)
+    if args.embed_dir is not None:
+        embed_dir = args.embed_dir
+    elif sp is not None:
+        embed_dir = sp.baclm_dir if args.store_kind == "baclm" else sp.esm_dir
+    else:
+        embed_dir = None
+
+    run(
+        args.segment_type, split_table=args.split_table, drug=args.drug, out_dir=args.out_dir,
+        baclm_dir=baclm_dir, input_csv=input_csv, embed_dir=embed_dir, parquet_dir=parquet_dir,
+        store_kind=args.store_kind, write_panels=args.write_panels,
+        min_prevalence=args.min_prevalence, max_prevalence=args.max_prevalence, auroc_filter=args.auroc_filter,
+        n_folds=args.n_folds, seed=args.seed, n_jobs=args.n_jobs, max_train_genomes=args.max_train_genomes,
+        sample_seed=args.sample_seed, boundary_tol=args.boundary_tol, baclm_suffix=args.baclm_suffix,
+        store_dtype=args.store_dtype, impute_absent_zero=args.impute_absent_zero, feature=args.feature,
+        include_convergent=args.include_convergent,
+        unit_types=set(args.unit_types) if args.unit_types else None,
+    )
+
+
+if __name__ == "__main__":
+    main()

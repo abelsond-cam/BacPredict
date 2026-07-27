@@ -31,12 +31,12 @@ from bacpredict.apps.kleb.build_amr_calls_store import load_calls
 from bacpredict.apps.kleb.card_label import causal_genes_for_drug, determinant_genes_for_drug
 from bacpredict.apps.kleb.kleborate_determinant_lr import (
     MIN_DETERMINANT_GENOMES,
-    load_labels,
     tokenize_cell,
 )
 from bacpredict.apps.kleb.validate_amr_annotation import default_metadata, default_sidecar_dir
 from bacpredict.engine.config import KP, visualisations_dir
 from bacpredict.engine.ref_catalogues.base import score_onehot_frame
+from bacpredict.engine.splits.load_splits import load_splits
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -156,10 +156,15 @@ def build_card_onehot(calls: pd.DataFrame, genes: set[str], universe: list[str],
     return pd.DataFrame(data, index=uni)
 
 
-def score_drug(calls: pd.DataFrame, ast_sheet: Path, drug: str, *, grain: str,
-               seeds: tuple[int, ...], metadata: Path) -> pd.DataFrame | None:
-    """Per-CARD-gene one-hot LR + ``__ALL_CARD__`` ceiling for one drug/grain → the cause-histogram frame."""
-    label_map = load_labels(ast_sheet, drug)
+def score_drug(calls: pd.DataFrame, split_table: Path, drug: str, *, grain: str,
+               metadata: Path) -> pd.DataFrame | None:
+    """Per-CARD-gene one-hot LR + ``__ALL_CARD__`` ceiling for one drug/grain → the cause-histogram frame.
+
+    The drug's train/holdout partition is read from its deployed ``<drug>_split.csv``
+    (:func:`bacpredict.engine.splits.load_splits.load_splits`); every one-hot is fit on ``train`` and scored
+    on the ``holdout``.
+    """
+    label_map, train_ids, _validate_ids, holdout_ids = load_splits(split_table)
     universe = sorted(label_map)
     determ = determinant_genes_for_drug(drug, grain=grain)
     causal = causal_genes_for_drug(drug, grain=grain)
@@ -176,7 +181,7 @@ def score_drug(calls: pd.DataFrame, ast_sheet: Path, drug: str, *, grain: str,
                                        + [g for g in keep.index if _is_causal(g, causal)]))
     rows = []
     for gene in display_genes:
-        agg = score_onehot_frame(oh[[gene]], label_map, seeds)
+        agg = score_onehot_frame(oh[[gene]], label_map, train_ids, holdout_ids)
         if agg is None:
             continue
         cat = _category(gene)
@@ -188,7 +193,7 @@ def score_drug(calls: pd.DataFrame, ast_sheet: Path, drug: str, *, grain: str,
             "embeddable": cat in _EMBEDDABLE, "is_causal": _is_causal(gene, causal),
             "is_rrna": False, "is_noncoding": cat not in _EMBEDDABLE,
         })
-    full = score_onehot_frame(oh, label_map, seeds)
+    full = score_onehot_frame(oh, label_map, train_ids, holdout_ids)
     if full is not None:
         rows.append({
             "gene_name": ALL_KEY, "site": ALL_KEY, "category": "all",
@@ -202,14 +207,22 @@ def score_drug(calls: pd.DataFrame, ast_sheet: Path, drug: str, *, grain: str,
     return pd.DataFrame(rows).sort_values("mut_auroc", ascending=False).reset_index(drop=True)
 
 
-def run(calls_dir: Path, ast_sheet: Path, out_dir: Path, drugs: list[str], grains: list[str],
-        metadata: Path, seeds: tuple[int, ...] = (1, 2, 3)) -> None:
-    """Score every (drug, grain) and write ``visualisations/kp/<drug>/card_determinant_lr_<drug>_<grain>.csv``."""
+def run(calls_dir: Path, splits_dir: Path, out_dir: Path, drugs: list[str], grains: list[str],
+        metadata: Path) -> None:
+    """Score every (drug, grain) and write ``visualisations/kp/<drug>/card_determinant_lr_<drug>_<grain>.csv``.
+
+    Each drug's train/holdout partition is read from its deployed ``<drug>_split.csv`` in ``splits_dir``;
+    a drug with no split table is skipped.
+    """
     calls = load_calls(calls_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     for drug in drugs:
+        split_table = Path(splits_dir) / f"{drug}_split.csv"
+        if not split_table.exists():
+            logger.warning("%s: no split table at %s — skipping", drug, split_table)
+            continue
         for grain in grains:
-            df = score_drug(calls, ast_sheet, drug, grain=grain, seeds=seeds, metadata=metadata)
+            df = score_drug(calls, split_table, drug, grain=grain, metadata=metadata)
             if df is None:
                 continue
             drug_dir = out_dir / drug
@@ -228,8 +241,8 @@ def main() -> None:
     p.add_argument("--calls-dir", type=Path, default=None,
                    help="Sidecar dir holding amr_calls_all.parquet (default: <data-root>/processed/"
                    "train_kleb_ast/amr_annotation; else crawls the sidecars).")
-    p.add_argument("--ast-sheet", type=Path, default=None,
-                   help="AST split sheet (default: <data-root>/processed/train_kleb_ast/binary_ast_with_split.csv).")
+    p.add_argument("--splits-dir", type=Path, default=None,
+                   help="Dir of deployed <drug>_split.csv tables (default: <data-root>/processed/train_kleb_ast/splits).")
     p.add_argument("--out-dir", type=Path, default=visualisations_dir("kp"))
     p.add_argument("--metadata", type=Path, default=None,
                    help="metadata_v2 TSV (default: <data-root>/final/...) — Kleborate mutation columns "
@@ -237,12 +250,11 @@ def main() -> None:
     p.add_argument("--drugs", type=str, nargs="+", required=True)
     p.add_argument("--grains", type=str, nargs="+", default=["family", "allele"],
                    choices=["family", "allele"])
-    p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])
     args = p.parse_args()
     calls_dir = args.calls_dir or default_sidecar_dir()
-    ast_sheet = args.ast_sheet or KP.data_root() / "binary_ast_with_split.csv"
+    splits_dir = args.splits_dir or KP.data_root() / "splits"
     metadata = args.metadata or default_metadata()
-    run(calls_dir, ast_sheet, args.out_dir, args.drugs, args.grains, metadata, tuple(args.seeds))
+    run(calls_dir, splits_dir, args.out_dir, args.drugs, args.grains, metadata)
 
 
 if __name__ == "__main__":

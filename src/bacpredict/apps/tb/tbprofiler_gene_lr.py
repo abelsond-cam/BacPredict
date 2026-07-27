@@ -25,7 +25,9 @@ from pathlib import Path
 
 import pandas as pd
 
+from bacpredict.engine.config import TB
 from bacpredict.engine.ref_catalogues.base import score_onehot_frame
+from bacpredict.engine.splits.load_splits import load_splits
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -43,28 +45,29 @@ def _region(variant_type: str) -> str:
     return "non-coding" if any(tok in t for tok in NONCODING_TOKENS) else "coding"
 
 
-def load_labels(ast_sheet: Path, drug: str) -> dict[str, int]:
-    """``Sample → 0/1`` for one drug from the AST sheet (drop NaN / ambiguous)."""
-    df = pd.read_csv(ast_sheet, usecols=["Sample", drug]).dropna(subset=[drug])
-    df = df[df[drug].isin([0, 1, 0.0, 1.0])]
-    return {s: int(v) for s, v in zip(df["Sample"], df[drug], strict=True)}
-
-
 def _who_gene_onehot(sub: pd.DataFrame, labelled: list[str]) -> pd.DataFrame:
     """Genomes × variant_id binary frame over ``labelled`` (genomes with no variant → all-zero rows)."""
     oh = pd.crosstab(sub["Sample"], sub["variant_id"]).clip(upper=1)
     return oh.reindex(labelled).fillna(0).astype(int)
 
 
-def run(variants_parquet: Path, ast_sheet: Path, esm_rank_dir: Path, out_dir: Path,
-        drugs: list[str], seeds: tuple[int, ...] = (1, 2, 3)) -> None:
-    """Per drug: per-gene WHO-mutation LR (incl. rRNA) + the full one-hot, vs the ESM-embeddable set."""
+def run(variants_parquet: Path, splits_dir: Path, esm_rank_dir: Path, out_dir: Path,
+        drugs: list[str]) -> None:
+    """Per drug: per-gene WHO-mutation LR (incl. rRNA) + the full one-hot, vs the ESM-embeddable set.
+
+    Each drug's train/holdout partition is read from its deployed ``<drug>_split.csv`` in ``splits_dir``
+    (:func:`bacpredict.engine.splits.load_splits.load_splits`); a drug with no split table is skipped.
+    """
     variants = pd.read_parquet(variants_parquet)
     variants["drug_set"] = variants["drugs"].fillna("").str.split(";")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     for drug in drugs:
-        label_map = load_labels(ast_sheet, drug)
+        split_table = Path(splits_dir) / f"{drug}_split.csv"
+        if not split_table.exists():
+            logger.warning("%s: no split table at %s — skipping", drug, split_table)
+            continue
+        label_map, train_ids, _validate_ids, holdout_ids = load_splits(split_table)
         labelled = sorted(label_map)
         dv = variants[variants["drug_set"].apply(lambda s, d=drug: d in s)]
         dv = dv[dv["Sample"].isin(label_map)]
@@ -84,7 +87,7 @@ def run(variants_parquet: Path, ast_sheet: Path, esm_rank_dir: Path, out_dir: Pa
             n_genomes = g["Sample"].nunique()
             if n_genomes < MIN_VARIANT_GENOMES:
                 continue
-            agg = score_onehot_frame(_who_gene_onehot(g, labelled), label_map, seeds)
+            agg = score_onehot_frame(_who_gene_onehot(g, labelled), label_map, train_ids, holdout_ids)
             if agg is None:
                 continue
             noncoding = region == "non-coding"
@@ -100,7 +103,7 @@ def run(variants_parquet: Path, ast_sheet: Path, esm_rank_dir: Path, out_dir: Pa
                 "is_rrna": gene in RRNA_GENES, "is_noncoding": noncoding,
             })
 
-        full = score_onehot_frame(_who_gene_onehot(dv, labelled), label_map, seeds)
+        full = score_onehot_frame(_who_gene_onehot(dv, labelled), label_map, train_ids, holdout_ids)
         if full is not None:
             rows.append({"gene_name": "__ALL_WHO_one_hot__", "region": "all", "site": "__ALL_WHO_one_hot__",
                          "mut_auroc": full["auroc"]["mean"], "mut_auroc_sd": full["auroc"]["sd"],
@@ -128,13 +131,14 @@ def main() -> None:
                      "levofloxacin", "streptomycin", "ethionamide", "rifabutin", "kanamycin"]
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--variants", type=Path, required=True, help="tbprofiler_variants.parquet.")
-    parser.add_argument("--ast-sheet", type=Path, required=True, help="binary_ast_with_split.csv.")
+    parser.add_argument("--splits-dir", type=Path, default=None,
+                        help="Dir of deployed <drug>_split.csv tables (default: <data-root>/processed/train_tb_ast/splits).")
     parser.add_argument("--esm-rank-dir", type=Path, required=True, help="per_gene_lr_ranking/ (per-drug subdirs).")
     parser.add_argument("--out-dir", type=Path, required=True, help="Where to write tbprofiler_gene_lr_<drug>.csv.")
     parser.add_argument("--drugs", type=str, nargs="+", default=default_drugs)
-    parser.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])
     args = parser.parse_args()
-    run(args.variants, args.ast_sheet, args.esm_rank_dir, args.out_dir, args.drugs, tuple(args.seeds))
+    splits_dir = args.splits_dir or TB.data_root() / "splits"
+    run(args.variants, splits_dir, args.esm_rank_dir, args.out_dir, args.drugs)
 
 
 if __name__ == "__main__":

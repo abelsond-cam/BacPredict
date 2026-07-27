@@ -59,7 +59,7 @@ def test_build_determinant_onehot_shapes():
 
 
 def _synthetic_inputs(tmp_path, n: int = 60):
-    """Write a tiny metadata TSV + AST CSV with a clean determinant→label signal for ciprofloxacin."""
+    """Write a tiny metadata TSV + a per-drug split table with a clean determinant→label signal for cipro."""
     samples = [f"g{i:03d}" for i in range(n)]
     resistant = [i % 2 == 0 for i in range(n)]  # alternate R/S, balanced
     meta = pd.DataFrame(
@@ -72,17 +72,21 @@ def _synthetic_inputs(tmp_path, n: int = 60):
     meta_path = tmp_path / "metadata.tsv"
     meta.to_csv(meta_path, sep="\t", index=False)
 
-    ast = pd.DataFrame({"Sample": samples, "ciprofloxacin": [1 if r else 0 for r in resistant]})
-    ast_path = tmp_path / "binary_ast_with_split.csv"
-    ast.to_csv(ast_path, index=False)
-    return meta_path, ast_path
+    # Deployed <drug>_split.csv (Sample, ast_label, split); contiguous chunks each keep both R/S (alternating).
+    split = ["train"] * 42 + ["validate"] * 6 + ["holdout"] * 12
+    splits_dir = tmp_path / "splits"
+    splits_dir.mkdir()
+    pd.DataFrame(
+        {"Sample": samples, "ast_label": [1 if r else 0 for r in resistant], "split": split}
+    ).to_csv(splits_dir / "ciprofloxacin_split.csv", index=False)
+    return meta_path, splits_dir
 
 
 def test_run_end_to_end(tmp_path):
     """run() scores per-column bars + the ceiling and writes the per-drug CSV + manifest."""
-    meta_path, ast_path = _synthetic_inputs(tmp_path)
+    meta_path, splits_dir = _synthetic_inputs(tmp_path)
     out_dir = tmp_path / "out"
-    run(meta_path, ast_path, out_dir, drugs=["ciprofloxacin"], seeds=(1, 2))
+    run(meta_path, splits_dir, out_dir, drugs=["ciprofloxacin"])
 
     csv = out_dir / "ciprofloxacin" / "kleborate_determinant_lr_ciprofloxacin.csv"
     assert csv.exists()

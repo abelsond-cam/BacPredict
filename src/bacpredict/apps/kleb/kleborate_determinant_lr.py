@@ -39,13 +39,13 @@ import pandas as pd
 
 from bacpredict.engine.config import KP, final_root, visualisations_dir
 from bacpredict.engine.ref_catalogues.base import score_onehot_frame
+from bacpredict.engine.splits.load_splits import load_splits
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# Canonical metadata_v2 row key and the AST-sheet sample-id aliases that map onto it.
+# Canonical metadata_v2 row key.
 META_SAMPLE_COL = "Sample"
-AST_SAMPLE_ALIASES = ("Sample", "phenotype-BioSample_ID", "sample_accession")
 
 # A determinant must be carried by ≥ this many genomes for its Kleborate column to get a scored bar
 # (mirrors TB's MIN_VARIANT_GENOMES). The full one-hot ceiling uses every determinant regardless.
@@ -167,19 +167,6 @@ def _site_label(column: str) -> str:
     return pretty.replace("_", " ")
 
 
-def load_labels(ast_sheet: Path, drug: str) -> dict[str, int]:
-    """``Sample → 0/1`` for one drug from the AST sheet (drop NaN / ambiguous 0.5)."""
-    df = pd.read_csv(ast_sheet)
-    sample_col = next((c for c in AST_SAMPLE_ALIASES if c in df.columns), None)
-    if sample_col is None:
-        raise ValueError(f"{ast_sheet} has no sample-id column (looked for {AST_SAMPLE_ALIASES}).")
-    if drug not in df.columns:
-        raise ValueError(f"{ast_sheet} has no '{drug}' column.")
-    df = df[[sample_col, drug]].rename(columns={sample_col: "Sample"}).dropna(subset=[drug])
-    df = df[df[drug].isin([0, 1, 0.0, 1.0])]
-    return {s: int(v) for s, v in zip(df["Sample"], df[drug], strict=True)}
-
-
 def build_determinant_onehot(meta_labelled: pd.DataFrame, columns: list[str],
                              universe: list[str]) -> pd.DataFrame:
     """Genomes × determinant binary frame over ``universe`` for the given Kleborate ``columns``.
@@ -211,9 +198,12 @@ def _columns_for(frame: pd.DataFrame, column: str) -> list[str]:
     return [f for f in frame.columns if f.split(":", 1)[0] == column]
 
 
-def run(metadata: Path, ast_sheet: Path, out_dir: Path, drugs: list[str],
-        seeds: tuple[int, ...] = (1, 2, 3)) -> None:
-    """Per drug: per-Kleborate-column determinant LR + the full one-hot ceiling, written as a CSV."""
+def run(metadata: Path, splits_dir: Path, out_dir: Path, drugs: list[str]) -> None:
+    """Per drug: per-Kleborate-column determinant LR + the full one-hot ceiling, written as a CSV.
+
+    Each drug's train/holdout partition is read from its deployed ``<drug>_split.csv`` in ``splits_dir``
+    (:func:`bacpredict.engine.splits.load_splits.load_splits`); a drug with no split table is skipped.
+    """
     needed = sorted({c for d in drugs for c in DRUG_COLUMNS.get(d, [])})
     unknown = [d for d in drugs if d not in DRUG_COLUMNS]
     if unknown:
@@ -223,7 +213,11 @@ def run(metadata: Path, ast_sheet: Path, out_dir: Path, drugs: list[str],
     out_dir.mkdir(parents=True, exist_ok=True)
 
     for drug in drugs:
-        label_map = load_labels(ast_sheet, drug)
+        split_table = Path(splits_dir) / f"{drug}_split.csv"
+        if not split_table.exists():
+            logger.warning("%s: no split table at %s — skipping", drug, split_table)
+            continue
+        label_map, train_ids, _validate_ids, holdout_ids = load_splits(split_table)
         meta_labelled = meta[meta[META_SAMPLE_COL].isin(label_map)]
         universe = sorted(set(meta_labelled[META_SAMPLE_COL]) & set(label_map))
         n_join_miss = len(label_map) - len(universe)
@@ -247,7 +241,7 @@ def run(metadata: Path, ast_sheet: Path, out_dir: Path, drugs: list[str],
             n_genomes = int((sub.sum(axis=1) > 0).sum())
             if n_genomes < MIN_DETERMINANT_GENOMES:
                 continue
-            agg = score_onehot_frame(sub, label_map, seeds)
+            agg = score_onehot_frame(sub, label_map, train_ids, holdout_ids)
             if agg is None:
                 continue
             category, embeddable = COLUMN_SCHEMA.get(col, ("other", False))
@@ -261,7 +255,7 @@ def run(metadata: Path, ast_sheet: Path, out_dir: Path, drugs: list[str],
                 "is_rrna": False, "is_noncoding": not embeddable,
             })
 
-        full = score_onehot_frame(oh, label_map, seeds)
+        full = score_onehot_frame(oh, label_map, train_ids, holdout_ids)
         if full is not None:
             rows.append({
                 "gene_name": ALL_KEY, "site": ALL_KEY, "category": "all",
@@ -293,18 +287,17 @@ def main() -> None:
     parser.add_argument("--metadata", type=Path, default=None,
                         help="metadata_v2_all_samples_and_columns.tsv with Kleborate determinant columns "
                              "(default: <data-root>/final/metadata_v2_all_samples_and_columns.tsv).")
-    parser.add_argument("--ast-sheet", type=Path, default=None,
-                        help="Kp binary_ast_with_split.csv, Sample + lowercase drug columns "
-                             "(default: <data-root>/processed/train_kleb_ast/binary_ast_with_split.csv).")
+    parser.add_argument("--splits-dir", type=Path, default=None,
+                        help="Dir of deployed <drug>_split.csv tables "
+                             "(default: <data-root>/processed/train_kleb_ast/splits).")
     parser.add_argument("--out-dir", type=Path, default=visualisations_dir("kp"),
                         help="Per-drug CSVs go to <out-dir>/<drug>/kleborate_determinant_lr_<drug>.csv.")
     parser.add_argument("--drugs", type=str, nargs="+", default=DEFAULT_DRUGS,
                         help=f"AST drug columns to score (default weak-first: {DEFAULT_DRUGS}).")
-    parser.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])
     args = parser.parse_args()
     metadata = args.metadata or final_root() / "metadata_v2_all_samples_and_columns.tsv"
-    ast_sheet = args.ast_sheet or KP.data_root() / "binary_ast_with_split.csv"
-    run(metadata, ast_sheet, args.out_dir, args.drugs, tuple(args.seeds))
+    splits_dir = args.splits_dir or KP.data_root() / "splits"
+    run(metadata, splits_dir, args.out_dir, args.drugs)
 
 
 if __name__ == "__main__":
