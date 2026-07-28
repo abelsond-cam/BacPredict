@@ -25,15 +25,18 @@ set -euo pipefail
 : "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
 D="$BACPREDICT_DATA_ROOT"
 PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
-export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
+REPO="${REPO:-$SCRATCHDIR/worktrees/consolidate}"
+export PYTHONPATH="$REPO/src:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 
 DRUG=${DRUG:-ciprofloxacin}
 RDS="$D/processed/train_kleb_ast"
+SPLITS="$RDS/splits"                             # per-drug <drug>_split.csv (generate_kfold_splits)
 
 echo "=== Kp reliable FT concat — drug=$DRUG ==="
 "$PY" -m bacpredict.apps.kleb.reliable_ft_concat \
+    --split-table "$SPLITS/${DRUG}_split.csv" \
     --drug "$DRUG" \
     --ft-cache-dir "$RDS/ft_amr_cache/$DRUG" \
     --frozen-cache-dir "$RDS/frozen_amr_cache/$DRUG" \

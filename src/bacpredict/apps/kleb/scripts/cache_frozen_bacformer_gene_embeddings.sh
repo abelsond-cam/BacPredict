@@ -32,7 +32,7 @@ set -uo pipefail
 : "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
 D="$BACPREDICT_DATA_ROOT"
 PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
-export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
+export PYTHONPATH="${BACPREDICT_REPO:-$SCRATCHDIR/worktrees/consolidate}/src:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 MKL_NUM_THREADS=8
 
@@ -51,7 +51,7 @@ echo "=== Kp FROZEN Bacformer gene cache — drug=$DRUG (task $SLURM_ARRAY_TASK_
 echo "rank=$RANK"; echo "out=$OUT"
 
 "$PY" -m bacpredict.engine.concat.cache_bacformer_gene_embeddings \
-    --ast-sheet-path "$D/processed/train_kleb_ast/binary_ast_with_split.csv" \
+    --split-table "$D/processed/train_kleb_ast/splits/${DRUG}_split.csv" \
     --drug "$DRUG" \
     --parquet-dir "$D/processed/train_kleb_ast/protein_sequences" \
     --esm-store-dir "$D/processed/train_kleb_ast/esm" \

@@ -27,7 +27,7 @@ set -uo pipefail
 : "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
 D="$BACPREDICT_DATA_ROOT"
 PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
-export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
+export PYTHONPATH="${BACPREDICT_REPO:-$SCRATCHDIR/worktrees/consolidate}/src:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 MKL_NUM_THREADS=4
 
@@ -47,7 +47,7 @@ echo "=== Kp reliable ESM-vs-FT(+frozen) + concat — drug=$DRUG (task $SLURM_AR
 
 "$PY" -m bacpredict.apps.kleb.reliable_ft_concat \
     --drug "$DRUG" \
-    --ast-sheet-path "$D/processed/train_kleb_ast/binary_ast_with_split.csv" \
+    --split-table "$D/processed/train_kleb_ast/splits/${DRUG}_split.csv" \
     --ft-cache-dir "$FTC" \
     --frozen-cache-dir "$FRC" \
     --esm-store-dir "$D/processed/train_kleb_ast/esm" \

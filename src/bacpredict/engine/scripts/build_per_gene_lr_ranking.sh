@@ -88,16 +88,13 @@ fi
 
 STORE=${EMBEDDING_STORE:-esm}                    # esm (default) | baclm
 RDS=$D/processed/train_${TASK}
-SHEET=$RDS/binary_ast_with_split.csv            # the FULL cohort split (all drug columns)
+SPLITS=$RDS/splits                               # per-drug <drug>_split.csv tables (generate_kfold_splits)
 PARQUET=$RDS/protein_sequences
 EMB=$RDS/$STORE                                  # $RDS/esm or $RDS/baclm — same flat parquet order
-# Held-out-test ("real numbers") mode — EVAL=1 fits each gene's LR on train+validate and reports
-# eval_auroc_<drug> on the untouched evaluate split (vs the OOF-only 2000-subsample default). It also
-# drops the train cap (full cohort) and stores the design matrices in float16 so the ~34k-genome
-# collection fits one node (the LR still fits in float32). SUFFIX namespaces the output dir so the eval
-# rankings sit beside — not on top of — the OOF ones (per_gene_lr_ranking_baclm_eval/).
-EVAL="${EVAL:-0}"                                 # 1 → --eval-holdout (train+val fit, evaluate test)
-SUFFIX="${SUFFIX:-}"                              # output-subdir suffix, e.g. _eval
+# per_segment_lr ALWAYS fits on the split table's `train` and reports eval_auroc_<drug> on its `holdout`
+# (the deployment holdout) — no separate eval mode any more. SUFFIX still namespaces the output dir; the
+# full-cohort float16 fit is selected by MAX_TRAIN="" + STORE_DTYPE=float16.
+SUFFIX="${SUFFIX:-}"                              # output-subdir suffix, e.g. _full
 MAX_TRAIN="${MAX_TRAIN-2000}"                    # "" → full cohort (no subsample cap)
 STORE_DTYPE="${STORE_DTYPE:-float32}"            # float16 → whole-cohort memory
 # FEATURE (env, default embedding) picks how non-carriers are handled. The concat's gene rung is
@@ -118,7 +115,7 @@ OUT=$RDS/pangena_predict/per_gene_lr_ranking_${MODE_TAG}${STORE}${SUFFIX}/$DRUG
 
 echo "========================================================================"
 echo "Per-gene LR ranking — species=$SPECIES drug=$DRUG store=$STORE (array task $SLURM_ARRAY_TASK_ID)"
-echo "Sheet:   $SHEET"
+echo "Splits:  $SPLITS/${DRUG}_split.csv"
 echo "Emb:     $EMB"
 echo "Out dir: $OUT  (feature=$FEATURE eval=$EVAL max-train=${MAX_TRAIN:-full} dtype=$STORE_DTYPE, min-prevalence 0.10, no panels)"
 echo "Job ID:  ${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
@@ -130,14 +127,14 @@ if [[ -f "$OUT/per_gene_lr_${DRUG}.csv" ]]; then
 fi
 mkdir -p "$OUT"
 
-EVAL_ARG=""; [[ "$EVAL" == 1 ]] && EVAL_ARG="--eval-holdout"
 MAXT_ARG=""; [[ -n "$MAX_TRAIN" ]] && MAXT_ARG="--max-train-genomes $MAX_TRAIN"
-"$PY" -m bacpredict.engine.gene_lr.build_per_gene_lr_store \
-    --split-csv "$SHEET" \
+"$PY" -m bacpredict.engine.segment_amr_lr.per_segment_lr \
+    --segment-type coding \
+    --split-table "$SPLITS/${DRUG}_split.csv" \
     --drug "$DRUG" \
     --parquet-dir "$PARQUET" \
-    --esm-store-dir "$EMB" \
-    --embedding-store "$STORE" \
+    --embed-dir "$EMB" \
+    --store-kind "$STORE" \
     --out-dir "$OUT" \
     --min-prevalence 0.10 \
     --auroc-filter 0.8 \
@@ -146,7 +143,6 @@ MAXT_ARG=""; [[ -n "$MAX_TRAIN" ]] && MAXT_ARG="--max-train-genomes $MAX_TRAIN"
     $MAXT_ARG \
     --sample-seed 1 \
     --store-dtype "$STORE_DTYPE" \
-    $EVAL_ARG \
     $IMPUTE_ARG \
     --n-jobs "${SLURM_CPUS_PER_TASK:-32}"
 

@@ -62,11 +62,11 @@ if [[ -z "$DRUG" ]]; then
     exit 1
 fi
 
-EVAL="${EVAL:-0}"                                 # 1 -> --eval-holdout
-SUFFIX="${SUFFIX:-}"                              # output-subdir suffix, e.g. _eval
+SUFFIX="${SUFFIX:-}"                              # output-subdir suffix, e.g. _full
 MAX_TRAIN="${MAX_TRAIN-2000}"                    # "" -> full cohort
 STORE_DTYPE="${STORE_DTYPE:-float32}"            # float16 -> whole-cohort memory
-UNIT_TYPES="${UNIT_TYPES:-}"                     # e.g. "rrna,ncrna" to restrict; default all named bodies
+UNIT_TYPES="${UNIT_TYPES:-}"                     # e.g. "rrna ncrna" to restrict; default all named bodies
+SPLITS=$D/processed/train_${TASK}/splits         # per-drug <drug>_split.csv tables (generate_kfold_splits)
 # Named bodies only exist in the re-embed store; override BACLM_DIR only to point elsewhere.
 BACLM_DIR="${BACLM_DIR:-$D/processed/train_${TASK}/baclm_reembed}"
 
@@ -107,11 +107,12 @@ if [[ -f "$OUT/$TABLE" ]]; then
 fi
 mkdir -p "$OUT"
 
-EVAL_ARG=""; [[ "$EVAL" == 1 ]] && EVAL_ARG="--eval-holdout"
 MAXT_ARG=""; [[ -n "$MAX_TRAIN" ]] && MAXT_ARG="--max-train-genomes $MAX_TRAIN"
-UNIT_ARG=""; [[ -n "$UNIT_TYPES" ]] && UNIT_ARG="--unit-types $UNIT_TYPES"
-"$PY" -m bacpredict.engine.gene_lr.build_per_unit_lr_store \
+UNIT_ARG=""; [[ -n "$UNIT_TYPES" ]] && UNIT_ARG="--unit-types ${UNIT_TYPES//,/ }"
+"$PY" -m bacpredict.engine.segment_amr_lr.per_segment_lr \
+    --segment-type unit \
     --species "$SPECIES" \
+    --split-table "$SPLITS/${DRUG}_split.csv" \
     --drug "$DRUG" \
     --baclm-dir "$BACLM_DIR" \
     --out-dir "$OUT" \
@@ -123,7 +124,6 @@ UNIT_ARG=""; [[ -n "$UNIT_TYPES" ]] && UNIT_ARG="--unit-types $UNIT_TYPES"
     $MAXT_ARG \
     --sample-seed 1 \
     --store-dtype "$STORE_DTYPE" \
-    $EVAL_ARG \
     --n-jobs "${SLURM_CPUS_PER_TASK:-32}"
 
 echo "=== top of the per-unit ranking table ($TABLE) ==="

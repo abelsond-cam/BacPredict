@@ -110,6 +110,7 @@ esac
 # MAX_TRAIN (default 2000; set empty → full cohort) + BACLM_DIR (override the store, e.g. …/baclm_reembed for
 # the re-embed whole-IGR channel) — mirror the upstream launcher so A5 can select the parcel + cohort size.
 MAX_TRAIN="${MAX_TRAIN-2000}"
+SPLITS=$D/processed/train_${TASK}/splits         # per-drug <drug>_split.csv tables (generate_kfold_splits)
 # Per-drug + per-species + per-feature subdir (the module also writes non-drug-specific files, so
 # concurrent array tasks / features must not share an out-dir).
 OUT=$D/processed/train_${TASK}/pangena_predict/$RANK_DIR/$DRUG
@@ -128,8 +129,10 @@ mkdir -p "$OUT"
 
 MAXT_ARG=""; [[ -n "$MAX_TRAIN" ]] && MAXT_ARG="--max-train-genomes $MAX_TRAIN"
 BACLM_ARG=""; [[ -n "${BACLM_DIR:-}" ]] && BACLM_ARG="--baclm-dir $BACLM_DIR"
-"$PY" -m bacpredict.engine.gene_lr.build_per_igr_lr_store \
+"$PY" -m bacpredict.engine.segment_amr_lr.per_segment_lr \
+    --segment-type igr \
     --species "$SPECIES" \
+    --split-table "$SPLITS/${DRUG}_split.csv" \
     --drug "$DRUG" \
     --out-dir "$OUT" \
     "${FEATURE_ARGS[@]}" \

@@ -61,7 +61,7 @@ echo "=== Kp FT Bacformer cache — drug=$DRUG (task $SLURM_ARRAY_TASK_ID) ==="
 echo "ckpt=$CKPT"; echo "rank=$RANK"; echo "out=$OUT"
 
 "$PY" -m bacpredict.engine.concat.cache_bacformer_gene_embeddings \
-    --ast-sheet-path "$D/processed/train_kleb_ast/binary_ast_with_split.csv" \
+    --split-table "$D/processed/train_kleb_ast/splits/${DRUG}_split.csv" \
     --drug "$DRUG" \
     --parquet-dir "$D/processed/train_kleb_ast/protein_sequences" \
     --esm-store-dir "$D/processed/train_kleb_ast/esm" \

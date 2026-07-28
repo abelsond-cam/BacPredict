@@ -58,6 +58,7 @@ DRUG=${DRUGS[$SLURM_ARRAY_TASK_ID]}
 # FT genome-mean dir. Defaults to the standard cache; override FT_CACHE for a drug whose npz sits elsewhere
 # (e.g. Kp ciprofloxacin's CP-0 cache lives under ft_amr_cache/, not ft_bacformer_cache/).
 FT_CACHE="${FT_CACHE:-$D/processed/train_${TASK}/pangena_predict/ft_bacformer_cache/$DRUG}"
+SPLITS=$D/processed/train_${TASK}/splits         # per-drug <drug>_split.csv (the deployed split)
 OUT=$D/processed/train_${TASK}/pangena_predict/amr_ladder/$DRUG
 
 echo "========================================================================"
@@ -66,14 +67,16 @@ echo "FT cache: $FT_CACHE"
 echo "Out dir:  $OUT   (non-coding rung: top imputed AUROC, no gate, over upstream/per_unit/per_igr)"
 echo "Job ID:   ${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 echo "========================================================================"
-if [[ ! -f "$FT_CACHE/ft_genome_mean_${DRUG}.npz" ]]; then
-    echo "ERROR: FT genome-mean missing: $FT_CACHE/ft_genome_mean_${DRUG}.npz" >&2
+if [[ ! -f "$FT_CACHE/cache_summary_${DRUG}.json" ]]; then
+    echo "ERROR: FT cache summary missing: $FT_CACHE/cache_summary_${DRUG}.json" >&2
+    echo "       (re-cache with cache_bacformer_gene_embeddings --scope trainholdout on the deployed checkpoint)" >&2
     exit 1
 fi
 
 "$PY" -m bacpredict.engine.concat.build_amr_ladder \
     --species "$SPECIES" \
     --drug "$DRUG" \
+    --split-table "$SPLITS/${DRUG}_split.csv" \
     --ft-cache-dir "$FT_CACHE" \
     --out-dir "$OUT"
 

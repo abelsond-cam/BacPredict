@@ -30,11 +30,13 @@ set -euo pipefail
 : "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
 D="$BACPREDICT_DATA_ROOT"
 PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
-export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
+REPO="${REPO:-$SCRATCHDIR/worktrees/consolidate}"
+export PYTHONPATH="$REPO/src:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
 
 DRUG=${DRUG:-ciprofloxacin}
 RDS="$D/processed/train_kleb_ast"
+SPLITS="$RDS/splits"                             # per-drug <drug>_split.csv (generate_kfold_splits)
 
 # Auto-discover the drug's deployed FT checkpoint (highest checkpoint-N under finetuned_fold00_seed1).
 FT_DIR=$(ls -d "$RDS"/models/finetune/klebsiella_pneumoniae_${DRUG}_*_finetuned_fold00_seed1 2>/dev/null | head -1)
@@ -47,6 +49,7 @@ echo "Sidecar dir:   $RDS/amr_annotation"
 
 # 1) FINE-TUNED backbone: genome-mean + per-gene FT tokens -> ft_amr_cache/<drug>/
 "$PY" -m bacpredict.apps.kleb.cache_ft_amr_proteins \
+    --split-table "$SPLITS/${DRUG}_split.csv" \
     --drug "$DRUG" \
     --bacformer-checkpoint "$CKPT" \
     --out-dir "$RDS/ft_amr_cache" \
@@ -54,6 +57,7 @@ echo "Sidecar dir:   $RDS/amr_annotation"
 
 # 2) FROZEN backbone: genome-mean + per-gene frozen tokens -> frozen_amr_cache/<drug>/
 "$PY" -m bacpredict.apps.kleb.cache_frozen_amr_proteins \
+    --split-table "$SPLITS/${DRUG}_split.csv" \
     --drug "$DRUG" \
     --out-dir "$RDS/frozen_amr_cache" \
     --device cuda:0

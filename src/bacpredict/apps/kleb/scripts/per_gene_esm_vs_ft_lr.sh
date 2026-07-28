@@ -31,7 +31,7 @@ set -uo pipefail
 : "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
 D="$BACPREDICT_DATA_ROOT"
 PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
-export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
+export PYTHONPATH="${BACPREDICT_REPO:-$SCRATCHDIR/worktrees/consolidate}/src:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 MKL_NUM_THREADS=4
 
@@ -51,7 +51,7 @@ if [[ ! -f "$FTC/top_gene_manifest_${DRUG}.csv" ]]; then echo "ERROR: FT cache m
 echo "=== Kp ESM-vs-frozen-vs-FT per-gene LR — drug=$DRUG (task $SLURM_ARRAY_TASK_ID) ==="
 
 "$PY" -m bacpredict.engine.gene_lr.segment_vs_ft \
-    --ast-sheet-path "$D/processed/train_kleb_ast/binary_ast_with_split.csv" \
+    --split-table "$D/processed/train_kleb_ast/splits/${DRUG}_split.csv" \
     --drug "$DRUG" \
     --parquet-dir "$D/processed/train_kleb_ast/protein_sequences" \
     --esm-store-dir "$D/processed/train_kleb_ast/esm" \

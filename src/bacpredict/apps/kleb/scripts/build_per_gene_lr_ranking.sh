@@ -41,7 +41,7 @@ set -uo pipefail
 : "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
 D="$BACPREDICT_DATA_ROOT"
 PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
-export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
+export PYTHONPATH="${BACPREDICT_REPO:-$SCRATCHDIR/worktrees/consolidate}/src:${PYTHONPATH:-}"
 
 export PYTHONUNBUFFERED=1
 # Pin BLAS to 1 thread/process so the joblib per-gene-LR workers don't oversubscribe.
@@ -59,7 +59,7 @@ if [[ -z "$DRUG" ]]; then
     exit 1
 fi
 
-SHEET=$D/processed/train_kleb_ast/binary_ast_with_split.csv   # the FULL cohort split (all drug columns)
+SPLITS=$D/processed/train_kleb_ast/splits                     # per-drug <drug>_split.csv (generate_kfold_splits)
 PARQUET=$D/processed/train_kleb_ast/protein_sequences
 EMB=$D/processed/train_kleb_ast/esm
 # Per-drug subdir: the module also writes non-drug-specific files (build_summary, gene_lr_auroc,
@@ -68,7 +68,7 @@ OUT=$D/processed/train_kleb_ast/pangena_predict/per_gene_lr_ranking/$DRUG
 
 echo "========================================================================"
 echo "Kp per-gene LR ranking — drug=$DRUG (array task $SLURM_ARRAY_TASK_ID)"
-echo "Sheet:   $SHEET"
+echo "Splits:  $SPLITS/${DRUG}_split.csv"
 echo "Out dir: $OUT  (subsample 2000 train, min-prevalence 0.10, no panels)"
 echo "Job ID:  ${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 echo "========================================================================"
@@ -80,11 +80,12 @@ if [[ -f "$OUT/per_gene_lr_${DRUG}.csv" ]]; then
 fi
 mkdir -p "$OUT"
 
-"$PY" -m bacpredict.engine.gene_lr.build_per_gene_lr_store \
-    --split-csv "$SHEET" \
+"$PY" -m bacpredict.engine.segment_amr_lr.per_segment_lr \
+    --segment-type coding \
+    --split-table "$SPLITS/${DRUG}_split.csv" \
     --drug "$DRUG" \
     --parquet-dir "$PARQUET" \
-    --esm-store-dir "$EMB" \
+    --embed-dir "$EMB" \
     --out-dir "$OUT" \
     --min-prevalence 0.10 \
     --auroc-filter 0.8 \

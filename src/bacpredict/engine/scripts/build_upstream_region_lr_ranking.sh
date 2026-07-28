@@ -77,14 +77,13 @@ if [[ -z "$DRUG" ]]; then
     exit 1
 fi
 
-# Held-out-test ("real numbers") mode — EVAL=1 fits each anchor's LR on train+validate and reports
-# eval_auroc_<drug> on the untouched evaluate split (vs the OOF-only 2000-subsample default). MAX_TRAIN=""
-# drops the cap (full cohort). SUFFIX namespaces the output dir so the eval rankings sit beside the OOF ones
-# (upstream_lr_ranking_eval/). BACLM_DIR overrides the store (e.g. …/baclm_reembed for the re-embed pass).
-EVAL="${EVAL:-0}"                                 # 1 → --eval-holdout
-SUFFIX="${SUFFIX:-}"                              # output-subdir suffix, e.g. _eval
+# per_segment_lr ALWAYS fits on the split table's `train` and reports eval_auroc_<drug> on its `holdout`
+# (the deployment holdout). MAX_TRAIN="" drops the subsample cap (full cohort); SUFFIX namespaces the output
+# dir; BACLM_DIR overrides the store (e.g. …/baclm_reembed for the re-embed pass).
+SUFFIX="${SUFFIX:-}"                              # output-subdir suffix, e.g. _full
 MAX_TRAIN="${MAX_TRAIN-2000}"                    # "" → full cohort
 STORE_DTYPE="${STORE_DTYPE:-float32}"            # float16 → whole-cohort memory
+SPLITS=$D/processed/train_${TASK}/splits         # per-drug <drug>_split.csv tables (generate_kfold_splits)
 # FEATURE (env, default embedding) selects the (upstream key × absence) variant, mirroring
 # build_per_igr_lr_ranking.sh — each writes its OWN ranking base dir so the carrier-only file is never
 # overwritten. embedding = carrier-only (drop-absent, core min-prevalence 0.10); imputed = the same 960-d
@@ -140,11 +139,12 @@ if [[ -f "$OUT/$TABLE" ]]; then
 fi
 mkdir -p "$OUT"
 
-EVAL_ARG=""; [[ "$EVAL" == 1 ]] && EVAL_ARG="--eval-holdout"
 MAXT_ARG=""; [[ -n "$MAX_TRAIN" ]] && MAXT_ARG="--max-train-genomes $MAX_TRAIN"
 BACLM_ARG=""; [[ -n "${BACLM_DIR:-}" ]] && BACLM_ARG="--baclm-dir $BACLM_DIR"
-"$PY" -m bacpredict.engine.gene_lr.build_upstream_region_lr_store \
+"$PY" -m bacpredict.engine.segment_amr_lr.per_segment_lr \
+    --segment-type upstream \
     --species "$SPECIES" \
+    --split-table "$SPLITS/${DRUG}_split.csv" \
     --drug "$DRUG" \
     --out-dir "$OUT" \
     "${FEATURE_ARGS[@]}" \
@@ -157,7 +157,6 @@ BACLM_ARG=""; [[ -n "${BACLM_DIR:-}" ]] && BACLM_ARG="--baclm-dir $BACLM_DIR"
     --store-dtype "$STORE_DTYPE" \
     $BACLM_ARG \
     $CONV_ARG \
-    $EVAL_ARG \
     --n-jobs "${SLURM_CPUS_PER_TASK:-32}"
 
 echo "=== top of the wide upstream ranking table ($TABLE) ==="

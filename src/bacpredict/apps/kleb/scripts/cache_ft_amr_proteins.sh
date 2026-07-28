@@ -32,7 +32,7 @@ set -euo pipefail
 : "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
 D="$BACPREDICT_DATA_ROOT"
 PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
-export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
+export PYTHONPATH="${BACPREDICT_REPO:-$SCRATCHDIR/worktrees/consolidate}/src:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
 
 DRUGS=(cefotaxime ertapenem ampicillin-sulbactam ceftriaxone cefuroxime ciprofloxacin ceftazidime \
@@ -49,7 +49,7 @@ echo "=== Kp FT AMR-token cache — drug=$DRUG (task $SLURM_ARRAY_TASK_ID), ckpt
 
 "$PY" -m bacpredict.apps.kleb.cache_ft_amr_proteins \
     --drug "$DRUG" \
-    --ast-sheet-path "$D/processed/train_kleb_ast/binary_ast_with_split.csv" \
+    --split-table "$D/processed/train_kleb_ast/splits/${DRUG}_split.csv" \
     --parquet-dir "$D/processed/train_kleb_ast/protein_sequences" \
     --esm-store-dir "$D/processed/train_kleb_ast/esm" \
     --sidecar-dir "$D/processed/train_kleb_ast/amr_annotation" \
