@@ -49,6 +49,8 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
+import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -150,18 +152,48 @@ def write_query_fasta(members: pd.DataFrame, out_fasta: Path) -> pd.DataFrame:
     return pd.DataFrame(id_rows)
 
 
-def scan_carriers(matrix_gz: Path, target_seqs: dict[str, str], all_hit_seqs: set[str]) -> tuple[dict[str, list[str]], set[str], int]:
-    """One streaming pass of the unitig matrix → carrier sets for the target unitigs.
+def extract_hit_submatrix(matrix_gz: Path, all_hit_seqs: set[str], submatrix_path: Path, *, decomp_threads: int = 4) -> int:
+    """Extract only the hit-unitig rows from the 77 GB matrix into a small **cached** sub-matrix.
+
+    A single C-speed streaming hash-join — ``pigz -dc`` (parallel gunzip; ``zcat`` fallback) piped to an
+    ``awk`` that loads the ``all_hit_seqs`` into a hash and keeps a matrix line iff its left field
+    (``substr($0, 1, index($0," | ")-1)``) is in that hash. ``awk`` touches only ``$0`` (never ``$1``),
+    so it does **not** field-split the giant carrier lists — the reason the pure-Python ``gzip`` scan was
+    ~30 min and this is a few. The 6.28M-row / 77 GB matrix is read exactly **once**, ever: the result is
+    the reusable index (``index once, match once``) and this returns immediately if it already exists.
+
+    Returns the row count of the sub-matrix (``-1`` if served from the existing cache).
+    """
+    if submatrix_path.is_file() and submatrix_path.stat().st_size > 0:
+        print(f"reusing cached hit sub-matrix {submatrix_path} (skipping the 77 GB pass)", file=sys.stderr)
+        return -1
+    targets = submatrix_path.with_suffix(".targets.txt")
+    targets.write_text("".join(f"{s}\n" for s in all_hit_seqs))
+    decomp = f"pigz -p {decomp_threads} -dc" if shutil.which("pigz") else "gzip -dc"
+    awk_prog = r'NR==FNR{t[$0];next}{i=index($0," | ");if(i){k=substr($0,1,i-1);if(k in t)print}}'
+    pipe = (f"set -o pipefail; {decomp} {shlex.quote(str(matrix_gz))} | "
+            f"awk {shlex.quote(awk_prog)} {shlex.quote(str(targets))} -")
+    print(f"extracting hit sub-matrix ({decomp.split()[0]} | awk hash-join, one 77 GB pass)…", file=sys.stderr)
+    with submatrix_path.open("w") as out:
+        res = subprocess.run(["bash", "-c", pipe], stdout=out, stderr=subprocess.PIPE, check=False)
+    if res.returncode != 0:
+        raise RuntimeError(f"sub-matrix extraction failed (rc={res.returncode}): "
+                           f"{res.stderr.decode('utf-8', errors='replace')}")
+    targets.unlink(missing_ok=True)
+    n = sum(1 for _ in submatrix_path.open())
+    print(f"wrote {submatrix_path}: {n} hit rows", file=sys.stderr)
+    return n
+
+
+def carriers_from_submatrix(submatrix_path: Path, target_seqs: dict[str, str]) -> tuple[dict[str, list[str]], set[str], int]:
+    """Read the small cached sub-matrix → carrier sets for the target unitigs + the Phase-2 union.
 
     Parameters
     ----------
-    matrix_gz
-        ``unitigs.pyseer.gz`` — 6.28M rows ``<unitig_seq> | SampleA:1 SampleB:1 …``.
+    submatrix_path
+        The cached hit sub-matrix (``<unitig_seq> | SampleA:1 …`` rows) from :func:`extract_hit_submatrix`.
     target_seqs
         ``{unitig_sequence: query_id}`` for the chosen (top-group) unitigs — the ones we classify.
-    all_hit_seqs
-        Every hit unitig sequence (superset of ``target_seqs``). Used to size the Phase-2 carrier
-        union in the same pass without a second scan.
 
     Returns
     -------
@@ -169,27 +201,24 @@ def scan_carriers(matrix_gz: Path, target_seqs: dict[str, str], all_hit_seqs: se
         ``{query_id: [Sample, …]}`` for the target unitigs.
     phase2_union : set
         Union of carrier Sample IDs across **all** hit unitigs (the Phase-2 scaling driver).
-    n_matched_all : int
-        Number of all-hit sequences found in the matrix (join-coverage check).
+    n_matched : int
+        Number of hit rows read (join-coverage check vs the hits table).
     """
     carriers: dict[str, list[str]] = {}
     phase2_union: set[str] = set()
-    matched_all: set[str] = set()
-    opener = gzip.open if str(matrix_gz).endswith(".gz") else open
-    with opener(matrix_gz, "rt") as fh:  # type: ignore[operator]
+    matched = 0
+    with submatrix_path.open() as fh:
         for line in fh:
             seq, sep, rest = line.partition(" | ")
             if not sep:
                 continue
-            if seq not in all_hit_seqs:
-                continue
-            matched_all.add(seq)
+            matched += 1
             samples = [tok.rpartition(":")[0] for tok in rest.split()]
             phase2_union.update(samples)
             qid = target_seqs.get(seq)
             if qid is not None:
                 carriers[qid] = samples
-    return carriers, phase2_union, len(matched_all)
+    return carriers, phase2_union, matched
 
 
 def resolve_genomad_paths(sample: str, genomad_root: Path) -> dict[str, Any]:
@@ -474,7 +503,9 @@ def run_select(args: argparse.Namespace) -> None:
 
     target_seqs = dict(zip(id_map["variant"].astype(str), id_map["query_id"], strict=True))
     all_hit_seqs = set(hits["variant"].astype(str))
-    carriers, phase2_union, n_matched = scan_carriers(args.unitig_matrix, target_seqs, all_hit_seqs)
+    submatrix = out / "hits_submatrix.tsv"
+    extract_hit_submatrix(args.unitig_matrix, all_hit_seqs, submatrix, decomp_threads=args.decomp_threads)
+    carriers, phase2_union, n_matched = carriers_from_submatrix(submatrix, target_seqs)
 
     # unitig_carriers.tsv: one row per (query_id, carrier) — the ground-truth (unitig, carrier) pairs.
     car_rows = [{"query_id": qid, "Sample": s} for qid, samples in carriers.items() for s in samples]
@@ -654,6 +685,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--min-matchlen", type=int, default=25)
     p.add_argument("--minimap2-bin", default="minimap2")
     p.add_argument("--threads", type=int, default=2)
+    p.add_argument("--decomp-threads", type=int, default=4, help="pigz threads for the one-time matrix scan.")
     p.add_argument("--carrier-shard-index", type=int, default=0)
     p.add_argument("--n-shards", type=int, default=1)
     p.add_argument("--genomad-probe-n", type=int, default=20, help="Carriers to probe for geNomad layout.")

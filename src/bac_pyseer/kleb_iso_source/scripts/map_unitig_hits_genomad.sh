@@ -106,7 +106,7 @@ if [ "$PHASE" = "align" ] || [ "$PHASE" = "smoke" ]; then
 fi
 
 COMMON=(--genomad-root "$GENOMAD" --out-dir "$OUT" --scratch-dir "$SCRATCH" \
-        --top-n-groups "$TOP_N" --min-af "$MIN_AF" --threads "$THREADS")
+        --top-n-groups "$TOP_N" --min-af "$MIN_AF" --threads "$THREADS" --decomp-threads "$THREADS")
 
 case "$PHASE" in
 select)
