@@ -17,12 +17,11 @@
 # (build_upstream_region_lr_ranking.sh / build_per_igr_lr_ranking.sh FEATURE=imputed_full + per_unit imputed).
 #
 #SBATCH --job-name=amr_ladder
-#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
-#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
+#SBATCH --output=/rds/user/dca36/hpc-work/logs/%x-%A_%a.out
+#SBATCH --error=/rds/user/dca36/hpc-work/logs/%x-%A_%a.out
 #SBATCH --array=0-9
-#SBATCH --partition=workq
-#SBATCH --account=brics.u6fp
-#SBATCH --qos=normal
+#SBATCH --partition=icelake-himem
+#SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
@@ -33,12 +32,12 @@
 # Kp). No --gres=gpu; a GPU-less workq job schedules normally, but MUST set --mem (DefMemPerGPU otherwise).
 
 set -uo pipefail
-: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+: "${BACPREDICT_DATA_ROOT:="$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/bac_ast_prediction"}"
 D="$BACPREDICT_DATA_ROOT"
 # Code checkout: the non-coding rung (per-unit loader, core selection) needs the concat worktree at 5c1d523+
 # until the consolidate worktree is advanced; override REPO=... otherwise.
-REPO="${REPO:-$SCRATCHDIR/worktrees/consolidate}"
-PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+REPO="${REPO:-$HOME/workspace/BacPredict}"
+PY="$HOME/workspace/BacPredict/.venv/bin/python"
 export PYTHONPATH="$REPO/src:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
 

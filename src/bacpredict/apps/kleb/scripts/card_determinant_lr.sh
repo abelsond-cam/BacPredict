@@ -7,11 +7,10 @@
 #     sbatch --dependency=afterok:<jid> src/bacpredict/apps/kleb/scripts/card_determinant_lr.sh
 #
 #SBATCH --job-name=kleb_card_determinant_lr
-#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
-#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
-#SBATCH --partition=workq
-#SBATCH --account=brics.u6fp
-#SBATCH --qos=normal
+#SBATCH --output=/rds/user/dca36/hpc-work/logs/%x-%j.out
+#SBATCH --error=/rds/user/dca36/hpc-work/logs/%x-%j.out
+#SBATCH --partition=icelake-himem
+#SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
@@ -24,10 +23,10 @@
 set -euo pipefail
 
 # Data root — one env var, cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
-: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+: "${BACPREDICT_DATA_ROOT:="$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/bac_ast_prediction"}"
 D="$BACPREDICT_DATA_ROOT"
-PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
-export PYTHONPATH="${BACPREDICT_REPO:-$SCRATCHDIR/worktrees/consolidate}/src:${PYTHONPATH:-}"
+PY="$HOME/workspace/BacPredict/.venv/bin/python"
+export PYTHONPATH="${BACPREDICT_REPO:-$HOME/workspace/BacPredict}/src:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 MKL_NUM_THREADS=4
 

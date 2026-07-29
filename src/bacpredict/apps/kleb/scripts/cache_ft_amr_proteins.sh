@@ -11,11 +11,10 @@
 #     sbatch --array=0-21 src/bacpredict/apps/kleb/scripts/cache_ft_amr_proteins.sh
 #
 #SBATCH --job-name=kleb_ft_amr_cache
-#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
-#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
-#SBATCH --partition=workq
-#SBATCH --account=brics.u6fp
-#SBATCH --qos=normal
+#SBATCH --output=/rds/user/dca36/hpc-work/logs/%x-%A_%a.out
+#SBATCH --error=/rds/user/dca36/hpc-work/logs/%x-%A_%a.out
+#SBATCH --partition=ampere
+#SBATCH --account=FLOTO-SL2-GPU
 #SBATCH --gres=gpu:1
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -29,10 +28,10 @@
 set -euo pipefail
 
 # Data root — one env var, cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
-: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+: "${BACPREDICT_DATA_ROOT:="$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/bac_ast_prediction"}"
 D="$BACPREDICT_DATA_ROOT"
-PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
-export PYTHONPATH="${BACPREDICT_REPO:-$SCRATCHDIR/worktrees/consolidate}/src:${PYTHONPATH:-}"
+PY="$HOME/workspace/BacPredict/.venv/bin/python"
+export PYTHONPATH="${BACPREDICT_REPO:-$HOME/workspace/BacPredict}/src:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
 
 DRUGS=(cefotaxime ertapenem ampicillin-sulbactam ceftriaxone cefuroxime ciprofloxacin ceftazidime \

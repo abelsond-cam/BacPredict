@@ -15,12 +15,11 @@
 # Usage:  sbatch --dependency=afterok:<ranking_jobid> src/bacpredict/engine/scripts/run_concat_frozen_sweep.sh
 #
 #SBATCH --job-name=concat_frozen_sweep
-#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
-#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
+#SBATCH --output=/rds/user/dca36/hpc-work/logs/%x-%A_%a.out
+#SBATCH --error=/rds/user/dca36/hpc-work/logs/%x-%A_%a.out
 #SBATCH --array=0-9
-#SBATCH --partition=workq
-#SBATCH --account=brics.u6fp
-#SBATCH --qos=normal
+#SBATCH --partition=icelake-himem
+#SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
@@ -36,9 +35,9 @@
 
 set -uo pipefail
 # Data root + env — cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
-: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+: "${BACPREDICT_DATA_ROOT:="$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/bac_ast_prediction"}"
 D="$BACPREDICT_DATA_ROOT"
-PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+PY="$HOME/workspace/BacPredict/.venv/bin/python"
 export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 
 export PYTHONUNBUFFERED=1

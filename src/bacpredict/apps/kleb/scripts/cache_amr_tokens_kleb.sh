@@ -11,11 +11,10 @@
 #     DRUG=ciprofloxacin sbatch --export=ALL,DRUG=ciprofloxacin src/bacpredict/apps/kleb/scripts/cache_amr_tokens_kleb.sh
 #
 #SBATCH --job-name=kleb_amr_token_cache
-#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
-#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
-#SBATCH --partition=workq
-#SBATCH --account=brics.u6fp
-#SBATCH --qos=normal
+#SBATCH --output=/rds/user/dca36/hpc-work/logs/%x-%j.out
+#SBATCH --error=/rds/user/dca36/hpc-work/logs/%x-%j.out
+#SBATCH --partition=ampere
+#SBATCH --account=FLOTO-SL2-GPU
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
@@ -27,10 +26,10 @@
 
 set -euo pipefail
 
-: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+: "${BACPREDICT_DATA_ROOT:="$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/bac_ast_prediction"}"
 D="$BACPREDICT_DATA_ROOT"
-PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
-REPO="${REPO:-$SCRATCHDIR/worktrees/consolidate}"
+PY="$HOME/workspace/BacPredict/.venv/bin/python"
+REPO="${REPO:-$HOME/workspace/BacPredict}"
 export PYTHONPATH="$REPO/src:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
 

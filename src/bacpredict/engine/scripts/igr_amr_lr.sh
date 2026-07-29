@@ -5,16 +5,15 @@
 # Folds in the build-quality audit (CDS-flanked vs RNA-abutting, truncation). CPU-only.
 #
 #   sbatch --export=ALL,TASK=tb   -J igr-amr-tb   src/bacpredict/engine/scripts/igr_amr_lr.sh
-#SBATCH --partition=workq
-#SBATCH --account=brics.u6fp
-#SBATCH --qos=normal
+#SBATCH --partition=icelake-himem
+#SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=64G
 #SBATCH --time=12:00:00
-#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
-#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --output=/rds/user/dca36/hpc-work/logs/%x-%j.out
+#SBATCH --error=/rds/user/dca36/hpc-work/logs/%x-%j.out
 # CPU-only — NO --gres=gpu (a no-GPU job schedules normally on workq; --mem is required since memory
 # defaults are GPU-tied). Cost is one GFF parse + one .pt load per genome, parallelised by workers.
 set -uo pipefail

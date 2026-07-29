@@ -9,16 +9,15 @@
 # are GPU-tied). Durable sbatch so an SSH drop can't kill it (that lost the TB panel once).
 #
 #   sbatch -J prepare-kp-ast src/bacpredict/engine/scripts/prepare_kp_ast_labels.sh
-#SBATCH --partition=workq
-#SBATCH --account=brics.u6fp
-#SBATCH --qos=normal
+#SBATCH --partition=icelake-himem
+#SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=2:00:00
-#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
-#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --output=/rds/user/dca36/hpc-work/logs/%x-%j.out
+#SBATCH --error=/rds/user/dca36/hpc-work/logs/%x-%j.out
 set -euo pipefail
 : "${SCRATCHDIR:?}"
 S="$SCRATCHDIR"

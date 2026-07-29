@@ -22,12 +22,11 @@
 #             src/bacpredict/engine/scripts/build_per_unit_lr_ranking.sh                              # TB eval
 #
 #SBATCH --job-name=per_unit_lr_ranking
-#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
-#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%A_%a.out
+#SBATCH --output=/rds/user/dca36/hpc-work/logs/%x-%A_%a.out
+#SBATCH --error=/rds/user/dca36/hpc-work/logs/%x-%A_%a.out
 #SBATCH --array=0-9
-#SBATCH --partition=workq
-#SBATCH --account=brics.u6fp
-#SBATCH --qos=normal
+#SBATCH --partition=icelake-himem
+#SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
@@ -38,10 +37,10 @@
 # handful of RNA/CRISPR/regulatory units), so this is fast; 24 h is a generous ceiling (never under-call).
 
 set -uo pipefail
-: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+: "${BACPREDICT_DATA_ROOT:="$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/bac_ast_prediction"}"
 D="$BACPREDICT_DATA_ROOT"
-REPO="${REPO:-$SCRATCHDIR/worktrees/consolidate}"
-PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+REPO="${REPO:-$HOME/workspace/BacPredict}"
+PY="$HOME/workspace/BacPredict/.venv/bin/python"
 export PYTHONPATH="$REPO/src:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1

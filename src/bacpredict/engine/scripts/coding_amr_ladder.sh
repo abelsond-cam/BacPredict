@@ -6,16 +6,15 @@
 #
 #   sbatch --export=ALL,TASK=tb   -J coding-ladder-tb   src/bacpredict/engine/scripts/coding_amr_ladder.sh
 #   sbatch --export=ALL,TASK=kleb -J coding-ladder-kleb src/bacpredict/engine/scripts/coding_amr_ladder.sh
-#SBATCH --partition=workq
-#SBATCH --account=brics.u6fp
-#SBATCH --qos=normal
+#SBATCH --partition=icelake-himem
+#SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=64G
 #SBATCH --time=12:00:00
-#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
-#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --output=/rds/user/dca36/hpc-work/logs/%x-%j.out
+#SBATCH --error=/rds/user/dca36/hpc-work/logs/%x-%j.out
 # CPU-only — NO --gres=gpu. A no-GPU job on workq schedules normally (reaches PENDING(Priority) and
 # runs); the PENDING(None) seen right after submit is transient, not a stall — do not add a GPU handle
 # to "fix" it. Memory defaults are GPU-tied here (DefMemPerGPU), so a GPU-less job MUST set --mem

@@ -19,7 +19,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 # CSD3/UoHPC working-data root — the last-resort autodetect when no env var is set (and it exists).
-_CSD3_DATA_ROOT = Path.home() / "rds/rds-floto-bacterial-4k08a2yyQLw/david"
+# Post-2026-07 Isambard→CSD3 migration this is the ``bac_ast_prediction`` task root: its
+# ``processed/train_*/{esm,baclm,bacformer,…}`` are symlinks into ``../bacformer_processed/`` (the
+# shared embeddings home), and ``raw/`` + ``final/`` symlink back to the sibling ``../{raw,final}``.
+_CSD3_DATA_ROOT = Path.home() / "rds/rds-floto-bacterial-4k08a2yyQLw/david/bac_ast_prediction"
 
 
 def resolve_data_root(explicit: str | Path | None = None) -> Path:

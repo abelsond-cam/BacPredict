@@ -1,11 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=embeddings_klebsiella
-#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
-#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --output=/rds/user/dca36/hpc-work/logs/%x-%j.out
+#SBATCH --error=/rds/user/dca36/hpc-work/logs/%x-%j.out
 #SBATCH --time=36:00:00
-#SBATCH --partition=workq
-#SBATCH --account=brics.u6fp
-#SBATCH --qos=normal
+#SBATCH --partition=ampere
+#SBATCH --account=FLOTO-SL2-GPU
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
@@ -26,9 +25,9 @@
 
 set -uo pipefail
 # Data root + env — cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david).
-: "${BACPREDICT_DATA_ROOT:="$SCRATCHDIR"}"
+: "${BACPREDICT_DATA_ROOT:="$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/bac_ast_prediction"}"
 D="$BACPREDICT_DATA_ROOT"
-PY="$SCRATCHDIR/envs/bacpredict-gpu-venv/bin/python"
+PY="$HOME/workspace/BacPredict/.venv/bin/python"
 export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
 
 # Force Python unbuffered output for real-time logging

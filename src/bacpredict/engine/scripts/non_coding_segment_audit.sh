@@ -6,16 +6,15 @@
 #
 #   sbatch --export=ALL,TASK=tb   -J audit-nc-tb   src/bacpredict/engine/scripts/non_coding_segment_audit.sh
 #   sbatch --export=ALL,TASK=kleb -J audit-nc-kleb src/bacpredict/engine/scripts/non_coding_segment_audit.sh
-#SBATCH --partition=workq
-#SBATCH --account=brics.u6fp
-#SBATCH --qos=normal
+#SBATCH --partition=icelake-himem
+#SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=48G
 #SBATCH --time=4:00:00
-#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
-#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --output=/rds/user/dca36/hpc-work/logs/%x-%j.out
+#SBATCH --error=/rds/user/dca36/hpc-work/logs/%x-%j.out
 set -euo pipefail
 : "${SCRATCHDIR:?}" "${TASK:=tb}"
 S="$SCRATCHDIR"

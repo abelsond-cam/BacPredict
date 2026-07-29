@@ -5,16 +5,15 @@
 #
 #   sbatch --export=ALL,TASK=tb   -J coding-amr-tb   src/bacpredict/engine/scripts/coding_amr_lr_panel.sh
 #   sbatch --export=ALL,TASK=kleb -J coding-amr-kleb src/bacpredict/engine/scripts/coding_amr_lr_panel.sh
-#SBATCH --partition=workq
-#SBATCH --account=brics.u6fp
-#SBATCH --qos=normal
+#SBATCH --partition=icelake-himem
+#SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=64G
 #SBATCH --time=8:00:00
-#SBATCH --output=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
-#SBATCH --error=/scratch/u6fp/dca36.u6fp/logs/%x-%j.out
+#SBATCH --output=/rds/user/dca36/hpc-work/logs/%x-%j.out
+#SBATCH --error=/rds/user/dca36/hpc-work/logs/%x-%j.out
 # CPU-only — NO --gres=gpu. A no-GPU job schedules normally on workq; the PENDING(None) right after
 # submit is transient, not a stall. Memory defaults are GPU-tied (DefMemPerGPU) so a GPU-less job MUST
 # set --mem. The whole panel over ~38k genomes runs well under an hour per gene; 8 h is headroom.
