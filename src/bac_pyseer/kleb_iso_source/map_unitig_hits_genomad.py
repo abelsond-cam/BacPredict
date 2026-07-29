@@ -53,7 +53,6 @@ import shlex
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -75,12 +74,12 @@ _SR_SUFFIX = "__sr"
 _PLASMID_LONG = "genomad_plasmid_summary_long.tsv"
 _VIRUS_LONG = "genomad_virus_summary_long.tsv"
 
-# minimap2 preset for short, near-exact DNA queries (asm5/asm10 seed too sparsely for ~31 bp unitigs).
-# -x sr (k=21,w=11) always seeds a >=k unitig; -c gives base-level alignment (accurate nmatch);
-# secondary hits kept so a unitig mapping to several replicons/copies is fully recorded.
-_MINIMAP2_PRESET = ("-c", "-x", "sr", "--secondary=yes", "-N", "50", "-p", "0.1")
+# A coloured de-Bruijn unitig present in a sample is an EXACT substring of that sample's assembly (and of
+# geNomad's excised plasmid/virus sequences), so classification is exact-substring matching on both strands
+# — not alignment. (minimap2 -x sr was tried and is unreliable at the k=31 unitig floor: most 31 bp unitigs
+# fail to seed even against their own assembly, i.e. ASM-recall << 100%.)
 
-# Classification tags written into target headers (routed on the prefix before the first "|").
+# Classification tags for the three target sources (priority PLASMID > VIRUS > ASM-only).
 _TAG_PLASMID, _TAG_VIRUS, _TAG_ASM = "PLASMID", "VIRUS", "ASM"
 _CLASS_BY_TAG = {_TAG_PLASMID: "plasmid", _TAG_VIRUS: "prophage", _TAG_ASM: "chromosomal"}
 
@@ -261,132 +260,82 @@ def _iter_fasta(path: Path) -> Any:
         yield header, "".join(chunks)
 
 
-def build_combined_target(plasmid_fna: Path | None, virus_fna: Path | None, assembly_fna: Path, out_fna: Path) -> dict[str, int]:
-    """Concatenate a carrier's plasmid/virus/assembly FASTAs into one tag-prefixed target.
+_COMPLEMENT = str.maketrans("ACGTNacgtn", "TGCANtgcan")
 
-    Headers become ``PLASMID|<seq>``, ``VIRUS|<seq>``, ``ASM|<contig>``. A missing/empty plasmid or
-    virus class is simply omitted (its unitigs then fall through to the assembly = chromosomal).
-    Returns per-tag sequence counts.
+
+def _revcomp(seq: str) -> str:
+    """Reverse-complement a DNA string (ggcat emits canonical k-mers, so a unitig may be RC in a sample)."""
+    return seq.translate(_COMPLEMENT)[::-1]
+
+
+def _load_contigs(path: Path | None) -> dict[str, str]:
+    """Read a FASTA into ``{seq_name: UPPERCASE sequence}`` (empty dict if the path is None/missing)."""
+    if path is None:
+        return {}
+    return {name: seq.upper() for name, seq in _iter_fasta(path)}
+
+
+def _find_seqnames(seq: str, rc: str, contigs: dict[str, str]) -> list[str]:
+    """Return the seq_names of every contig that contains the unitig on either strand (exact substring)."""
+    return [name for name, cseq in contigs.items() if seq in cseq or rc in cseq]
+
+
+def classify_hit(hits: list[dict[str, str]]) -> dict[str, Any]:
+    """Classify one unitig's exact hits in a carrier by priority PLASMID > VIRUS > ASM-only > unmapped.
+
+    A coloured de-Bruijn unitig present in a sample is an **exact substring** of that sample's assembly
+    (and of geNomad's excised plasmid/virus sequences), so mapping is exact-substring, not alignment.
+    Returns ``mge_class``, the distinct ``seq_names`` of the winning class (the "same replicon/prophage"
+    evidence), a ``multi_replicon`` flag, and whether an ``ASM`` hit was seen at all (``asm_recall`` — the
+    built-in ground-truth QC: an expected carrier's unitig must be in its own assembly).
     """
-    counts = {_TAG_PLASMID: 0, _TAG_VIRUS: 0, _TAG_ASM: 0}
-    sources = [(_TAG_PLASMID, plasmid_fna), (_TAG_VIRUS, virus_fna), (_TAG_ASM, assembly_fna)]
-    with out_fna.open("w") as out:
-        for tag, path in sources:
-            if path is None:
-                continue
-            for header, seq in _iter_fasta(path):
-                out.write(f">{tag}|{header}\n{seq}\n")
-                counts[tag] += 1
-    return counts
-
-
-def run_minimap2(minimap2_bin: str, target: Path, query: Path, out_paf: Path, *, threads: int) -> None:
-    """Run minimap2 with the short-near-exact preset (target = carrier, query = all unitigs) → PAF."""
-    cmd = [minimap2_bin, *_MINIMAP2_PRESET, "-t", str(threads), str(target), str(query)]
-    with out_paf.open("w") as fh:
-        res = subprocess.run(cmd, stdout=fh, stderr=subprocess.PIPE, check=False)
-    if res.returncode != 0:
-        raise RuntimeError(f"minimap2 failed (rc={res.returncode}): {res.stderr.decode('utf-8', errors='replace')}")
-
-
-def parse_paf(paf_path: Path, min_ident: float, min_cov: float, min_matchlen: int) -> dict[str, list[dict[str, Any]]]:
-    """Parse a carrier's PAF → ``{query_id: [qualifying hit dicts]}`` (tag, seq_name, ident, cov).
-
-    Target names are split on the first ``|`` into tag + seq_name (a contig literally containing ``|``
-    keeps the remainder as its seq_name). Field math mirrors ``extract_proteins_from_gff_fna._parse_amr_paf``.
-    """
-    by_query: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    with paf_path.open() as fh:
-        for line in fh:
-            parts = line.rstrip("\n").split("\t")
-            if len(parts) < 11:
-                continue
-            qname = parts[0]
-            qlen, qstart, qend = int(parts[1]), int(parts[2]), int(parts[3])
-            tname = parts[5]
-            nmatch, alnlen = int(parts[9]), int(parts[10])
-            if alnlen == 0 or qlen == 0:
-                continue
-            ident = nmatch / alnlen
-            cov = (qend - qstart) / qlen
-            if ident < min_ident or cov < min_cov or nmatch < min_matchlen:
-                continue
-            tag, _, seq_name = tname.partition("|")
-            by_query[qname].append({
-                "tag": tag, "seq_name": seq_name, "ident": round(ident, 4),
-                "cov": round(cov, 4), "matchlen": nmatch,
-            })
-    return by_query
-
-
-def classify_hit(hits: list[dict[str, Any]]) -> dict[str, Any]:
-    """Classify one unitig's qualifying hits in a carrier by priority PLASMID > VIRUS > ASM-only.
-
-    Returns ``mge_class`` (plasmid / prophage / chromosomal / unmapped), the distinct ``seq_names`` of
-    the winning class (the "same replicon/prophage" evidence), a ``multi_replicon`` flag, whether an
-    ``ASM|`` hit was seen at all (``asm_recall`` — the built-in ground-truth QC), and best ident/cov.
-    """
-    by_tag: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_tag: dict[str, list[str]] = defaultdict(list)
     for h in hits:
-        by_tag[h["tag"]].append(h)
+        by_tag[h["tag"]].append(h["seq_name"])
     asm_recall = _TAG_ASM in by_tag
     for tag in (_TAG_PLASMID, _TAG_VIRUS, _TAG_ASM):
         if tag in by_tag:
-            winners = by_tag[tag]
-            seqs = sorted({h["seq_name"] for h in winners})
-            best = max(winners, key=lambda h: (h["ident"], h["cov"]))
-            return {
-                "mge_class": _CLASS_BY_TAG[tag], "seq_names": ";".join(seqs),
-                "n_distinct_seqnames": len(seqs), "multi_replicon": len(seqs) > 1,
-                "asm_recall": asm_recall, "best_ident": best["ident"], "best_cov": best["cov"],
-            }
-    return {
-        "mge_class": "unmapped", "seq_names": "", "n_distinct_seqnames": 0,
-        "multi_replicon": False, "asm_recall": asm_recall, "best_ident": None, "best_cov": None,
-    }
+            seqs = sorted(set(by_tag[tag]))
+            return {"mge_class": _CLASS_BY_TAG[tag], "seq_names": ";".join(seqs),
+                    "n_distinct_seqnames": len(seqs), "multi_replicon": len(seqs) > 1, "asm_recall": asm_recall}
+    return {"mge_class": "unmapped", "seq_names": "", "n_distinct_seqnames": 0,
+            "multi_replicon": False, "asm_recall": asm_recall}
 
 
-def align_carrier(
-    sample: str, assembly_fna: Path, expected_qids: list[str], id_map: pd.DataFrame,
-    genomad_root: Path, query_fasta: Path, minimap2_bin: str, tmpdir: Path, *,
-    min_ident: float, min_cov: float, min_matchlen: int, threads: int,
+def match_carrier(
+    sample: str, assembly_fna: Path, expected_qids: list[str], id_lookup: pd.DataFrame, genomad_root: Path,
 ) -> tuple[list[dict[str, Any]], dict[str, float]]:
-    """Map all query unitigs into one carrier's tagged target → classified records for expected pairs.
+    """Exact-match every unitig this carrier carries against its plasmid/virus extracts + full assembly.
 
-    ``expected_qids`` are the query IDs this carrier actually carries (from the matrix); only those
-    (unitig, carrier) pairs are recorded — that is the ground-truth set the summary and ``ASM|`` recall
-    QC use. Returns ``(records, timings)`` where timings has ``build``/``mm2``/``parse`` seconds.
+    ``expected_qids`` are the query IDs this carrier actually carries (from the matrix) — the ground-truth
+    (unitig, carrier) pairs the summary + ASM-recall QC use. Returns ``(records, timings)`` with
+    ``load``/``search`` seconds.
     """
     gpaths = resolve_genomad_paths(sample, genomad_root)
-    id_lookup = id_map.set_index("query_id")
+    if not gpaths["found"]:
+        # No geNomad output: cannot separate MGE from chromosome. Record honestly (not chromosomal).
+        recs = [{"Sample": sample, "genomad_key": None, **_id_fields(id_lookup, qid),
+                 "mge_class": "unknown_no_genomad", "seq_names": "", "n_distinct_seqnames": 0,
+                 "multi_replicon": False, "asm_recall": None} for qid in expected_qids]
+        return recs, {"load": 0.0, "search": 0.0}
 
     t0 = time.perf_counter()
-    if not gpaths["found"]:
-        # No geNomad output: cannot separate MGE from chromosome. Record honestly, do not align.
-        recs = [
-            {"Sample": sample, "genomad_key": None, **_id_fields(id_lookup, qid),
-             "mge_class": "unknown_no_genomad", "seq_names": "", "n_distinct_seqnames": 0,
-             "multi_replicon": False, "asm_recall": None, "best_ident": None, "best_cov": None}
-            for qid in expected_qids
-        ]
-        return recs, {"build": 0.0, "mm2": 0.0, "parse": 0.0}
-
-    target = tmpdir / f"{sample}_target.fna"
-    build_combined_target(gpaths["plasmid_fna"], gpaths["virus_fna"], assembly_fna, target)
+    plasmid = _load_contigs(gpaths["plasmid_fna"])
+    virus = _load_contigs(gpaths["virus_fna"])
+    asm = _load_contigs(assembly_fna)
     t1 = time.perf_counter()
-    paf = tmpdir / f"{sample}.paf"
-    run_minimap2(minimap2_bin, target, query_fasta, paf, threads=threads)
-    t2 = time.perf_counter()
-    by_query = parse_paf(paf, min_ident, min_cov, min_matchlen)
-    t3 = time.perf_counter()
 
     records: list[dict[str, Any]] = []
     for qid in expected_qids:
-        cls = classify_hit(by_query.get(qid, []))
-        records.append({"Sample": sample, "genomad_key": gpaths["key"], **_id_fields(id_lookup, qid), **cls})
-    target.unlink(missing_ok=True)
-    paf.unlink(missing_ok=True)
-    return records, {"build": t1 - t0, "mm2": t2 - t1, "parse": t3 - t2}
+        seq = str(id_lookup.loc[qid, "variant"]).upper()
+        rc = _revcomp(seq)
+        hits = ([{"tag": _TAG_PLASMID, "seq_name": s} for s in _find_seqnames(seq, rc, plasmid)]
+                + [{"tag": _TAG_VIRUS, "seq_name": s} for s in _find_seqnames(seq, rc, virus)]
+                + [{"tag": _TAG_ASM, "seq_name": s} for s in _find_seqnames(seq, rc, asm)])
+        records.append({"Sample": sample, "genomad_key": gpaths["key"], **_id_fields(id_lookup, qid),
+                        **classify_hit(hits)})
+    t2 = time.perf_counter()
+    return records, {"load": t1 - t0, "search": t2 - t1}
 
 
 def _id_fields(id_lookup: pd.DataFrame, qid: str) -> dict[str, Any]:
@@ -478,7 +427,8 @@ def crosscheck_genomad(long: pd.DataFrame, genomad_root: Path, n_spot: int) -> p
                     ok = None if kset is None else ((str(rec.Sample), seq) in kset)
                     rows.append({"pattern_group": pg, "Sample": rec.Sample, "mge_class": cls,
                                  "seq_name": seq, "in_genomad_long": ok})
-    return pd.DataFrame(rows)
+    # Explicit columns so an empty spot-check (no plasmid/prophage calls) is still a typed frame.
+    return pd.DataFrame(rows, columns=["pattern_group", "Sample", "mge_class", "seq_name", "in_genomad_long"])
 
 
 # --------------------------------------------------------------------------------------------------
@@ -496,7 +446,7 @@ def run_select(args: argparse.Namespace) -> None:
     """``select`` phase: groups → query FASTA + id_map; scan matrix → carriers; resolve assemblies."""
     out = args.out_dir
     out.mkdir(parents=True, exist_ok=True)
-    hits = pd.read_csv(args.hits_tsv, sep="\t")
+    hits = pd.read_csv(args.hits_tsv, sep="\t", low_memory=False)
     members = select_target_groups(hits, args.top_n_groups, args.min_af)
     id_map = write_query_fasta(members, out / "query_unitigs.fasta")
     id_map.to_csv(out / "id_map.tsv", sep="\t", index=False)
@@ -532,7 +482,7 @@ def run_select(args: argparse.Namespace) -> None:
         "n_resolved_assemblies": int(len(res)), "n_join_misses": len(join_misses),
         "n_all_hit_seqs": len(all_hit_seqs), "n_all_hit_seqs_matched": n_matched,
         "phase2_carrier_union": len(phase2_union), "min_af": args.min_af,
-        "minimap2_preset": " ".join(_MINIMAP2_PRESET),
+        "match_method": "exact-substring (fwd+revcomp)",
         "genomad_layout_found": sum(1 for p in probe if p["found"]),
     }
     (out / "select_manifest.json").write_text(json.dumps(manifest, indent=2))
@@ -566,26 +516,22 @@ def run_align(args: argparse.Namespace) -> None:
 
 
 def _align_shard(shard: pd.DataFrame, by_sample: dict[str, list[str]], id_map: pd.DataFrame, args: argparse.Namespace) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Align every carrier in a shard; aggregate records + timing sums (seconds/genome, /unitig)."""
+    """Exact-match every carrier in a shard; aggregate records + timing sums (seconds/genome, /unitig)."""
     records: list[dict[str, Any]] = []
-    totals = {"build": 0.0, "mm2": 0.0, "parse": 0.0}
+    id_lookup = id_map.set_index("query_id")
+    totals = {"load": 0.0, "search": 0.0}
     n_carriers, n_pairs = 0, 0
-    with tempfile.TemporaryDirectory(prefix="mge_align_", dir=args.scratch_dir) as td:
-        tmp = Path(td)
-        for row in shard.itertuples(index=False):
-            sample, asm = str(row.Sample), Path(str(row.assembly_path))
-            expected = by_sample.get(sample, [])
-            if not expected:
-                continue
-            recs, t = align_carrier(
-                sample, asm, expected, id_map, args.genomad_root, args.out_dir / "query_unitigs.fasta",
-                args.minimap2_bin, tmp, min_ident=args.min_ident, min_cov=args.min_cov,
-                min_matchlen=args.min_matchlen, threads=args.threads)
-            records.extend(recs)
-            for k in totals:
-                totals[k] += t[k]
-            n_carriers += 1
-            n_pairs += len(recs)
+    for row in shard.itertuples(index=False):
+        sample, asm = str(row.Sample), Path(str(row.assembly_path))
+        expected = by_sample.get(sample, [])
+        if not expected:
+            continue
+        recs, t = match_carrier(sample, asm, expected, id_lookup, args.genomad_root)
+        records.extend(recs)
+        for k in totals:
+            totals[k] += t[k]
+        n_carriers += 1
+        n_pairs += len(recs)
     timing = {
         **{f"total_{k}_s": round(v, 3) for k, v in totals.items()},
         "n_carriers": n_carriers, "n_pairs": n_pairs,
@@ -616,7 +562,7 @@ def run_combine(args: argparse.Namespace) -> None:
 def _write_combine_manifest(out: Path, long: pd.DataFrame, summary: pd.DataFrame, spot: pd.DataFrame, scratch: Path) -> None:
     """Aggregate shard timings into a Phase-2 estimate + record QC counts to a JSON manifest."""
     timings = [json.loads(f.read_text()) for f in sorted(scratch.glob("align_shard_*.timing.json"))]
-    tot_secs = sum(t.get(f"total_{k}_s", 0.0) for t in timings for k in ("build", "mm2", "parse"))
+    tot_secs = sum(t.get(f"total_{k}_s", 0.0) for t in timings for k in ("load", "search"))
     tot_carriers = sum(t.get("n_carriers", 0) for t in timings)
     sec_per_genome = round(tot_secs / tot_carriers, 4) if tot_carriers else None
     asm = long[long["asm_recall"].notna()]
@@ -680,11 +626,6 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--scratch-dir", type=Path, required=True, help="Per-shard scratch (RDS hpc-work).")
     p.add_argument("--top-n-groups", type=int, default=3)
     p.add_argument("--min-af", type=float, default=0.05)
-    p.add_argument("--min-ident", type=float, default=0.95)
-    p.add_argument("--min-cov", type=float, default=0.90)
-    p.add_argument("--min-matchlen", type=int, default=25)
-    p.add_argument("--minimap2-bin", default="minimap2")
-    p.add_argument("--threads", type=int, default=2)
     p.add_argument("--decomp-threads", type=int, default=4, help="pigz threads for the one-time matrix scan.")
     p.add_argument("--carrier-shard-index", type=int, default=0)
     p.add_argument("--n-shards", type=int, default=1)

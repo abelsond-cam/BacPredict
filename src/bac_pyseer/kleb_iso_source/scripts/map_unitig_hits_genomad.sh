@@ -96,24 +96,20 @@ if [ -z "${PHASE:-}" ]; then
 fi
 
 # ---------------------------------------------------------------------------------------------------
-# WORKER — inside a job ($PHASE set). Resolve the pixi minimap2 binary once (align/smoke need it).
+# WORKER — inside a job ($PHASE set). Unitigs are exact substrings of their carriers' assemblies, so
+# classification is exact-substring matching (no aligner); only the one-time matrix scan uses a binary.
 # ---------------------------------------------------------------------------------------------------
 echo "PHASE=$PHASE  job=${SLURM_JOB_ID:-none}  task=${SLURM_ARRAY_TASK_ID:-none}  $(date)"
-MM2=""
-if [ "$PHASE" = "align" ] || [ "$PHASE" = "smoke" ]; then
-    MM2=$(pixi run --manifest-path "$PIXI_MANIFEST" which minimap2)
-    echo "minimap2: $MM2"
-fi
 
 COMMON=(--genomad-root "$GENOMAD" --out-dir "$OUT" --scratch-dir "$SCRATCH" \
-        --top-n-groups "$TOP_N" --min-af "$MIN_AF" --threads "$THREADS" --decomp-threads "$THREADS")
+        --top-n-groups "$TOP_N" --min-af "$MIN_AF" --decomp-threads "$THREADS")
 
 case "$PHASE" in
 select)
     py_run --phase select --hits-tsv "$HITS" --unitig-matrix "$MATRIX" --metadata "$METADATA" "${COMMON[@]}"
     ;;
 align)
-    py_run --phase align --minimap2-bin "$MM2" \
+    py_run --phase align \
         --carrier-shard-index "${SLURM_ARRAY_TASK_ID:?align needs --array}" --n-shards "$NSHARDS" "${COMMON[@]}"
     ;;
 combine)
@@ -122,7 +118,7 @@ combine)
     ;;
 smoke)
     py_run --phase smoke --hits-tsv "$HITS" --unitig-matrix "$MATRIX" --metadata "$METADATA" \
-        --minimap2-bin "$MM2" --smoke "$SMOKE_K" "${COMMON[@]}"
+        --smoke "$SMOKE_K" "${COMMON[@]}"
     echo "=== smoke outputs ==="; ls -lh "$OUT"
     ;;
 *) echo "unknown PHASE=$PHASE"; exit 1 ;;
