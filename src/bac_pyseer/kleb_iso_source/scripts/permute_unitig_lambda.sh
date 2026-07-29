@@ -16,7 +16,7 @@
 
 # Within-lineage permutation NULL for the UNITIG LMM — the DIRECT test of whether the unitig common-af
 # inflation (real af-λ: 0.05–0.10 = 1.09 … 0.70–1.0 = 23.8) is residual population structure the core-SNP
-# kinship cannot absorb, vs real signal. Shuffling case/control WITHIN each sublineage preserves the
+# kinship cannot absorb, vs real signal. Shuffling case/control WITHIN each lineage cluster preserves the
 # between-lineage structure but destroys within-lineage signal; re-running the SAME unitig LMM (core-SNP
 # kinship) on the permuted phenotype and recomputing af-stratified λ isolates the STRUCTURE-only inflation
 # per af bucket, giving a NON-ARBITRARY reliability ceiling:
@@ -26,13 +26,19 @@
 # CONTROL: if λ_perm there reproduces the real λ≈7/24, that confirms the common-af inflation is structure
 # (correctly disregarded); if it were ≈1 there, the common-af signal would be real.
 #
+# The unitig axis is ALWAYS an LMM on the core-SNP kinship (MODEL fixed = lmm); the one toggle is the
+# lineage RESOLUTION of the shuffle (suffix _lmm_${LEVEL} on every output so CG never clobbers SL):
+#   LEVEL=sl|cg   sl = Sublineage (finest, the original run);  cg = "Clonal group" (coarser).
+# CG extends the SL λ_perm≈1 result to the clonal-group resolution.
+#
 # Mirrors permute_variant_lambda.sh but feeds --kmers (a stride-subsample of the 6.28M-unitig matrix; a
 # representative ~420k is λ-sufficient and runs in one job) instead of --pres. pyseer's --save-lmm cache
 # bakes in h^2, so we RE-FIT fresh (a NEW --save-lmm) — NOT --load-lmm the real h²=0.83 cache. Runs pyseer
 # AND the python helpers via PIXI (numpy/scipy/pandas present; sidesteps the current uv.lock breakage).
 #
-# Usage:  SEED=1 sbatch permute_unitig_lambda.sh   (seed 1 reuses the variant run's permuted phenotype)
-# Staged helpers (permute_phenotype_within_lineage.py, genomic_inflation_by_af.py) live in $LB on RDS.
+# Usage:  LEVEL=cg SEED=1 sbatch permute_unitig_lambda.sh   (seed 1 reuses the variant run's permuted phenotype)
+# The cluster builder lives in the repo checkout ($REPO); staged helpers (permute_phenotype_within_lineage.py,
+# genomic_inflation_by_af.py) live in $LB on RDS.
 set -euo pipefail
 export PYTHONUNBUFFERED=1
 export MPLBACKEND=Agg
@@ -41,45 +47,44 @@ unset PYTHONPATH PYTHONHOME
 
 REPO=/home/dca36/workspace/BacPredict
 PIXI=$REPO/src/bac_pyseer/pixi.toml
+BUILDER=$REPO/src/bac_pyseer/kleb_iso_source/build_lineage_clusters.py
 LB=/home/dca36/rds/hpc-work/pyseer_scratch          # RDS scratch: staged helpers, SLURM logs, unitig subset (NOT home)
 DATA=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw
 IN=$DATA/david/processed/pyseer_iso_source/blood_faeces/sampled_country_2_1_all
 CSV=$DATA/david/processed/train_iso_source/blood_faeces/sampled_country_2_1_all/kpsc_human/binary_blood_vs_faeces_with_split.csv
+METADATA=$DATA/david/final/metadata_v2_all_samples_and_columns.tsv   # CG "Clonal group" join fallback
 UNITIGS=$DATA/david/processed/pyseer_iso_source/unitigs/blood_faeces/unitigs.pyseer.gz
 SIM=$IN/similarity.tsv
 LABEL=blood_vs_faeces_label
+MODEL=lmm               # unitig axis is always LMM (core-SNP kinship); fixed, kept in the stem for symmetry
+LEVEL=${LEVEL:-sl}      # sl (Sublineage) | cg ("Clonal group")
 SEED=${SEED:-1}
 STRIDE=${STRIDE:-15}
+case "$LEVEL" in sl|cg) ;; *) echo "ERROR: LEVEL must be sl|cg, got '$LEVEL'"; exit 2;; esac
 OUT=$IN/gwas_lmm_permnull
 mkdir -p "$OUT" "$LB"
 PHENO=$IN/phenotype.tsv
-CLUST=$OUT/sublineage_clusters_full.tsv
-PERM=$OUT/phenotype_perm_seed${SEED}.tsv
-SUB=$LB/unitig_subset_stride${STRIDE}.gz
-ASSOC=$OUT/blood_vs_faeces_unitig_permnull_seed${SEED}.assoc
-PYERR=$OUT/pyseer_unitig_permnull_seed${SEED}.err
+if [ "$LEVEL" = "cg" ]; then
+    CLUST=$OUT/clonal_group_clusters_full.tsv;  COLUMN="Clonal group"
+else
+    CLUST=$OUT/sublineage_clusters_full.tsv;     COLUMN="Sublineage"
+fi
+PERM=$OUT/phenotype_perm_${LEVEL}_seed${SEED}.tsv          # LEVEL-specific null (SL reuses the variant SL run)
+STEM=${MODEL}_${LEVEL}_seed${SEED}
+SUB=$LB/unitig_subset_stride${STRIDE}.gz                   # LEVEL-independent (reused across levels)
+ASSOC=$OUT/blood_vs_faeces_unitig_permnull_${STEM}.assoc
+PYERR=$OUT/pyseer_unitig_permnull_${STEM}.err
 
-echo "Job ${SLURM_JOB_ID:-?}  node ${SLURMD_NODENAME:-?}  seed=$SEED  stride=$STRIDE  $(date)"
+echo "Job ${SLURM_JOB_ID:-?}  node ${SLURMD_NODENAME:-?}  model=$MODEL  level=$LEVEL  seed=$SEED  stride=$STRIDE  $(date)"
 
-# 0+1) within-lineage permuted phenotype — REUSE if present (seed 1 = the variant run's, same null
-#      realization → directly comparable), else build fine clusters + permute (via pixi: pandas/numpy).
+# 0+1) within-lineage permuted phenotype — REUSE if present (SL seed 1 = the variant run's, same null
+#      realization → directly comparable), else build lineage clusters + permute (via pixi: pandas/numpy).
 if [ -s "$PERM" ]; then
-    echo "reusing existing permuted phenotype $PERM"
+    echo "reusing existing permuted phenotype $PERM (LEVEL=$LEVEL, SEED=$SEED)"
 else
     if [ ! -s "$CLUST" ]; then
-        pixi run --manifest-path "$PIXI" python - "$CSV" "$PHENO" "$CLUST" <<'PY'
-import sys
-import pandas as pd
-csv, pheno, out = sys.argv[1:4]
-samples = set(pd.read_csv(pheno, sep="\t")["samples"].astype(str))
-meta = pd.read_csv(csv, usecols=["Sample", "Sublineage"], low_memory=False)
-meta["Sample"] = meta["Sample"].astype(str)
-meta = meta.drop_duplicates("Sample")
-meta = meta[meta["Sample"].isin(samples)]
-meta["Sublineage"] = meta["Sublineage"].fillna("unknown").astype(str).replace({"": "unknown", "nan": "unknown"})
-meta[["Sample", "Sublineage"]].to_csv(out, sep="\t", header=False, index=False)
-print(f"wrote {out}: {len(meta)} samples, {meta['Sublineage'].nunique()} clusters", file=sys.stderr)
-PY
+        pixi run --manifest-path "$PIXI" python "$BUILDER" \
+            --split-csv "$CSV" --phenotype "$PHENO" --column "$COLUMN" --metadata "$METADATA" --out "$CLUST"
     fi
     pixi run --manifest-path "$PIXI" python "$LB/permute_phenotype_within_lineage.py" \
         --phenotype "$PHENO" --clusters "$CLUST" --label-col "$LABEL" --seed "$SEED" --out "$PERM"
@@ -100,8 +105,10 @@ fi
 #    the kinship eigendecomposition + h^2 ONCE (--save-lmm, tiny kmer set), then scan each ~85k-unitig chunk
 #    as a FRESH process with --load-lmm (memory freed per chunk; same permuted phenotype → n & h^2 consistent;
 #    the combined per-unitig p-values equal a single full run). Chunk dir lives on RDS scratch, cleaned after.
-CHUNKDIR=$LB/unitig_chunks_seed${SEED}
-CACHE=$OUT/unitig_lmm_cache_perm_seed${SEED}.npz   # explicit .npz so --save-lmm/--load-lmm agree on the path
+CHUNKDIR=$LB/unitig_chunks_${LEVEL}_seed${SEED}
+CACHE=$OUT/unitig_lmm_cache_perm_${STEM}.npz   # explicit .npz so --save-lmm/--load-lmm agree on the path
+# NB the --load-lmm below reloads THIS freshly primed cache (built on the permuted phenotype, same job) —
+# NOT the real-run h²=0.83 cache. Fresh h² per permutation is preserved; the load only frees per-chunk memory.
 rm -rf "$CHUNKDIR"; mkdir -p "$CHUNKDIR"
 : > "$PYERR"
 # NB: pyseer --kmers REQUIRES gzipped input (it gzip-reads the file), so the prime set and every chunk must
@@ -135,7 +142,7 @@ echo "pyseer unitig permnull done: $(wc -l < "$ASSOC") assoc lines  $(date)"
 # 4) af-stratified λ of the unitig permutation null — full af range:
 #    rare end = calibration sanity, 0.10–0.50 = ceiling search, 0.50–1.0 = structure positive control.
 pixi run --manifest-path "$PIXI" python "$LB/genomic_inflation_by_af.py" \
-    --assoc "unitig_permnull=$ASSOC" \
+    --assoc "unitig_permnull_${MODEL}_${LEVEL}=$ASSOC" \
     --bins 0.01,0.05,0.10,0.15,0.20,0.25,0.30,0.35,0.40,0.45,0.50,0.70,1.0 \
-    --out "$OUT/unitig_permnull_af_lambda_seed${SEED}.tsv"
-echo "UNITIG_PERMNULL_DONE  seed=$SEED  $(date)"
+    --out "$OUT/unitig_permnull_af_lambda_${STEM}.tsv"
+echo "UNITIG_PERMNULL_DONE  model=$MODEL  level=$LEVEL  seed=$SEED  $(date)"
