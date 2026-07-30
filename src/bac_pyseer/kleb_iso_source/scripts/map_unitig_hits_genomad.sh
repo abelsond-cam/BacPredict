@@ -52,6 +52,7 @@ HITS=${HITS:-$GD/blood_vs_faeces_unitig_hits_annotated.tsv}
 MATRIX=${MATRIX:-$P/unitigs/$PAIR/unitigs.pyseer.gz}
 GENOMAD=${GENOMAD:-$DATA/david/processed/genomad}
 METADATA=${METADATA:-$DATA/david/final/metadata_v2_all_samples_and_columns.tsv}
+STRATA_CSV=${STRATA_CSV:-$DATA/david/processed/train_iso_source/$PAIR/$COHORT/kpsc_human/binary_blood_vs_faeces_with_split.csv}
 OUT=${OUT:-$GD/mge_mapping}                                   # durable results on project_k
 SCRATCH=${SCRATCH:-/home/dca36/rds/hpc-work/mge_mapping_shards/$PAIR}
 
@@ -75,6 +76,13 @@ if [ -z "${PHASE:-}" ]; then
             --cpus-per-task=8 --mem=48G --time=2:00:00 --job-name="mge_smoke_$PAIR" \
             --export=ALL,PHASE=smoke "$0")
         echo "smoke   : $JOB"
+        exit 0
+    fi
+    if [ "${STRATIFY:-0}" = "1" ]; then   # re-aggregate the existing parquet by sublineage / clonal group
+        JOB=$(sbatch --parsable --account=$ACCT --partition=icelake --nodes=1 --ntasks=1 \
+            --cpus-per-task=8 --mem=48G --time=1:00:00 --job-name="mge_strat_$PAIR" \
+            --export=ALL,PHASE=stratify "$0")
+        echo "stratify: $JOB"
         exit 0
     fi
     SELECT=$(sbatch --parsable --account=$ACCT --partition=icelake --nodes=1 --ntasks=1 \
@@ -113,6 +121,10 @@ align)
 combine)
     py_run --phase combine "${COMMON[@]}"
     echo "=== outputs ==="; ls -lh "$OUT"
+    ;;
+stratify)
+    py_run --phase stratify --strata-csv "$STRATA_CSV" "${COMMON[@]}"
+    echo "=== stratified outputs ==="; ls -lh "$OUT"/mge_by_*.tsv
     ;;
 smoke)
     py_run --phase smoke --hits-tsv "$HITS" --unitig-matrix "$MATRIX" --metadata "$METADATA" \

@@ -574,6 +574,76 @@ def _write_combine_manifest(out: Path, scratch: Path, per_unitig: pd.DataFrame, 
 
 
 # --------------------------------------------------------------------------------------------------
+# stratify — post-hoc re-aggregation of the per-pair parquet by clonal structure
+# --------------------------------------------------------------------------------------------------
+_STRATA_COLS = {"sublineage": "Sublineage", "clonal_group": "Clonal group"}
+
+
+def _load_strata(strata_csv: Path, min_group_size: int, carriers: set[str]) -> dict[str, dict[str, str]]:
+    """Read Sample → {sublineage, clonal_group}; collapse groups with < ``min_group_size`` carriers to 'other'.
+
+    'Big' is decided over the **carrier** set (the genomes actually mapped), matching the LMM's
+    ≥100-sample sublineage rule. Missing / blank labels become 'unknown'.
+    """
+    df = pd.read_csv(strata_csv, usecols=["Sample", *_STRATA_COLS.values()], low_memory=False)
+    df["Sample"] = df["Sample"].astype(str)
+    df = df[df["Sample"].isin(carriers)].drop_duplicates("Sample")
+    maps: dict[str, dict[str, str]] = {}
+    for level, col in _STRATA_COLS.items():
+        lab = df[col].fillna("unknown").astype(str).replace({"": "unknown", "nan": "unknown"})
+        big = lab.value_counts()
+        big = set(big.index[big >= min_group_size]) - {"unknown"}
+        lab = lab.where(lab.isin(big | {"unknown"}), "other")
+        maps[level] = dict(zip(df["Sample"], lab, strict=True))
+    return maps
+
+
+def run_stratify(args: argparse.Namespace) -> None:
+    """``stratify``: re-aggregate the per-(unitig, carrier) parquet by big sublineage / clonal group.
+
+    Answers "are the plasmid/prophage/chromosomal placements clonal-structure-specific?" — the direct
+    follow-up to the within-sublineage shuffle test. No re-mapping: reads the existing parquet detail.
+    """
+    import pyarrow.parquet as pq
+
+    out = args.out_dir
+    id_map = pd.read_csv(out / "id_map.tsv", sep="\t", usecols=["unitig_idx", "direction"])
+    dir_by_idx = dict(zip(id_map["unitig_idx"], id_map["direction"].astype(str), strict=True))
+    carriers = set(pd.read_csv(out / "carriers.resolved.tsv", sep="\t")["Sample"].astype(str))
+    strata = _load_strata(args.strata_csv, args.min_group_size, carriers)
+
+    acc: Counter = Counter()                      # (level, group, direction, mge_class) -> n_pairs
+    n_carr: dict[tuple[str, str], int] = {}       # (level, group) -> distinct carriers
+    for level, smap in strata.items():
+        vc = Counter(smap.values())
+        for g, n in vc.items():
+            n_carr[(level, g)] = n
+        n_carr[(level, "ALL")] = sum(vc.values())
+    parts = sorted((out / "mge_hits.parquet").glob("*.parquet"))
+    for part in parts:
+        df = pq.read_table(part, columns=["unitig_idx", "Sample", "mge_class"]).to_pandas()
+        df["direction"] = df["unitig_idx"].map(dir_by_idx).fillna("NA")
+        for level, smap in strata.items():
+            df["_g"] = df["Sample"].map(smap).fillna("unknown")
+            for (g, d, cls), n in df.groupby(["_g", "direction", "mge_class"]).size().items():
+                for dk in (d, "all"):
+                    acc[(level, g, dk, cls)] += n
+                    acc[(level, "ALL", dk, cls)] += n
+
+    for level in strata:
+        rows = []
+        for g, d in sorted({(k[1], k[2]) for k in acc if k[0] == level}):
+            counts = {c: acc[(level, g, d, c)] for c in _CLASSES}
+            tot = sum(counts.values())
+            row = {level: g, "direction": d, "n_carriers": n_carr.get((level, g)), "n_pairs": tot}
+            for c in _CLASSES:
+                row[f"frac_{c}"] = round(counts[c] / tot, 4) if tot else 0.0
+            rows.append(row)
+        pd.DataFrame(rows).to_csv(out / f"mge_by_{level}.tsv", sep="\t", index=False)
+    print(f"wrote mge_by_sublineage.tsv, mge_by_clonal_group.tsv (min_group_size={args.min_group_size})", file=sys.stderr)
+
+
+# --------------------------------------------------------------------------------------------------
 # smoke
 # --------------------------------------------------------------------------------------------------
 def run_smoke(args: argparse.Namespace) -> None:
@@ -605,7 +675,7 @@ def main(argv: list[str] | None = None) -> None:
     if argv is None:
         argv = sys.argv[1:]
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--phase", required=True, choices=("select", "align", "combine", "smoke"))
+    p.add_argument("--phase", required=True, choices=("select", "align", "combine", "smoke", "stratify"))
     p.add_argument("--hits-tsv", type=Path, help="blood_vs_faeces_unitig_hits_annotated.tsv (select/smoke).")
     p.add_argument("--unitig-matrix", type=Path, help="unitigs.pyseer.gz (select/smoke).")
     p.add_argument("--genomad-root", type=Path, required=True, help="<DATA>/david/processed/genomad.")
@@ -618,14 +688,19 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--genomad-probe-n", type=int, default=20, help="Carriers to probe for geNomad layout.")
     p.add_argument("--spot-n", type=int, default=3, help="Spot-check records per class per group (approx).")
     p.add_argument("--smoke", type=int, default=30, help="smoke phase: number of carriers to map.")
+    p.add_argument("--strata-csv", type=Path, help="Cohort CSV with Sample, Sublineage, 'Clonal group' (stratify).")
+    p.add_argument("--min-group-size", type=int, default=100, help="Min carriers for a 'big' sublineage/CG (stratify).")
     args = p.parse_args(argv)
 
     if args.phase in ("select", "smoke"):
         for req in ("hits_tsv", "unitig_matrix", "metadata"):
             if getattr(args, req) is None:
                 p.error(f"--{req.replace('_', '-')} is required for --phase {args.phase}")
+    if args.phase == "stratify" and args.strata_csv is None:
+        p.error("--strata-csv is required for --phase stratify")
 
-    {"select": run_select, "align": run_align, "combine": run_combine, "smoke": run_smoke}[args.phase](args)
+    {"select": run_select, "align": run_align, "combine": run_combine,
+     "smoke": run_smoke, "stratify": run_stratify}[args.phase](args)
 
 
 if __name__ == "__main__":
