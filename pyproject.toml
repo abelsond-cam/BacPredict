@@ -43,6 +43,7 @@ dependencies = [
   "leidenalg>=0.10.2",
   "muon>=0.1.7",
   "pandas>=2.2.3",
+  "pyahocorasick>=2.0",
   "pyarrow>=19.0.1",
   "pysymlog>=1.0.1",
   "scanpy>=1.11.1",
