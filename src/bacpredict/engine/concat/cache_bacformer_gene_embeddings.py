@@ -165,9 +165,17 @@ def run(
         store = torch.load(pt, map_location="cpu")
         real_idx = real_protein_indices(store, store["protein_embeddings"].shape[1])
         n_real = int(real_idx.numel())
-        if n_real > len(gene_names):
+        n_gene = len(gene_names)
+        # The genome-mean is order-invariant and does NOT need the parquet, so a SMALL parquet/ESM
+        # protein-count mismatch (the whole-Kleb ESM and some per-genome parquets came from slightly
+        # different annotations — observed off-by <=3) must not drop the genome; only a gross mismatch
+        # (a wrong/truncated parquet) is skipped. Per-gene tokens below are emitted ONLY when the counts
+        # match exactly (``aligned``), so a tolerated genome still yields a correct mean but no
+        # (possibly-misaligned) per-gene tokens.
+        if n_real > n_gene + 50:
             skips["misaligned"] = skips.get("misaligned", 0) + 1
             continue
+        aligned = n_real == n_gene
         gene_names = gene_names[:n_real]
         counts = Counter(g for g in gene_names if g in top_set)
 
@@ -179,7 +187,7 @@ def run(
         mean_ids.append(str(sid))
         mean_vecs.append(genome_mean_pool(real_rows))
         for i, g in enumerate(gene_names):
-            if g in top_set and counts[g] == 1:  # single-copy occurrence only
+            if aligned and g in top_set and counts[g] == 1:  # exact-alignment + single-copy occurrence only
                 gene_vecs[g].append(real_rows[i])
                 gene_ids[g].append(str(sid))
         if k % 200 == 0:
