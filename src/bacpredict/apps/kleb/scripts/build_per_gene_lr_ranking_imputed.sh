@@ -63,7 +63,10 @@ fi
 
 STORE=${EMBEDDING_STORE:-esm}                                  # esm (default) | baclm
 SPLITS=$D/processed/train_kleb_ast/splits                     # per-drug <drug>_split.csv (generate_kfold_splits)
-PARQUET=$D/processed/train_kleb_ast/protein_sequences
+# PARQUET_DIR override: the shared protein_sequences store is an A/B annotation MIX, so the baclm coding
+# join (flat-index) aligns for only ~34% of the cohort. For EMBEDDING_STORE=baclm pass the dedicated
+# protein_sequences_B store (the canonical B-parquets baclm was embedded from) so coding covers 100%.
+PARQUET=${PARQUET_DIR:-$D/processed/train_kleb_ast/protein_sequences}
 EMB=$D/processed/train_kleb_ast/$STORE                        # .../esm or .../baclm — same flat parquet order
 # Per-drug + per-store subdir: the module also writes non-drug-specific files (build_summary,
 # gene_lr_auroc, gene_prevalence), so concurrent array tasks must not share an out-dir (they'd race),

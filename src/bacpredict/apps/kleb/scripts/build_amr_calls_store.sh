@@ -25,7 +25,7 @@ set -euo pipefail
 : "${BACPREDICT_DATA_ROOT:="$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/bac_ast_prediction"}"
 D="$BACPREDICT_DATA_ROOT"
 PY="$HOME/workspace/BacPredict/.venv/bin/python"
-export PYTHONPATH="$HOME/BacPredict/src:${PYTHONPATH:-}"
+export PYTHONPATH="${BACPREDICT_REPO:-$HOME/workspace/BacPredict}/src:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
 
 echo "=== build combined AMR-calls store ==="
