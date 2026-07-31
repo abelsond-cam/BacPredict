@@ -90,6 +90,7 @@ SPLITS=$D/processed/train_${TASK}/splits         # per-drug <drug>_split.csv tab
 # the presence/absence one-hot lineage control, same band. NB: the imputed/presence modes need
 # build_upstream_region_lr_store's new args (416f32f+) — run with REPO=$SCRATCHDIR/worktrees/concat until the
 # consolidate worktree is advanced past that commit.
+EVAL="${EVAL:-0}"                                # vestigial: the holdout now comes from the split table; only the echo below reads it
 FEATURE=${FEATURE:-embedding}
 case "$FEATURE" in
     presence)

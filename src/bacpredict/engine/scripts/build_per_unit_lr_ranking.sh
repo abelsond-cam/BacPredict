@@ -74,6 +74,7 @@ BACLM_DIR="${BACLM_DIR:-$D/processed/train_${TASK}/baclm_reembed}"
 # rRNA determinants (rrs/rrl) are near-UBIQUITOUS with a point mutation, so the embedding + zero-imputed
 # screens must KEEP prevalence 1.0 units (no 0.99 ceiling) — the mutation, not carriage, carries the
 # signal. Only the presence one-hot caps at 0.99 (an all-ones column for a ubiquitous unit is chance).
+EVAL="${EVAL:-0}"                                # vestigial: the holdout now comes from the split table; only the echo below reads it
 FEATURE=${FEATURE:-embedding}
 case "$FEATURE" in
     presence)
