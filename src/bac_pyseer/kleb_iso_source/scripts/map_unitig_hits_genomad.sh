@@ -53,6 +53,7 @@ MATRIX=${MATRIX:-$P/unitigs/$PAIR/unitigs.pyseer.gz}
 GENOMAD=${GENOMAD:-$DATA/david/processed/genomad}
 METADATA=${METADATA:-$DATA/david/final/metadata_v2_all_samples_and_columns.tsv}
 STRATA_CSV=${STRATA_CSV:-$DATA/david/processed/train_iso_source/$PAIR/$COHORT/kpsc_human/binary_blood_vs_faeces_with_split.csv}
+ISESCAN_LOOKUP=${ISESCAN_LOOKUP:-$DATA/david/raw/isescan_csv.tsv}   # Sample<TAB>path -> seb SR ISEScan .fa.csv
 OUT=${OUT:-$GD/mge_mapping}                                   # durable results on project_k
 SCRATCH=${SCRATCH:-/home/dca36/rds/hpc-work/mge_mapping_shards/$PAIR}
 
@@ -115,7 +116,7 @@ select)
     py_run --phase select --hits-tsv "$HITS" --unitig-matrix "$MATRIX" --metadata "$METADATA" "${COMMON[@]}"
     ;;
 align)
-    py_run --phase align \
+    py_run --phase align --isescan-lookup "$ISESCAN_LOOKUP" \
         --carrier-shard-index "${SLURM_ARRAY_TASK_ID:?align needs --array}" --n-shards "$NSHARDS" "${COMMON[@]}"
     ;;
 combine)
@@ -128,7 +129,7 @@ stratify)
     ;;
 smoke)
     py_run --phase smoke --hits-tsv "$HITS" --unitig-matrix "$MATRIX" --metadata "$METADATA" \
-        --smoke "$SMOKE_K" "${COMMON[@]}"
+        --isescan-lookup "$ISESCAN_LOOKUP" --smoke "$SMOKE_K" "${COMMON[@]}"
     echo "=== smoke outputs ==="; ls -lh "$OUT"
     ;;
 *) echo "unknown PHASE=$PHASE"; exit 1 ;;

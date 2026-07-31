@@ -239,14 +239,22 @@ def build_automaton(id_map: pd.DataFrame) -> Any:
     return aut
 
 
-def scan_carrier(aut: Any, plasmid: dict[str, str], virus: dict[str, str], asm: dict[str, str]) -> dict[int, dict[str, set[str]]]:
-    """Stream a carrier's tagged contigs through the automaton → ``{unitig_idx: {tag: {seq_name…}}}``."""
+def scan_carrier(aut: Any, plasmid: dict[str, str], virus: dict[str, str],
+                 asm: dict[str, str]) -> tuple[dict[int, dict[str, set[str]]], dict[int, list[tuple[str, int]]]]:
+    """Stream a carrier's tagged contigs through the automaton.
+
+    Returns ``(found, asm_pos)``: ``found[idx][tag] = {seq_name…}`` (for geNomad classification) and
+    ``asm_pos[idx] = [(contig, end_off)…]`` — every ASM occurrence, for IS-overlap + copy number.
+    """
     found: dict[int, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    asm_pos: dict[int, list[tuple[str, int]]] = defaultdict(list)
     for tag, contigs in ((_TAG_PLASMID, plasmid), (_TAG_VIRUS, virus), (_TAG_ASM, asm)):
         for name, cseq in contigs.items():
-            for _, idx in aut.iter(cseq):
+            for end_off, idx in aut.iter(cseq):
                 found[idx][tag].add(name)
-    return found
+                if tag == _TAG_ASM:
+                    asm_pos[idx].append((name, end_off))
+    return found, asm_pos
 
 
 def classify(tag_hits: dict[str, set[str]]) -> dict[str, Any]:
@@ -262,6 +270,58 @@ def classify(tag_hits: dict[str, set[str]]) -> dict[str, Any]:
             return {"mge_class": _CLASS_BY_TAG[tag], "seq_names": seqs,
                     "multi_replicon": len(seqs) > 1, "asm_recall": asm_recall}
     return {"mge_class": "unmapped", "seq_names": [], "multi_replicon": False, "asm_recall": asm_recall}
+
+
+# --------------------------------------------------------------------------------------------------
+# IS-element (ISEScan) annotation — geNomad misses IS/transposons, so "chromosomal" absorbs them
+# --------------------------------------------------------------------------------------------------
+def load_is_intervals(csv_path: Path) -> dict[str, list[tuple[int, int, str, bool]]]:
+    """Read an ISEScan per-genome ``.fa.csv`` → ``{contig: [(start, end, family, is_partial)…]}``.
+
+    Uses ``isBegin``/``isEnd`` (1-based; swapped if start>end) — NOT ``start1/end1`` (0 for partial
+    IS). ``type == 'p'`` marks a partial/degraded IS. Mirrors BacHGT ``isescan_gene_context._process``.
+    """
+    by_contig: dict[str, list[tuple[int, int, str, bool]]] = defaultdict(list)
+    import csv as _csv
+    with csv_path.open(newline="") as fh:
+        for r in _csv.DictReader(fh):
+            try:
+                s, e = int(r["isBegin"]), int(r["isEnd"])
+            except (KeyError, ValueError):
+                continue
+            if s > e:
+                s, e = e, s
+            by_contig[str(r["seqID"])].append((s, e, str(r.get("family", "")), str(r.get("type", "")) == "p"))
+    return by_contig
+
+
+def annotate_is(asm_positions: list[tuple[str, int]], unitig_len: int,
+                is_by_contig: dict[str, list[tuple[int, int, str, bool]]] | None) -> dict[str, Any]:
+    """Annotate a unitig's ASM occurrences against a carrier's IS intervals.
+
+    Returns ``is_element`` (True/False, or None when the carrier has no ISEScan data), ``is_family``
+    (of an overlapping IS), ``is_partial``, and ``n_copies`` (distinct ASM positions — IS-borne
+    unitigs are typically multi-copy). Overlap is 1-based inclusive against ``isBegin``/``isEnd``.
+    """
+    n_copies = len({(c, p) for c, p in asm_positions})
+    if is_by_contig is None:
+        return {"is_element": None, "is_family": None, "is_partial": None, "n_copies": n_copies}
+    hit = False
+    fam: str | None = None
+    partial = False
+    for contig, end_off in asm_positions:
+        u1s, u1e = end_off - unitig_len + 2, end_off + 1   # 0-based end_off → 1-based inclusive span
+        for s, e, f, p in is_by_contig.get(contig, ()):
+            if not (u1e < s or u1s > e):
+                hit = True
+                fam = fam or (f or None)
+                partial = partial or p
+    return {"is_element": hit, "is_family": fam, "is_partial": partial, "n_copies": n_copies}
+
+
+def _is_state(is_element: bool | None) -> str:
+    """IS state label for aggregation: 'IS' / 'nonIS' / 'na' (no ISEScan data)."""
+    return "na" if is_element is None else ("IS" if is_element else "nonIS")
 
 
 # --------------------------------------------------------------------------------------------------
@@ -376,8 +436,11 @@ def run_align(args: argparse.Namespace) -> None:
     scratch.mkdir(parents=True, exist_ok=True)
     id_map = pd.read_csv(out / "id_map.tsv", sep="\t")
     seq2idx = {str(s).upper(): int(i) for s, i in zip(id_map["variant"], id_map["unitig_idx"], strict=True)}
+    ulen = {int(i): int(n) for i, n in zip(id_map["unitig_idx"], id_map["unitig_len"], strict=True)}
     aut = build_automaton(id_map)
     meta = load_genomad_meta(args.genomad_root)
+    is_lookup = dict(zip(*[pd.read_csv(args.isescan_lookup, sep="\t")[c].astype(str)
+                           for c in ("Sample", "path")], strict=True)) if args.isescan_lookup else {}
 
     shard = _read_carrier_shard(out / "carriers.resolved.tsv", args.carrier_shard_index, args.n_shards)
     my_carriers = set(shard["Sample"].astype(str))
@@ -385,11 +448,13 @@ def run_align(args: argparse.Namespace) -> None:
 
     i = args.carrier_shard_index
     sink = _ParquetSink(scratch / f"align_shard_{i:04d}.parquet")
-    class_counts: dict[int, Counter] = defaultdict(Counter)                     # unitig_idx -> class -> n
-    tax_counts: dict[int, Counter] = defaultdict(Counter)                       # unitig_idx -> (class, descriptor) -> n
+    class_counts: dict[int, Counter] = defaultdict(Counter)              # unitig_idx -> (mge_class, is_state) -> n
+    tax_counts: dict[int, Counter] = defaultdict(Counter)               # unitig_idx -> (class, descriptor) -> n
+    isfam_counts: dict[int, Counter] = defaultdict(Counter)             # unitig_idx -> is_family -> n (IS-borne only)
+    copies: dict[int, list[int]] = defaultdict(lambda: [0, 0])         # unitig_idx -> [sum_copies, n_obs]
     spot: list[dict[str, Any]] = []
     qc = {"n_carriers": 0, "n_pairs": 0, "asm_recall_num": 0, "asm_recall_den": 0,
-          "found_not_expected": 0, "no_genomad_carriers": 0}
+          "found_not_expected": 0, "no_genomad_carriers": 0, "no_isescan_carriers": 0}
     t0 = time.perf_counter()
 
     for row in shard.itertuples(index=False):
@@ -399,18 +464,23 @@ def run_align(args: argparse.Namespace) -> None:
             continue
         qc["n_carriers"] += 1
         gp = resolve_genomad_paths(sample, args.genomad_root)
+        is_path = is_lookup.get(sample)
+        is_by_contig = load_is_intervals(Path(is_path)) if is_path and Path(is_path).is_file() else None
+        if is_by_contig is None:
+            qc["no_isescan_carriers"] += 1
         if not gp["found"]:
             qc["no_genomad_carriers"] += 1
             for idx in exp:
-                class_counts[idx]["unknown_no_genomad"] += 1
-                sink.add({"unitig_idx": idx, "Sample": sample, "genomad_key": None,
-                          "mge_class": "unknown_no_genomad", "seq_name": None, "descriptor": None, "asm_recall": None})
+                class_counts[idx][("unknown_no_genomad", "na")] += 1
+                sink.add({"unitig_idx": idx, "Sample": sample, "genomad_key": None, "mge_class": "unknown_no_genomad",
+                          "seq_name": None, "descriptor": None, "asm_recall": None,
+                          "is_element": None, "is_family": None, "is_partial": None, "n_copies": 0})
             qc["n_pairs"] += len(exp)
             continue
 
         key = gp["key"]
-        found = scan_carrier(aut, _load_contigs(gp["plasmid_fna"]), _load_contigs(gp["virus_fna"]),
-                             _load_contigs(Path(str(row.assembly_path))))
+        found, asm_pos = scan_carrier(aut, _load_contigs(gp["plasmid_fna"]), _load_contigs(gp["virus_fna"]),
+                                      _load_contigs(Path(str(row.assembly_path))))
         qc["found_not_expected"] += sum(1 for idx in found if idx not in exp)
         for idx in exp:
             c = classify(found.get(idx, {}))
@@ -419,18 +489,25 @@ def run_align(args: argparse.Namespace) -> None:
             desc = ""
             if mge_class in ("plasmid", "prophage") and seq_name is not None:
                 desc = next((meta[mge_class].get((key, s), "") for s in seqs if (key, s) in meta[mge_class]), "")
-            class_counts[idx][mge_class] += 1
+            isa = annotate_is(asm_pos.get(idx, []), ulen[idx], is_by_contig)
+            state = _is_state(isa["is_element"])
+            class_counts[idx][(mge_class, state)] += 1
             if mge_class in ("plasmid", "prophage"):
                 tax_counts[idx][(mge_class, desc)] += 1
+            if isa["is_element"]:
+                isfam_counts[idx][isa["is_family"] or "unknown_family"] += 1
+            copies[idx][0] += isa["n_copies"]
+            copies[idx][1] += 1
             if c["asm_recall"] is not None:
                 qc["asm_recall_den"] += 1
                 qc["asm_recall_num"] += int(c["asm_recall"])
             if mge_class in ("plasmid", "prophage") and len(spot) < args.spot_n * 200:
-                in_long = (key, seq_name) in meta[mge_class]
                 spot.append({"unitig_idx": idx, "Sample": sample, "genomad_key": key, "mge_class": mge_class,
-                             "seq_name": seq_name, "in_genomad_long": in_long})
+                             "seq_name": seq_name, "in_genomad_long": (key, seq_name) in meta[mge_class]})
             sink.add({"unitig_idx": idx, "Sample": sample, "genomad_key": key, "mge_class": mge_class,
-                      "seq_name": seq_name, "descriptor": desc, "asm_recall": c["asm_recall"]})
+                      "seq_name": seq_name, "descriptor": desc, "asm_recall": c["asm_recall"],
+                      "is_element": isa["is_element"], "is_family": isa["is_family"],
+                      "is_partial": isa["is_partial"], "n_copies": isa["n_copies"]})
         qc["n_pairs"] += len(exp)
 
     sink.close()
@@ -438,15 +515,30 @@ def run_align(args: argparse.Namespace) -> None:
     qc["sec_per_genome"] = round(qc["seconds"] / qc["n_carriers"], 4) if qc["n_carriers"] else None
     _write_class_counts(scratch / f"align_shard_{i:04d}.class.tsv", class_counts)
     _write_tax_counts(scratch / f"align_shard_{i:04d}.tax.tsv", tax_counts)
+    _write_isfam_counts(scratch / f"align_shard_{i:04d}.isfam.tsv", isfam_counts)
+    _write_copies(scratch / f"align_shard_{i:04d}.copies.tsv", copies)
     pd.DataFrame(spot).to_csv(scratch / f"align_shard_{i:04d}.spot.tsv", sep="\t", index=False)
     (scratch / f"align_shard_{i:04d}.qc.json").write_text(json.dumps(qc, indent=2))
     print(f"shard {i}: {qc['n_carriers']} carriers, {qc['n_pairs']} pairs, {qc['sec_per_genome']} s/genome", file=sys.stderr)
 
 
 def _write_class_counts(path: Path, class_counts: dict[int, Counter]) -> None:
-    """Write long per-(unitig_idx, class) counts for this shard."""
-    rows = [{"unitig_idx": idx, "mge_class": cls, "n": n} for idx, cc in class_counts.items() for cls, n in cc.items()]
-    pd.DataFrame(rows, columns=["unitig_idx", "mge_class", "n"]).to_csv(path, sep="\t", index=False)
+    """Write long per-(unitig_idx, mge_class, is_state) counts for this shard."""
+    rows = [{"unitig_idx": idx, "mge_class": cls, "is_state": st, "n": n}
+            for idx, cc in class_counts.items() for (cls, st), n in cc.items()]
+    pd.DataFrame(rows, columns=["unitig_idx", "mge_class", "is_state", "n"]).to_csv(path, sep="\t", index=False)
+
+
+def _write_isfam_counts(path: Path, isfam_counts: dict[int, Counter]) -> None:
+    """Write long per-(unitig_idx, is_family) counts for IS-borne placements."""
+    rows = [{"unitig_idx": idx, "is_family": fam, "n": n} for idx, cc in isfam_counts.items() for fam, n in cc.items()]
+    pd.DataFrame(rows, columns=["unitig_idx", "is_family", "n"]).to_csv(path, sep="\t", index=False)
+
+
+def _write_copies(path: Path, copies: dict[int, list[int]]) -> None:
+    """Write per-unitig ASM copy-number sums (→ mean copies in combine)."""
+    rows = [{"unitig_idx": idx, "copies_sum": s, "copies_n": n} for idx, (s, n) in copies.items()]
+    pd.DataFrame(rows, columns=["unitig_idx", "copies_sum", "copies_n"]).to_csv(path, sep="\t", index=False)
 
 
 def _write_tax_counts(path: Path, tax_counts: dict[int, Counter]) -> None:
@@ -460,34 +552,53 @@ def _write_tax_counts(path: Path, tax_counts: dict[int, Counter]) -> None:
 # combine
 # --------------------------------------------------------------------------------------------------
 def run_combine(args: argparse.Namespace) -> None:
-    """``combine``: sum shard aggregates → per-unitig / per-pattern_group / overall tables + spot-check."""
+    """``combine``: sum shard aggregates → per-unitig / per-pattern_group / overall tables + spot-check.
+
+    Classes are the **IS-refined** geNomad classes (``chromosomal`` split into ``chromosomal`` = truly
+    chromosomal vs ``chromosomal_IS`` = on an ISEScan IS element; likewise plasmid/prophage).
+    """
     out, scratch = args.out_dir, args.scratch_dir
     id_map = pd.read_csv(out / "id_map.tsv", sep="\t")
 
-    cls = _sum_long(sorted(scratch.glob("align_shard_*.class.tsv")), ["unitig_idx", "mge_class"])
-    wide = cls.pivot_table(index="unitig_idx", columns="mge_class", values="n", fill_value=0).reset_index()
-    for c in _CLASSES:
+    cls3 = _sum_long(sorted(scratch.glob("align_shard_*.class.tsv")), ["unitig_idx", "mge_class", "is_state"])
+    cls3["rclass"] = [_refined_class(c, s) for c, s in zip(cls3["mge_class"], cls3["is_state"], strict=True)]
+    rcls = cls3.groupby(["unitig_idx", "rclass"], as_index=False)["n"].sum()
+    classes = sorted(rcls["rclass"].unique())
+    wide = rcls.pivot_table(index="unitig_idx", columns="rclass", values="n", fill_value=0).reset_index()
+    for c in classes:
         if c not in wide.columns:
             wide[c] = 0
-    wide["n_carriers"] = wide[list(_CLASSES)].sum(axis=1)
-    for c in _CLASSES:
+    wide["n_carriers"] = wide[classes].sum(axis=1)
+    for c in classes:
         wide[f"frac_{c}"] = (wide[c] / wide["n_carriers"]).round(4)
+    chrom_tot = sum(wide.get(c, 0) for c in ("chromosomal", "chromosomal_IS", "chromosomal_naIS"))
+    wide["frac_chromosomal_is"] = (wide.get("chromosomal_IS", 0) / chrom_tot).round(4)  # IS share OF chromosomal
 
     tax = _sum_long(sorted(scratch.glob("align_shard_*.tax.tsv")), ["unitig_idx", "mge_class", "descriptor"])
-    dom = _dominant_descriptor(tax)
-    per_unitig = id_map.merge(wide, on="unitig_idx", how="left").merge(dom, on="unitig_idx", how="left")
+    isfam = _sum_long(sorted(scratch.glob("align_shard_*.isfam.tsv")), ["unitig_idx", "is_family"])
+    per_unitig = (id_map.merge(wide, on="unitig_idx", how="left")
+                  .merge(_dominant_descriptor(tax), on="unitig_idx", how="left")
+                  .merge(_dominant_is_family(isfam), on="unitig_idx", how="left")
+                  .merge(_sum_copies(sorted(scratch.glob("align_shard_*.copies.tsv"))), on="unitig_idx", how="left"))
     per_unitig.to_csv(out / "mge_unitig_class.tsv", sep="\t", index=False)
 
-    _rollup_pattern_group(per_unitig).to_csv(out / "mge_pattern_group.tsv", sep="\t", index=False)
-    _rollup_overall(per_unitig).to_csv(out / "mge_overall.tsv", sep="\t", index=False)
+    _rollup_pattern_group(per_unitig, classes).to_csv(out / "mge_pattern_group.tsv", sep="\t", index=False)
+    _rollup_overall(per_unitig, classes).to_csv(out / "mge_overall.tsv", sep="\t", index=False)
 
     spot = pd.concat([pd.read_csv(f, sep="\t") for f in sorted(scratch.glob("align_shard_*.spot.tsv")) if f.stat().st_size > 1],
                      ignore_index=True) if list(scratch.glob("align_shard_*.spot.tsv")) else pd.DataFrame()
     spot.to_csv(out / "spotcheck.tsv", sep="\t", index=False)
 
     _assemble_parquet_dataset(scratch, out / "mge_hits.parquet")
-    _write_combine_manifest(out, scratch, per_unitig, spot)
+    _write_combine_manifest(out, scratch, per_unitig, spot, classes)
     print(pd.read_csv(out / "mge_overall.tsv", sep="\t").to_string(index=False), file=sys.stderr)
+
+
+def _refined_class(mge_class: str, is_state: str) -> str:
+    """Split a geNomad class by IS state → ``chromosomal_IS`` / ``chromosomal`` (=non-IS) / ``chromosomal_naIS``."""
+    if mge_class in ("plasmid", "prophage", "chromosomal"):
+        return {"IS": f"{mge_class}_IS", "nonIS": mge_class, "na": f"{mge_class}_naIS"}[is_state]
+    return mge_class
 
 
 def _assemble_parquet_dataset(scratch: Path, dataset_dir: Path) -> None:
@@ -518,9 +629,28 @@ def _dominant_descriptor(tax: pd.DataFrame) -> pd.DataFrame:
         columns={"mge_class": "dominant_mge_class", "descriptor": "dominant_descriptor", "frac": "dominant_descriptor_frac"})
 
 
-def _rollup_pattern_group(per_unitig: pd.DataFrame) -> pd.DataFrame:
-    """Aggregate per-unitig counts to per-pattern_group class fractions."""
-    cnt = [c for c in _CLASSES if c in per_unitig.columns]
+def _dominant_is_family(isfam: pd.DataFrame) -> pd.DataFrame:
+    """Per unitig: the most common IS family among its IS-borne placements + how many carriers are IS-borne."""
+    if isfam.empty:
+        return pd.DataFrame(columns=["unitig_idx", "dominant_is_family", "n_is_carriers"])
+    n_is = isfam.groupby("unitig_idx", as_index=False)["n"].sum().rename(columns={"n": "n_is_carriers"})
+    top = isfam.sort_values("n", ascending=False).drop_duplicates("unitig_idx")[["unitig_idx", "is_family"]]
+    return top.rename(columns={"is_family": "dominant_is_family"}).merge(n_is, on="unitig_idx")
+
+
+def _sum_copies(files: list[Path]) -> pd.DataFrame:
+    """Per unitig: mean ASM copy number across its carriers (IS-borne unitigs are typically multi-copy)."""
+    parts = [pd.read_csv(f, sep="\t") for f in files if f.stat().st_size > 1]
+    if not parts:
+        return pd.DataFrame(columns=["unitig_idx", "mean_copies"])
+    d = pd.concat(parts, ignore_index=True).groupby("unitig_idx", as_index=False).agg({"copies_sum": "sum", "copies_n": "sum"})
+    d["mean_copies"] = (d["copies_sum"] / d["copies_n"]).round(3)
+    return d[["unitig_idx", "mean_copies"]]
+
+
+def _rollup_pattern_group(per_unitig: pd.DataFrame, classes: list[str]) -> pd.DataFrame:
+    """Aggregate per-unitig counts to per-pattern_group (IS-refined) class fractions."""
+    cnt = [c for c in classes if c in per_unitig.columns]
     g = per_unitig.groupby("pattern_group", as_index=False).agg(
         {"unitig_idx": "count", "n_carriers": "sum", **dict.fromkeys(cnt, "sum")})
     g = g.rename(columns={"unitig_idx": "n_member_unitigs"})
@@ -529,9 +659,9 @@ def _rollup_pattern_group(per_unitig: pd.DataFrame) -> pd.DataFrame:
     return g
 
 
-def _rollup_overall(per_unitig: pd.DataFrame) -> pd.DataFrame:
-    """Global + by-direction + by-af-bin class fractions (the headline 'where are they')."""
-    cnt = [c for c in _CLASSES if c in per_unitig.columns]
+def _rollup_overall(per_unitig: pd.DataFrame, classes: list[str]) -> pd.DataFrame:
+    """Global + by-direction + by-af-bin (IS-refined) class fractions (the headline 'where are they')."""
+    cnt = [c for c in classes if c in per_unitig.columns]
     rows = []
 
     def _agg(label: str, sub: pd.DataFrame) -> dict[str, Any]:
@@ -552,12 +682,12 @@ def _rollup_overall(per_unitig: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _write_combine_manifest(out: Path, scratch: Path, per_unitig: pd.DataFrame, spot: pd.DataFrame) -> None:
-    """Aggregate shard QC → manifest (ASM-recall, discordances, class distribution, timing)."""
+def _write_combine_manifest(out: Path, scratch: Path, per_unitig: pd.DataFrame, spot: pd.DataFrame, classes: list[str]) -> None:
+    """Aggregate shard QC → manifest (ASM-recall, discordances, class distribution, IS, timing)."""
     qcs = [json.loads(f.read_text()) for f in sorted(scratch.glob("align_shard_*.qc.json"))]
     den = sum(q.get("asm_recall_den", 0) for q in qcs)
     num = sum(q.get("asm_recall_num", 0) for q in qcs)
-    cnt = [c for c in _CLASSES if c in per_unitig.columns]
+    cnt = [c for c in classes if c in per_unitig.columns]
     manifest = {
         "phase": "combine", "n_unitigs": int(len(per_unitig)),
         "n_carriers": sum(q.get("n_carriers", 0) for q in qcs),
@@ -565,6 +695,7 @@ def _write_combine_manifest(out: Path, scratch: Path, per_unitig: pd.DataFrame, 
         "asm_recall": round(num / den, 4) if den else None,
         "found_not_expected": sum(q.get("found_not_expected", 0) for q in qcs),
         "no_genomad_carriers": sum(q.get("no_genomad_carriers", 0) for q in qcs),
+        "no_isescan_carriers": sum(q.get("no_isescan_carriers", 0) for q in qcs),
         "class_pair_totals": {c: int(per_unitig[c].sum()) for c in cnt},
         "spotcheck_pass": int((spot["in_genomad_long"] == True).sum()) if "in_genomad_long" in spot else 0,  # noqa: E712
         "spotcheck_fail": int((spot["in_genomad_long"] == False).sum()) if "in_genomad_long" in spot else 0,  # noqa: E712
@@ -612,7 +743,8 @@ def run_stratify(args: argparse.Namespace) -> None:
     carriers = set(pd.read_csv(out / "carriers.resolved.tsv", sep="\t")["Sample"].astype(str))
     strata = _load_strata(args.strata_csv, args.min_group_size, carriers)
 
-    acc: Counter = Counter()                      # (level, group, direction, mge_class) -> n_pairs
+    acc: Counter = Counter()                      # (level, group, direction, refined_class) -> n_pairs
+    seen: dict[str, set[str]] = defaultdict(set)  # level -> refined classes observed
     n_carr: dict[tuple[str, str], int] = {}       # (level, group) -> distinct carriers
     for level, smap in strata.items():
         vc = Counter(smap.values())
@@ -621,22 +753,27 @@ def run_stratify(args: argparse.Namespace) -> None:
         n_carr[(level, "ALL")] = sum(vc.values())
     parts = sorted((out / "mge_hits.parquet").glob("*.parquet"))
     for part in parts:
-        df = pq.read_table(part, columns=["unitig_idx", "Sample", "mge_class"]).to_pandas()
+        df = pq.read_table(part, columns=["unitig_idx", "Sample", "mge_class", "is_element"]).to_pandas()
         df["direction"] = df["unitig_idx"].map(dir_by_idx).fillna("NA")
+        st = df["is_element"].map({True: "_IS", False: "", None: "_naIS"}).fillna("_naIS")
+        mask = df["mge_class"].isin(["plasmid", "prophage", "chromosomal"])
+        df["rclass"] = df["mge_class"].where(~mask, df["mge_class"] + st)
         for level, smap in strata.items():
             df["_g"] = df["Sample"].map(smap).fillna("unknown")
-            for (g, d, cls), n in df.groupby(["_g", "direction", "mge_class"]).size().items():
+            for (g, d, cls), n in df.groupby(["_g", "direction", "rclass"]).size().items():
+                seen[level].add(cls)
                 for dk in (d, "all"):
                     acc[(level, g, dk, cls)] += n
                     acc[(level, "ALL", dk, cls)] += n
 
     for level in strata:
+        classes = sorted(seen[level])
         rows = []
         for g, d in sorted({(k[1], k[2]) for k in acc if k[0] == level}):
-            counts = {c: acc[(level, g, d, c)] for c in _CLASSES}
+            counts = {c: acc[(level, g, d, c)] for c in classes}
             tot = sum(counts.values())
             row = {level: g, "direction": d, "n_carriers": n_carr.get((level, g)), "n_pairs": tot}
-            for c in _CLASSES:
+            for c in classes:
                 row[f"frac_{c}"] = round(counts[c] / tot, 4) if tot else 0.0
             rows.append(row)
         pd.DataFrame(rows).to_csv(out / f"mge_by_{level}.tsv", sep="\t", index=False)
@@ -688,6 +825,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--genomad-probe-n", type=int, default=20, help="Carriers to probe for geNomad layout.")
     p.add_argument("--spot-n", type=int, default=3, help="Spot-check records per class per group (approx).")
     p.add_argument("--smoke", type=int, default=30, help="smoke phase: number of carriers to map.")
+    p.add_argument("--isescan-lookup", type=Path, help="TSV Sample<TAB>path → per-genome ISEScan .fa.csv (align).")
     p.add_argument("--strata-csv", type=Path, help="Cohort CSV with Sample, Sublineage, 'Clonal group' (stratify).")
     p.add_argument("--min-group-size", type=int, default=100, help="Min carriers for a 'big' sublineage/CG (stratify).")
     args = p.parse_args(argv)
