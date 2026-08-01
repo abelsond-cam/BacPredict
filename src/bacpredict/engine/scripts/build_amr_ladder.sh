@@ -72,11 +72,19 @@ if [[ ! -f "$FT_CACHE/cache_summary_${DRUG}.json" ]]; then
     exit 1
 fi
 
+# Kp: read the FRESH data-root CARD ceiling (Step C, card_ceiling/) when present; else fall back to the
+# ladder default (committed repo CSV). TB keeps its default (tbprofiler). Existence-guarded so a missing
+# file never errors the ladder.
+CAT_ARG=""
+CCSV="$D/processed/train_${TASK}/card_ceiling/$DRUG/card_determinant_lr_${DRUG}_family.csv"
+[[ "$SPECIES" == "kp" && -f "$CCSV" ]] && CAT_ARG="--catalogue-csv $CCSV"
+
 "$PY" -m bacpredict.engine.concat.build_amr_ladder \
     --species "$SPECIES" \
     --drug "$DRUG" \
     --split-table "$SPLITS/${DRUG}_split.csv" \
     --ft-cache-dir "$FT_CACHE" \
+    $CAT_ARG \
     --out-dir "$OUT"
 
 echo "=== ladder table ($DRUG) ==="

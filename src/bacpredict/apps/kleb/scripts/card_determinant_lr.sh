@@ -34,6 +34,9 @@ DRUGS=(cefotaxime ertapenem ampicillin-sulbactam ceftriaxone cefuroxime ciproflo
        gentamicin cefazolin imipenem meropenem trimethoprim-sulfamethoxazole tobramycin amikacin \
        levofloxacin piperacillin-tazobactam cefoxitin tetracycline aztreonam cefepime azithromycin colistin)
 
-echo "=== CARD determinant LR (one-hot ceiling) — ${#DRUGS[@]} drugs × {family,allele} ==="
-"$PY" -m bacpredict.apps.kleb.card_determinant_lr --drugs "${DRUGS[@]}" --grains family allele
-echo "done -> visualisations/kp/<drug>/card_determinant_lr_<drug>_<grain>.csv"
+# Write to a data-root dir by default (NOT the repo visualisations tree) so a CSD3 run never dirties the
+# shared checkout; Step-F curation copies the honest CSVs into visualisations/kp/. Override with CEILING_OUT_DIR.
+CEILING_OUT="${CEILING_OUT_DIR:-$D/processed/train_kleb_ast/card_ceiling}"
+echo "=== CARD determinant LR (one-hot ceiling) — ${#DRUGS[@]} drugs × {family,allele} -> $CEILING_OUT ==="
+"$PY" -m bacpredict.apps.kleb.card_determinant_lr --drugs "${DRUGS[@]}" --grains family allele --out-dir "$CEILING_OUT"
+echo "done -> $CEILING_OUT/<drug>/card_determinant_lr_<drug>_<grain>.csv"
