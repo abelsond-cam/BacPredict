@@ -88,7 +88,10 @@ fi
 STORE=${EMBEDDING_STORE:-esm}                    # esm (default) | baclm
 RDS=$D/processed/train_${TASK}
 SPLITS=$RDS/splits                               # per-drug <drug>_split.csv tables (generate_kfold_splits)
-PARQUET=$RDS/protein_sequences
+# PARQUET_DIR override: the shared protein_sequences store is an A/B annotation MIX, so the baclm coding
+# flat-index join aligns for only ~34% of the Kp cohort. For EMBEDDING_STORE=baclm on Kp pass the dedicated
+# protein_sequences_B store (the canonical B-parquets baclm was embedded from) so coding covers 100%.
+PARQUET=${PARQUET_DIR:-$RDS/protein_sequences}
 EMB=$RDS/$STORE                                  # $RDS/esm or $RDS/baclm — same flat parquet order
 # per_segment_lr ALWAYS fits on the split table's `train` and reports eval_auroc_<drug> on its `holdout`
 # (the deployment holdout) — no separate eval mode any more. SUFFIX still namespaces the output dir; the

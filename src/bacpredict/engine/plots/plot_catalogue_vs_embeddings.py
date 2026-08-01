@@ -76,14 +76,22 @@ def _is_coding(row: pd.Series) -> bool:
     return embeddable and not bool(row.get("is_noncoding", False)) and not bool(row.get("is_rrna", False))
 
 
-def _score_gene(gene_table, paths: SpeciesPaths, label_map, bacformer_frame, *, n_folds, seeds, pool_workers):
-    """k-fold AUROC/AUPRC for one gene's baclm + ESM (+ Bacformer if provided) vectors vs the label."""
+def _score_gene(gene_table, paths: SpeciesPaths, label_map, bacformer_frame, *, n_folds, seeds, pool_workers,
+                score_esm: bool = True):
+    """k-fold AUROC/AUPRC for one gene's baclm (+ ESM if ``score_esm``, + Bacformer if provided) vs the label.
+
+    ``score_esm=False`` skips the ESM column: the ESM store and the baclm store index into *different*
+    protein-order parquets (the Kp A/B split), so a single ``--parquet-dir`` can only be flat-index-aligned to
+    one of them. When scoring baclm against the B-parquet, ESM would be mis-indexed — so drop it rather than
+    emit wrong numbers.
+    """
     if gene_table.empty:
         return {"error": "no single-copy genomes"}
-    esm = load_pooled_gene_vectors(gene_table, paths.esm_dir, pt_suffix=paths.esm_suffix, pool_workers=pool_workers)
+    esm = (load_pooled_gene_vectors(gene_table, paths.esm_dir, pt_suffix=paths.esm_suffix, pool_workers=pool_workers)
+           if score_esm else None)
     baclm = load_baclm_gene_vectors(gene_table, paths.baclm_dir, pt_suffix=paths.baclm_suffix, pool_workers=pool_workers)
     specs = {}
-    if not esm.empty:
+    if esm is not None and not esm.empty:
         specs["esm"] = FeatureSpec(frame=esm, kind="numeric", standardise=True)
     if not baclm.empty:
         specs["baclm"] = FeatureSpec(frame=baclm, kind="numeric", standardise=True)
@@ -122,6 +130,7 @@ def run_drug_panel(
     n_folds: int = 5,
     seeds: tuple[int, ...] = (1, 2, 3),
     pool_workers: int = 8,
+    score_esm: bool = True,
 ) -> dict:
     """Build the per-driver [one-hot | baclm | ESM | Bacformer] table for one drug.
 
@@ -163,8 +172,8 @@ def run_drug_panel(
         if _is_coding(r) and gene in presence:
             gene_table = presence[gene].loc[presence[gene].index.intersection(sample_ids)]
             bac = _bacformer_frame_for_gene(gene, bacformer_npz)
-            scored = _score_gene(gene_table, paths, label_map, bac,
-                                 n_folds=n_folds, seeds=seeds, pool_workers=pool_workers)
+            scored = _score_gene(gene_table, paths, label_map, bac, n_folds=n_folds, seeds=seeds,
+                                 pool_workers=pool_workers, score_esm=score_esm)
             for m in ("baclm", "esm", "bacformer"):
                 if m in scored and scored[m].get("auroc"):
                     row[f"{m}_auroc"] = scored[m]["auroc"]["mean"]
@@ -239,10 +248,17 @@ def main() -> None:
     ap.add_argument("--n-folds", type=int, default=5)
     ap.add_argument("--seeds", type=str, default="1,2,3")
     ap.add_argument("--pool-workers", type=int, default=8)
+    ap.add_argument("--parquet-dir", type=Path, default=None,
+                    help="override the protein_sequences store (Kp baclm: the B-aligned protein_sequences_B).")
+    ap.add_argument("--skip-esm", action="store_true",
+                    help="score baclm + one-hot only (no ESM) — use when --parquet-dir is B-aligned to baclm, "
+                         "so the A-ordered ESM store would be mis-indexed.")
     ap.add_argument("--output", type=Path, required=True, help="output dir for per-drug tables + charts + summary.")
     args = ap.parse_args()
 
     paths = default_paths(args.species)
+    if args.parquet_dir:
+        paths.parquet_dir = args.parquet_dir
     ast_columns = set(pd.read_csv(paths.ast_sheet, nrows=0).columns)
     seeds = tuple(int(s) for s in args.seeds.split(","))
     npz = np.load(args.bacformer_npz) if args.bacformer_npz and args.bacformer_npz.exists() else None
@@ -277,7 +293,7 @@ def main() -> None:
             continue
         result = run_drug_panel(drug, csv_path, paths, ast_column=ast_col, bacformer_npz=npz,
                                 card_sidecar_dir=card_dir, n_folds=args.n_folds, seeds=seeds,
-                                pool_workers=args.pool_workers)
+                                pool_workers=args.pool_workers, score_esm=not args.skip_esm)
         result["table"].to_csv(args.output / f"driver_panel_{drug}.csv", index=False)
         plot_drug_panel(result, args.output / f"driver_panel_{drug}.png")
         n_coding = int(result["table"]["baclm_auroc"].notna().sum())

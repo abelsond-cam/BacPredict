@@ -38,14 +38,19 @@ WHO_LINE_COLOUR = "#d62728"  # red — the WHO one-hot family (the reference lin
 
 
 def plot_ranking(csv_path: Path, out_path: Path, *, drug: str | None = None, top_n: int = 10,
-                 who_onehot_auroc: float | None = None, min_n_eval: int | None = None) -> None:
+                 who_onehot_auroc: float | None = None, min_n_eval: int | None = None,
+                 source_label: str = "ESM", annotation_label: str = "Prokka",
+                 ceiling_label: str = "all WHO mutations") -> None:
     """Top-``top_n`` genes by out-of-fold LR AUROC, ascending (highest on the right); top gene = our pick.
 
-    ``who_onehot_auroc`` (the full WHO one-hot ceiling for this drug) is drawn as a red reference line,
-    so the best single ESM gene can be read against "all WHO mutations combined". ``min_n_eval`` gates the
-    screen to genes carried by **more than** that many evaluate-set genomes (``n_eval``) — the
-    present-embeddings-only, well-powered filter for the *non-imputed* carrier screen (needs an
-    eval-holdout ranking, which carries ``n_eval``). Skips the figure if the gate empties the table.
+    ``who_onehot_auroc`` (the full catalogue one-hot ceiling for this drug) is drawn as a red reference
+    line, so the best single embedded gene can be read against the combined catalogue. ``source_label``
+    (embedding source: "ESM"/"baclm"), ``annotation_label`` (gene caller: "Prokka"/"Bakta") and
+    ``ceiling_label`` ("all WHO mutations"/"all CARD determinants") make the labels organism-agnostic — TB
+    keeps the WHO/ESM/Prokka defaults, Kp passes baclm/Bakta/CARD. ``min_n_eval`` gates the screen to genes
+    carried by **more than** that many evaluate-set genomes (``n_eval``) — the present-embeddings-only,
+    well-powered filter for the *non-imputed* carrier screen (needs an eval-holdout ranking, which carries
+    ``n_eval``). Skips the figure if the gate empties the table.
     """
     df = pd.read_csv(csv_path)
     if min_n_eval is not None and "n_eval" in df.columns:
@@ -78,7 +83,7 @@ def plot_ranking(csv_path: Path, out_path: Path, *, drug: str | None = None, top
     if who_onehot_auroc is not None:
         ax.axhline(who_onehot_auroc, color=WHO_LINE_COLOUR, linestyle="--", linewidth=1.4)
         ax.text((len(top) - 1) / 2, who_onehot_auroc + 0.006,
-                f"Ceiling combining all WHO mutations = {who_onehot_auroc:.3f}",
+                f"Ceiling combining {ceiling_label} = {who_onehot_auroc:.3f}",
                 ha="center", va="bottom", fontsize=7.5, color=WHO_LINE_COLOUR)
 
     ax.set_xticks(list(x))
@@ -94,12 +99,13 @@ def plot_ranking(csv_path: Path, out_path: Path, *, drug: str | None = None, top
         plt.Rectangle((0, 0), 1, 1, color=to_rgba(PICK_COLOUR, 0.5), ec="black", lw=0.7),
         plt.Line2D([0], [0], color=WHO_LINE_COLOUR, linestyle="--", linewidth=1.4),
     ]
-    ax.legend(handles, [f"our pick: {pick} — top ESM prediction, injected gene", "other ranked genes",
-                        "all WHO mutations (one-hot)"], loc="upper left", bbox_to_anchor=(0.01, 0.82),
-              fontsize=9.0, framealpha=0.95)
+    ax.legend(handles, [f"our pick: {pick} — top {source_label} prediction, injected gene",
+                        "other ranked genes", f"{ceiling_label} (one-hot)"], loc="upper left",
+              bbox_to_anchor=(0.01, 0.82), fontsize=9.0, framealpha=0.95)
     gate_note = f"  ·  non-imputed screen (>{min_n_eval} eval carriers)" if min_n_eval is not None else ""
     ax.set_title(
-        f"{drug_name}: ESM mean embedding predictions by LR, for each gene by Prokka annotation{gate_note}",
+        f"{drug_name}: {source_label} mean embedding predictions by LR, "
+        f"for each gene by {annotation_label} annotation{gate_note}",
         fontsize=12.5,
     )
     fig.tight_layout()
@@ -123,6 +129,12 @@ def main() -> None:
     parser.add_argument("--min-n-eval", type=int, default=None,
                         help="Gate the screen to genes with n_eval > this (the non-imputed carrier screen "
                              "over present-embeddings-only, well-powered genes; needs an eval-holdout ranking).")
+    parser.add_argument("--ceiling-key", default="__ALL_WHO_one_hot__",
+                        help="row key of the combined-catalogue ceiling in --who-onehot-csv (Kp: __ALL_CARD__).")
+    parser.add_argument("--source-label", default="ESM", help='embedding source label (TB "ESM", Kp "baclm").')
+    parser.add_argument("--annotation-label", default="Prokka", help='gene caller label (TB "Prokka", Kp "Bakta").')
+    parser.add_argument("--ceiling-label", default="all WHO mutations",
+                        help='catalogue-ceiling legend label (Kp "all CARD determinants").')
     args = parser.parse_args()
     disp = display_name(args.drug)
     drug_dir = visualisations_dir("tb") / disp  # each drug's data + figures live together
@@ -132,10 +144,11 @@ def main() -> None:
     who_auroc = None
     if who_csv.exists():
         wdf = pd.read_csv(who_csv)
-        row = wdf[wdf["gene_name"] == "__ALL_WHO_one_hot__"]
+        row = wdf[wdf["gene_name"] == args.ceiling_key]
         who_auroc = float(row["mut_auroc"].iloc[0]) if not row.empty else None
     plot_ranking(csv, out, drug=args.drug, top_n=args.top_n, who_onehot_auroc=who_auroc,
-                 min_n_eval=args.min_n_eval)
+                 min_n_eval=args.min_n_eval, source_label=args.source_label,
+                 annotation_label=args.annotation_label, ceiling_label=args.ceiling_label)
     print(f"Wrote {out}")
 
 
