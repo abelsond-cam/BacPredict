@@ -74,6 +74,12 @@ def fit_score_step(
     y_va = np.array([label_map[s] for s in va], dtype=int)
     y_ev = np.array([label_map[s] for s in ev], dtype=int)
 
+    # A single-class training fold is unfittable (LogisticRegression needs ≥2 classes). This happens for a
+    # near-fully-penetrant determinant scored on its carriers (all resistant) — return an error so
+    # run_kfold_probe skips just this fold rather than crashing the whole probe.
+    if len(np.unique(y_tr)) < 2:
+        return {"error": f"single-class train fold (class {int(y_tr[0])}, n_train={len(y_tr)})"}
+
     if kind == "categorical":
         enc = OneHotEncoder(handle_unknown="ignore", sparse_output=False)
         x_tr = enc.fit_transform(feat_df.loc[tr].astype(str))

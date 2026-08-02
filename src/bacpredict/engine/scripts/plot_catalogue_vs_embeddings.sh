@@ -19,7 +19,7 @@
 #SBATCH --output=/rds/user/dca36/hpc-work/logs/%x-%j.out
 #SBATCH --error=/rds/user/dca36/hpc-work/logs/%x-%j.out
 #SBATCH --open-mode=append
-set -uo pipefail
+set -euo pipefail   # -e so a Python crash FAILS the job (not a silent COMPLETED with no outputs)
 # Data root + env — cluster-agnostic (Isambard: $SCRATCHDIR; CSD3: project_k/david). Matches the other launchers.
 : "${BACPREDICT_DATA_ROOT:="$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/bac_ast_prediction"}"
 D="$BACPREDICT_DATA_ROOT"

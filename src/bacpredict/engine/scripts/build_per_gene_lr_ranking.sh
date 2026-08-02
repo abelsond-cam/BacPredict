@@ -99,6 +99,7 @@ EMB=$RDS/$STORE                                  # $RDS/esm or $RDS/baclm — sa
 SUFFIX="${SUFFIX:-}"                              # output-subdir suffix, e.g. _full
 MAX_TRAIN="${MAX_TRAIN-2000}"                    # "" → full cohort (no subsample cap)
 STORE_DTYPE="${STORE_DTYPE:-float32}"            # float16 → whole-cohort memory
+EVAL="${EVAL:-0}"                                # vestigial (per_segment_lr always reports the holdout); default so set -u is happy
 # FEATURE (env, default embedding) picks how non-carriers are handled. The concat's gene rung is
 # zero-imputed at the head, so its selection ranking MUST be the imputed one — build_amr_ladder now
 # HARD-FAILS on a carrier-only gene ranking (selection≠usage). `imputed` passes --impute-absent-zero
