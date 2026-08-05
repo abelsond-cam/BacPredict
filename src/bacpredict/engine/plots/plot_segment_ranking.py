@@ -59,23 +59,29 @@ def plot_ranking(csv_path: Path, out_path: Path, *, drug: str | None = None, top
             logger.warning("%s: no gene with n_eval > %d — skipping the gated non-imputed screen",
                            Path(csv_path).name, min_n_eval)
             return
-    auroc_cols = [c for c in df.columns if c.startswith("lr_auroc_")]
-    if not auroc_cols:
+    sel_cols = [c for c in df.columns if c.startswith("lr_auroc_")]
+    if not sel_cols:
         raise ValueError(f"{csv_path} has no lr_auroc_<drug> column — not a per-gene ranking table.")
-    auroc_col = f"lr_auroc_{drug}" if drug else auroc_cols[0]
-    drug_name = display_name(auroc_col.removeprefix("lr_auroc_"))
+    sel_col = f"lr_auroc_{drug}" if drug else sel_cols[0]     # SELECT/order on out-of-fold TRAIN (leakage-free)
+    drug_key = sel_col.removeprefix("lr_auroc_")
+    disp_col = f"eval_auroc_{drug_key}"                        # DISPLAY the deployment HOLDOUT
+    drug_name = display_name(drug_key)
+    if disp_col not in df.columns:
+        raise ValueError(f"{csv_path} has no {disp_col} column — need the holdout AUROC to display.")
+    df = df[df[disp_col].notna()].reset_index(drop=True)       # only genes with a held-out number
 
-    # Ascending order (smallest left, largest right) to match the ladder; the pick (largest) is rightmost.
-    top = (df.sort_values(auroc_col, ascending=False).head(top_n)
-           .sort_values(auroc_col, ascending=True).reset_index(drop=True))
+    # Ascending by train-OOF (pick = rightmost = the ladder's injected gene); bar HEIGHTS are the holdout,
+    # so the bars need not be monotonic — that gap between selection and holdout is honest.
+    top = (df.sort_values(sel_col, ascending=False).head(top_n)
+           .sort_values(sel_col, ascending=True).reset_index(drop=True))
     pick_idx = len(top) - 1
-    # All bars purple (ESM family): the pick solid, the rest the same purple at alpha 0.5.
+    # All bars purple (embedding family): the pick solid, the rest the same purple at alpha 0.5.
     colours = [PICK_COLOUR if i == pick_idx else to_rgba(PICK_COLOUR, 0.5) for i in range(len(top))]
 
     fig, ax = plt.subplots(figsize=(10.5, 5.6))
     x = range(len(top))
-    ax.bar(x, top[auroc_col], color=colours, edgecolor="black", linewidth=0.7, width=0.74)
-    for xi, v in zip(x, top[auroc_col], strict=True):
+    ax.bar(x, top[disp_col], color=colours, edgecolor="black", linewidth=0.7, width=0.74)
+    for xi, v in zip(x, top[disp_col], strict=True):
         ax.text(xi, v + 0.005, f"{v:.3f}", ha="center", va="bottom", fontsize=9.5, fontweight="bold")
 
     ax.axhline(0.5, color="0.6", linestyle=":", linewidth=1.0)  # chance
@@ -88,7 +94,7 @@ def plot_ranking(csv_path: Path, out_path: Path, *, drug: str | None = None, top
 
     ax.set_xticks(list(x))
     ax.set_xticklabels(top["gene_name"], rotation=30, ha="right", fontsize=10, fontstyle="italic")
-    ax.set_ylabel("out-of-fold train AUROC", fontsize=12)
+    ax.set_ylabel("deployment-holdout AUROC (ordered by train-OOF)", fontsize=12)
     ax.set_ylim(0.45, 1.0)
     ax.grid(axis="y", alpha=0.3)
     ax.spines[["top", "right"]].set_visible(False)

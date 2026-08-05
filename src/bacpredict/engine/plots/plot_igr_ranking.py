@@ -145,20 +145,23 @@ def plot_top10(rank: pd.DataFrame, presence: pd.DataFrame | None, *, imputed: pd
     ``min_n_pos`` drops the low-n conditional-on-carriage artifacts (a body at prevalence 0.003 scoring 1.0
     on n=6 resistant carriers) so the top-N shows regions with real support — the same guard the ladder uses.
     """
-    au = _auroc_col(rank)
-    ranked = rank
+    sel = _auroc_col(rank, "lr_auroc_")             # SELECT/order on out-of-fold TRAIN (leakage-free)
+    disp = _auroc_col(rank, "eval_auroc_")          # DISPLAY the deployment HOLDOUT
+    ranked = rank[rank[disp].notna()]
+    if ranked.empty:
+        ranked = rank
     if min_n_pos > 0 and "n_pos" in ranked.columns:
         floored = ranked[ranked["n_pos"] >= min_n_pos]
         ranked = floored if not floored.empty else ranked  # fall back if the floor removes everything
-    top = ranked.sort_values(au, ascending=False).head(top_n).reset_index(drop=True)
+    top = ranked.sort_values(sel, ascending=False).head(top_n).reset_index(drop=True)
     labels = [_region_label(r) for _, r in top.iterrows()]
-    emb = top[au].to_numpy(dtype=float)
+    emb = top[disp].to_numpy(dtype=float)
     prev = top["prevalence"].to_numpy(dtype=float) if "prevalence" in top else np.zeros(len(top))
     causal_flags = [_is_causal(r, causal_lower) for _, r in top.iterrows()]
 
     key = _key_col(top)
-    pres_au = _joined_auroc(top, presence, "presence_lr_auroc_", key)
-    imp_au = _joined_auroc(top, imputed, "lr_auroc_", key)
+    pres_au = _joined_auroc(top, presence, "presence_lr_auroc_", key)  # presence has no holdout column
+    imp_au = _joined_auroc(top, imputed, "eval_auroc_", key)
 
     norm = Normalize(vmin=0.0, vmax=1.0)
     cmap = matplotlib.colormaps["Reds"]
@@ -188,7 +191,7 @@ def plot_top10(rank: pd.DataFrame, presence: pd.DataFrame | None, *, imputed: pd
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
     ax.set_ylim(0.4, 1.02)
-    ax.set_ylabel("out-of-fold AUROC")
+    ax.set_ylabel("deployment-holdout AUROC (ordered by train-OOF)")
     ax.set_title(f"{species.upper()} {display_name(drug)} — top {len(top)} {method}")
     ax.spines[["top", "right"]].set_visible(False)
     ax.grid(axis="y", alpha=0.3)
@@ -224,7 +227,7 @@ def plot_density(rank: pd.DataFrame, *, drug: str, method: str, species: str, ou
     undefined. The KDE spans **all** regions (the low-n artifact spike near 1.0 is part of the distribution),
     but the N-th-best marker is taken over the ``min_n_pos``-floored regions so it reflects real support.
     """
-    au = _auroc_col(rank)
+    au = _auroc_col(rank, "eval_auroc_")  # DISPLAY the deployment holdout distribution
     vals = rank[au].dropna().to_numpy(dtype=float)
     if len(vals) < 5:
         logger.warning("%s %s %s: only %d scores — skipping density", species, drug, method, len(vals))
@@ -255,9 +258,9 @@ def plot_density(rank: pd.DataFrame, *, drug: str, method: str, species: str, ou
         if fill is not None:
             ax.fill_between(xs, dens, color=fill, alpha=0.30)
         ax.plot(xs, dens, color=line, linewidth=1.5, label=f"{label} (n={len(sv):,})")
-    ax.axvline(cut, color="#c0392b", linestyle="--", linewidth=1.4, label=f"{top_n}th-best carrier = {cut:.3f}")
+    ax.axvline(cut, color="#c0392b", linestyle="--", linewidth=1.4, label=f"{top_n}th-best (holdout) = {cut:.3f}")
     ax.axvline(_CHANCE, color="0.6", linestyle=":", linewidth=1.0)
-    ax.set_xlabel("out-of-fold AUROC")
+    ax.set_xlabel("deployment-holdout AUROC")
     ax.set_ylabel("density")
     ax.set_title(f"{species.upper()} {display_name(drug)} — {method} score density")
     ax.spines[["top", "right"]].set_visible(False)
@@ -287,7 +290,7 @@ def run(*, species: str, drug: str, method: str, csv: Path, presence_csv: Path |
                out_path=base / "top10.png", causal_lower=causal_lower, top_n=top_n, min_n_pos=min_n_pos)
     overlays: list[tuple[str, pd.DataFrame, str, str]] = []
     if imputed is not None:
-        overlays.append(("zero-imputed", imputed, "lr_auroc_", _IMPUTED_COLOUR))
+        overlays.append(("zero-imputed", imputed, "eval_auroc_", _IMPUTED_COLOUR))
     if presence is not None:
         overlays.append(("presence one-hot", presence, "presence_lr_auroc_", _PRESENCE_COLOUR))
     plot_density(rank, drug=drug, method=method, species=species, out_path=base / "density.png",

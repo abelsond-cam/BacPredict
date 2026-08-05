@@ -145,34 +145,41 @@ def _catalogue(csv: Path | None) -> tuple[set[str], dict[str, float], float | No
 
 
 def _best_by_key(rankings: list[tuple[pd.DataFrame | None, str, str]],
-                 min_n_pos: int) -> dict[str, tuple[float, str, float, str]]:
-    """``{key → (auroc, source, prevalence, raw_key)}`` — best LR AUROC per region key across the rankings.
+                 min_n_pos: int) -> dict[str, tuple[float, float, str, float, str]]:
+    """``{key → (sel_auroc, disp_auroc, source, prevalence, raw_key)}`` — best region per key across rankings.
 
-    ``rankings`` is ``[(df, key_col, source_label)]``. Rows below ``min_n_pos`` resistant carriers are
-    dropped (the low-n carriage artifacts). An ``upstream:<gene>`` key is *also* indexed by the bare
-    ``<gene>`` so a catalogue gene name can match the promoter region anchored at it; both the prefixed and
-    bare index carry the same ``raw_key`` (the full prefixed key, e.g. ``upstream:fabg1``) + ``source`` so a
-    bar can be hatched and relabelled (promoter/RNA) by what actually won it.
+    ``sel_auroc`` = out-of-fold **train** AUROC (`lr_auroc_`, used for *selection*/ranking — leakage-free);
+    ``disp_auroc`` = deployment **holdout** AUROC (`eval_auroc_`, what the bar *shows*). ``rankings`` is
+    ``[(df, key_col, source_label)]``. Rows below ``min_n_pos`` resistant carriers are dropped. An
+    ``upstream:<gene>`` key is *also* indexed by the bare ``<gene>`` so a catalogue gene name can match the
+    promoter region anchored at it; both indices carry the same ``raw_key`` + ``source``.
     """
-    best: dict[str, tuple[float, str, float, str]] = {}
+    best: dict[str, tuple[float, float, str, float, str]] = {}
     for df, kc, source in rankings:
         if df is None or kc not in df.columns:
             continue
         try:
-            acol = _auroc_col(df)
+            sel_col = _auroc_col(df, "lr_auroc_")   # SELECT on train-OOF
         except ValueError:
             continue
+        try:
+            disp_col = _auroc_col(df, "eval_auroc_")  # DISPLAY the holdout
+        except ValueError:
+            disp_col = sel_col  # no holdout column → show train (keeps the plot working; TB legacy CSVs)
         sub = df[df["n_pos"] >= min_n_pos] if "n_pos" in df.columns else df
         for _, r in sub.iterrows():
-            au = r.get(acol)
-            if pd.isna(au):
+            sel = r.get(sel_col)
+            if pd.isna(sel):
                 continue
-            au, prev = float(au), float(r.get("prevalence", np.nan))
+            sel = float(sel)
+            disp = r.get(disp_col)
+            disp = float(disp) if pd.notna(disp) else float("nan")
+            prev = float(r.get("prevalence", np.nan))
             raw = str(r[kc]).strip().lower()
             keys = {raw} | ({raw.split(":", 1)[1]} if ":" in raw else set())
             for k in keys:
-                if k not in best or au > best[k][0]:
-                    best[k] = (au, source, prev, raw)
+                if k not in best or sel > best[k][0]:
+                    best[k] = (sel, disp, source, prev, raw)
     return best
 
 
@@ -190,61 +197,72 @@ def _top_gene(coding_df: pd.DataFrame | None) -> str | None:
     return str(d.sort_values(acols[0], ascending=False).iloc[0]["gene_name"]).strip().lower()
 
 
-# (name, lr_auroc|nan, catalogue_ref|nan, coverage|nan, prevalence|nan, win_source, win_raw_key)
+# (name, holdout_auroc|nan, catalogue_ref|nan, coverage|nan, prevalence|nan, win_source, win_raw_key)
 _CatBar = tuple[str, float, float, float, float, str, str]
-# (name, lr_auroc, prevalence, win_source, win_raw_key)
+# (name, holdout_auroc, prevalence, win_source, win_raw_key)
 _LrBar = tuple[str, float, float, str, str]
 
-# LR sources that name a non-coding region (promoter / named body / convergent flank-pair) — these bars are
-# hatched and relabelled by :func:`region_label` so a promoter/RNA reads as distinct from a coding gene.
-_NONCODING_SOURCES = frozenset({"upstream", "per_unit", "between"})
+# LR sources that name a non-coding region (promoter / named body / convergent flank-pair / IGR flank-pair)
+# — these bars are hatched and relabelled by :func:`region_label` so a promoter/RNA reads as distinct from a
+# coding gene. ``igr`` is included so the ladder's IGR-routed rung-3 block can be drawn + ★-marked.
+_NONCODING_SOURCES = frozenset({"upstream", "per_unit", "between", "igr"})
 
 
 def _panel_data(rankings: list[tuple[pd.DataFrame | None, str, str]], catalogue_lower: set[str],
                 cat_auroc: dict[str, float], alias_map: dict[str, tuple[frozenset[str], float]], *,
-                top_n_lr: int, min_n_pos: int) -> tuple[list[_CatBar], list[_LrBar]]:
+                top_n_lr: int, min_n_pos: int, force_keys: tuple[str, ...] = ()) -> tuple[list[_CatBar], list[_LrBar]]:
     """One panel's ``(catalogue determinant bars, LR-only bars)`` from its ranking set.
 
-    ``catalogue`` bars carry every determinant at its best LR AUROC via the CARD→Bakta alias map (+
-    synonyms), plus its own catalogue one-hot AUROC, Bakta coverage, the matched region's prevalence, and
-    the winning ranking's ``source``/``raw_key`` (so a determinant whose best signal is a promoter/RNA — e.g.
-    ``inha`` won by ``upstream:fabg1`` — is hatched and relabelled "inhA promoter"). A determinant absent
-    from every ranking is flagged with ``nan`` AUROC. ``LR-only`` bars are the strongest ``top_n_lr`` regions
-    the catalogue does not claim, each with its own source/raw_key. Empty lists when there are no rankings.
+    Regions are **selected/ranked by their out-of-fold train AUROC** (leakage-free) but each bar **shows the
+    deployment holdout AUROC**. ``catalogue`` bars carry every determinant at its best-matched region (via the
+    CARD→Bakta alias map + synonyms), plus its own catalogue one-hot AUROC, Bakta coverage, prevalence, and
+    the winning ranking's ``source``/``raw_key``. A determinant absent from every ranking is flagged with
+    ``nan``. ``LR-only`` bars are the strongest ``top_n_lr`` regions the catalogue does not claim.
+    ``force_keys`` (the ladder-routed rung-2/rung-3 blocks) are always drawn so their ◆/★ markers can land,
+    even when they fall below the top-N. Empty lists when there are no rankings.
     """
     best = _best_by_key(rankings, min_n_pos)
     if not best:
         return [], []
-    all_au = sorted((v[0] for v in best.values()), reverse=True)
-    cutoff = all_au[min(top_n_lr, len(all_au)) - 1] if all_au else _CHANCE
+    all_sel = sorted((v[0] for v in best.values()), reverse=True)   # ranking key = train-OOF
+    cutoff = all_sel[min(top_n_lr, len(all_sel)) - 1] if all_sel else _CHANCE
 
     cat: list[_CatBar] = []
     matched_keys: set[str] = set()
     for d in sorted(catalogue_lower):
         jk = _join_keys(d, alias_map)
-        cands = [(best[s][0], best[s][2], s) for s in jk if s in best]  # (auroc, prevalence, join-key)
+        cands = [(best[s][0], s) for s in jk if s in best]  # (sel_auroc, join-key) — pick best by train-OOF
         ref = float(cat_auroc.get(d, float("nan")))
         cov = alias_map[d][1] if d in alias_map else float("nan")
         if not cands:
             cat.append((d, float("nan"), ref, cov, float("nan"), "", ""))
             continue
-        au, prev, key = max(cands)
-        src, raw = best[key][1], best[key][3]
+        _sel, key = max(cands)
+        disp, src, prev, raw = best[key][1], best[key][2], best[key][3], best[key][4]  # bar shows the holdout
         matched_keys |= {s for s in jk if s in best}
-        cat.append((d, au, ref, cov, prev, src, raw))
+        cat.append((d, disp, ref, cov, prev, src, raw))
     cat.sort(key=lambda t: -(t[1] if not np.isnan(t[1]) else -1.0))  # ranked determinants first, absent last
 
     # LR-only: strongest regions the catalogue does not claim. _best_by_key indexes each prefixed key
     # (upstream:/…) *also* under its bare suffix; collapse to one entry per bare name, drop matched ones.
     matched_bare = {k.split(":", 1)[1] if ":" in k else k for k in matched_keys}
-    canon_best: dict[str, tuple[float, float, str, str]] = {}
-    for k, (au, src, prev, raw) in best.items():
+    canon: dict[str, tuple[float, float, float, str, str]] = {}  # name → (sel, disp, prev, src, raw)
+    for k, (sel, disp, src, prev, raw) in best.items():
         name = k.split(":", 1)[1] if ":" in k else k
-        if name not in canon_best or au > canon_best[name][0]:
-            canon_best[name] = (au, prev, src, raw)
-    lr_only = sorted(((n, au, prev, src, raw) for n, (au, prev, src, raw) in canon_best.items()
-                      if n not in matched_bare), key=lambda t: -t[1])
-    lr_only = [t for t in lr_only if t[1] >= cutoff][:top_n_lr]
+        if name not in canon or sel > canon[name][0]:
+            canon[name] = (sel, disp, prev, src, raw)
+    ranked = sorted(((n, *v) for n, v in canon.items() if n not in matched_bare), key=lambda t: -t[1])  # by sel
+    lr_only: list[_LrBar] = [(n, disp, prev, src, raw)
+                             for (n, sel, disp, prev, src, raw) in ranked if sel >= cutoff][:top_n_lr]
+
+    # Force the ladder-routed blocks (rung-2 gene / rung-3 non-coding) into the drawn set so ◆/★ always land.
+    drawn = {c[0] for c in cat} | {lb[0] for lb in lr_only}
+    for fk in force_keys:
+        bare = fk.split(":", 1)[1] if ":" in fk else fk
+        if bare and bare not in drawn and bare not in matched_bare and bare in canon:
+            sel, disp, prev, src, raw = canon[bare]
+            lr_only.append((bare, disp, prev, src, raw))
+            drawn.add(bare)
     return cat, lr_only
 
 
@@ -337,8 +355,8 @@ def plot_causal_comparison(*, imputed: tuple[list[_CatBar], list[_LrBar]],
     fig, (ax_top, ax_bot) = plt.subplots(2, 1, figsize=(width, 11.4), gridspec_kw={"hspace": 0.62})
     low_cov = _draw_panel(ax_top, cat_i, lr_i, ceiling_auroc, coding_mark=coding_mark, noncoding_mark=noncoding_mark)
     low_cov |= _draw_panel(ax_bot, cat_c, lr_c, ceiling_auroc)
-    ax_top.set_ylabel("best imputed LR AUROC")
-    ax_bot.set_ylabel("best carrier-only LR AUROC")
+    ax_top.set_ylabel("best imputed LR — holdout AUROC")
+    ax_bot.set_ylabel("best carrier-only LR — holdout AUROC")
     ax_top.set_title("LR on all genomes (absence imputed as zero embedding)", fontsize=9.5, loc="left")
     ax_bot.set_title("LR on carrier only (drop-absent)", fontsize=9.5, loc="left")
 
@@ -401,42 +419,65 @@ def _routed_marks(ladder_csv: Path | None, cat: list[_CatBar],
     def _match(block: str | None) -> str | None:
         if not block:
             return None
-        bare = block.split(":", 1)[1] if ":" in block else block
+        # A routed block may be prefixed (``upstream:aac(3)-iie``) while the drawn bar carries the bare key
+        # (``aac(3)-iie``, folded into its AAC(3) determinant) — match on either the full block or its bare form.
+        cands = {block, block.split(":", 1)[1] if ":" in block else block}
         for name, raw in bars:
-            if block in (raw, name) or name == bare:
+            if cands & {raw, name}:
                 return name
         return None
 
     return _match(_block(2)), _match(_block(3))
 
 
+def _routed_blocks(ladder_csv: Path | None) -> tuple[str | None, str | None]:
+    """The ladder table's rung-2 (coding gene) and rung-3 (non-coding) ``block`` strings, lowercased.
+
+    Passed as ``force_keys`` so the causal top panel always draws the regions the concat routed — otherwise a
+    routed region below the top-N would have no bar and its ◆/★ marker would silently go missing.
+    """
+    if not ladder_csv or not Path(ladder_csv).exists():
+        return None, None
+    df = pd.read_csv(ladder_csv)
+    if "rung" not in df.columns or "block" not in df.columns:
+        return None, None
+
+    def _blk(rung: int) -> str | None:
+        r = df[df["rung"] == rung]
+        b = str(r.iloc[0]["block"]).strip().lower() if not r.empty else ""
+        return b or None
+
+    return _blk(2), _blk(3)
+
+
 def run(*, species: str, drug: str, imputed_coding_csv: Path | None, carrier_coding_csv: Path | None,
         upstream_csv: Path | None, unit_csv: Path | None, catalogue_csv: Path | None, out_dir: Path,
-        causal_genes: list[str] | None = None, top_n_lr: int = 10, min_n_pos: int = 20,
-        card_bakta_map_csv: Path | None = None, ladder_table: Path | None = None) -> Path:
+        igr_csv: Path | None = None, causal_genes: list[str] | None = None, top_n_lr: int = 10,
+        min_n_pos: int = 20, card_bakta_map_csv: Path | None = None, ladder_table: Path | None = None) -> Path:
     """Render one drug's two-panel causal comparison → ``<out_dir>/<species>/<display_drug>/causal_comparison.png``.
 
     ``imputed_coding_csv`` (per_gene_lr_ranking_imputed_baclm) drives the **top** panel; ``carrier_coding_csv``
-    (per_gene_lr_ranking_baclm) the **bottom**. The non-coding rankings (``upstream_csv``, ``unit_csv``) are
-    shared by both panels — core non-coding regions are near-universal, so their imputed and carrier AUROC
-    coincide; only the coding ranking differs meaningfully. ``ladder_table`` (the drug's
+    (per_gene_lr_ranking_baclm) the **bottom**. The non-coding rankings (``upstream_csv``, ``unit_csv``,
+    ``igr_csv``) are shared by both panels — the same upstream ∪ per_unit ∪ IGR set the ladder's non-coding
+    rung selects from, so the ★ can land on an IGR-routed block. ``ladder_table`` (the drug's
     ``<drug>_amr_ladder_table.csv``), when given, places the ◆ (coding rung) + ★ (non-coding rung) over the
     two regions the concat actually routes; without it the ◆ falls back to the imputed coding top gene.
     """
     determinants, cat_auroc, ceiling_auroc = _catalogue(catalogue_csv)
     determinants |= {g.strip().lower() for g in (causal_genes or [])}
     alias_map = _load_alias_map(card_bakta_map_csv)  # CARD→Bakta (Kp); {} for TB → name-string matching
-    up, un = _read(upstream_csv), _read(unit_csv)
+    up, un, igr = _read(upstream_csv), _read(unit_csv), _read(igr_csv)
     imp_coding, car_coding = _read(imputed_coding_csv), _read(carrier_coding_csv)
     if imp_coding is None:
         logger.warning("%s %s: imputed coding ranking %s absent — top panel omits the imputed coding bars "
                        "(rebuild once per_gene_lr_ranking_imputed_baclm lands)", species, drug, imputed_coding_csv)
-    imputed = _panel_data([(imp_coding, "gene_name", "coding"), (up, "upstream_gene", "upstream"),
-                           (un, "unit", "per_unit")], determinants, cat_auroc, alias_map,
-                          top_n_lr=top_n_lr, min_n_pos=min_n_pos)
-    carrier = _panel_data([(car_coding, "gene_name", "coding"), (up, "upstream_gene", "upstream"),
-                           (un, "unit", "per_unit")], determinants, cat_auroc, alias_map,
-                          top_n_lr=top_n_lr, min_n_pos=min_n_pos)
+    nc_sources = [(up, "upstream_gene", "upstream"), (un, "unit", "per_unit"), (igr, "igr_pair", "igr")]
+    g_block, nc_block = _routed_blocks(ladder_table)  # force the routed rungs into the top-panel bar set
+    imputed = _panel_data([(imp_coding, "gene_name", "coding"), *nc_sources], determinants, cat_auroc,
+                          alias_map, top_n_lr=top_n_lr, min_n_pos=min_n_pos,
+                          force_keys=tuple(b for b in (g_block, nc_block) if b))
+    carrier = _panel_data([(car_coding, "gene_name", "coding"), *nc_sources], determinants, cat_auroc,
+                          alias_map, top_n_lr=top_n_lr, min_n_pos=min_n_pos)
     if ladder_table is not None and Path(ladder_table).exists():
         coding_mark, noncoding_mark = _routed_marks(ladder_table, imputed[0], imputed[1])
     else:
@@ -461,6 +502,8 @@ def main() -> None:
                    help="per_gene_lr_ranking_baclm/<drug>/per_gene_lr_<drug>.csv (bottom panel).")
     p.add_argument("--upstream-csv", type=Path, default=None, help="per_upstream_lr_<drug>.csv (shared).")
     p.add_argument("--unit-csv", type=Path, default=None, help="per_unit_lr_<drug>.csv (shared).")
+    p.add_argument("--igr-csv", type=Path, default=None, help="per_igr_lr_<drug>.csv (shared; lets the ★ land "
+                   "on an IGR-routed non-coding rung).")
     p.add_argument("--catalogue-csv", type=Path, required=True,
                    help="driver CSV with gene_name + mut_auroc (TB-Profiler or CARD schema)")
     p.add_argument("--out-dir", type=Path, default=None, help="default: the repo visualisations/ tree")
@@ -476,8 +519,8 @@ def main() -> None:
     out_dir = args.out_dir or visualisations_dir(args.species).parent
     run(species=args.species, drug=args.drug, imputed_coding_csv=args.imputed_coding_csv,
         carrier_coding_csv=args.carrier_coding_csv, upstream_csv=args.upstream_csv, unit_csv=args.unit_csv,
-        catalogue_csv=args.catalogue_csv, out_dir=out_dir, top_n_lr=args.top_n_lr, min_n_pos=args.min_n_pos,
-        card_bakta_map_csv=args.card_bakta_map, ladder_table=args.ladder_table)
+        igr_csv=args.igr_csv, catalogue_csv=args.catalogue_csv, out_dir=out_dir, top_n_lr=args.top_n_lr,
+        min_n_pos=args.min_n_pos, card_bakta_map_csv=args.card_bakta_map, ladder_table=args.ladder_table)
 
 
 if __name__ == "__main__":

@@ -198,7 +198,8 @@ def plot_drug_panel(result: dict, png_path: Path) -> None:
     # Order drivers by one-hot AUROC descending; cap to keep the chart legible.
     table = table.sort_values("onehot_auroc", ascending=False).head(20).reset_index(drop=True)
     labels = [f"{r.gene}\n{r.site}" if str(r.site) != str(r.gene) else str(r.gene) for r in table.itertuples()]
-    methods = [("one-hot", "onehot"), ("baclm", "baclm"), ("ESM", "esm"), ("Bacformer", "bacformer")]
+    methods = [("one-hot (presence, all samples)", "onehot"), ("baclm (carriers only)", "baclm"),
+               ("ESM", "esm"), ("Bacformer", "bacformer")]
     colours = [_METHOD_COLOURS[k] for k in ("one_hot", "baclm", "esm", "bacformer")]
 
     x = np.arange(len(table))
@@ -215,10 +216,16 @@ def plot_drug_panel(result: dict, png_path: Path) -> None:
         ax.set_ylim(0, 1.02)
         ax.yaxis.grid(True, ls="--", alpha=0.5)
         ax.set_axisbelow(True)
-    axes[0].set_title(f"{result['drug']} — driver panel (blank = not yet embedded)", fontweight="bold")
+    axes[0].set_title(f"{result['drug']} — catalogue comparison: presence one-hot (all samples) vs "
+                      "within-carrier baclm LR", fontweight="bold", fontsize=11)
     axes[0].legend(ncol=5, fontsize=8, loc="lower right")
     axes[1].set_xticks(x)
     axes[1].set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
+    # The two bars answer DIFFERENT questions and are not a like-for-like comparison — spell it out so the
+    # panel is never read as "the embedding is worse than presence".
+    fig.text(0.5, -0.015, "one-hot = presence over ALL samples   ·   baclm = embedding among CARRIERS only "
+             "(different questions, not like-for-like).   Blank baclm = single-class among carriers "
+             "(carriers ~all resistant → unscoreable).", ha="center", va="top", fontsize=7.5, color="#555")
     fig.tight_layout()
     png_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(png_path, dpi=200, bbox_inches="tight")
