@@ -141,6 +141,9 @@ mkdir -p "$OUT"
 
 MAXT_ARG=""; [[ -n "$MAX_TRAIN" ]] && MAXT_ARG="--max-train-genomes $MAX_TRAIN"
 BACLM_ARG=""; [[ -n "${BACLM_DIR:-}" ]] && BACLM_ARG="--baclm-dir $BACLM_DIR"
+# SEG_BATCH (unset = all-at-once) bounds peak RAM by fitting core segments in slices; identical results,
+# one genome scan per batch. Enable (e.g. SEG_BATCH=800) if a clonal cohort's core upstream set OOMs.
+SEG_ARG=""; [[ -n "${SEG_BATCH:-}" ]] && SEG_ARG="--segment-batch-size $SEG_BATCH"
 "$PY" -m bacpredict.engine.segment_amr_lr.per_segment_lr \
     --segment-type upstream \
     --species "$SPECIES" \
@@ -157,6 +160,7 @@ BACLM_ARG=""; [[ -n "${BACLM_DIR:-}" ]] && BACLM_ARG="--baclm-dir $BACLM_DIR"
     --store-dtype "$STORE_DTYPE" \
     $BACLM_ARG \
     $CONV_ARG \
+    $SEG_ARG \
     --n-jobs "${SLURM_CPUS_PER_TASK:-32}"
 
 echo "=== top of the wide upstream ranking table ($TABLE) ==="

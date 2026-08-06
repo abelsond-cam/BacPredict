@@ -283,6 +283,57 @@ def test_rank_segments_core_returns_mode_and_core_count(monkeypatch: pytest.Monk
     assert prev is prevalence
 
 
+class _EqLocator:
+    """A real (non-monkeypatched) locator over synthetic per-genome records, for the batching-equivalence test."""
+
+    def __init__(self, recs: dict[str, list]) -> None:
+        self.recs = recs
+
+    def records(self, sid: str):
+        r = self.recs.get(sid)
+        return None if r is None else (sid, list(r))
+
+    def discover_ids(self, sid: str):
+        r = self.recs.get(sid)
+        return [] if r is None else [k for k, _ in r]
+
+
+@pytest.mark.parametrize("batch_size", [1, 2, 3])
+def test_rank_segments_batched_matches_single_shot(batch_size: int) -> None:
+    """The core property of the memory fix: batched fitting is byte-for-byte identical to single-shot.
+
+    Runs the *real* two-pass sweep (no monkeypatch) over 5 single-copy core segments — one label-separable —
+    and asserts ``segment_batch_size=k`` yields the same ``fitted`` (keys + AUROC), ``read_ids``, and
+    ``n_core`` as the classic all-at-once path. Per-segment fits are independent, so only peak RAM differs.
+    """
+    ids, label_map = _cohort(30)
+    rng = np.random.default_rng(3)
+    recs: dict[str, list] = {}
+    for s in ids:
+        row = []
+        for j in range(5):
+            v = rng.normal(size=DIM)
+            if j == 0:  # seg0 is label-separable → tops the ranking
+                v[0] += 4.0 if label_map[s] == 1 else -4.0
+            row.append((f"seg{j}", v))
+        recs[s] = row
+    loc = _EqLocator(recs)
+    kw = {"id_column": "seg", "eval_ids": set(), "min_prevalence": 0.0, "max_prevalence": 1.0,
+          "feature": "embedding", "impute_absent_zero": True, "n_folds": 3, "seed": 1, "n_jobs": 1}
+
+    full_fitted, _fp, full_read, full_ncore, full_mode = psl.rank_segments(loc, ids, label_map, **kw)
+    bat_fitted, _bp, bat_read, bat_ncore, bat_mode = psl.rank_segments(
+        loc, ids, label_map, segment_batch_size=batch_size, **kw
+    )
+
+    assert full_ncore == bat_ncore == 5 and full_mode == bat_mode
+    assert full_read == bat_read == ids
+    assert set(full_fitted) == set(bat_fitted) == {f"seg{j}" for j in range(5)}
+    for k in full_fitted:
+        assert bat_fitted[k]["auroc"] == pytest.approx(full_fitted[k]["auroc"])
+        assert bat_fitted[k]["n_train"] == full_fitted[k]["n_train"]
+
+
 # ---------------------------------------------------------------------------
 # coding (protein) — gene_name + annotation table, no presence, panel side-output
 # ---------------------------------------------------------------------------

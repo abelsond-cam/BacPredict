@@ -12,7 +12,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from bacpredict.engine.embedding.segment_embedding_extractor import collect_segment_matrices
+from bacpredict.engine.embedding.segment_embedding_extractor import (
+    collect_core_subset,
+    collect_segment_matrices,
+    sweep_core_prevalence,
+)
 from bacpredict.engine.embedding.segment_locator import SegmentLocator
 
 DIM = 4
@@ -105,6 +109,41 @@ def test_prevalence_band_excludes_ubiquitous_and_pass2_is_core_only() -> None:
     assert "ubiq" not in m and "mid" in m and m["mid"][1].shape == (3, DIM)  # ubiq (1.0) band-excluded
     p = dict(zip(prev["unit"], prev["prevalence"], strict=True))
     assert p["ubiq"] == pytest.approx(1.0) and p["mid"] == pytest.approx(0.5)  # both still in the table
+
+
+def test_core_subset_partition_reproduces_single_shot() -> None:
+    """Batching primitive: pass-1 core + unioning ``collect_core_subset`` over a partition == the single shot.
+
+    Proves the memory fix is exact — ``sweep_core_prevalence`` recovers the same core set, and materialising
+    that set in slices (``collect_core_subset`` per batch) reproduces the identical matrices + ``read_ids`` as
+    the one-shot :func:`collect_segment_matrices`, so the downstream fits cannot differ.
+    """
+    ids = [f"G{i}" for i in range(8)]
+    rng = np.random.default_rng(0)
+    recs: dict = {}
+    for i, s in enumerate(ids):
+        row = [("segA", rng.normal(size=DIM)), ("segB", rng.normal(size=DIM))]
+        if i % 2 == 0:  # segC present in half → an in-band (non-ubiquitous) core segment
+            row.append(("segC", rng.normal(size=DIM)))
+        recs[s] = row
+    loc = FakeLocator(recs, _disc_from_records(recs))
+
+    full_m, _prev, full_read = collect_segment_matrices(loc, ids, min_prevalence=0.0, max_prevalence=1.0, id_column="seg")
+    core, _prev2 = sweep_core_prevalence(loc, ids, min_prevalence=0.0, max_prevalence=1.0, id_column="seg")
+    assert set(core) == set(full_m)  # pass-1 core == what pass-2 materialised
+
+    core_sorted = sorted(core)
+    merged: dict = {}
+    read2 = None
+    for batch in (core_sorted[:1], core_sorted[1:]):  # arbitrary partition of the core set
+        m, r = collect_core_subset(loc, ids, set(batch))
+        read2 = r if read2 is None else read2
+        merged.update(m)
+    assert read2 == full_read  # impute universe identical across batches
+    assert set(merged) == set(full_m)
+    for k in full_m:
+        assert merged[k][0] == full_m[k][0]
+        np.testing.assert_array_equal(merged[k][1], full_m[k][1])
 
 
 def test_eval_excluded_from_selection_scored_in_pass2_and_in_read_ids() -> None:

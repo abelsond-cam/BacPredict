@@ -90,11 +90,36 @@ def collect_segment_matrices(
     read_ids
         The impute universe — the fit ∪ eval genomes read in pass 2.
     """
+    core, prevalence = sweep_core_prevalence(
+        locator, sweep_ids, eval_ids=eval_ids, min_prevalence=min_prevalence,
+        max_prevalence=max_prevalence, id_column=id_column,
+    )
+    matrices, read_ids = collect_core_subset(locator, sweep_ids, core, store_dtype=store_dtype)
+    logger.info("segment sweep: materialised %d core matrices over %d read genomes (fit ∪ eval)",
+                len(matrices), len(read_ids))
+    return matrices, prevalence, read_ids
+
+
+def sweep_core_prevalence(
+    locator: SegmentLocator,
+    sweep_ids: list[str],
+    *,
+    eval_ids: set[str] | None = None,
+    min_prevalence: float = 0.0,
+    max_prevalence: float = 1.0,
+    id_column: str = "segment",
+) -> tuple[set[str], pd.DataFrame]:
+    """Pass 1 of the sweep: single-copy prevalence over the fit genomes → ``(core, prevalence)``.
+
+    The cheap, vector-free half of :func:`collect_segment_matrices`: reads only ``discover_ids`` per fit
+    genome (never the embedding vectors), so it can run standalone to size a batched pass 2. ``core`` is the
+    set of single-copy segments whose fit prevalence falls in ``(min_prevalence, max_prevalence]``; the
+    ``[id_column, n_single_copy, prevalence]`` table covers every single-copy segment seen.
+    """
     eval_ids = eval_ids or set()
     sweep_ids = [str(s) for s in sweep_ids]
     fit_ids = [s for s in sweep_ids if s not in eval_ids]
 
-    # Pass 1 (fit genomes only) — single-copy prevalence → the core (in-band) set; vectors discarded.
     single_copy: Counter[str] = Counter()
     n_fit_read = 0
     n_skipped = 0
@@ -117,8 +142,26 @@ def collect_segment_matrices(
     core = {k for k, c in single_copy.items() if min_prevalence < (c / denom) <= max_prevalence}
     logger.info("segment sweep: %d core segments in band (%.3f, %.3f] of %d single-copy over %d fit genomes",
                 len(core), min_prevalence, max_prevalence, len(single_copy), n_fit_read)
+    return core, prevalence
 
-    # Pass 2 (fit + eval) — single-copy vectors for core segments only; read_ids = the impute universe.
+
+def collect_core_subset(
+    locator: SegmentLocator,
+    sweep_ids: list[str],
+    core_subset: set[str],
+    *,
+    store_dtype: str = "float32",
+) -> tuple[dict[str, tuple[list[str], np.ndarray]], list[str]]:
+    """Pass 2 of the sweep, restricted to ``core_subset``: → ``({seg: (carrier_ids, X[m, dim])}, read_ids)``.
+
+    Materialises the single-copy design matrices for **only** the segments in ``core_subset`` (a slice of the
+    full ``core`` set from :func:`sweep_core_prevalence`). A caller processes the core set in memory-bounded
+    batches — one full genome scan per batch, holding only that batch's matrices at once — which bounds peak
+    RAM for clonal cohorts where thousands of core segments are each near-ubiquitous (dense ``m ≈ n_read``).
+    ``read_ids`` (the impute universe: every readable swept genome, in sweep order) is identical across
+    batches, so a caller captures it once.
+    """
+    sweep_ids = [str(s) for s in sweep_ids]
     ids_by_key: dict[str, list[str]] = {}
     vecs_by_key: dict[str, list[np.ndarray]] = {}
     read_ids: list[str] = []
@@ -130,10 +173,8 @@ def collect_segment_matrices(
         read_ids.append(sid)
         counts = Counter(k for k, _ in records)
         for key, vec in records:
-            if counts[key] == 1 and key in core:  # single-copy AND core (unit already pools copies → 1)
+            if counts[key] == 1 and key in core_subset:  # single-copy AND in this batch's slice of core
                 ids_by_key.setdefault(key, []).append(sid)
                 vecs_by_key.setdefault(key, []).append(np.asarray(vec).astype(store_dtype, copy=False))
     matrices = {k: (ids_by_key[k], np.vstack(vecs_by_key[k])) for k in ids_by_key}
-    logger.info("segment sweep: materialised %d core matrices over %d read genomes (fit ∪ eval)",
-                len(matrices), len(read_ids))
-    return matrices, prevalence, read_ids
+    return matrices, read_ids

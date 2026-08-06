@@ -131,6 +131,11 @@ fi
 mkdir -p "$OUT"
 
 MAXT_ARG=""; [[ -n "$MAX_TRAIN" ]] && MAXT_ARG="--max-train-genomes $MAX_TRAIN"
+# SEG_BATCH bounds peak RAM by materialising + fitting core genes in slices of this many (identical results,
+# one genome scan per batch). Default 800: clonal cohorts (e.g. TB) have ~2k near-ubiquitous core genes whose
+# dense matrices otherwise OOM 128G; 800 caps a batch at ~n_read×960×4 B × 800. Set SEG_BATCH= (empty) for all-at-once.
+SEG_BATCH="${SEG_BATCH-800}"
+SEG_ARG=""; [[ -n "$SEG_BATCH" ]] && SEG_ARG="--segment-batch-size $SEG_BATCH"
 "$PY" -m bacpredict.engine.segment_amr_lr.per_segment_lr \
     --segment-type coding \
     --split-table "$SPLITS/${DRUG}_split.csv" \
@@ -147,6 +152,7 @@ MAXT_ARG=""; [[ -n "$MAX_TRAIN" ]] && MAXT_ARG="--max-train-genomes $MAX_TRAIN"
     --sample-seed 1 \
     --store-dtype "$STORE_DTYPE" \
     $IMPUTE_ARG \
+    $SEG_ARG \
     --n-jobs "${SLURM_CPUS_PER_TASK:-32}"
 
 echo "=== top of the wide ranking table (per_gene_lr_${DRUG}.csv) ==="

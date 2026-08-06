@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -47,7 +48,11 @@ import numpy as np
 import pandas as pd
 
 from bacpredict.engine.config import store_paths
-from bacpredict.engine.embedding.segment_embedding_extractor import collect_segment_matrices
+from bacpredict.engine.embedding.segment_embedding_extractor import (
+    collect_core_subset,
+    collect_segment_matrices,
+    sweep_core_prevalence,
+)
 from bacpredict.engine.embedding.segment_locator import (
     IgrLocator,
     ProteinLocator,
@@ -165,6 +170,7 @@ def rank_segments(
     seed: int = 1,
     n_jobs: int = 1,
     store_dtype: str = "float32",
+    segment_batch_size: int | None = None,
 ) -> tuple[dict[str, dict], pd.DataFrame, list[str], int, str]:
     """Sweep → (presence transform) → per-segment LR fit — the type-agnostic core of every screen.
 
@@ -189,6 +195,11 @@ def rank_segments(
         Fit over the full read universe (a 0-vector for absent genomes) rather than carriers only.
     n_folds, seed, n_jobs, store_dtype
         Cross-fit folds, fold-assignment seed, per-segment fit worker processes, and design-matrix precision.
+    segment_batch_size
+        If set, materialise + fit the core segments in memory-bounded batches of this many (one genome scan
+        per batch, only that batch's matrices held at once) instead of all at once. Per-segment fits are
+        independent, so the ``fitted`` result is **identical** to the single-shot path — only peak RAM changes.
+        ``None`` (default) keeps the classic single-shot behaviour.
 
     Returns
     -------
@@ -203,25 +214,60 @@ def rank_segments(
     impute_mode
         The resolved absence-mode tag (``carrier_only`` / ``imputed_zero`` / ``presence``) for the table.
     """
-    matrices, prevalence, read_ids = collect_segment_matrices(
-        locator, sweep_ids, eval_ids=eval_ids, min_prevalence=min_prevalence,
-        max_prevalence=max_prevalence, store_dtype=store_dtype, id_column=id_column,
-    )
-    n_core = len(matrices)
     presence = feature == "presence"
     impute_mode = "presence" if presence else ("imputed_zero" if impute_absent_zero else "carrier_only")
-    if presence:
-        # Replace each segment's embedding block with a ones-column; zero-imputing over the read universe
-        # then makes the full design a 1/0 presence indicator (carrier=1, absent=0) — the pure one-hot LR.
-        matrices = {k: (ids, np.ones((len(ids), 1), dtype=np.float32)) for k, (ids, _v) in matrices.items()}
-        impute_absent_zero = True
-    if not matrices:
-        logger.warning("rank_segments[%s]: 0 core segments in band — nothing to fit", id_column)
-        return {}, prevalence, read_ids, n_core, impute_mode
-    fitted = fit_per_segment(
-        matrices, label_map, n_folds=n_folds, seed=seed, n_jobs=n_jobs,
-        all_ids=read_ids, impute_absent_zero=impute_absent_zero, eval_ids=eval_ids,
+
+    def _fit_batch(matrices: dict[str, tuple[list[str], np.ndarray]], read_ids: list[str]) -> dict[str, dict]:
+        """Presence-transform (if any) then fit one materialised batch of segment matrices."""
+        m, impute = matrices, impute_absent_zero
+        if presence:
+            # Replace each segment's embedding block with a ones-column; zero-imputing over the read universe
+            # then makes the full design a 1/0 presence indicator (carrier=1, absent=0) — the pure one-hot LR.
+            m = {k: (ids, np.ones((len(ids), 1), dtype=np.float32)) for k, (ids, _v) in m.items()}
+            impute = True
+        if not m:
+            return {}
+        return fit_per_segment(
+            m, label_map, n_folds=n_folds, seed=seed, n_jobs=n_jobs,
+            all_ids=read_ids, impute_absent_zero=impute, eval_ids=eval_ids,
+        )
+
+    if segment_batch_size is None:
+        # Single-shot: the whole core set is materialised at once (the classic path).
+        matrices, prevalence, read_ids = collect_segment_matrices(
+            locator, sweep_ids, eval_ids=eval_ids, min_prevalence=min_prevalence,
+            max_prevalence=max_prevalence, store_dtype=store_dtype, id_column=id_column,
+        )
+        n_core = len(matrices)
+        if not matrices:
+            logger.warning("rank_segments[%s]: 0 core segments in band — nothing to fit", id_column)
+            return {}, prevalence, read_ids, n_core, impute_mode
+        return _fit_batch(matrices, read_ids), prevalence, read_ids, n_core, impute_mode
+
+    # Batched: pass 1 once (core + prevalence), then materialise + fit the core set in memory-bounded slices
+    # of `segment_batch_size` segments — one genome scan per batch, only that batch's matrices held at once.
+    core, prevalence = sweep_core_prevalence(
+        locator, sweep_ids, eval_ids=eval_ids, min_prevalence=min_prevalence,
+        max_prevalence=max_prevalence, id_column=id_column,
     )
+    n_core = len(core)
+    core_sorted = sorted(core)
+    if not core_sorted:
+        _m, read_ids = collect_core_subset(locator, sweep_ids, set(), store_dtype=store_dtype)
+        logger.warning("rank_segments[%s]: 0 core segments in band — nothing to fit", id_column)
+        return {}, prevalence, read_ids, 0, impute_mode
+    n_batches = math.ceil(len(core_sorted) / segment_batch_size)
+    fitted: dict[str, dict] = {}
+    read_ids: list[str] = []
+    for bi in range(n_batches):
+        subset = set(core_sorted[bi * segment_batch_size : (bi + 1) * segment_batch_size])
+        matrices, batch_read_ids = collect_core_subset(locator, sweep_ids, subset, store_dtype=store_dtype)
+        if not read_ids:  # identical across batches; capture once as the impute universe
+            read_ids = batch_read_ids
+        fitted.update(_fit_batch(matrices, read_ids))
+        logger.info("segment batch %d/%d [%s]: fit %d segments (%d/%d core cumulative)",
+                    bi + 1, n_batches, id_column, len(matrices), len(fitted), n_core)
+        del matrices
     return fitted, prevalence, read_ids, n_core, impute_mode
 
 
@@ -369,6 +415,7 @@ def run(
     feature: str = "embedding",
     include_convergent: bool = False,
     unit_types: set[str] | None = None,
+    segment_batch_size: int | None = None,
 ) -> dict:
     """Rank every segment of ``segment_type`` for one drug; write the ranking + prevalence tables + summary.
 
@@ -466,6 +513,7 @@ def run(
         locator, sweep_ids, label_map, id_column=spec.id_column, eval_ids=eval_ids,
         min_prevalence=min_prevalence, max_prevalence=max_prevalence, feature=feature,
         impute_absent_zero=impute_absent_zero, n_folds=n_folds, seed=seed, n_jobs=n_jobs, store_dtype=store_dtype,
+        segment_batch_size=segment_batch_size,
     )
     filtered = {k for k, f in fitted.items() if f["auroc"] > auroc_filter}
     logger.info("filter (AUROC > %.2f): %d of %d fitted %s kept", auroc_filter, len(filtered), len(fitted), segment_type)
@@ -578,6 +626,10 @@ def main() -> None:
     p.add_argument("--boundary-tol", type=int, default=3)
     p.add_argument("--baclm-suffix", default="_baclm_embeddings.pt")
     p.add_argument("--store-dtype", default="float32")
+    p.add_argument("--segment-batch-size", type=int, default=None,
+                   help="Materialise + fit core segments in memory-bounded batches of this many (default: all "
+                        "at once). Bounds peak RAM for clonal cohorts (thousands of dense near-ubiquitous core "
+                        "matrices) at the cost of one genome scan per batch; results are identical.")
     args = p.parse_args()
 
     sp = store_paths(args.species) if args.species else None
@@ -601,6 +653,7 @@ def main() -> None:
         store_dtype=args.store_dtype, impute_absent_zero=args.impute_absent_zero, feature=args.feature,
         include_convergent=args.include_convergent,
         unit_types=set(args.unit_types) if args.unit_types else None,
+        segment_batch_size=args.segment_batch_size,
     )
 
 
