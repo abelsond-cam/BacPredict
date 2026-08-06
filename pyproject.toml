@@ -104,6 +104,7 @@ allow-direct-references = true
 packages = [
   "src/bacpredict",
   "src/amr_over_time",
+  "src/genome_prep",
   "src/kleb_iso_source",
   "src/bac_pyseer",
   "src/gene_array_lasso",
