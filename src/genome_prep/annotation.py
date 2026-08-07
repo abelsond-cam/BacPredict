@@ -196,48 +196,65 @@ class CodingIndex:
     non-CDS feature → ``("IGR", <type>)``; else (a gap between annotated features) →
     ``("IGR", "unclassified")`` — the promoter-candidate bucket. All coordinates 1-based inclusive.
 
-    CDS overlap is an O(log n) query (bisect on sorted starts + a prefix-max of ends); the named-feature
-    scan is O(#named) which is tiny per genome. Build once per genome, then classify many spans.
+    CDS is stored as **merged, non-overlapping** intervals (0-based half-open internally), so both the
+    boolean overlap test and the exact **base-pair overlap** (:meth:`cds_overlap_bp` — how much of a
+    span is coding, the input to the IGR-coverage analysis) are O(log n) bisect lookups. The
+    named-feature scan is O(#named), tiny per genome. Build once per genome, classify many spans.
     """
 
-    def __init__(self, per_contig: dict[str, tuple[list[int], list[int], list[tuple[int, int, str]]]]):
+    def __init__(self, per_contig: dict[str, tuple[list[tuple[int, int]], list[int], list[tuple[int, int, str]]]]):
         self._c = per_contig
 
     @classmethod
     def from_gff(cls, gff_path: str | Path) -> CodingIndex:
         """Build the index from a GFF3 (via :func:`parse_gff_features`)."""
-        per_contig: dict[str, tuple[list[int], list[int], list[tuple[int, int, str]]]] = {}
+        per_contig: dict[str, tuple[list[tuple[int, int]], list[int], list[tuple[int, int, str]]]] = {}
         for seqid, flist in parse_gff_features(gff_path).items():
-            cds = sorted((f.start, f.end) for f in flist if f.is_cds)
-            named = sorted((f.start, f.end, f.igr_type) for f in flist if not f.is_cds)
-            cds_starts = [s for s, _e in cds]
-            pref_max_end: list[int] = []
-            running = 0
-            for _s, e in cds:
-                running = max(running, e)
-                pref_max_end.append(running)
-            per_contig[seqid] = (cds_starts, pref_max_end, named)
+            # 0-based half-open, merged so overlapping CDS (e.g. opposite strands) are not double-counted.
+            cds = merge_intervals([(f.start - 1, f.end) for f in flist if f.is_cds])
+            named = sorted((f.start - 1, f.end, f.igr_type) for f in flist if not f.is_cds)
+            per_contig[seqid] = (cds, [s for s, _e in cds], named)
         return cls(per_contig)
 
     def classify_span(self, contig: str, start: int, end: int) -> tuple[str, str | None]:
-        """Classify a 1-based inclusive span into ``(coding_class, igr_type)`` (see class docstring)."""
+        """Classify a 1-based inclusive span into ``(coding_class, igr_type)`` (CDS wins; see class docstring)."""
         entry = self._c.get(contig)
         if entry is None:  # contig has no CDS and no named features → wholly unclassified IGR
             return (IGR_CLASS, UNCLASSIFIED_IGR)
-        cds_starts, pref_max_end, named = entry
-        # CDS overlap iff some CDS with start <= end has (prefix-)max end >= start.
-        k = bisect.bisect_right(cds_starts, end)
-        if k > 0 and pref_max_end[k - 1] >= start:
+        cds, cds_starts, named = entry
+        s0, e0 = start - 1, end  # 0-based half-open
+        k = bisect.bisect_right(cds_starts, e0 - 1)  # merged+sorted → only the last start < e0 can overlap
+        if k > 0 and cds[k - 1][1] > s0:
             return (CDS_CLASS, None)
-        for fs, fe, ft in named:  # named sorted by start; scan while start <= end
-            if fs > end:
+        for fs, fe, ft in named:  # named sorted by start; scan while start < e0
+            if fs >= e0:
                 break
-            if fe >= start:
+            if fe > s0:
                 return (IGR_CLASS, ft)
         return (IGR_CLASS, UNCLASSIFIED_IGR)
 
+    def cds_overlap_bp(self, contig: str, start: int, end: int) -> int:
+        """Base pairs of the 1-based inclusive span ``[start, end]`` that lie within a CDS.
 
-def _contig_lengths(gff_path: str | Path, fna_path: str | Path | None) -> dict[str, int]:
+        ``igr_bp = (end - start + 1) - cds_overlap_bp`` is the intergenic coverage the IGR analysis
+        weighs. Sums intersections with the merged CDS intervals (no double counting), including a
+        span that straddles several genes.
+        """
+        entry = self._c.get(contig)
+        if entry is None:
+            return 0
+        cds, cds_starts, _named = entry
+        s0, e0 = start - 1, end
+        total = 0
+        j = bisect.bisect_right(cds_starts, e0 - 1) - 1  # last interval starting before e0
+        while j >= 0 and cds[j][1] > s0:  # merged+sorted → walk back while ends still reach the span
+            is_, ie = cds[j]
+            total += min(e0, ie) - max(s0, is_)
+            j -= 1
+        return total
+
+
+def contig_lengths(gff_path: str | Path, fna_path: str | Path | None = None) -> dict[str, int]:
     """Contig lengths from the FASTA if given, else from GFF ``##sequence-region`` pragmas."""
     if fna_path is not None:
         return {seqid: len(seq) for seqid, seq in load_fna(fna_path).items()}
@@ -272,7 +289,7 @@ def coding_fraction(gff_path: str | Path, fna_path: str | Path | None = None) ->
     ``named_igr_bp`` — ``named_igr_bp``/``unclassified_igr_bp`` (from the union) are the exact split.
     """
     feats = parse_gff_features(gff_path)
-    lengths = _contig_lengths(gff_path, fna_path)
+    lengths = contig_lengths(gff_path, fna_path)
     total_bp = sum(lengths.values())
     cds_bp = 0
     named_igr_bp = 0

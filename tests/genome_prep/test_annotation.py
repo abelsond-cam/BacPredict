@@ -104,6 +104,23 @@ def test_classify_span_boundary_of_named_feature(tmp_path):
     assert idx.classify_span("c1", 351, 360) == ("IGR", "unclassified")  # just past it
 
 
+def test_cds_overlap_bp(tmp_path):
+    idx = CodingIndex.from_gff(_write(tmp_path)[0])
+    assert idx.cds_overlap_bp("c1", 150, 160) == 11    # 150-160 fully inside CDS 100-200
+    assert idx.cds_overlap_bp("c1", 195, 205) == 6     # 195-200 in CDS (6 bp), 201-205 in IGR
+    assert idx.cds_overlap_bp("c1", 210, 240) == 0     # intergenic gap
+    assert idx.cds_overlap_bp("c1", 300, 320) == 0     # inside rRNA, not CDS
+    assert idx.cds_overlap_bp("c1", 100, 200) == 101   # whole CDS
+    assert idx.cds_overlap_bp("cX", 10, 20) == 0       # unknown contig
+
+
+def test_cds_overlap_bp_spanning_two_cds(tmp_path):
+    # Two touching CDS 100-200 and 201-300 → a span across the join is fully coding (no gap).
+    lines = ["c1\tX\tCDS\t100\t200\t.\t+\t0\tID=a", "c1\tX\tCDS\t201\t300\t.\t+\t0\tID=b"]
+    idx = CodingIndex.from_gff(_write(tmp_path, lines)[0])
+    assert idx.cds_overlap_bp("c1", 150, 250) == 101   # 150..250 all coding across the 200/201 join
+
+
 # --------------------------------------------------------------------------- #
 # coding_fraction                                                               #
 # --------------------------------------------------------------------------- #

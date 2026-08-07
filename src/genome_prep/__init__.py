@@ -14,6 +14,7 @@ from genome_prep.annotation import (
     CodingIndex,
     Feature,
     coding_fraction,
+    contig_lengths,
     extract_intergenic,
     parse_gff_features,
 )
@@ -43,6 +44,7 @@ __all__ = [
     "UNCLASSIFIED_IGR",
     "coding_fraction",
     "complement",
+    "contig_lengths",
     "extract_intergenic",
     "is_gbff_path",
     "is_gff_path",

@@ -1,10 +1,10 @@
-"""Tests for the unitig CDS-vs-IGR classifier job: pair-level reduction + the combine pivot."""
+"""Tests for the unitig IGR-coverage job: per-placement igr_frac + the overall rollup."""
 
 from __future__ import annotations
 
 import pandas as pd
 
-from bac_pyseer.kleb_iso_source.annotate_unitig_coding import _overall_with_igr_total, _per_unitig, classify_pair
+from bac_pyseer.kleb_iso_source.annotate_unitig_coding import _rollup, pair_igr_frac
 from genome_prep import CodingIndex
 
 # c1: CDS 100-200, rRNA 250-350, CDS 400-500 (1-based inclusive)
@@ -22,58 +22,46 @@ def _cidx(tmp_path):
 
 
 def _endoff(one_based_end: int) -> int:
-    """0-based end offset for a placement ending at ``one_based_end`` (1-based)."""
     return one_based_end - 1
 
 
-def test_classify_pair_single_occurrence(tmp_path):
+def test_pair_igr_frac_single_and_partial(tmp_path):
     idx = _cidx(tmp_path)
-    # span 150-160 (len 11) fully inside CDS 100-200
-    assert classify_pair([("c1", _endoff(160))], 11, idx) == "CDS"
-    # span 310-320 inside rRNA 250-350
-    assert classify_pair([("c1", _endoff(320))], 11, idx) == "IGR_rrna"
-    # span 220-230 in the unannotated gap
-    assert classify_pair([("c1", _endoff(230))], 11, idx) == "IGR_unclassified"
+    assert pair_igr_frac([("c1", _endoff(160))], 11, idx) == 0.0            # 150-160 fully CDS
+    assert pair_igr_frac([("c1", _endoff(220))], 11, idx) == 1.0            # 210-220 fully IGR (gap)
+    # 195-205: 6 bp CDS (195-200), 5 bp IGR -> 5/11
+    assert round(pair_igr_frac([("c1", _endoff(205))], 11, idx), 4) == round(5 / 11, 4)
 
 
-def test_classify_pair_tie_favours_cds(tmp_path):
+def test_pair_igr_frac_multi_occurrence_mean(tmp_path):
     idx = _cidx(tmp_path)
-    occ = [("c1", _endoff(160)), ("c1", _endoff(230))]  # one CDS, one IGR -> tie -> CDS
-    assert classify_pair(occ, 11, idx) == "CDS"
+    occ = [("c1", _endoff(160)), ("c1", _endoff(220))]  # fully CDS + fully IGR -> mean 0.5
+    assert pair_igr_frac(occ, 11, idx) == 0.5
 
 
-def test_classify_pair_igr_majority(tmp_path):
-    idx = _cidx(tmp_path)
-    occ = [("c1", _endoff(230)), ("c1", _endoff(240)), ("c1", _endoff(160))]  # 2 IGR (unclassified), 1 CDS
-    assert classify_pair(occ, 11, idx) == "IGR_unclassified"
+def _per_row(idx, direction, af, np_, mean, p, n):
+    keys = ["entirely_cds", "touch", "significant", "predominant", "entirely_igr"]
+    row = {"unitig_idx": idx, "direction": direction, "af": af, "n_pairs": np_, "mean_igr_frac": mean}
+    row.update({f"p_{k}": p[i] for i, k in enumerate(keys)})
+    row.update({f"n_{k}": n[i] for i, k in enumerate(keys)})
+    return row
 
 
-def test_classify_pair_no_bakta_and_no_hit(tmp_path):
-    idx = _cidx(tmp_path)
-    assert classify_pair([("c1", _endoff(160))], 11, None) == "unknown_no_bakta"
-    assert classify_pair([], 11, idx) == "no_asm_hit"
-
-
-def test_per_unitig_pivot_and_fracs():
-    cls = pd.DataFrame(
-        {
-            "unitig_idx": [0, 0, 1, 1],
-            "rclass": ["CDS", "IGR_unclassified", "IGR_trna", "IGR_unclassified"],
-            "n": [8, 2, 3, 1],
-        }
-    )
-    id_map = pd.DataFrame(
-        {"unitig_idx": [0, 1], "variant": ["A", "C"], "pattern_group": [10, 11],
-         "direction": ["blood", "faeces"], "af": [0.9, 0.03]}
-    )
-    per, classes = _per_unitig(cls, id_map)
-    assert classes == ["CDS", "IGR_trna", "IGR_unclassified"]
-    u0 = per[per["unitig_idx"] == 0].iloc[0]
-    assert u0["n_carriers"] == 10 and u0["frac_CDS"] == 0.8 and u0["frac_IGR"] == 0.2
-    assert u0["dominant_igr_type"] == "unclassified"
-    u1 = per[per["unitig_idx"] == 1].iloc[0]
-    assert u1["frac_CDS"] == 0.0 and u1["frac_IGR"] == 1.0
-    assert u1["frac_IGR_unclassified"] == 0.25 and u1["dominant_igr_type"] == "trna"
-    # overall rollup runs and carries a summed frac_IGR
-    ov = _overall_with_igr_total(per, classes)
-    assert "frac_IGR" in ov.columns and (ov["stratum"] == "ALL").any()
+def test_rollup_unitig_and_placement_fractions():
+    per = pd.DataFrame([
+        _per_row(0, "blood", 0.9, 100, 0.05, [0.9, 0.1, 0.05, 0.02, 0.0], [90, 10, 5, 2, 0]),
+        _per_row(1, "faeces", 0.03, 100, 0.60, [0.1, 0.9, 0.8, 0.7, 0.5], [10, 90, 80, 70, 50]),
+    ])
+    ov = _rollup(per)
+    allrow = ov[ov["stratum"] == "ALL"].iloc[0]
+    assert allrow["n_unitigs"] == 2 and allrow["n_pairs"] == 200
+    # unitig-level: one of two unitigs has majority-carrier entirely_cds; one predominant_igr
+    assert allrow["unitig_frac_entirely_cds"] == 0.5
+    assert allrow["unitig_frac_predominant_igr"] == 0.5
+    # placement-weighted
+    assert allrow["placement_frac_entirely_cds"] == 0.5            # (90+10)/200
+    assert allrow["placement_frac_predominant_igr"] == 0.36        # (2+70)/200
+    # direction split present
+    assert set(ov["stratum"]) >= {"ALL", "direction=blood", "direction=faeces"}
+    blood = ov[ov["stratum"] == "direction=blood"].iloc[0]
+    assert blood["placement_frac_entirely_cds"] == 0.9            # 90/100
