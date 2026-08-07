@@ -43,7 +43,7 @@ import pandas as pd
 from genome_prep import CodingIndex
 
 try:  # package import when bac_pyseer is on the path (editable install)
-    from bac_pyseer.kleb_iso_source.map_unitig_hits_genomad import (
+    from bac_pyseer.kleb_iso_source.unitig_placement import (
         _load_contigs,
         _load_strata,
         _read_carrier_shard,
@@ -51,10 +51,10 @@ try:  # package import when bac_pyseer is on the path (editable install)
         scan_carrier,
         shard_expected,
     )
-    from bac_pyseer.kleb_iso_source.map_unitig_hits_genomad import _ParquetSink as ParquetSink
+    from bac_pyseer.kleb_iso_source.unitig_placement import _ParquetSink as ParquetSink
 except ImportError:  # invoked as a bare script — add the script dir to sys.path
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from map_unitig_hits_genomad import (  # type: ignore[no-redef]
+    from unitig_placement import (  # type: ignore[no-redef]
         _load_contigs,
         _load_strata,
         _read_carrier_shard,
@@ -62,7 +62,7 @@ except ImportError:  # invoked as a bare script — add the script dir to sys.pa
         scan_carrier,
         shard_expected,
     )
-    from map_unitig_hits_genomad import _ParquetSink as ParquetSink  # type: ignore[no-redef]
+    from unitig_placement import _ParquetSink as ParquetSink  # type: ignore[no-redef]
 
 # igr_frac thresholds for the robust, measure-insensitive reporting.
 _SIGNIFICANT = 0.25   # "covers a significant portion of IGR"
