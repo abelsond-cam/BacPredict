@@ -20,13 +20,34 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from genome_prep import coding_fraction
+from genome_prep import coding_fraction, contig_lengths, merge_intervals, parse_gff_features
 
 
 def _lookup(path: Path) -> dict[str, str]:
     """Read a ``Sample<TAB>path`` TSV into a dict."""
     d = pd.read_csv(path, sep="\t", dtype=str)
     return dict(zip(d["Sample"], d["path"], strict=True))
+
+
+def _plasmid_contigs_by_sample(genomad_root: Path) -> dict[str, set[str]]:
+    """Plasmid contig names (geNomad) per Sample, for the plasmid-vs-chromosome partition."""
+    path = genomad_root / "genomad_plasmid_summary_long.tsv"
+    if not path.is_file():
+        return {}
+    d = pd.read_csv(path, sep="\t", usecols=["Sample", "seq_name"], dtype=str)
+    return {s: set(g["seq_name"]) for s, g in d.groupby("Sample")}
+
+
+def _partition_coding_bp(gff: str, plasmid_contigs: set[str]) -> dict[str, int]:
+    """CDS + total bp split by contig into plasmid vs chromosome (non-plasmid) partitions."""
+    feats = parse_gff_features(gff)
+    out = {"plasmid_total": 0, "plasmid_cds": 0, "chrom_total": 0, "chrom_cds": 0}
+    for contig, clen in contig_lengths(gff).items():
+        part = "plasmid" if contig in plasmid_contigs else "chrom"
+        cds_bp = sum(e - s for s, e in merge_intervals([(f.start - 1, f.end) for f in feats.get(contig, []) if f.is_cds]))
+        out[f"{part}_total"] += clen
+        out[f"{part}_cds"] += cds_bp
+    return out
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -38,16 +59,20 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", type=Path, required=True, help="Output JSON.")
     p.add_argument("--per-genome-tsv", type=Path, help="Optional per-genome fractions TSV.")
+    p.add_argument("--genomad-root", type=Path,
+                   help="Optional geNomad root → also report the plasmid-vs-chromosome CDS/IGR base rate.")
     args = p.parse_args(argv)
 
     gff = _lookup(args.bakta_lookup)
     fna = _lookup(args.assembly_lookup) if args.assembly_lookup else {}
+    plasmid_by_sample = _plasmid_contigs_by_sample(args.genomad_root) if args.genomad_root else {}
     samples = sorted(gff)
     if args.n_sample and args.n_sample < len(samples):
         rng = np.random.default_rng(args.seed)
         samples = sorted(rng.choice(samples, size=args.n_sample, replace=False).tolist())
 
     pooled = {"total_bp": 0, "cds_bp": 0, "igr_bp": 0, "named_igr_bp": 0, "unclassified_igr_bp": 0}
+    part_pooled = {"plasmid_total": 0, "plasmid_cds": 0, "chrom_total": 0, "chrom_cds": 0}
     per_type: dict[str, int] = {}
     rows: list[dict[str, object]] = []
     n_ok = 0
@@ -57,6 +82,9 @@ def main(argv: list[str] | None = None) -> None:
             continue
         try:
             cf = coding_fraction(g, fna.get(s))
+            if args.genomad_root:
+                for k, v in _partition_coding_bp(g, plasmid_by_sample.get(s, set())).items():
+                    part_pooled[k] += v
         except (ValueError, OSError) as exc:  # unreadable/length-less GFF — skip, don't abort the pool
             print(f"skip {s}: {exc}", file=sys.stderr)
             continue
@@ -86,6 +114,17 @@ def main(argv: list[str] | None = None) -> None:
         result["per_genome_frac_igr_median"] = round(float(pg["frac_igr"].median()), 4)
         if args.per_genome_tsv:
             pg.to_csv(args.per_genome_tsv, sep="\t", index=False)
+
+    if args.genomad_root:
+        pl_tot = part_pooled["plasmid_total"] or 1
+        ch_tot = part_pooled["chrom_total"] or 1
+        result["by_mge_partition"] = {
+            "plasmid_frac_cds": round(part_pooled["plasmid_cds"] / pl_tot, 4),
+            "plasmid_frac_igr": round((pl_tot - part_pooled["plasmid_cds"]) / pl_tot, 4),
+            "chromosome_frac_cds": round(part_pooled["chrom_cds"] / ch_tot, 4),
+            "chromosome_frac_igr": round((ch_tot - part_pooled["chrom_cds"]) / ch_tot, 4),
+            "plasmid_bp": part_pooled["plasmid_total"], "chromosome_bp": part_pooled["chrom_total"],
+        }
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(result, indent=2))
