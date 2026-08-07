@@ -175,6 +175,12 @@ def collect_core_subset(
         for key, vec in records:
             if counts[key] == 1 and key in core_subset:  # single-copy AND in this batch's slice of core
                 ids_by_key.setdefault(key, []).append(sid)
-                vecs_by_key.setdefault(key, []).append(np.asarray(vec).astype(store_dtype, copy=False))
+                # `np.array(..., copy=True)`, NOT a `copy=False` view: the locator's vec is a row-VIEW into a
+                # `torch.load(mmap=True)` store, so a view would keep every scanned genome's .pt mmap pinned —
+                # and under a SLURM memory cgroup those mapped pages count as RSS, so peak scales with the
+                # number of genomes read (not the kept-matrix size) and OOMs on large read universes. Copying
+                # materialises the row into RAM and lets each genome's mmap release once its records go out of
+                # scope, so peak = the kept matrices alone.
+                vecs_by_key.setdefault(key, []).append(np.array(vec, dtype=store_dtype))
     matrices = {k: (ids_by_key[k], np.vstack(vecs_by_key[k])) for k in ids_by_key}
     return matrices, read_ids
