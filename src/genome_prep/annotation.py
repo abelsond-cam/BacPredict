@@ -255,7 +255,12 @@ class CodingIndex:
 
 
 def contig_lengths(gff_path: str | Path, fna_path: str | Path | None = None) -> dict[str, int]:
-    """Contig lengths from the FASTA if given, else from GFF ``##sequence-region`` pragmas."""
+    """Contig lengths from the FASTA if given, else from GFF ``##sequence-region`` pragmas.
+
+    Bakta **interleaves** the ``##sequence-region`` directives — each contig's pragma sits just before
+    that contig's feature block, not all in the header — so the whole GFF must be scanned (up to the
+    ``##FASTA`` section) rather than stopping at the first feature line.
+    """
     if fna_path is not None:
         return {seqid: len(seq) for seqid, seq in load_fna(fna_path).items()}
     lengths: dict[str, int] = {}
@@ -267,8 +272,6 @@ def contig_lengths(gff_path: str | Path, fna_path: str | Path | None = None) -> 
                 parts = line.split()
                 if len(parts) >= 4:
                     lengths[parts[1]] = int(parts[3]) - int(parts[2]) + 1
-            elif not line.startswith("#"):
-                break  # pragmas precede feature lines; stop once features start
     if not lengths:
         raise ValueError(
             f"No contig lengths: {gff_path} has no ##sequence-region pragmas — pass fna_path."

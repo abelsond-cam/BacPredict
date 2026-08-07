@@ -6,7 +6,7 @@ must be preserved through the move); the classifier + baseline cases are new.
 
 from __future__ import annotations
 
-from genome_prep import CodingIndex, coding_fraction, extract_intergenic, parse_gff_features
+from genome_prep import CodingIndex, coding_fraction, contig_lengths, extract_intergenic, parse_gff_features
 
 # contig c1, 1000 bp, 1-based inclusive:
 #   CDS   100-200 (+)
@@ -139,3 +139,31 @@ def test_coding_fraction_from_fasta_lengths(tmp_path):
     gff, fna = _write(tmp_path)  # no ##sequence-region
     cf = coding_fraction(gff, fna)
     assert cf["total_bp"] == 1000 and cf["cds_bp"] == 202
+
+
+def _write_interleaved(tmp_path):
+    # Bakta-style: each contig's ##sequence-region precedes its own feature block (interleaved,
+    # NOT all in the header) — the whole file must be scanned to get every contig length.
+    gff = tmp_path / "il.gff3"
+    gff.write_text(
+        "##gff-version 3\n"
+        "##sequence-region c1 1 1000\n"
+        "c1\tBakta\tregion\t1\t1000\t.\t+\t.\tID=c1\n"
+        "c1\tProdigal\tCDS\t100\t200\t.\t+\t0\tID=a\n"
+        "##sequence-region c2 1 500\n"
+        "c2\tBakta\tregion\t1\t500\t.\t+\t.\tID=c2\n"
+        "c2\tProdigal\tCDS\t50\t150\t.\t+\t0\tID=b\n"
+        "##FASTA\n"
+    )
+    return gff
+
+
+def test_contig_lengths_interleaved_pragmas(tmp_path):
+    assert contig_lengths(_write_interleaved(tmp_path)) == {"c1": 1000, "c2": 500}
+
+
+def test_coding_fraction_interleaved_counts_all_contigs(tmp_path):
+    cf = coding_fraction(_write_interleaved(tmp_path))
+    assert cf["total_bp"] == 1500          # both contigs, not just the first
+    assert cf["cds_bp"] == 202             # 101 (c1) + 101 (c2)
+    assert cf["igr_bp"] == 1298
