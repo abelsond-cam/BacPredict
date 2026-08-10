@@ -132,7 +132,10 @@ def load_baclm_gene_block(
         idxs = [i for i, g in enumerate(gene_names) if g == gene]
         if len(idxs) == 1:  # single-copy occurrence in this genome
             ids.append(str(sid))
-            vecs.append(emb[idxs[0]])
+            # np.array copy, NOT a view: emb is a torch.load(mmap=True) tensor, so keeping emb[i] as a view
+            # would pin every genome's .pt mmap (counted as RSS under the SLURM cgroup) until vstack — peak
+            # then scales with the number of genomes read and OOMs on large cohorts. Copy → mmap releases.
+            vecs.append(np.array(emb[idxs[0]], dtype=np.float32))
     return ids, (np.vstack(vecs).astype(np.float32) if vecs else np.zeros((0, 0), np.float32))
 
 
@@ -160,7 +163,7 @@ def load_baclm_igr_block(
         matches = [emb for pair, emb in res[1] if pair == igr_pair]
         if len(matches) == 1:  # single-copy pair in this genome
             ids.append(str(sid))
-            vecs.append(matches[0])
+            vecs.append(np.array(matches[0], dtype=np.float32))  # copy out of the mmap store (see load_baclm_gene_block)
     return ids, (np.vstack(vecs).astype(np.float32) if vecs else np.zeros((0, 0), np.float32))
 
 
@@ -190,7 +193,7 @@ def load_baclm_upstream_block(
         matches = [emb for k, emb in res[1] if k == key]
         if len(matches) == 1:
             ids.append(str(sid))
-            vecs.append(matches[0])
+            vecs.append(np.array(matches[0], dtype=np.float32))  # copy out of the mmap store (see load_baclm_gene_block)
     return ids, (np.vstack(vecs).astype(np.float32) if vecs else np.zeros((0, 0), np.float32))
 
 
@@ -218,5 +221,5 @@ def load_baclm_unit_block(
         matches = [emb for k, emb in res[1] if k == unit_key]
         if len(matches) == 1:  # copies already mean-pooled to one row per (genome, unit)
             ids.append(str(sid))
-            vecs.append(matches[0])
+            vecs.append(np.array(matches[0], dtype=np.float32))  # copy out of the mmap store (see load_baclm_gene_block)
     return ids, (np.vstack(vecs).astype(np.float32) if vecs else np.zeros((0, 0), np.float32))
