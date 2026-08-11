@@ -107,9 +107,25 @@ stack by **+0.055** on the pooled cohort (0.786 vs 0.731).
 - [ ] **Unitig honest re-run** — re-fit the LMM selection on train rows only, then re-score
   (`SELECTION_SCOPE=train_only`); the current number is a leakage-advantaged upper bound
 - [ ] Score a user-supplied strain list for predicted invasiveness
-- [ ] **bac-LM forward pass** → per-gene LR → concat ladder. Gate passed; inputs 99% ready
-  (13,980/14,119 have assembly+GFF). **⚠ Blocked on `flash_attn`, which is absent from the
-  CSD3 venv** — without it baclm is ~100× slower and OOMs at batch 128.
+- [ ] **bac-LM forward pass** → per-gene LR → concat ladder. **Gate passed** (unitig tie).
+  Inputs 99% ready: 13,980/14,119 have both `sr_assembly_file` and `sr_gff_file`.
+  **DEMOTED TO LAST JOB (David, 2026-08-11) — do the current work first.**
+
+  **⚠ flash-attn cannot be installed on CSD3 at all.** Not a torch-version issue: the wheel
+  installs and then fails at import with ``GLIBC_2.32 not found`` — CSD3 runs **glibc 2.28**
+  and every recent flash-attn release is built against 2.32, so no wheel of any torch/CUDA
+  tag will load. BacLM does fall back to `F.scaled_dot_product_attention`, but David's call
+  is that the fallback is too slow to be worth it, so **do not pursue the CSD3 SDPA path**
+  (the benchmarking job was cancelled).
+
+  **Agreed plan — port to Isambard and bring the embeddings back.** Acknowledged as a
+  stop-gap, not a long-term answer:
+  1. Ship the ~13,980 assemblies + GFFs for the iso-source cohort to Isambard.
+  2. Run `baclm_embed` there under the working GH200 flash-attn env
+     (`/projects/u6fp/public/micromamba/envs/bacformer`), writing the **`baclm_reembed`**
+     schema (three non-coding channels + named bodies — `concat_ingredients.py` requires them).
+  3. Bring the `.pt` store back to CSD3, where the split CSVs and FT checkpoints live.
+  Sizing: ~11 s/genome measured ⇒ ~43 GPU-h coding-only; non-coding adds ~65% more sequences.
 - [ ] Downstream (parked): Kp pre-training first; complete-genomes-only subset; matched-pair SR-vs-CG contrast; Captum gene attribution; stepwise AUROC across modelling layers
 
 ## Task 6 — `predictHGT` embedding diagnostic ([src/predict_hgt/](src/predict_hgt/))
