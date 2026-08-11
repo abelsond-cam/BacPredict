@@ -64,7 +64,11 @@ SIM=$CO/similarity.tsv
 CLUST=$GD/sublineage_clusters.tsv
 PHENO=$CO/phenotype.tsv
 GFF=$DATA/david/raw/related_lr/gff/GCF_000016305.1.gff
-SHARD_DIR=/home/dca36/rds/hpc-work/unitig_shards/$PAIR
+# Keyed by PAIR *and* COHORT: the task phase writes chunk_$i.assoc / patterns_$i.txt in here, so two
+# cohorts of the same pair (e.g. the full cohort and its train+validate-only counterpart) sharing one
+# directory would silently overwrite each other's per-shard results. The gzipped chunks themselves are
+# cohort-independent, so the only cost of separating them is one extra split pass. Overridable.
+SHARD_DIR=${SHARD_DIR:-/home/dca36/rds/hpc-work/unitig_shards/$PAIR/$COHORT}
 mkdir -p "$GD" "$SHARD_DIR"
 
 PHASE=${PHASE:?set PHASE=prep|task|combine}
