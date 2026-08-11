@@ -34,6 +34,12 @@ export PYTHONUNBUFFERED=1
 export MPLBACKEND=Agg
 export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 export UV_CACHE_DIR=/home/dca36/rds/hpc-work/.uv_cache
+# Bash writes here-documents into $TMPDIR. The default is a small, shared, node-local /tmp, and a
+# prep run died there with "cannot create temp file for here-document: No space left on device"
+# while the project and scratch tiers both had hundreds of GB free. Redirect it (also the
+# storage-discipline default for this cluster).
+export TMPDIR=${TMPDIR_OVERRIDE:-/home/dca36/rds/hpc-work/tmp}
+mkdir -p "$TMPDIR"
 unset PYTHONPATH PYTHONHOME
 REPO=/home/dca36/workspace/BacPredict
 PIXI_MANIFEST=$REPO/src/bac_pyseer/pixi.toml
@@ -64,12 +70,19 @@ SIM=$CO/similarity.tsv
 CLUST=$GD/sublineage_clusters.tsv
 PHENO=$CO/phenotype.tsv
 GFF=$DATA/david/raw/related_lr/gff/GCF_000016305.1.gff
-# Keyed by PAIR *and* COHORT: the task phase writes chunk_$i.assoc / patterns_$i.txt in here, so two
-# cohorts of the same pair (e.g. the full cohort and its train+validate-only counterpart) sharing one
-# directory would silently overwrite each other's per-shard results. The gzipped chunks themselves are
-# cohort-independent, so the only cost of separating them is one extra split pass. Overridable.
+# Chunks vs results are separated deliberately.
+#
+# CHUNK_DIR holds the gzipped slices of the unitig matrix. Those depend only on the matrix and
+# NSHARDS — not on the cohort — so every cohort of a pair shares one copy. At ~77 GB per full set,
+# on a tier with a few hundred GB free, duplicating them per cohort is not affordable and re-splitting
+# is an hour of IO for nothing.
+#
+# SHARD_DIR holds the per-cohort *results* (chunk_$i.assoc, patterns_$i.txt, work_$i). These MUST be
+# per-cohort: keyed on PAIR alone, a second cohort would overwrite the first's shard results and the
+# combine step would silently emit an .assoc mixing two analyses.
+CHUNK_DIR=${CHUNK_DIR:-/home/dca36/rds/hpc-work/unitig_shards/$PAIR}
 SHARD_DIR=${SHARD_DIR:-/home/dca36/rds/hpc-work/unitig_shards/$PAIR/$COHORT}
-mkdir -p "$GD" "$SHARD_DIR"
+mkdir -p "$GD" "$SHARD_DIR" "$CHUNK_DIR"
 
 PHASE=${PHASE:?set PHASE=prep|task|combine}
 echo "PHASE=$PHASE  PAIR=$PAIR  NSHARDS=$NSHARDS  CPU=$CPU  job=$SLURM_JOB_ID  $(date)"
@@ -101,7 +114,7 @@ PY
         echo "reusing existing cache $CACHE ($(ls -lh "$CACHE" | awk '{print $5}'))"
     else
         [ -s "$SIM" ] || { echo "ERROR: kinship $SIM missing — run the variant LMM first"; exit 1; }
-        PRIME=$SHARD_DIR/_prime.kmers.gz
+        PRIME=$SHARD_DIR/_prime.kmers.gz  # per-cohort: the cache it primes is cohort-specific
         zcat "$M" | head -500 | gzip > "$PRIME"
         echo "priming cache from $SIM (tiny kmer set; cache depends on samples+kinship, not kmers)"
         pyseer_run --kmers "$PRIME" --phenotypes "$PHENO" --phenotype-column "$LABEL_COL" \
@@ -112,17 +125,26 @@ PY
         echo "wrote cache $CACHE ($(ls -lh "$CACHE" | awk '{print $5}'))"
     fi
 
-    echo "=== (3) split matrix -> $NSHARDS gzipped chunks (single pass, round-robin) ==="
-    rm -f "$SHARD_DIR"/chunk_*.gz
-    zcat "$M" | awk -v n="$NSHARDS" -v d="$SHARD_DIR" \
-        '{ f = sprintf("%s/chunk_%02d.gz", d, (NR-1)%n); print | ("gzip > " f) }'
-    echo "chunk line counts:"; for c in "$SHARD_DIR"/chunk_*.gz; do echo "  $(basename "$c"): $(zcat "$c" | wc -l)"; done
+    echo "=== (3) split matrix -> $NSHARDS gzipped chunks in $CHUNK_DIR (shared across cohorts) ==="
+    # `find`, not `ls chunk_*.gz`: a no-match glob makes ls exit non-zero, which under
+    # `set -euo pipefail` would kill the job instead of reporting zero chunks.
+    HAVE=$(find "$CHUNK_DIR" -maxdepth 1 -name 'chunk_*.gz' | wc -l)
+    if [ "$HAVE" -eq "$NSHARDS" ]; then
+        echo "reusing $HAVE existing chunks (cohort-independent; skipping the ~77 GB re-split)"
+    else
+        # `if`, not `[ ] && echo`: a false test makes the && list return non-zero and `set -e` aborts.
+        if [ "$HAVE" -gt 0 ]; then echo "found $HAVE chunks but need $NSHARDS — rebuilding"; fi
+        rm -f "$CHUNK_DIR"/chunk_*.gz
+        zcat "$M" | awk -v n="$NSHARDS" -v d="$CHUNK_DIR" \
+            '{ f = sprintf("%s/chunk_%02d.gz", d, (NR-1)%n); print | ("gzip > " f) }'
+        echo "chunk line counts:"; for c in "$CHUNK_DIR"/chunk_*.gz; do echo "  $(basename "$c"): $(zcat "$c" | wc -l)"; done
+    fi
     echo "=== prep done  $(date) ==="
     ;;
 
 task)
     i=$(printf "%02d" "${SLURM_ARRAY_TASK_ID:?task phase needs --array}")
-    CHUNK=$SHARD_DIR/chunk_$i.gz
+    CHUNK=$CHUNK_DIR/chunk_$i.gz
     [ -s "$CHUNK" ] || { echo "ERROR: missing $CHUNK"; exit 1; }
     [ -s "$CACHE" ] || { echo "ERROR: missing cache $CACHE (run prep first)"; exit 1; }
     WD=$SHARD_DIR/work_$i; mkdir -p "$WD"; cd "$WD"   # own cwd so lineage_effects.txt doesn't collide
@@ -156,8 +178,8 @@ combine)
         --out-fig-dir "$GD" --out-table "$GD/${OUT_STEM}_hits_annotated.tsv" \
         --summary-json "$GD/${OUT_STEM}_gwas_summary.json" \
         --contig NC_009648 --pos-label "$POS_LABEL" --neg-label faeces --pair-title "$PAIR_TITLE"
-    echo "=== cleanup scratch chunks (keep $GD outputs) ==="
-    rm -rf "$SHARD_DIR"/chunk_*.gz "$SHARD_DIR"/work_*
+    echo "=== cleanup this cohort's scratch work dirs (keep $GD outputs AND the shared chunks) ==="
+    rm -rf "$SHARD_DIR"/work_*
     echo "=== combine done  $(date) ==="; ls -lh "$GD"
     ;;
 *) echo "unknown PHASE=$PHASE"; exit 1 ;;
