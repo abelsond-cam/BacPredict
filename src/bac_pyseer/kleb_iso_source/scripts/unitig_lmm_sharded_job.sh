@@ -115,7 +115,13 @@ PY
     else
         [ -s "$SIM" ] || { echo "ERROR: kinship $SIM missing — run the variant LMM first"; exit 1; }
         PRIME=$SHARD_DIR/_prime.kmers.gz  # per-cohort: the cache it primes is cohort-specific
-        zcat "$M" | head -500 | gzip > "$PRIME"
+        # `zcat | head -N` kills zcat with SIGPIPE once head has its lines. That is the intended
+        # behaviour, but `set -o pipefail` turns it into a non-zero status and `set -e` then aborts
+        # the job (exit 13). This line had never run before: every previous invocation found an
+        # existing $CACHE and skipped the whole block, so the bug only surfaced on the first new
+        # cohort. Disable pipefail just here, then assert the output instead of trusting the status.
+        ( set +o pipefail; zcat "$M" | head -500 | gzip > "$PRIME" )
+        [ -s "$PRIME" ] || { echo "ERROR: could not build the priming kmer set at $PRIME"; exit 1; }
         echo "priming cache from $SIM (tiny kmer set; cache depends on samples+kinship, not kmers)"
         pyseer_run --kmers "$PRIME" --phenotypes "$PHENO" --phenotype-column "$LABEL_COL" \
             --lmm --similarity "$SIM" --save-lmm "$CACHE" --no-distances \
