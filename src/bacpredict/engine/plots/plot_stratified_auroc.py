@@ -121,7 +121,10 @@ def plot_stratified_auroc(
     ax.set_xlabel(f"AUROC — {_SCOPE_CAPTIONS.get(_scope_of(df), 'scope unrecorded')} (95% bootstrap CI)")
     ax.set_title(title or f"Per-{group_label} discrimination vs the pooled model")
     ax.grid(axis="x", linestyle=":", alpha=0.4)
-    ax.legend(loc="lower right", framealpha=0.9, fontsize=9)
+    # Lower LEFT, not right: AUROCs cluster toward 1.0 when the model works, so the right-hand side
+    # is where the markers are — at all-splits scope the legend landed squarely on the 'other' point.
+    # The 0.4-0.6 corner is empty in any plot worth reading.
+    ax.legend(loc="lower left", framealpha=0.9, fontsize=9)
 
     if not unscoreable.empty:
         names = ", ".join(f"{r.group} (n={int(r.n)})" for r in unscoreable.itertuples())
