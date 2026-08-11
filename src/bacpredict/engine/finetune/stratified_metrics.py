@@ -302,9 +302,13 @@ def _main_cli() -> None:
     p.add_argument("--drug", type=str, default=None,
                    help="Label column, for the fallback split replay. Defaults to the npz's stored drug.")
     p.add_argument(
-        "--restrict-split", type=str, default="all", choices=["all", "train", "validate", "evaluate"],
+        "--restrict-split", type=str, default="all",
+        choices=["all", "train", "validate", "evaluate", "heldout"],
         help="Which split(s) to score. Needs a whole-cohort npz (score_cohort.py) for anything but "
-             "'all'. 'train' rows are fitted-on and optimistically biased — never quote them.",
+             "'all'. 'train' rows are fitted-on and optimistically biased — never quote them. "
+             "'heldout' = validate + evaluate: neither was fitted on, so it stays honest while nearly "
+             "doubling n over 'evaluate' alone (validate drove early stopping, so it carries mild "
+             "model-selection optimism — quote 'evaluate' for headline numbers).",
     )
     p.add_argument("--min-group-n", type=int, default=DEFAULT_MIN_GROUP_N)
     p.add_argument("--n-boot", type=int, default=DEFAULT_N_BOOT)
@@ -332,8 +336,10 @@ def _main_cli() -> None:
                 "Use --restrict-split all, or score the cohort with score_cohort.py first."
             )
         before = len(scored)
-        scored = scored[scored["split"] == args.restrict_split].reset_index(drop=True)
-        logger.info("restricted to split=%s: %d of %d rows", args.restrict_split, len(scored), before)
+        wanted = ["validate", "evaluate"] if args.restrict_split == "heldout" else [args.restrict_split]
+        scored = scored[scored["split"].isin(wanted)].reset_index(drop=True)
+        logger.info("restricted to split=%s (%s): %d of %d rows",
+                    args.restrict_split, "+".join(wanted), len(scored), before)
         if scored.empty:
             raise SystemExit(f"no rows with split == {args.restrict_split!r}")
     elif "split" in scored.columns:

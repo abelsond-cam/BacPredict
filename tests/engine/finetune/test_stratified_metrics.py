@@ -162,6 +162,55 @@ def test_resolve_sample_ids_rejects_a_length_mismatch(tmp_path):
         resolve_sample_ids(scores, None, tmp_path / "unused.csv", "d")
 
 
+def _cohort_npz(path, ids, splits):
+    """A whole-cohort npz as score_cohort.py writes it (carries the per-genome split array)."""
+    n = len(ids)
+    np.savez(
+        path,
+        y_true=np.array([i % 2 for i in range(n)]),
+        y_prob=np.linspace(0.05, 0.95, n),
+        sample_ids=np.asarray(ids, dtype=np.str_),
+        split=np.asarray(splits, dtype=np.str_),
+        drug=np.array("blood_vs_faeces_label"),
+        operating_threshold=np.array(0.5),
+    )
+
+
+@pytest.mark.parametrize(
+    ("scope", "expected_n"),
+    [("evaluate", 4), ("validate", 3), ("heldout", 7), ("all", 12), ("train", 5)],
+)
+def test_restrict_split_selects_the_right_rows_through_the_cli(tmp_path, monkeypatch, scope, expected_n):
+    """CLI-level: the parser and the restriction logic must agree.
+
+    ``heldout`` is the only multi-split scope (validate + evaluate) — it exists because the whole-set
+    scope is dominated by fitted-on train rows. Driven through ``_main_cli`` deliberately: a bug in
+    the parser wiring (a choice the body never handles, or vice versa) is invisible to tests that
+    call the functions directly, which is how an earlier missing ``--seed`` reached the cluster.
+    """
+    from bacpredict.engine.finetune.stratified_metrics import _main_cli
+
+    ids = [f"S{i}" for i in range(12)]
+    splits = ["train"] * 5 + ["validate"] * 3 + ["evaluate"] * 4
+    npz = tmp_path / "cohort_scores.npz"
+    _cohort_npz(npz, ids, splits)
+    meta = tmp_path / "split.csv"
+    pd.DataFrame({"Sample": ids, "Sublineage": ["SL258"] * 12}).to_csv(meta, index=False)
+    out = tmp_path / f"per_sl_{scope}.csv"
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["stratified_metrics", "--eval-scores", str(npz), "--metadata", str(meta),
+         "--out", str(out), "--restrict-split", scope, "--min-group-n", "1", "--n-boot", "20"],
+    )
+    _main_cli()
+
+    table = pd.read_csv(out)
+    assert (table["split_scope"] == scope).all()
+    # The pooled row carries the total n for the scope.
+    assert int(table.iloc[0]["n"]) == expected_n
+
+
 def test_missing_sample_ids_without_checkpoint_dir_raises_a_helpful_error(tmp_path):
     npz = tmp_path / "eval_scores.npz"
     np.savez(npz, y_true=np.array([0, 1]), y_prob=np.array([0.2, 0.8]), drug=np.array("d"))
