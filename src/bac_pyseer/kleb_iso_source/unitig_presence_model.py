@@ -326,6 +326,45 @@ def fit_l1(
     }
 
 
+def paired_delta_ci(
+    y_true: np.ndarray,
+    prob_a: np.ndarray,
+    prob_b: np.ndarray,
+    n_boot: int = 2000,
+    alpha: float = 0.05,
+    seed: int = 1,
+) -> dict[str, Any]:
+    """Paired bootstrap CI for ``AUROC(a) - AUROC(b)`` on the same genomes.
+
+    The two models are scored on an identical genome set, so the difference must be resampled
+    *paired* — resampling each model independently would inflate the interval by ignoring that both
+    see the same easy and hard genomes. Without this a small delta reads as a result when it is
+    within noise, which is exactly the failure mode a near-tie invites.
+    """
+    y_true = np.asarray(y_true).astype(int)
+    n = len(y_true)
+    obs = float(roc_auc_score(y_true, prob_a) - roc_auc_score(y_true, prob_b))
+    rng = np.random.default_rng(seed)
+    deltas: list[float] = []
+    for _ in range(n_boot):
+        idx = rng.integers(0, n, size=n)
+        yt = y_true[idx]
+        if len(np.unique(yt)) < 2:
+            continue
+        deltas.append(roc_auc_score(yt, prob_a[idx]) - roc_auc_score(yt, prob_b[idx]))
+    if not deltas:
+        return {"delta": obs, "ci_lo": float("nan"), "ci_hi": float("nan"), "n_boot_valid": 0}
+    lo, hi = np.percentile(deltas, [100 * alpha / 2, 100 * (1 - alpha / 2)])
+    return {
+        "delta": obs,
+        "ci_lo": float(lo),
+        "ci_hi": float(hi),
+        "n_boot_valid": len(deltas),
+        # A CI spanning 0 means the two models are not distinguishable on this holdout.
+        "separates_from_zero": bool(lo > 0 or hi < 0),
+    }
+
+
 def bacformer_on_subset(
     scores_npz: Path,
     subset_ids: list[str],
@@ -345,19 +384,27 @@ def bacformer_on_subset(
     scores = load_eval_scores(scores_npz)
     ids = resolve_sample_ids(scores, checkpoint_dir, split_csv, label_column or scores["drug"])
     by_id = {s: i for i, s in enumerate(ids)}
-    rows = [by_id[s] for s in subset_ids if s in by_id]
-    if not rows:
+    kept = [(s, by_id[s]) for s in subset_ids if s in by_id]
+    if not kept:
         logger.warning("no overlap between the Bacformer holdout and the unitig evaluate subset")
         return None
+    subset_kept = [s for s, _ in kept]
+    rows = [i for _, i in kept]
     y_true = scores["y_true"][rows]
     y_prob = scores["y_prob"][rows]
     full_auroc = float(roc_auc_score(scores["y_true"], scores["y_prob"]))
     subset_auroc = float(roc_auc_score(y_true, y_prob)) if len(np.unique(y_true)) > 1 else float("nan")
+    logger.info(
+        "Bacformer holdout %d genomes; %d overlap the unitig evaluate set (%d unitig-eval genomes "
+        "absent from it)", len(ids), len(rows), len(subset_ids) - len(rows),
+    )
     return {
         "n_full_holdout": int(len(ids)),
         "auroc_full_holdout": full_auroc,
         "n_common": len(rows),
         "auroc_on_common": subset_auroc,
+        # Order-matched ids, so the caller can pair the other model's predictions safely.
+        "subset_ids": subset_kept,
         "y_true": y_true,
         "y_prob": y_prob,
     }
@@ -414,12 +461,21 @@ def _cmd_fit(args: argparse.Namespace) -> None:
             split_csv=args.split_csv, label_column=args.label_column,
         )
         if bac is not None:
-            payload["bacformer"] = {k: v for k, v in bac.items() if k not in ("y_true", "y_prob")}
+            payload["bacformer"] = {
+                k: v for k, v in bac.items() if k not in ("y_true", "y_prob", "subset_ids")
+            }
+            # Re-align the unitig predictions onto the Bacformer subset order before pairing them.
+            common = {s: i for i, s in enumerate(eval_ids)}
+            keep = [common[s] for s in bac["subset_ids"]]
+            delta = paired_delta_ci(bac["y_true"], bac["y_prob"], res["y_prob"][keep], seed=args.seed)
             payload["head_to_head"] = {
                 "n_common_genomes": bac["n_common"],
                 "bacformer_auroc": bac["auroc_on_common"],
-                "unitig_l2_auroc": unitig_auroc,
-                "delta_bacformer_minus_unitig": bac["auroc_on_common"] - unitig_auroc,
+                "unitig_l2_auroc": float(roc_auc_score(bac["y_true"], res["y_prob"][keep])),
+                "delta_bacformer_minus_unitig": delta["delta"],
+                "delta_ci_lo": delta["ci_lo"],
+                "delta_ci_hi": delta["ci_hi"],
+                "separates_from_zero": delta["separates_from_zero"],
             }
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -438,7 +494,9 @@ def _cmd_fit(args: argparse.Namespace) -> None:
     if "head_to_head" in payload:
         h = payload["head_to_head"]
         print(f"Bacformer on the SAME {h['n_common_genomes']} genomes: {h['bacformer_auroc']:.4f}")
-        print(f"  delta (Bacformer - unitig): {h['delta_bacformer_minus_unitig']:+.4f}")
+        print(f"  delta (Bacformer - unitig): {h['delta_bacformer_minus_unitig']:+.4f} "
+              f"[{h['delta_ci_lo']:+.4f}, {h['delta_ci_hi']:+.4f}]  "
+              f"{'separates from 0' if h['separates_from_zero'] else 'CI spans 0 — a tie on this holdout'}")
     print(f"\nWrote {args.out_dir/'unitig_model_results.json'}")
 
 
