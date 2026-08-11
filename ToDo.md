@@ -64,9 +64,14 @@ design (the n=10 train=val Stage A run is the overfit check). NB drug column is
 
 **State.** Existing Kp AST models trained but **not formally evaluated**; all prior
 training used the old MAG-trained weights. No run yet on the refreshed
-complete-genomes model. Outstanding code fix: backport the `dtype="auto"` HF
-loading idiom to `train_amr.py` (the `.to(torch.bfloat16)` cast pegs Stage A on
-CPU — already fixed in tb_ast and kleb_iso_source).
+complete-genomes model.
+
+> **⚠ The old "backport `dtype="auto"`" item here was WRONG and has been removed.**
+> `dtype="auto"` resolves to **fp32** for Bacformer-large — the *underperforming*
+> setting (bf16 beat fp32 by ~7 pp on TB rifampin). Every trainer now casts
+> unconditionally to bf16; `kleb_iso_source` was corrected in `a817ac2` (2026-07-26).
+> The CPU Stage-A smoke that motivated `dtype="auto"` is unsupported for this
+> codebase anyway — Stage A must be a short GPU sbatch (see "Shared infrastructure").
 
 - [ ] Evaluate existing Kp models against the refreshed model — save as the benchmark to beat
 - [ ] Stage A/B/C on a canonical drug (meropenem or ceftriaxone) from the refreshed model
@@ -77,15 +82,34 @@ CPU — already fixed in tb_ast and kleb_iso_source).
 
 ## Task 3 — Isolation source in Klebsiella ([src/kleb_iso_source/](src/kleb_iso_source/))
 
-**State (2026-05-25).** Re-baselined on the refreshed model + v2 metadata. Split
-CSV regenerated (no stratification, no country cap): 25,879 unique samples; train
-18,169 / validate 2,591 / evaluate 5,206; 13,289 blood (51.2%) / 12,677 faeces
-(48.8%). **Stage A + Stage B both PASS** in one GPU run (job 29713406; train loss
-→ 3.6e-5, eval AUROC 1.0 on n=10). **Stage C script ready but not submitted** —
-fire with `sbatch src/kleb_iso_source/scripts/train_isolation_source_stage_c.sh`.
+**State (2026-08-11).** Stage C **done** on all three KPSC-clean cohorts. Eval-holdout
+AUROC: `sampled_country_2_1_all` (pooled, n=14,211) **0.786** ← the headline and the
+cohort the pyseer GWAS ran on; `sampled_country_2_1_stratified` (n=9,866) **0.762**;
+`all_samples` (n=21,533) 0.827 but **country-confounded** — it sits *below* its own
+linear metadata baseline (0.857), so it is not a defensible headline. Country control
+costs ~0.04 and the signal survives it. Bacformer clears the strongest linear metadata
+stack by **+0.055** on the pooled cohort (0.786 vs 0.731).
 
-- [ ] Submit Stage C full run (blood-vs-faeces, single fold/seed, 36 h GPU)
-- [ ] Compare against the prior 0.55–0.62 AUROC benchmark
+> **⚠ All three were trained in fp32** (`dtype="auto"`); the bf16 cast landed later in
+> `a817ac2`. bf16 re-runs are in flight — see [src/kleb_iso_source/CLAUDE.md](src/kleb_iso_source/CLAUDE.md).
+
+- [x] Stage C full runs on all three cohorts; beat the 0.55–0.62 MAG benchmark decisively
+- [x] **Unitig-GWAS comparator (2026-08-11)** — unitig L2 LR **0.781** vs Bacformer **0.787**
+  on the identical 2,715 genomes: a **tie**, with the unitig model holding a selection
+  advantage (its 33,039 features were picked by an LMM that saw this holdout). **Gate passed.**
+- [x] **Per-sublineage AUROC (2026-08-11)** — holds *within* every major clone: SL258 0.858,
+  SL15 0.841, SL307 0.815, SL17 0.806, SL147 0.738, rare-SL bucket 0.759 vs pooled 0.786.
+  Lineage identity is not what the model reads. Mechanism = open, for discussion.
+- [x] **Kleborate comparator (2026-08-11)** — virulence_score alone **0.489 (chance)**,
+  virulence one-hot 0.552, virulence+AMR 0.638, all-Kleborate 0.640 vs Bacformer 0.786.
+- [ ] **bf16 re-run on all three cohorts** (fp32→bf16 A/B; `models_bf16/` sibling) — jobs
+  `33476292/3/4` in flight
+- [ ] **Unitig honest re-run** — re-fit the LMM selection on train rows only, then re-score
+  (`SELECTION_SCOPE=train_only`); the current number is a leakage-advantaged upper bound
+- [ ] Score a user-supplied strain list for predicted invasiveness
+- [ ] **bac-LM forward pass** → per-gene LR → concat ladder. Gate passed; inputs 99% ready
+  (13,980/14,119 have assembly+GFF). **⚠ Blocked on `flash_attn`, which is absent from the
+  CSD3 venv** — without it baclm is ~100× slower and OOMs at batch 128.
 - [ ] Downstream (parked): Kp pre-training first; complete-genomes-only subset; matched-pair SR-vs-CG contrast; Captum gene attribution; stepwise AUROC across modelling layers
 
 ## Task 6 — `predictHGT` embedding diagnostic ([src/predict_hgt/](src/predict_hgt/))

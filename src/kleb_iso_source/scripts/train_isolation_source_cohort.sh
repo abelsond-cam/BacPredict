@@ -1,0 +1,109 @@
+#!/bin/bash
+#SBATCH --job-name=iso_source_cohort
+#SBATCH --output=/rds/user/dca36/hpc-work/logs/iso_source_%x_%j.out
+#SBATCH --error=/rds/user/dca36/hpc-work/logs/iso_source_%x_%j.err
+#SBATCH --time=36:00:00
+#SBATCH --partition=ampere
+#SBATCH --account=FLOTO-SL2-GPU
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=32
+#SBATCH --gres=gpu:1
+#SBATCH --mem=250G
+#SBATCH --open-mode=append
+
+# Stage C fine-tune for one isolation-source cohort, parameterised.
+#
+# Supersedes the three near-identical copies (train_isolation_source_stage_c{,_pooled,_stratified}.sh)
+# which differed only in cohort_dir, eval_steps, and job name — and which all hardcoded
+# output_dir=<cohort>/models, so re-running one would overwrite the deployed checkpoint in place.
+# Here OUTPUT_SUBDIR defaults to models_bf16, keeping the fp32 checkpoints intact for the A/B.
+#
+# Logs go to the persistent project tier, never the git working tree (the old copies wrote
+# stage_c_*_%j.out into the repo checkout).
+#
+# Usage:
+#   COHORT=sampled_country_2_1_all sbatch -J bf16_pooled  .../train_isolation_source_cohort.sh
+#   COHORT=sampled_country_2_1_stratified sbatch -J bf16_strat .../train_isolation_source_cohort.sh
+#   COHORT=all_samples PRECISION=bf16 sbatch -J bf16_all .../train_isolation_source_cohort.sh
+#   # reproduce the fp32 condition (what produced the 2026-05 numbers):
+#   COHORT=... PRECISION=fp32 OUTPUT_SUBDIR=models_fp32_repro sbatch ...
+
+set -uo pipefail
+cd /home/dca36/workspace/BacPredict
+
+COHORT=${COHORT:-sampled_country_2_1_all}
+PAIR=${PAIR:-blood_faeces}
+FLAVOR=${FLAVOR:-kpsc_human}
+PRECISION=${PRECISION:-bf16}
+OUTPUT_SUBDIR=${OUTPUT_SUBDIR:-models_bf16}
+
+processed_base_dir="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_iso_source"
+cohort_dir="${processed_base_dir}/${PAIR}/${COHORT}/${FLAVOR}"
+sheet_path="${cohort_dir}/binary_blood_vs_faeces_with_split.csv"
+embeddings_dir="/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/klebsiella_esm_embeddings"
+output_dir="${cohort_dir}/${OUTPUT_SUBDIR}"
+model_name_or_path="macwiatrak/bacformer-large-masked-complete-genomes"
+
+# eval_steps ~= every half epoch. batch=1 x grad_accum=8, so steps/epoch = n_train/8:
+#   all_samples          train ~18k -> ~2.3k steps/epoch -> 1000
+#   sampled_country_2_1_all      ~9.9k -> ~1.24k          ->  700
+#   sampled_country_2_1_stratified ~7.4k -> ~920          ->  500
+case "$COHORT" in
+  all_samples)                    default_eval_steps=1000 ;;
+  sampled_country_2_1_all)        default_eval_steps=700  ;;
+  sampled_country_2_1_stratified) default_eval_steps=500  ;;
+  *)                              default_eval_steps=700  ;;
+esac
+eval_steps=${EVAL_STEPS:-$default_eval_steps}
+
+seed=${SEED:-1}
+lr=${LR:-0.00015}
+warmup_proportion=0.1
+max_steps=100000            # generous cap; early stopping decides the real stop
+early_stopping_patience=30
+
+[ -f "$sheet_path" ] || { echo "MISSING split CSV: $sheet_path"; exit 1; }
+
+module purge
+module load cuda/12.4
+module load cudnn/8.9_cuda-12.4
+
+export PYTHONUNBUFFERED=1
+export TRANSFORMERS_VERBOSITY=info
+
+echo "========================================================================"
+echo "Stage C — isolation source (blood vs faeces)"
+echo "Cohort:            ${COHORT}/${FLAVOR}"
+echo "Precision:         ${PRECISION}   (recorded in results.json run_config)"
+echo "Sheet:             $sheet_path"
+echo "Output:            $output_dir"
+echo "eval_steps:        $eval_steps   seed: $seed   lr: $lr"
+echo "Job ID:            $SLURM_JOB_ID  Node: $SLURMD_NODENAME  GPU: $CUDA_VISIBLE_DEVICES"
+echo "========================================================================"
+
+uv run python src/kleb_iso_source/train_isolation_source.py \
+  --isolation-sources blood faeces \
+  --processed-base-dir "$processed_base_dir" \
+  --sheet-path "$sheet_path" \
+  --embeddings-dir "$embeddings_dir" \
+  --output-dir "$output_dir" \
+  --model-name-or-path "$model_name_or_path" \
+  --precision "$PRECISION" \
+  --lr "$lr" \
+  --warmup-proportion "$warmup_proportion" \
+  --batch-size 1 \
+  --grad-accumulation-steps 8 \
+  --num-workers 15 \
+  --eval-steps "$eval_steps" \
+  --max-steps "$max_steps" \
+  --early-stopping-patience "$early_stopping_patience" \
+  --seed "$seed"
+status=$?
+
+if [ "$status" -ne 0 ]; then
+  echo "Stage C ($COHORT, $PRECISION) FAILED with exit code $status — inspect the .err log."
+  exit "$status"
+fi
+echo "Stage C ($COHORT, $PRECISION) finished — checkpoint + results.json in $output_dir."
+echo "Compare results.json auroc against the fp32 run in ${cohort_dir}/models/results.json."

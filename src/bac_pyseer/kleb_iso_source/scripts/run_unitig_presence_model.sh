@@ -1,0 +1,91 @@
+#!/bin/bash
+#SBATCH --job-name=unitig_presence_model
+#SBATCH --output=/rds/user/dca36/hpc-work/logs/unitig_presence_model_%j.out
+#SBATCH --error=/rds/user/dca36/hpc-work/logs/unitig_presence_model_%j.err
+#SBATCH --partition=icelake-himem
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=96G
+#SBATCH --time=06:00:00
+#SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
+
+# Build the genome x hit-unitig presence matrix and fit the invasion comparator model, then
+# re-score Bacformer on the identical genome subset for a like-for-like head-to-head.
+#
+# Resources. The build parses the 1.66 GB cached hits_submatrix.tsv (33,039 unitigs x 13,171
+# carriers, ~10^8 non-zeros): CSC indices int32 + data float32 is ~0.9 GB, and the one CSC->CSR
+# conversion transiently doubles it, so ~5 GB peak with headroom for the six L2 fits over a
+# sparse 13.6k x 33k design. 96G is deliberately generous because this is a >2h job where an OOM
+# near the end wastes the whole run and another queue wait. 16 cores for the BLAS in lbfgs.
+#
+# Usage:
+#   sbatch src/bac_pyseer/kleb_iso_source/scripts/run_unitig_presence_model.sh
+#   ALSO_L1=1 sbatch .../run_unitig_presence_model.sh            # + the L1 locus shortlist
+#   SELECTION_SCOPE=train_only HITS_SUBMATRIX=<train-only submatrix> sbatch ...   # the honest re-run
+
+set -euo pipefail
+export PYTHONUNBUFFERED=1
+export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+export UV_CACHE_DIR=/home/dca36/rds/hpc-work/.uv_cache
+# Clear PYTHONPATH/HOME so a stray spack/module leak cannot shadow uv's numpy (see cluster_uohpc.md).
+unset PYTHONPATH PYTHONHOME
+# Keep BLAS single-threaded per process; sklearn's own threading handles the parallelism.
+export OMP_NUM_THREADS=${OMP_NUM_THREADS:-16}
+cd /home/dca36/workspace/BacPredict
+
+DATA=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david
+PAIR=${PAIR:-blood_faeces}
+COHORT=${COHORT:-sampled_country_2_1_all}
+LABEL_COL=${LABEL_COL:-blood_vs_faeces_label}
+
+PYSEER_COHORT=$DATA/processed/pyseer_iso_source/$PAIR/$COHORT
+GWAS_DIR=$PYSEER_COHORT/gwas_unitig_lmm
+FT_COHORT=$DATA/processed/train_iso_source/$PAIR/$COHORT/kpsc_human
+
+HITS_SUBMATRIX=${HITS_SUBMATRIX:-$GWAS_DIR/mge_mapping/hits_submatrix.tsv}
+# The GWAS phenotype file is the full modelled sample universe. Passing it is what keeps genomes
+# that carry NONE of the hit unitigs in the matrix as all-zero rows — dropping them would quietly
+# remove exactly the genomes the model should be calling faecal, and bias the comparison.
+SAMPLE_UNIVERSE=${SAMPLE_UNIVERSE:-$PYSEER_COHORT/phenotype.tsv}
+MATRIX_DIR=${MATRIX_DIR:-$GWAS_DIR/presence_matrix}
+OUT_DIR=${OUT_DIR:-$GWAS_DIR/presence_model}
+SPLIT_CSV=${SPLIT_CSV:-$FT_COHORT/binary_${LABEL_COL%_label}_with_split.csv}
+BAC_SCORES=${BAC_SCORES:-$FT_COHORT/models/eval_scores.npz}
+BAC_CKPT=${BAC_CKPT:-$FT_COHORT/models}
+SELECTION_SCOPE=${SELECTION_SCOPE:-full_cohort}
+
+echo "=== inputs ==="
+for f in "$HITS_SUBMATRIX" "$SAMPLE_UNIVERSE" "$SPLIT_CSV" "$BAC_SCORES"; do
+  [ -f "$f" ] || { echo "MISSING: $f"; exit 1; }
+  echo "  ok  $f"
+done
+
+MOD=bac_pyseer.kleb_iso_source.unitig_presence_model
+
+# Build is cached by its output dir; skip when the matrix is already there.
+if [ -f "$MATRIX_DIR/X.npz" ]; then
+  echo "=== reusing cached presence matrix at $MATRIX_DIR ==="
+else
+  echo "=== building presence matrix ==="
+  uv run python -m $MOD build \
+    --submatrix "$HITS_SUBMATRIX" \
+    --sample-universe "$SAMPLE_UNIVERSE" \
+    --matrix-dir "$MATRIX_DIR"
+fi
+
+echo "=== fitting + head-to-head vs Bacformer ==="
+EXTRA=()
+[ "${ALSO_L1:-0}" = "1" ] && EXTRA+=(--also-l1)
+
+uv run python -m $MOD fit \
+  --matrix-dir "$MATRIX_DIR" \
+  --split-csv "$SPLIT_CSV" \
+  --label-column "$LABEL_COL" \
+  --bacformer-scores "$BAC_SCORES" \
+  --bacformer-checkpoint-dir "$BAC_CKPT" \
+  --selection-scope "$SELECTION_SCOPE" \
+  --out-dir "$OUT_DIR" \
+  "${EXTRA[@]}"
+
+echo "=== done — results in $OUT_DIR ==="

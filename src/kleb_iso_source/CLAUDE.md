@@ -6,6 +6,89 @@ This is one of the task folders under `src/`. See the root [CLAUDE.md](../../CLA
 
 Test whether Bacformer fine-tuned via BacPredict can pick up genomic markers that distinguish invasive from non-invasive infection. The canonical comparison is **blood vs stool** (the field has converged on this — cleanest two-source comparison: largest n, least ambiguous microbiology, strongest biological interpretation). Liver abscess vs stool is an even stronger hvKp signal where it can be text-mined from metadata, even at modest n.
 
+## ⚠ Precision — every published number here is fp32 (2026-08-11)
+
+`train_isolation_source.py` loaded the model with `dtype="auto"`, which resolves to
+**fp32** master weights for Bacformer-large. It was changed to an unconditional
+`.to(torch.bfloat16)` cast in **`a817ac2` (2026-07-26)** — *after* every result in
+this file (all dated 2026-05-29/31). So:
+
+| | |
+|---|---|
+| Deployed checkpoints (0.786 / 0.762 / 0.827) | **fp32** |
+| `train_isolation_source.py` at HEAD | **bf16** |
+
+bf16 beat fp32 by ~7 pp AUROC on TB rifampin in a controlled A/B, so a bf16 re-run
+is expected to move these numbers — direction unproven for this phenotype. Re-runs
+write to a `models_bf16/` sibling so the fp32 checkpoints survive for the A/B.
+`results.json` now records `run_config.precision`, so this can never be ambiguous again.
+
+**Which number to quote.** The defensible headline is **0.786** on
+`sampled_country_2_1_all` (country-controlled, n=14,211, eval n=2,822) — and it is the
+cohort the pyseer GWAS ran on, so it is the correct comparator throughout. `all_samples`
+0.827 is country-**confounded** and sits *below* its own linear metadata baseline (0.857);
+do not quote it as a headline.
+
+## Comparator results (2026-08-11) — what the 0.786 is worth
+
+Three independent comparators, all scored on the **same** `sampled_country_2_1_all` holdout
+as the deployed model. Cohort n=14,119 (train 9,885 / validate 1,412 / evaluate 2,822).
+
+**1. Unitig GWAS model** — `bac_pyseer.kleb_iso_source.unitig_presence_model`. The 33,039
+significant hit unitigs as a genome × unitig presence matrix (13,602 × 33,039, 108,796,553
+non-zeros — matches the GWAS placement count exactly), L2 LR with `C` swept on validate.
+
+| | AUROC on the same 2,715 genomes |
+|---|---:|
+| unitig L2 (C=0.01) | 0.781 |
+| **Bacformer** | **0.787** |
+
+A **tie** — and the unitig model held a real advantage, since its feature set was selected by
+an LMM fitted over the whole cohort *including this holdout*. Bacformer matching a
+leakage-advantaged accessory-sequence model is the claim; "beating it" is not.
+`C` mattered: validate fell 0.775 → 0.728 from C=0.01 to C=10, so the repo's pinned C=1.0
+would have understated the comparator by ~2.5 pp. L1 peaked at 0.770 with 817 non-zero
+unitigs (the interpretable shortlist — still gene-unannotated).
+
+**2. Per-Sublineage** — `bacpredict.engine.finetune.stratified_metrics` (95% bootstrap CIs):
+
+| Sublineage | n | AUROC | 95% CI |
+|---|--:|--:|---|
+| pooled | 2,822 | 0.786 | — |
+| SL258 | 472 | **0.858** | 0.823–0.890 |
+| SL15 | 107 | 0.841 | 0.760–0.913 |
+| SL307 | 155 | 0.815 | 0.745–0.878 |
+| SL17 | 189 | 0.806 | 0.744–0.866 |
+| SL147 | 207 | 0.738 | 0.666–0.809 |
+| other (556 rare SLs) | 1,692 | 0.759 | 0.736–0.781 |
+
+Discrimination **holds within every major clone**; four of five sit at or above pooled, SL258
+significantly so. Lineage identity is therefore not what the model is reading.
+*Hypotheses only, pending David's read:* the signal may be within-clone accessory content, and
+pooling across 561 sublineages may cost AUROC (the rare-SL bucket is the weakest stratum). Not
+resolved here — do not plan downstream work off this without discussion.
+
+**3. Kleborate annotation** — `linear_baselines`, no country/Sublineage terms:
+
+| Model | n_feat | AUROC | Bacformer margin |
+|---|--:|--:|--:|
+| virulence_score (total) | 1 | **0.489** | +0.297 |
+| virulence factors one-hot | 6 | 0.552 | +0.234 |
+| virulence + AMR one-hot | 23 | 0.638 | +0.148 |
+| all Kleborate | 27 | 0.640 | +0.146 |
+| *AMR classes alone* | 17 | 0.617 | +0.169 |
+| country + Sublineage | 1,192 | 0.694 | +0.092 |
+| richest linear stack | 1,360 | 0.731 | +0.055 |
+
+**Kleborate's total virulence score is at chance (0.489)** for blood-vs-faeces, and AMR
+annotation predicts invasion *better* than virulence annotation does (0.617 vs 0.552) — likely
+a healthcare-association confound, not a virulence finding. Reproduces the Jun-2026 ladder
+(country+SL 0.694, full stack 0.731) to 3 dp.
+
+Artifacts: `<cohort>/kpsc_human/models/per_sublineage_metrics.{csv,json}` +
+`per_sublineage_auroc.png`; `<cohort>/kpsc_human/linear_baselines_v2.json`;
+`…/pyseer_iso_source/blood_faeces/sampled_country_2_1_all/gwas_unitig_lmm/presence_model/`.
+
 ## Status
 
 - Models already trained on isolation source, achieving **AUROC 0.55–0.62 (poor)**.
@@ -58,13 +141,15 @@ cohorts well enough that country/SL are demonstrably not doing the work.
   existing `stratification_report.md` embeds them. Reuse
   `_log_final_country_table()` for counts.
 - **A4 — baseline AUROCs from metadata alone.** New harness in
-  `src/tl/train/linear_baselines.py` (generic) + thin wrapper here. sklearn
+  `bacpredict/engine/finetune/linear_baselines.py` (generic; was `src/tl/train/`
+  before the engine consolidation) + thin wrapper here. sklearn
   LogisticRegression on (i) one-hot `country_parsed`, (ii) one-hot
   `Sublineage`, (iii) the combination. Fit on the same train/eval split as
   the Bacformer fine-tune. Numbers added to `stratification_report.md` and to
   Stage C `results.json` under a new `baselines` key.
 - **A5 — explainability (occlusion + integrated gradients).** New code in
-  `src/tl/explain/` (generic, Captum-based) + `explain_iso_source.py` wrapper.
+  `bacpredict/engine/explain/` (generic, Captum-based; the old plan said
+  `src/tl/explain/`) + `explain_iso_source.py` wrapper.
   Run on both the country-confounded (`all_samples`) and country-controlled
   (`stratified`) checkpoints; rank proteins by aggregated importance.
   **Rank-shift between cohorts is the phylogeny-vs-signal filter:** genes
@@ -141,6 +226,10 @@ Codebase prep (all on `restructure/flatten-to-task-folders`):
   `dtype="auto"` HF loading idiom (same fix `tb_ast/train_amr.py` got in
   `4956f91`). The previous unconditional `.to(torch.bfloat16)` crashed on CPU in
   Bacformer's classifier einsum.
+  > **⚠ SUPERSEDED — see the 2026-08-11 precision note below.** `dtype="auto"`
+  > resolves to **fp32** master weights for this model, which is the *underperforming*
+  > setting. It was reverted to an unconditional bf16 cast in `a817ac2` (2026-07-26).
+  > Every result dated 2026-05-29/31 in this file was therefore trained in **fp32**.
 - New `--output-dir` flag on
   [`prepare_esmc_embeddings_and_labels_to_finetune_isolation_source.py`](prepare_esmc_embeddings_and_labels_to_finetune_isolation_source.py)
   so the bypass-stratification flow can write outputs somewhere other than the

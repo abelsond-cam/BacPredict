@@ -9,9 +9,26 @@ was scored on, across a *nested sequence* of feature blocks:
 - ``virulence_bsc`` — 6 binary flags: Yersiniabactin / Colibactin / Aerobactin /
   Salmochelin / RmpADC / rmpA2 (parsed via ``bac_kleborate.parsing``)
 - ``amr_class`` — ~15 binary flags: every ``<class>_acquired`` column
+- ``virulence_score`` — Kleborate's own 0–5 summary score (standardised)
+- ``amr_score`` — Kleborate's ``resistance_score`` / ``num_resistance_classes`` /
+  ``num_resistance_genes`` (standardised)
 
 plus their concatenations (``country+sublineage``, …, all-of-the-above) so the
-**nested ΔAUROC** of each added block is directly comparable. Reuses
+**nested ΔAUROC** of each added block is directly comparable.
+
+Two ladders live in here and they answer different questions — do not mix them:
+
+- The **Kleborate-only** recipes (``virulence_score``, ``virulence_bsc``,
+  ``virulence_bsc+amr_class``, ``kleborate_all``) carry **no country and no Sublineage**.
+  They are the "could a virulence-factor model have done this?" comparator, and letting
+  population terms in would hand the work to phylogeny rather than virulence biology.
+- The **population/metadata** recipes (``country``, ``sublineage``, and the nested stack)
+  are the *confounder ceiling* a genome model has to clear to claim genuine genomic signal.
+
+Which cohort this is fit on decides whether the comparison means anything: on a
+country-confounded cohort the metadata stack can beat the deep model outright (it did —
+0.857 vs 0.827 on iso-source ``all_samples``), so always report the cohort alongside
+the number. Reuses
 ``bacpredict.engine.finetune.metrics.compute_full_metrics`` for §0.4 metrics (AUROC, AUPRC,
 sensitivity, specificity, balanced accuracy, F1, confusion, calibration).
 
@@ -83,9 +100,12 @@ class FeatureBlock:
     :attr:`discover_input_cols` instead — given the metadata's column list, it
     returns the set of columns the block needs.
 
-    Exactly one of :attr:`categorical_materialise` / :attr:`binary_materialise`
-    should be set. Categorical materialised frames go through ``OneHotEncoder``;
-    binary frames are passed through verbatim as sparse 0/1 columns.
+    Exactly one of :attr:`categorical_materialise` / :attr:`binary_materialise` /
+    :attr:`numeric_materialise` should be set. Categorical materialised frames go
+    through ``OneHotEncoder``; binary frames are passed through verbatim as sparse
+    0/1 columns; numeric frames are **standardised on the train rows** before being
+    stacked, so a count-scaled column (e.g. Kleborate's 0–5 ``virulence_score``) is
+    not effectively down-weighted relative to 0/1 columns by the shared L2 penalty.
     """
 
     name: str
@@ -93,6 +113,7 @@ class FeatureBlock:
     discover_input_cols: Callable[[Iterable[str]], list[str]] | None = None
     categorical_materialise: Callable[[pd.DataFrame], pd.DataFrame] | None = None
     binary_materialise: Callable[[pd.DataFrame], pd.DataFrame] | None = None
+    numeric_materialise: Callable[[pd.DataFrame], pd.DataFrame] | None = None
 
     def resolve_input_cols(self, metadata_columns: Iterable[str]) -> list[str]:
         """Return the metadata columns this block actually needs given an available column set."""
@@ -114,6 +135,25 @@ def _identity_frame_factory(cols: list[str]) -> Callable[[pd.DataFrame], pd.Data
 _VIRULENCE_INPUT_COLS = sorted(
     {allele for info in KLEBORATE_VIRULENCE_LOCI.values() for allele in info["alleles"]}
 )
+
+# Kleborate's own summary scores. virulence_score (0-5) counts the virulence loci carried;
+# resistance_score / num_resistance_classes / num_resistance_genes summarise acquired AMR. These are
+# the headline numbers Kleborate reports per isolate, so "can the published score alone predict
+# invasion?" is the cheapest, most-quoted baseline to beat.
+_VIRULENCE_SCORE_COLS = ["virulence_score"]
+_AMR_SCORE_COLS = ["resistance_score", "num_resistance_classes", "num_resistance_genes"]
+
+
+def _numeric_frame_factory(cols: list[str]) -> Callable[[pd.DataFrame], pd.DataFrame]:
+    """Return ``df -> df[cols]`` coerced to float, tolerating columns the metadata lacks."""
+
+    def _take(df: pd.DataFrame) -> pd.DataFrame:
+        present = [c for c in cols if c in df.columns]
+        if not present:
+            raise ValueError(f"None of the numeric columns {cols} are present in the metadata.")
+        return df[present].apply(pd.to_numeric, errors="coerce")
+
+    return _take
 
 
 FEATURE_BLOCKS: dict[str, FeatureBlock] = {
@@ -142,6 +182,16 @@ FEATURE_BLOCKS: dict[str, FeatureBlock] = {
         discover_input_cols=acquired_column_names,
         binary_materialise=amr_class_presence,
     ),
+    "virulence_score": FeatureBlock(
+        name="virulence_score",
+        input_cols=_VIRULENCE_SCORE_COLS,
+        numeric_materialise=_numeric_frame_factory(_VIRULENCE_SCORE_COLS),
+    ),
+    "amr_score": FeatureBlock(
+        name="amr_score",
+        input_cols=_AMR_SCORE_COLS,
+        numeric_materialise=_numeric_frame_factory(_AMR_SCORE_COLS),
+    ),
 }
 
 
@@ -152,6 +202,15 @@ FEATURE_SET_RECIPES: dict[str, list[str]] = {
     "k_locus": ["k_locus"],
     "virulence_bsc": ["virulence_bsc"],
     "amr_class": ["amr_class"],
+    "virulence_score": ["virulence_score"],
+    "amr_score": ["amr_score"],
+    # Kleborate-only ladder — no country, no Sublineage, so these isolate what the published
+    # per-isolate annotation carries on its own. This is the comparator for "can a virulence-factor
+    # model do what the genome model does?", and it must be read WITHOUT the population terms:
+    # adding country/SL would let phylogeny, not virulence biology, do the work.
+    "virulence_score+virulence_bsc": ["virulence_score", "virulence_bsc"],
+    "virulence_bsc+amr_class": ["virulence_bsc", "amr_class"],
+    "kleborate_all": ["virulence_score", "virulence_bsc", "amr_score", "amr_class"],
     # Pairs
     "country+sublineage": ["country", "sublineage"],
     # Nested ladder (current ceiling → +k_locus → +virulence → +amr)
@@ -204,20 +263,23 @@ def _load_metadata_subset(metadata_file: Path, needed_cols: list[str]) -> pd.Dat
 
 def _materialise_blocks(
     joined: pd.DataFrame, blocks: dict[str, FeatureBlock]
-) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
-    """Run every block's materialise callback once → (categorical_frames, binary_frames).
+) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
+    """Run every block's materialise callback once → (categorical, binary, numeric) frames.
 
     Frames are indexed by ``joined.index`` (Sample) and contain only the block's
     feature columns. Caller selects the train/eval row subsets afterwards.
     """
     cat: dict[str, pd.DataFrame] = {}
     bin_: dict[str, pd.DataFrame] = {}
+    num: dict[str, pd.DataFrame] = {}
     for name, block in blocks.items():
         if block.categorical_materialise is not None:
             cat[name] = block.categorical_materialise(joined)
         if block.binary_materialise is not None:
             bin_[name] = block.binary_materialise(joined)
-    return cat, bin_
+        if block.numeric_materialise is not None:
+            num[name] = block.numeric_materialise(joined)
+    return cat, bin_, num
 
 
 # ---------------------------------------------------------------------------
@@ -230,8 +292,15 @@ def _build_design_matrix(
     binary_frames: list[pd.DataFrame],
     train_idx: pd.Index,
     test_idx: pd.Index,
+    numeric_frames: list[pd.DataFrame] | None = None,
 ) -> tuple[sp.csr_matrix, sp.csr_matrix, int]:
-    """Build sparse train/test design matrices, hstack-ing categorical (one-hot) + binary (passthrough)."""
+    """Build sparse train/test design matrices from one-hot + passthrough-binary + standardised-numeric blocks.
+
+    Numeric blocks are standardised with the **train** mean/std (test rows use the train statistics,
+    never their own) and NaNs are imputed to the train mean — i.e. 0 after centring. Without this a
+    0–5 count column sits on a different scale from the 0/1 columns beside it and the shared L2
+    penalty would shrink it disproportionately, understating the baseline we are trying to beat.
+    """
     blocks_train: list[sp.csr_matrix] = []
     blocks_test: list[sp.csr_matrix] = []
     for frame in categorical_frames:
@@ -241,6 +310,13 @@ def _build_design_matrix(
     for frame in binary_frames:
         blocks_train.append(sp.csr_matrix(frame.loc[train_idx].fillna(0).astype(float).values))
         blocks_test.append(sp.csr_matrix(frame.loc[test_idx].fillna(0).astype(float).values))
+    for frame in numeric_frames or []:
+        tr = frame.loc[train_idx].astype(float)
+        te = frame.loc[test_idx].astype(float)
+        mean = tr.mean()
+        std = tr.std(ddof=0).replace(0.0, 1.0).fillna(1.0)
+        blocks_train.append(sp.csr_matrix(((tr - mean) / std).fillna(0.0).values))
+        blocks_test.append(sp.csr_matrix(((te - mean) / std).fillna(0.0).values))
     X_train = sp.hstack(blocks_train, format="csr") if blocks_train else sp.csr_matrix((len(train_idx), 0))
     X_test = sp.hstack(blocks_test, format="csr") if blocks_test else sp.csr_matrix((len(test_idx), 0))
     return X_train, X_test, X_train.shape[1]
@@ -250,6 +326,7 @@ def _fit_and_score_recipe(
     recipe_blocks: list[str],
     categorical_frames_all: dict[str, pd.DataFrame],
     binary_frames_all: dict[str, pd.DataFrame],
+    numeric_frames_all: dict[str, pd.DataFrame],
     train_df: pd.DataFrame,
     test_df: pd.DataFrame,
     label_column: str,
@@ -257,7 +334,10 @@ def _fit_and_score_recipe(
     """Fit LR on TRAIN, score on TEST for one recipe; returns (§0.4 metrics, n_features, model_repr)."""
     cats = [categorical_frames_all[b] for b in recipe_blocks if b in categorical_frames_all]
     bins = [binary_frames_all[b] for b in recipe_blocks if b in binary_frames_all]
-    X_train, X_test, n_feat = _build_design_matrix(cats, bins, train_df.index, test_df.index)
+    nums = [numeric_frames_all[b] for b in recipe_blocks if b in numeric_frames_all]
+    X_train, X_test, n_feat = _build_design_matrix(
+        cats, bins, train_df.index, test_df.index, numeric_frames=nums
+    )
     y_train = train_df[label_column].astype(int).to_numpy()
     y_test = test_df[label_column].astype(int).to_numpy()
     model = LogisticRegression(max_iter=2000, solver="lbfgs")
@@ -311,14 +391,14 @@ def run_baselines(
         )
 
     selected_blocks = {b: FEATURE_BLOCKS[b] for b in needed_blocks}
-    categorical_frames_all, binary_frames_all = _materialise_blocks(joined, selected_blocks)
+    categorical_frames_all, binary_frames_all, numeric_frames_all = _materialise_blocks(joined, selected_blocks)
 
     baselines: dict[str, Any] = {}
     for fs in feature_sets:  # preserve user-supplied order so ΔAUROC reads top-to-bottom
         blocks = FEATURE_SET_RECIPES[fs]
         logging.info("  fitting %s (blocks=%s)", fs, blocks)
         eval_metrics, n_feat, model_repr = _fit_and_score_recipe(
-            blocks, categorical_frames_all, binary_frames_all, train_df, eval_df, label_column
+            blocks, categorical_frames_all, binary_frames_all, numeric_frames_all, train_df, eval_df, label_column
         )
         entry: dict[str, Any] = {
             "blocks": blocks,
@@ -328,7 +408,7 @@ def run_baselines(
         }
         if also_score_validate and not val_df.empty:
             val_metrics, _, _ = _fit_and_score_recipe(
-                blocks, categorical_frames_all, binary_frames_all, train_df, val_df, label_column
+                blocks, categorical_frames_all, binary_frames_all, numeric_frames_all, train_df, val_df, label_column
             )
             entry["metrics_validate"] = val_metrics
         baselines[fs] = entry
@@ -448,8 +528,13 @@ def _main_cli() -> None:
     p.add_argument(
         "--feature-sets", nargs="+",
         default=[
+            # Kleborate-only comparator ladder (no population terms) — the "can a virulence-factor
+            # model do this?" question, read on its own before any country/SL is allowed in.
+            "virulence_score", "virulence_bsc", "virulence_score+virulence_bsc",
+            "amr_score", "amr_class", "virulence_bsc+amr_class", "kleborate_all",
+            # Population/metadata ladder — the confounder ceiling the genome model must clear.
             "country", "sublineage", "country+sublineage",
-            "k_locus", "virulence_bsc", "amr_class",
+            "k_locus",
             "country+sublineage+k_locus",
             "country+sublineage+k_locus+virulence",
             "country+sublineage+k_locus+virulence+amr",

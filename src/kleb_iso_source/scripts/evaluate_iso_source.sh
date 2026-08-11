@@ -1,12 +1,12 @@
 #!/bin/bash
 # Score a fine-tuned iso-source checkpoint on its held-out 'evaluate' split.
-# Wraps src/tl/train/evaluate.py (task-agnostic). Inference on a few-thousand
+# Wraps bacpredict.engine.finetune.evaluate (task-agnostic). Inference on a few-thousand
 # Bacformer-large genomes needs a GPU, so this is a short ampere sbatch, not login CPU.
 # Edit CHECKPOINT / SHEET / OUT_DIR inline per cohort.
 
 #SBATCH --job-name=eval_iso_blood_faeces
-#SBATCH --output=eval_iso_blood_faeces_%j.out
-#SBATCH --error=eval_iso_blood_faeces_%j.err
+#SBATCH --output=/rds/user/dca36/hpc-work/logs/eval_iso_blood_faeces_%j.out
+#SBATCH --error=/rds/user/dca36/hpc-work/logs/eval_iso_blood_faeces_%j.err
 #SBATCH --time=01:00:00
 #SBATCH --partition=ampere
 #SBATCH --account=FLOTO-SL2-GPU
@@ -43,7 +43,7 @@ module load cudnn/8.9_cuda-12.4 || true
 export PYTHONUNBUFFERED=1
 
 echo "=== Evaluating $CHECKPOINT on evaluate split of $SHEET ==="
-uv run python src/tl/train/evaluate.py \
+uv run python -m bacpredict.engine.finetune.evaluate \
   --checkpoint "$CHECKPOINT" \
   --drug blood_vs_faeces_label \
   --task kleb_iso_source \
