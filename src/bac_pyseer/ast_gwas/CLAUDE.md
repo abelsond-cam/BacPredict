@@ -5,6 +5,10 @@ organism), this one is **organism-agnostic** — `--organism {kp,tb}` — becaus
 to serve 2 organisms × 32 antibiotics. See the root [CLAUDE.md](../../../CLAUDE.md) for §0
 conventions.
 
+> **The working plan is [`docs/PLAN.md`](docs/PLAN.md)** — the decisions and their alternatives, the
+> full leakage argument, the scale/risk analysis, and the sequenced run order with its `[look]`
+> checkpoints. Start there before running anything; this file is the layout and status summary.
+
 ## Why
 
 To answer *how good is the Bacformer AMR fine-tuning, really?* A unitig GWAS is the right yardstick
