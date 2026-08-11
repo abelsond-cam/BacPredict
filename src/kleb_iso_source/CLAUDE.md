@@ -42,10 +42,13 @@ non-zeros — matches the GWAS placement count exactly), L2 LR with `C` swept on
 |---|---:|
 | unitig L2 (C=0.01) | 0.781 |
 | **Bacformer** | **0.787** |
+| delta (paired bootstrap) | **+0.0055, 95% CI [−0.0110, +0.0230]** |
 
-A **tie** — and the unitig model held a real advantage, since its feature set was selected by
-an LMM fitted over the whole cohort *including this holdout*. Bacformer matching a
-leakage-advantaged accessory-sequence model is the claim; "beating it" is not.
+**The CI spans zero — a statistical tie**, not a Bacformer win. And the unitig model held a
+real advantage, since its feature set was selected by an LMM fitted over the whole cohort
+*including this holdout*. Bacformer matching a leakage-advantaged accessory-sequence model
+is the claim; "beating it" is not. A leakage-free re-run (LMM selection on train+validate
+only, cohort `sampled_country_2_1_all_trainval`, n=10,887) is the publication number.
 `C` mattered: validate fell 0.775 → 0.728 from C=0.01 to C=10, so the repo's pinned C=1.0
 would have understated the comparator by ~2.5 pp. L1 peaked at 0.770 with 817 non-zero
 unitigs (the interpretable shortlist — still gene-unannotated).
