@@ -522,6 +522,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Needed only if that npz predates the sample_ids field.")
     f.add_argument("--c-grid", type=float, nargs="+", default=list(DEFAULT_C_GRID))
     f.add_argument("--max-iter", type=int, default=2000)
+    f.add_argument("--seed", type=int, default=1, help="Seed for the paired bootstrap on the head-to-head delta.")
     f.add_argument("--also-l1", action="store_true", help="Also fit L1 for an interpretable locus shortlist.")
     f.add_argument("--selection-scope", type=str, default="full_cohort",
                    choices=["full_cohort", "train_only"],

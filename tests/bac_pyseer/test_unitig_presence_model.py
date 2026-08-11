@@ -13,9 +13,11 @@ import pytest
 
 from bac_pyseer.kleb_iso_source.unitig_presence_model import (
     align_to_split,
+    build_parser,
     build_presence_matrix,
     fit_l2_with_c_sweep,
     load_matrix,
+    paired_delta_ci,
     read_sample_universe,
 )
 
@@ -190,3 +192,49 @@ def test_fit_refuses_to_tune_without_a_validate_split():
     split = np.where(split == "validate", "train", split)
     with pytest.raises(ValueError, match="no validate rows"):
         fit_l2_with_c_sweep(X, y, split, c_grid=(0.1,))
+
+
+# ---------------------------------------------------------------------------
+# CLI wiring
+# ---------------------------------------------------------------------------
+
+
+def test_fit_parser_supplies_every_attribute_the_handler_reads():
+    """Guards the class of bug where the handler reads an arg the subparser never declared.
+
+    A missing `--seed` shipped once and only surfaced 24 minutes into a cluster job, after the
+    expensive fit had already run — unit tests that call the fit functions directly cannot catch it.
+    """
+    args = build_parser().parse_args([
+        "fit", "--matrix-dir", "m", "--split-csv", "s.csv", "--out-dir", "o",
+    ])
+    for attr in ("matrix_dir", "split_csv", "label_column", "out_dir", "bacformer_scores",
+                 "bacformer_checkpoint_dir", "c_grid", "max_iter", "also_l1", "selection_scope",
+                 "seed", "func"):
+        assert hasattr(args, attr), f"fit subparser is missing {attr!r}"
+
+
+def test_build_parser_supplies_every_attribute_the_build_handler_reads():
+    args = build_parser().parse_args(["build", "--submatrix", "h.tsv", "--matrix-dir", "m"])
+    for attr in ("submatrix", "sample_universe", "matrix_dir", "func"):
+        assert hasattr(args, attr), f"build subparser is missing {attr!r}"
+
+
+def test_paired_delta_ci_brackets_zero_for_identical_models():
+    rng = np.random.default_rng(0)
+    y = (rng.random(400) < 0.5).astype(int)
+    p = np.clip(0.5 + 0.3 * (y - 0.5) + rng.normal(0, 0.2, 400), 0, 1)
+    r = paired_delta_ci(y, p, p, n_boot=200)
+    assert r["delta"] == pytest.approx(0.0, abs=1e-12)
+    assert r["separates_from_zero"] is False
+
+
+def test_paired_delta_ci_separates_when_one_model_is_clearly_better():
+    rng = np.random.default_rng(1)
+    y = (rng.random(600) < 0.5).astype(int)
+    good = np.clip(0.5 + 0.45 * (y - 0.5) + rng.normal(0, 0.10, 600), 0, 1)
+    poor = np.clip(0.5 + 0.05 * (y - 0.5) + rng.normal(0, 0.30, 600), 0, 1)
+    r = paired_delta_ci(y, good, poor, n_boot=300)
+    assert r["delta"] > 0
+    assert r["ci_lo"] > 0
+    assert r["separates_from_zero"] is True
