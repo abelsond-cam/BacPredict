@@ -46,6 +46,23 @@ OTHER_COLOUR = "#9aa3ad"   # muted grey — the pooled-small-groups bucket
 POOLED_COLOUR = "#d62728"  # red — the pooled reference line (matches the catalogue/reference red)
 CHANCE_COLOUR = "#4a5568"
 
+# One caption per --restrict-split scope, so a reader can tell a measurement from a fitted-on
+# number without going back to the CSV.
+_SCOPE_CAPTIONS = {
+    "evaluate": "held-out evaluate split",
+    "validate": "validate split (drove early stopping)",
+    "heldout": "held out (validate + evaluate)",
+    "train": "TRAIN split — fitted on, NOT a measurement",
+    "all": "all splits incl. TRAIN — fitted on, NOT a measurement",
+}
+
+
+def _scope_of(df: pd.DataFrame) -> str | None:
+    """The table's ``split_scope``, or ``None`` for tables written before the column existed."""
+    if "split_scope" not in df.columns or df["split_scope"].empty:
+        return None
+    return str(df["split_scope"].iloc[0])
+
 
 def plot_stratified_auroc(
     csv_path: Path,
@@ -98,7 +115,10 @@ def plot_stratified_auroc(
     ax.set_yticks(list(y))
     ax.set_yticklabels([f"{g}  (n={int(nn)})" for g, nn in zip(groups["group"], groups["n"], strict=True)])
     ax.set_xlim(*xlim)
-    ax.set_xlabel("AUROC on the held-out evaluate split (95% bootstrap CI)")
+    # The axis must name the scope it actually plotted. A hardcoded "held-out evaluate split" was
+    # silently wrong for every scope that includes fitted-on train rows, which is the one caption a
+    # reader relies on to know whether the numbers are a measurement.
+    ax.set_xlabel(f"AUROC — {_SCOPE_CAPTIONS.get(_scope_of(df), 'scope unrecorded')} (95% bootstrap CI)")
     ax.set_title(title or f"Per-{group_label} discrimination vs the pooled model")
     ax.grid(axis="x", linestyle=":", alpha=0.4)
     ax.legend(loc="lower right", framealpha=0.9, fontsize=9)
