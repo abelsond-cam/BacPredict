@@ -12,8 +12,10 @@ because "above chance within a clone" is the claim the plot exists to support.
 
 Rows are ordered by n descending (largest, best-estimated group at the top), never by AUROC — the
 same discipline as the ladder plot, where re-sorting would invent a story the data doesn't tell.
-Single-class groups have no defined AUROC; they are listed in the margin rather than silently
-dropped, so the reader can see what was unscoreable.
+The ``other`` bucket is pinned to the bottom regardless of its combined n, because it is an
+aggregate of many small groups rather than a lineage and should not outrank real ones. Single-class
+groups have no defined AUROC; they are listed in the margin rather than silently dropped, so the
+reader can see what was unscoreable.
 
 Login-node / local CPU only (pure matplotlib over a small CSV)::
 
@@ -39,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 POOLED_KEY = "__pooled__"
 POINT_COLOUR = "#2b6cb0"   # blue — a scored group
+OTHER_KEY = "other"
 OTHER_COLOUR = "#9aa3ad"   # muted grey — the pooled-small-groups bucket
 POOLED_COLOUR = "#d62728"  # red — the pooled reference line (matches the catalogue/reference red)
 CHANCE_COLOUR = "#4a5568"
@@ -64,9 +67,16 @@ def plot_stratified_auroc(
 
     groups = df[df["group"] != POOLED_KEY].copy()
     unscoreable = groups[groups["auroc"].isna()]
-    groups = groups[groups["auroc"].notna()].sort_values("n", ascending=True)  # largest ends up on top
+    groups = groups[groups["auroc"].notna()]
     if groups.empty:
         raise ValueError(f"{csv_path} has no scoreable groups to plot.")
+
+    # Rows are laid out bottom-up, so sorting ascending by n puts the largest (best-estimated)
+    # group at the top. The "other" bucket is an aggregate of many small groups, not a lineage, so
+    # it is pinned to the bottom rather than allowed to outrank real groups on its combined n.
+    other = groups[groups["group"] == OTHER_KEY]
+    real = groups[groups["group"] != OTHER_KEY].sort_values("n", ascending=True)
+    groups = pd.concat([other, real], ignore_index=True)
 
     n = len(groups)
     fig, ax = plt.subplots(figsize=(8.5, max(3.0, 0.42 * n + 2.0)))
@@ -74,7 +84,7 @@ def plot_stratified_auroc(
 
     sizes = groups["n"].to_numpy(dtype=float)
     marker_sizes = 20.0 + 90.0 * (sizes / sizes.max())
-    colours = [OTHER_COLOUR if g == "other" else POINT_COLOUR for g in groups["group"]]
+    colours = [OTHER_COLOUR if g == OTHER_KEY else POINT_COLOUR for g in groups["group"]]
 
     ax.hlines(list(y), groups["auroc_ci_lo"], groups["auroc_ci_hi"], color=colours, linewidth=2.0, alpha=0.75)
     ax.scatter(groups["auroc"], list(y), s=marker_sizes, color=colours, zorder=3, edgecolor="white", linewidth=0.8)
@@ -84,6 +94,7 @@ def plot_stratified_auroc(
                    label=f"pooled {pooled:.3f} (n={pooled_n})", zorder=1)
     ax.axvline(0.5, color=CHANCE_COLOUR, linestyle=":", linewidth=1.2, label="chance (0.5)", zorder=1)
 
+    ax.set_ylim(-0.9, n - 0.4)  # blank margin so the legend never covers the bottom row
     ax.set_yticks(list(y))
     ax.set_yticklabels([f"{g}  (n={int(nn)})" for g, nn in zip(groups["group"], groups["n"], strict=True)])
     ax.set_xlim(*xlim)
