@@ -22,7 +22,10 @@
 # Usage:
 #   sbatch src/bac_pyseer/kleb_iso_source/scripts/run_unitig_presence_model.sh
 #   ALSO_L1=1 sbatch .../run_unitig_presence_model.sh            # + the L1 locus shortlist
-#   SELECTION_SCOPE=train_only HITS_SUBMATRIX=<train-only submatrix> sbatch ...   # the honest re-run
+#   # the honest re-run: hit set selected by an LMM that never saw a holdout genome. Note the
+#   # submatrix must still cover the WHOLE cohort (the holdout genomes need presence values to be
+#   # scored) — only the unitig SELECTION is restricted, never the rows.
+#   SELECTION_SCOPE=trainval_only HITS_SUBMATRIX=<submatrix for the trainval hit set> sbatch ...
 
 set -euo pipefail
 export PYTHONUNBUFFERED=1

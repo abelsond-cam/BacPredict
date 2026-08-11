@@ -10,7 +10,8 @@ used, so the two models are directly comparable on identical genomes.
 by an LMM fitted over the whole cohort, holdout rows included, so the feature set has already seen
 the test labels. That bias runs in the unitig model's favour, which is the safe direction when the
 question is "is Bacformer at least competitive?" — but it is not a publication number. For that,
-re-run the LMM selection on train rows only and point ``--assoc`` at the train-only hit set.
+re-run the LMM selection with the holdout genomes removed (train + validate only, which is what the
+``sampled_country_2_1_all_trainval`` cohort is) and point ``--assoc`` at that hit set.
 ``selection_scope`` in the output JSON records which of the two you ran, so the numbers cannot be
 mixed up later.
 
@@ -525,9 +526,11 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("--seed", type=int, default=1, help="Seed for the paired bootstrap on the head-to-head delta.")
     f.add_argument("--also-l1", action="store_true", help="Also fit L1 for an interpretable locus shortlist.")
     f.add_argument("--selection-scope", type=str, default="full_cohort",
-                   choices=["full_cohort", "train_only"],
+                   choices=["full_cohort", "trainval_only"],
                    help="Provenance of the hit-unitig selection. 'full_cohort' saw the holdout labels "
-                        "(leakage-advantaged upper bound); 'train_only' is the honest number.")
+                        "(leakage-advantaged upper bound); 'trainval_only' means the selecting LMM was "
+                        "fitted with every holdout genome removed (train + validate, n=10,887) — the "
+                        "honest number. Named for what it is: validate is used, the holdout is not.")
     f.set_defaults(func=_cmd_fit)
     return p
 
