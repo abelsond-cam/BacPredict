@@ -103,11 +103,48 @@ are fitted at that `C` — stays like-for-like.
 - [x] Package + Stage A smoke (CPU-only, synthetic fixtures, no GGCAT/pyseer/cluster)
 - [x] Reconciled with the sibling invasion comparator: C swept on validate (their measured
       overfitting finding), paired bootstrap CI in `collect_comparison`, CSC accumulation
-- [ ] Step 0 toolchain probe on the active cluster — **gates everything below**
+- [x] Step 0 toolchain probe — **passed on CSD3, 2026-08-11** (see *Running on CSD3*). The aarch64
+      `ggcat` risk was Isambard-specific and does not apply: CSD3 is `linux-64`, exactly what
+      `pixi.toml` targets. pyseer 1.4.1 · ggcat 2.2.0 · unitig-caller 1.3.0 · mash 2.3.
+- [x] Step 0b cohort resolution on CSD3 — Kp 7,080/7,088, TB 36,692/36,692
 - [ ] Kp cohort build → `ertapenem` (positive control) → `colistin`
 - [ ] TB cohort build → `ethionamide` (smaller n first) → `rifampin`
 - [ ] Calibration: λ by af + within-lineage permutation null
 - [ ] Fan out to the remaining 20 Kp + 8 TB drugs
+
+## Running on CSD3
+
+The plan was written for Isambard. CSD3 differs in three ways that matter, all verified live on
+2026-08-11.
+
+**1. The canonical task root is `bac_ast_prediction/`, not `processed/`.** Both exist; the cohort
+sizes disambiguate. Set `BACPREDICT_DATA_ROOT` to the former or you silently get the deprecated
+May cohort.
+
+| Sheet | Rows | |
+|---|---|---|
+| `<rds>/david/bac_ast_prediction/processed/train_{kleb,tb}_ast/binary_ast_with_split.csv` | 7,088 / 36,692 | **canonical**, matches Isambard |
+| `<rds>/david/processed/train_{kleb,tb}_ast/binary_ast_with_split.csv` | 6,838 / 36,684 | deprecated |
+
+**2. Kp assemblies need `--file-list`; TB does not.** TB is flat and BioSample-keyed exactly as the
+module assumes (`raw/tb/assemblies/SAMEA*.fa.gz`, 36,692/36,692 resolve on the default path). Kp has
+no such directory on CSD3 — `raw/assemblies` is the whole-*Klebsiella* 81k store keyed by **GCA
+accession**, so a filename join resolves *zero*. The AST genomes are sharded across
+`seb/assemblies_2/klebsiella_pneumoniae__NN/<BioSample>.fa.gz`, and CSD3 ships the join already made
+as `raw/assemblies_file_list.tsv` (95,131 rows, `Sample<TAB>path` — the format this module emits).
+So pass `FILE_LIST=<rds>/david/raw/assemblies_file_list.tsv`: 7,080/7,088 resolve, 8 missing.
+
+**3. Cluster knobs.** `ACCT=FLOTO-PROJECT-K-SL2-CPU PART=icelake-himem QOS=`. Prefer a node
+*fraction* — himem nodes are 76 cores at 6,760 MB/core, and requesting all 76 (or ~all memory)
+forces whole-node placement and a slower start.
+
+Input volume by count × one-file: Kp ≈ 10.6 GB (7,080 × ~1.5 MB), TB ≈ 51 GB (36,692 × ~1.4 MB).
+
+> `mash` is **not** declared in `src/bac_pyseer/pixi.toml` — it arrives as a transitive dependency of
+> `pyseer`, whose conda recipe requires it (alongside `bedops`/`bedtools`/`bwa`/`pysam`/`dendropy`).
+> It is pinned in `pixi.lock`, so this is not a live break, but we call `mash` directly and should
+> declare what we use. Left alone for now because `pixi.toml` is shared and adding a dependency
+> would force a lock re-solve while a sibling agent has uncommitted lock changes.
 
 ## Known technical debt (clean up before publishing)
 
@@ -115,9 +152,13 @@ are fitted at that `C` — stays like-for-like.
    `metadata_v2` on CSD3; TB lineages do not exist until TB-Profiler is run over ~39k assemblies.
    The publishable version uses Kleborate sublineages (Kp) and TB-Profiler lineage (TB). This is a
    methods-section item, not just tidiness.
-2. **`linux-aarch64` added to `src/bac_pyseer/pixi.toml`** (and possibly a `cargo`-built GGCAT
-   outside the pixi env) to get the toolchain onto Isambard. The lock is already stale relative to
-   the toml — `ggcat` and `unitig-caller` do not appear in `pixi.lock`.
+2. **`src/bac_pyseer/pixi.toml` needs tidying** — only if Isambard is used again, plus one item
+   that applies regardless. `linux-aarch64` would have to be added to `platforms` (and possibly a
+   `cargo`-built GGCAT alongside) to get the toolchain onto Isambard; **on CSD3 none of that is
+   needed**. Regardless of cluster, `mash` should be declared explicitly rather than relied on as a
+   pyseer transitive (see *Running on CSD3*). The "`ggcat`/`unitig-caller` missing from `pixi.lock`"
+   note is now stale — a sibling agent re-solved the lock and both are present, though that
+   re-solve is still uncommitted.
 3. **`pheno_var` keeps a 0.249 fallback** for backward compatibility; should become required once
    the iso-source outputs have been regenerated.
 4. **Two near-duplicate unitig→LR implementations** — `kleb_iso_source/unitig_presence_model.py`

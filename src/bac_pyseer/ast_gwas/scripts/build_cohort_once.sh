@@ -14,6 +14,10 @@
 #
 # Cluster knobs (defaults = Isambard; override for CSD3):
 #   ACCT/PART/QOS/LOGDIR, and GGCAT_CPUS/GGCAT_MEM/GGCAT_TIME, MASH_CPUS/MASH_MEM/MASH_TIME.
+#
+# FILE_LIST resolves the cohort through a Sample<TAB>path TSV instead of scanning a flat directory.
+# Needed for Kp on CSD3, which has no flat BioSample-keyed dir -- see resolve_ast_assemblies.py.
+#   ORGANISM=kp FILE_LIST=$DATA/raw/assemblies_file_list.tsv bash .../build_cohort_once.sh
 set -euo pipefail
 
 REPO=${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)}
@@ -44,7 +48,8 @@ if [ -s "$REFLIST" ]; then
     echo "reusing existing reflist ($(wc -l < "$REFLIST") samples)"
 else
     uv run python -m bac_pyseer.ast_gwas.resolve_ast_assemblies \
-        --organism "$ORGANISM" --out-tsv "$REFLIST" --data-root "$DATA_ROOT"
+        --organism "$ORGANISM" --out-tsv "$REFLIST" --data-root "$DATA_ROOT" \
+        ${FILE_LIST:+--file-list "$FILE_LIST"}
 fi
 NSAMP=$(wc -l < "$REFLIST")
 echo "cohort: $NSAMP genomes"

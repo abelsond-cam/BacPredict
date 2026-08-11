@@ -11,7 +11,13 @@ import pytest
 
 from bac_pyseer.ast_gwas.lineage_from_distances import OTHER, cluster_distances
 from bac_pyseer.ast_gwas.lineage_from_distances import run as cluster_run
-from bac_pyseer.ast_gwas.resolve_ast_assemblies import assemblies_dir, cohort_samples, resolve
+from bac_pyseer.ast_gwas.resolve_ast_assemblies import (
+    assemblies_dir,
+    cohort_samples,
+    load_file_list,
+    resolve,
+    resolve_via_file_list,
+)
 from bac_pyseer.ast_gwas.resolve_ast_assemblies import run as resolve_run
 
 
@@ -53,6 +59,95 @@ def test_resolve_run_writes_reflist_and_missing_list(tmp_path: Path) -> None:
     assert manifest["n_resolved"] == 2
     assert manifest["n_missing"] == 1
     assert (tmp_path / "assembly_refs.missing.txt").read_text().split() == ["SAMN9"]
+
+
+# --------------------------------------------------------------------------------------- #
+# file-list resolution — CSD3's Kp layout, where there is no flat BioSample-keyed directory
+# --------------------------------------------------------------------------------------- #
+def _write_file_list(path: Path, rows: list[tuple[str, Path]], *, header: bool = True) -> None:
+    """Write the Sample<TAB>path TSV CSD3 ships as raw/assemblies_file_list.tsv."""
+    lines = ["Sample\tpath"] if header else []
+    lines.extend(f"{s}\t{p}" for s, p in rows)
+    path.write_text("\n".join(lines) + "\n")
+
+
+def test_load_file_list_skips_the_header(tmp_path: Path) -> None:
+    """CSD3's file list carries a `Sample<TAB>path` header; it must not become a sample."""
+    listing = tmp_path / "assemblies_file_list.tsv"
+    _write_file_list(listing, [("SAMEA1", tmp_path / "a.fa.gz"), ("SAMEA2", tmp_path / "b.fa.gz")])
+    mapping = load_file_list(listing)
+    assert set(mapping) == {"SAMEA1", "SAMEA2"}
+    assert mapping["SAMEA1"] == tmp_path / "a.fa.gz"
+
+
+def test_load_file_list_without_a_header_keeps_every_row(tmp_path: Path) -> None:
+    """A headerless list is the format this module itself emits — round-trips cleanly."""
+    listing = tmp_path / "refs.txt"
+    _write_file_list(listing, [("SAMEA1", tmp_path / "a.fa.gz")], header=False)
+    assert set(load_file_list(listing)) == {"SAMEA1"}
+
+
+def test_load_file_list_rejects_an_empty_list(tmp_path: Path) -> None:
+    """An empty mapping means a wrong path, not a cohort with no genomes."""
+    listing = tmp_path / "empty.tsv"
+    listing.write_text("Sample\tpath\n")
+    with pytest.raises(SystemExit, match="no Sample"):
+        load_file_list(listing)
+
+
+def test_resolve_via_file_list_reports_absent_and_broken_entries(tmp_path: Path) -> None:
+    """Absent from the map, or mapped to a file that is not there, both count as missing."""
+    real = tmp_path / "SAMEA1.fa.gz"
+    real.write_text("")
+    mapping = {"SAMEA1": real, "SAMEA2": tmp_path / "gone.fa.gz"}
+    resolved, missing = resolve_via_file_list(["SAMEA1", "SAMEA2", "SAMEA3"], mapping)
+    assert [s for s, _ in resolved] == ["SAMEA1"]
+    assert missing == ["SAMEA2", "SAMEA3"]
+
+
+def test_resolve_via_file_list_can_skip_the_stat(tmp_path: Path) -> None:
+    """--no-check-exists trusts the list, for when the store is on a slow shared mount."""
+    mapping = {"SAMEA1": tmp_path / "gone.fa.gz"}
+    resolved, missing = resolve_via_file_list(["SAMEA1"], mapping, check_exists=False)
+    assert [s for s, _ in resolved] == ["SAMEA1"]
+    assert missing == []
+
+
+def test_run_via_file_list_records_the_strategy(tmp_path: Path) -> None:
+    """The manifest must say how paths were resolved — the two clusters differ, and it matters."""
+    asm = tmp_path / "store"
+    asm.mkdir()
+    (asm / "SAMEA1.fa.gz").write_text("")
+    listing = tmp_path / "assemblies_file_list.tsv"
+    _write_file_list(listing, [("SAMEA1", asm / "SAMEA1.fa.gz"), ("SAMEA9", asm / "SAMEA9.fa.gz")])
+    sheet = tmp_path / "sheet.csv"
+    pd.DataFrame({"phenotype-BioSample_ID": ["SAMEA1", "SAMEA2"]}).to_csv(sheet, index=False)
+
+    out = tmp_path / "assembly_refs.txt"
+    manifest = resolve_run(organism_key="kp", out_tsv=out, ast_sheet=sheet, file_list=listing)
+
+    assert manifest["resolution"] == "file_list"
+    assert manifest["n_resolved"] == 1
+    assert manifest["n_missing"] == 1
+    assert out.read_text().splitlines() == [f"SAMEA1\t{asm / 'SAMEA1.fa.gz'}"]
+
+
+def test_file_list_takes_precedence_over_a_directory(tmp_path: Path) -> None:
+    """Both supplied is not an error: the explicit list wins, since it is the narrower statement."""
+    decoy = tmp_path / "decoy"
+    decoy.mkdir()
+    (decoy / "SAMEA1.fa.gz").write_text("")
+    real = tmp_path / "real"
+    real.mkdir()
+    (real / "SAMEA1.fa.gz").write_text("")
+    listing = tmp_path / "list.tsv"
+    _write_file_list(listing, [("SAMEA1", real / "SAMEA1.fa.gz")])
+    sheet = tmp_path / "sheet.csv"
+    pd.DataFrame({"Sample": ["SAMEA1"]}).to_csv(sheet, index=False)
+
+    resolve_run(organism_key="kp", out_tsv=tmp_path / "refs.txt", ast_sheet=sheet,
+                asm_dir=decoy, file_list=listing)
+    assert str(real) in (tmp_path / "refs.txt").read_text()
 
 
 def test_cohort_samples_accepts_either_id_column(tmp_path: Path) -> None:

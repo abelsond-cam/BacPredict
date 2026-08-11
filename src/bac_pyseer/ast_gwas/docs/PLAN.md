@@ -4,10 +4,33 @@
 > `CLAUDE.md`; this file holds the *why*, the decisions and their alternatives, the leakage
 > argument, the scale analysis, and the sequenced run order with its `[look]` checkpoints.
 >
-> **State (2026-08-11):** the package is written and tested — 200 tests pass, `ruff` clean, Stage A
-> smoke green (CPU-only, synthetic fixtures). **Nothing has run on a cluster yet.** The next action
-> is step 2 of the run order below: the toolchain probe, which gates everything after it.
-> PR [#1](https://github.com/abelsond-cam/BacPredict/pull/1).
+> **State (2026-08-11, updated):** the package is written and tested — `ruff` clean, Stage A smoke
+> green (CPU-only, synthetic fixtures). **Step 4's gate has now passed, on CSD3 rather than
+> Isambard** — see *Cluster: CSD3, not Isambard* below, which supersedes Decision 1. The next
+> action is step 5, the Kp cohort build. PR [#1](https://github.com/abelsond-cam/BacPredict/pull/1).
+
+## Cluster: CSD3, not Isambard — supersedes Decision 1
+
+Decision 1 chose Isambard because that is where the assemblies and split tables were, and flagged
+aarch64 `ggcat` as the step-4 risk. **The work is running on CSD3 instead.** Verified live
+2026-08-11:
+
+- **The toolchain risk evaporates.** CSD3 is `linux-64`, exactly what `src/bac_pyseer/pixi.toml`
+  already targets, and every binary resolves in the installed env: pyseer 1.4.1, ggcat 2.2.0,
+  unitig-caller 1.3.0, mash 2.3, bcftools/samtools 1.23.1. No `platforms` edit, no `cargo` fallback.
+- **The real gate turned out to be data availability, and it passes:** Kp 7,080/7,088 genomes
+  resolve, TB 36,692/36,692 — and against the *canonical* cohorts (7,088 / 36,692), matching
+  Isambard. Sampled paths all dereference.
+- **One adaptation was needed.** The module's flat-BioSample-keyed-directory assumption is
+  Isambard's. It holds for TB on CSD3 but not for Kp, whose AST genomes are sharded across
+  `seb/assemblies_2/` batch directories while `raw/assemblies` holds a GCA-keyed whole-*Klebsiella*
+  store. CSD3 ships the join as `raw/assemblies_file_list.tsv`, in the same `Sample<TAB>path` format
+  this package emits — so `--file-list` filters it rather than adding a second resolution strategy.
+
+The consequence for the plan is small: `metadata_v2` is *available* on CSD3, so debt item 1
+(mash-derived lineage clusters standing in for curated Kp `Sublineage`) could be closed earlier
+than expected. Not done here — it would change the population-structure correction mid-pilot, and
+that is a statistical decision to take deliberately rather than in passing.
 
 ---
 
@@ -394,12 +417,14 @@ Checkpoints marked **[look]** are where a human should read results before conti
       `--max-samples` cap (`a877215`), torch-free engine metrics (`8709b85`).
 - [x] **3. Package + tests + Stage A smoke** (`5d54117`, `2bd56bd`), reconciled with the sibling
       invasion comparator (`45122af`). 200 tests, CPU-only, no cluster.
-- [ ] **4. Toolchain probe on Isambard** — `scripts/probe_toolchain.sh`. **[look]**
-      **This gates everything below; do not size any compute until it passes.** The open risk is
-      `ggcat` having no aarch64 conda build; the script prints the `cargo install` fallback.
-- [ ] **5. Kp cohort build** — `ORGANISM=kp scripts/build_cohort_once.sh` (reflist → GGCAT → mash →
-      clusters). **[look]** unitig count, matrix size, how many near-universal unitigs the
-      `--max-samples` cap dropped, cluster size distribution.
+- [x] **4. Toolchain probe — passed on CSD3** (2026-08-11), not Isambard. The aarch64 `ggcat` risk
+      did not apply; the binding gate was data availability, which also passed (Kp 7,080/7,088,
+      TB 36,692/36,692). Required one adaptation — `--file-list` for Kp assembly resolution. See
+      *Cluster: CSD3, not Isambard* above.
+- [ ] **5. Kp cohort build** — `ORGANISM=kp FILE_LIST=<rds>/david/raw/assemblies_file_list.tsv
+      scripts/build_cohort_once.sh` (reflist → GGCAT → mash → clusters). **[look]** unitig count,
+      matrix size, how many near-universal unitigs the `--max-samples` cap dropped, cluster size
+      distribution.
 - [ ] **6. Kp `ertapenem`** — `ORGANISM=kp DRUG=ertapenem scripts/run_drug.sh`, through to
       `results.json`. **[look]** the positive control: expect ~0.98. Anything much lower is a
       pipeline bug, not a result — stop and debug rather than running the other three.
@@ -411,7 +436,8 @@ Checkpoints marked **[look]** are where a human should read results before conti
       If λ_perm is inflated, the hits are structure and the kinship needs replacing.
 - [ ] **11. Fan out** to the remaining 20 Kp + 8 TB drugs as SLURM arrays.
 
-> **This requires a machine with SSH access to Isambard.** Steps 4 onward cannot run from a Claude
+> **This requires a machine with SSH access to the cluster** (CSD3 in practice — see the note
+> superseding Decision 1). Steps 4 onward cannot run from a Claude
 > Code cloud session: that sandbox has no `ssh`/`scp`/`rsync` binary, an empty `~/.ssh`, and proxied
 > egress. Teleport the session to a local terminal
 > (`claude --teleport <session-id>`) or drive the scripts by hand.

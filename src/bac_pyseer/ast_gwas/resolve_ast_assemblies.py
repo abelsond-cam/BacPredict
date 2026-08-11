@@ -15,6 +15,16 @@ every drug.
 
 Note the raw-directory naming asymmetry on disk: ``raw/kleb_ast/`` but ``raw/tb/``, while the
 processed dirs are consistently ``processed/train_{kleb,tb}_ast/``.
+
+**The flat-directory assumption is Isambard's, and does not hold for Kp on CSD3.** There,
+``raw/kleb_ast/assemblies`` does not exist at all: ``raw/assemblies`` is the whole-*Klebsiella*
+store keyed by **GCA accession** (``GCA_900451215.1_44310_G01_genomic.fna.gz``), so a filename join
+against BioSample ids resolves nothing, and the AST genomes themselves live sharded across
+``seb/assemblies_2/klebsiella_pneumoniae__NN/<BioSample>.fa.gz`` batch directories. CSD3 ships the
+join already made, as ``raw/assemblies_file_list.tsv`` — a ``Sample<TAB>path`` TSV in exactly the
+format this module *emits*. ``--file-list`` consumes it, so that layout needs a filter rather than
+a second resolution strategy. TB is unaffected: its assemblies are flat and BioSample-keyed on both
+clusters, and the default path is already correct.
 """
 
 from __future__ import annotations
@@ -61,6 +71,45 @@ def cohort_samples(
     raise SystemExit(f"{sheet} has neither 'Sample' nor 'phenotype-BioSample_ID' (has {list(df.columns)[:10]})")
 
 
+def load_file_list(path: Path) -> dict[str, Path]:
+    """Read a ``Sample<TAB>path`` TSV into a mapping, tolerating a header row.
+
+    For stores that are not one flat directory — see the module docstring on CSD3's Kp layout.
+    Later rows win, matching the behaviour of re-running a resolution and appending.
+    """
+    mapping: dict[str, Path] = {}
+    with path.open() as handle:
+        for lineno, line in enumerate(handle):
+            row = line.rstrip("\n").split("\t")
+            if len(row) < 2 or not row[0]:
+                continue
+            if lineno == 0 and row[0] in {"Sample", "sample", "samples"}:
+                continue  # header
+            mapping[row[0]] = Path(row[1])
+    if not mapping:
+        raise SystemExit(f"{path} yielded no Sample<TAB>path rows")
+    return mapping
+
+
+def resolve_via_file_list(
+    samples: list[str], mapping: dict[str, Path], *, check_exists: bool = True
+) -> tuple[list[tuple[str, Path]], list[str]]:
+    """Join samples through a pre-built mapping → ``(resolved pairs, unresolved samples)``.
+
+    A sample absent from the mapping, or present but pointing at a file that does not exist (a
+    broken symlink into a shared store is the realistic failure), counts as missing.
+    """
+    resolved: list[tuple[str, Path]] = []
+    missing: list[str] = []
+    for sample in samples:
+        candidate = mapping.get(sample)
+        if candidate is None or (check_exists and not candidate.is_file()):
+            missing.append(sample)
+        else:
+            resolved.append((sample, candidate))
+    return resolved, missing
+
+
 def resolve(
     samples: list[str], asm_dir: Path, *, check_exists: bool = True
 ) -> tuple[list[tuple[str, Path]], list[str]]:
@@ -83,16 +132,24 @@ def resolve(
 
 def run(
     *, organism_key: str, out_tsv: Path, ast_sheet: Path | None = None, split_table: Path | None = None,
-    asm_dir: Path | None = None, data_root: Path | str | None = None, check_exists: bool = True,
+    asm_dir: Path | None = None, file_list: Path | None = None,
+    data_root: Path | str | None = None, check_exists: bool = True,
 ) -> dict[str, object]:
     """Write the ``Sample<TAB>path`` reflist plus a manifest recording what could not be resolved."""
     samples = cohort_samples(
         organism_key, ast_sheet=ast_sheet, split_table=split_table, data_root=data_root
     )
-    directory = asm_dir if asm_dir is not None else assemblies_dir(organism_key, data_root)
-    resolved, missing = resolve(samples, directory, check_exists=check_exists)
+    if file_list is not None:
+        source_desc = str(file_list)
+        resolved, missing = resolve_via_file_list(
+            samples, load_file_list(file_list), check_exists=check_exists
+        )
+    else:
+        directory = asm_dir if asm_dir is not None else assemblies_dir(organism_key, data_root)
+        source_desc = str(directory)
+        resolved, missing = resolve(samples, directory, check_exists=check_exists)
     if not resolved:
-        raise SystemExit(f"no assemblies resolved for {len(samples)} samples under {directory}")
+        raise SystemExit(f"no assemblies resolved for {len(samples)} samples under {source_desc}")
 
     out_tsv.parent.mkdir(parents=True, exist_ok=True)
     out_tsv.write_text("".join(f"{s}\t{p}\n" for s, p in resolved))
@@ -101,7 +158,8 @@ def run(
 
     manifest = {
         "organism": organism_key,
-        "assemblies_dir": str(directory),
+        "assemblies_dir": source_desc,
+        "resolution": "file_list" if file_list is not None else "directory_scan",
         "source": str(split_table or ast_sheet or organism_config(organism_key).store_paths().ast_sheet),
         "n_cohort": len(samples),
         "n_resolved": len(resolved),
@@ -124,6 +182,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--split-table", type=Path, default=None,
                    help="Restrict to one drug's labelled samples instead of the whole cohort.")
     p.add_argument("--assemblies-dir", type=Path, default=None, help="Override raw/<organism>/assemblies.")
+    p.add_argument("--file-list", type=Path, default=None,
+                   help="Resolve through a Sample<TAB>path TSV instead of scanning a directory "
+                        "(CSD3 Kp: raw/assemblies_file_list.tsv). Takes precedence over --assemblies-dir.")
     p.add_argument("--data-root", default=None, help="Override the resolved data root.")
     p.add_argument("--no-check-exists", action="store_true",
                    help="Emit paths without stat()ing them (default is to check and report misses).")
@@ -132,8 +193,8 @@ def main(argv: list[str] | None = None) -> None:
 
     print(json.dumps(run(
         organism_key=args.organism, out_tsv=args.out_tsv, ast_sheet=args.ast_sheet,
-        split_table=args.split_table, asm_dir=args.assemblies_dir, data_root=args.data_root,
-        check_exists=not args.no_check_exists,
+        split_table=args.split_table, asm_dir=args.assemblies_dir, file_list=args.file_list,
+        data_root=args.data_root, check_exists=not args.no_check_exists,
     ), indent=2))
 
 
