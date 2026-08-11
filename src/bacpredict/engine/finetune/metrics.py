@@ -13,10 +13,9 @@ import socket
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import torch
 from sklearn.calibration import calibration_curve
 from sklearn.metrics import (
     accuracy_score,
@@ -27,7 +26,9 @@ from sklearn.metrics import (
     roc_auc_score,
     roc_curve,
 )
-from transformers import EvalPrediction
+
+if TYPE_CHECKING:  # torch/transformers are needed by ONE function — see the lazy import in it
+    from transformers import EvalPrediction
 
 SCHEMA_VERSION = "1.2"
 REQUIRED_TOP_LEVEL_KEYS = {
@@ -132,6 +133,13 @@ def compute_metrics_binary_genome_pred(
     ``metric_for_best_model="eval_auroc"``. Calibration is omitted because the
     HF Trainer expects flat scalar metrics.
     """
+    # Lazy: this is the only function here that needs the deep-learning stack. Keeping it out of
+    # module scope lets the torch-free consumers of this module — the catalogue one-hot ceilings,
+    # the per-segment LR screens, the plots, and the pyseer/unitig read-outs in ``bac_pyseer``
+    # (which runs in a separate pixi env that deliberately excludes Bacformer's pinned torch) —
+    # import compute_full_metrics / build_results_payload without it.
+    import torch
+
     logits = torch.as_tensor(preds.predictions).flatten()
     labels = torch.as_tensor(preds.label_ids).flatten().long()
     if (labels == ignore_index).any():
