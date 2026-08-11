@@ -71,6 +71,39 @@ significantly so. Lineage identity is therefore not what the model is reading.
 pooling across 561 sublineages may cost AUROC (the rare-SL bucket is the weakest stratum). Not
 resolved here — do not plan downstream work off this without discussion.
 
+**2b. Whole-cohort scoring → more clones, three scopes** (`score_cohort.py` job `33494112`;
+tables via `scripts/stratified_tables_iso_source.sh`). Scoring all 14,119 genomes reproduced the
+deployed holdout number exactly (evaluate 0.7858 vs 0.786) and gave train 0.9590 / validate 0.7943.
+
+**That train-vs-evaluate gap is why the whole-set numbers cannot answer the within-clone question
+on their own.** The model memorises hard and train is 70% of the cohort, so an all-splits per-clone
+AUROC is mostly recall of fitted rows. Hence a third scope, `heldout` = validate + evaluate: nothing
+fitted on, n 2,822 → 4,234, and more clones clear n≥100. Quote `evaluate`; read `heldout` for the
+within-clone claim; treat `all` as a pattern check only.
+
+| Sublineage | n (heldout) | AUROC | 95% CI | | n (all) | AUROC (all — fitted-on) |
+|---|--:|--:|---|---|--:|--:|
+| pooled | 4,234 | 0.788 | 0.775–0.801 | | 14,119 | 0.914 |
+| SL15 | 167 | **0.890** | 0.840–0.932 | | 536 | 0.949 |
+| SL258 | 703 | 0.844 | 0.813–0.872 | | 2,416 | 0.933 |
+| SL307 | 247 | 0.828 | 0.778–0.878 | | 796 | 0.922 |
+| SL17 | 275 | 0.814 | 0.761–0.863 | | 960 | 0.925 |
+| SL147 | 315 | 0.739 | 0.676–0.793 | | 1,022 | 0.866 |
+| SL37 | 100 | 0.662 | 0.555–0.768 | | 326 | 0.868 |
+| other | 2,427 | 0.762 | 0.743–0.780 | | 5,776 | 0.906 |
+
+At `all` scope **20 sublineages** clear n≥100 and **every one** scores 0.849–0.966 against pooled
+0.914 — no clone fails, though these are inflated. By clonal group: 15 CGs at `all` scope (CG258
+0.935 … CG17 0.967, CG147 lowest at 0.864), only 4 at `heldout` (CG258 0.847, CG307 0.827,
+CG15 0.890, CG147 0.737) and 4 at `evaluate` — clonal groups are too fine-grained for the holdout
+alone, which is exactly what the extra scopes were for.
+
+**Held-out discrimination survives inside every clone tested, with real spread: 0.662 (SL37) to
+0.890 (SL15).** Four of six sit at or above pooled. SL37 is the weakest and its CI is wide
+(n=100) — it is the one group whose interval comes close to the rare-SL bucket. Whether the spread
+is biological (clone-specific invasion routes) or an artefact of per-clone prevalence/provenance is
+**an open question for David**, not something to build on.
+
 **3. Kleborate annotation** — `linear_baselines`, no country/Sublineage terms:
 
 | Model | n_feat | AUROC | Bacformer margin |
@@ -88,8 +121,9 @@ annotation predicts invasion *better* than virulence annotation does (0.617 vs 0
 a healthcare-association confound, not a virulence finding. Reproduces the Jun-2026 ladder
 (country+SL 0.694, full stack 0.731) to 3 dp.
 
-Artifacts: `<cohort>/kpsc_human/models/per_sublineage_metrics.{csv,json}` +
-`per_sublineage_auroc.png`; `<cohort>/kpsc_human/linear_baselines_v2.json`;
+Artifacts: `<cohort>/kpsc_human/models/cohort_scores.npz` +
+`per_{sublineage,clonal_group}_metrics_{evaluate,heldout,all}.{csv,json,png}`;
+`<cohort>/kpsc_human/linear_baselines_v2.json`;
 `…/pyseer_iso_source/blood_faeces/sampled_country_2_1_all/gwas_unitig_lmm/presence_model/`.
 
 ## Status
