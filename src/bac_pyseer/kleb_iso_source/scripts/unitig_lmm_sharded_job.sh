@@ -123,8 +123,13 @@ PY
         ( set +o pipefail; zcat "$M" | head -500 | gzip > "$PRIME" )
         [ -s "$PRIME" ] || { echo "ERROR: could not build the priming kmer set at $PRIME"; exit 1; }
         echo "priming cache from $SIM (tiny kmer set; cache depends on samples+kinship, not kmers)"
+        # NO --no-distances here: pyseer rejects it outright with --lmm ("Cannot use --no-distances
+        # with --lmm", __main__.py). --similarity alone satisfies the structure-argument check, and
+        # with neither --lineage nor --distances pyseer never loads a distance matrix at all, so the
+        # cache this writes (K eigendecomp + null h^2) is identical either way. Same never-executed
+        # block as the SIGPIPE bug above — both were latent until this first new cohort.
         pyseer_run --kmers "$PRIME" --phenotypes "$PHENO" --phenotype-column "$LABEL_COL" \
-            --lmm --similarity "$SIM" --save-lmm "$CACHE" --no-distances \
+            --lmm --similarity "$SIM" --save-lmm "$CACHE" \
             --min-af "$MIN_AF" --max-af "$MAX_AF" --cpu "$CPU" > /dev/null
         rm -f "$PRIME"
         [ -s "$CACHE" ] || { echo "ERROR: cache not produced"; exit 1; }
