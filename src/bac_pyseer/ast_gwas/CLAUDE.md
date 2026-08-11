@@ -65,10 +65,29 @@ threshold/λ/hits, and `unitig_placement.extract_hit_submatrix` for the cached b
 files gained env-overridable roots (`REPO`/`PYSEER`/`OUT_DIR`/`TMP`/`MATRIX`/`GWAS_DIR`/`SIM`/
 `DIST`/`CLUSTERS_TSV`) with defaults preserving their existing behaviour — no forks.
 
-The read-out reuses the engine: `load_splits`, `LOGREG_KW` (C=1.0, L2, lbfgs, no class weight),
+The read-out reuses the engine: `load_splits`, `LOGREG_KW` (L2, lbfgs, no class weight),
 `compute_full_metrics`, `build_results_payload`/`write_results_json`. The design matrix stays
 **sparse** — `fit_score_step` and `score_onehot_frame` densify and will not survive 10⁴–10⁶ columns —
 but the estimator settings and metric block are shared, so the numbers stay comparable.
+
+### Relationship to `kleb_iso_source/unitig_presence_model.py`
+
+A sibling agent built the same comparison for the **invasion** phenotype. Both arrived independently
+at the same leakage conclusion (their `subset_cohort_trainval.py`, my `build_ast_phenotype.py`).
+Rather than fork or rewrite, this package **imports** from theirs:
+
+- `DEFAULT_C_GRID` — so both comparators sweep the same grid.
+- `paired_delta_ci` — the paired bootstrap on the model-vs-model AUROC delta.
+
+and adopts their CSC accumulation pattern in `unitig_design_matrix` (can't call their builder
+directly: my column order is the GWAS rank order in `id_map.tsv`, which is what lets a coefficient
+be traced back to its GWAS row).
+
+**Their measured finding changed this package's estimator.** They found that ~33k correlated binary
+unitig columns against ~9.5k training rows overfit badly at the repo-pinned `C=1.0`. So `unitig_lr`
+sweeps `C` on **validate** and reports that as the headline, while also fitting the pinned `C=1.0`
+as a secondary (`extra.pinned_C_metrics`) so the comparison against the catalogue ceilings — which
+are fitted at that `C` — stays like-for-like.
 
 ## Status
 
@@ -78,6 +97,8 @@ but the estimator settings and metric block are shared, so the numbers stay comp
 - [x] `--max-samples` cap in `ggcat_to_pyseer` (near-universal unitigs are untestable and dominate
       matrix size; matters most for near-clonal TB)
 - [x] Package + Stage A smoke (CPU-only, synthetic fixtures, no GGCAT/pyseer/cluster)
+- [x] Reconciled with the sibling invasion comparator: C swept on validate (their measured
+      overfitting finding), paired bootstrap CI in `collect_comparison`, CSC accumulation
 - [ ] Step 0 toolchain probe on the active cluster — **gates everything below**
 - [ ] Kp cohort build → `ertapenem` (positive control) → `colistin`
 - [ ] TB cohort build → `ethionamide` (smaller n first) → `rifampin`
@@ -95,6 +116,10 @@ but the estimator settings and metric block are shared, so the numbers stay comp
    the toml — `ggcat` and `unitig-caller` do not appear in `pixi.lock`.
 3. **`pheno_var` keeps a 0.249 fallback** for backward compatibility; should become required once
    the iso-source outputs have been regenerated.
+4. **Two near-duplicate unitig→LR implementations** — `kleb_iso_source/unitig_presence_model.py`
+   (invasion) and this package (AMR). They now share a grid and the bootstrap by import, but the
+   matrix build and the fit are still written twice. Unify into one engine with thin per-phenotype
+   callers before publication; needs the sibling agent coordinated with.
 
 ## Watch out for
 

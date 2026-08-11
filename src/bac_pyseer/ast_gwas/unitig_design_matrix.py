@@ -34,11 +34,7 @@ import numpy as np
 import pandas as pd
 from scipy import sparse
 
-from bac_pyseer.kleb_iso_source.unitig_placement import (
-    carrier_union_from_submatrix,
-    extract_hit_submatrix,
-    shard_expected,
-)
+from bac_pyseer.kleb_iso_source.unitig_placement import extract_hit_submatrix
 from bacpredict.engine.splits.load_splits import load_splits
 
 logger = logging.getLogger(__name__)
@@ -92,6 +88,16 @@ def build_presence_matrix(
 ) -> tuple[sparse.csr_matrix, set[str], int]:
     """Stream the cached hit sub-matrix → a ``(len(sample_ids), len(id_map))`` binary CSR.
 
+    Each sub-matrix line is one unitig and its carriers, which is *column*-major for a genome ×
+    unitig matrix — so the accumulation is CSC (``indptr`` from the per-unitig carrier counts) with
+    a single conversion at the end, the pattern
+    :mod:`bac_pyseer.kleb_iso_source.unitig_presence_model` uses. That avoids materialising either a
+    COO triple or a dict-of-sets, roughly halving peak memory at ~10⁸ non-zeros.
+
+    Columns are placed at their ``id_map`` position rather than in file order, so column *j* is
+    always ``id_map`` row *j* — which is what lets a fitted coefficient be traced back to its GWAS
+    row.
+
     Returns
     -------
     (scipy.sparse.csr_matrix, set of str, int)
@@ -102,29 +108,40 @@ def build_presence_matrix(
         matrix but mean different things, so they are counted separately.
     """
     seq2idx = {row.variant: int(row.unitig_idx) for row in id_map.itertuples(index=False)}
-    universe = set(sample_ids)
-    expected = shard_expected(submatrix_path, seq2idx, universe)
-
     row_of = {s: i for i, s in enumerate(sample_ids)}
-    rows: list[int] = []
-    cols: list[int] = []
-    for sample, idxs in expected.items():
-        r = row_of[sample]
-        rows.extend([r] * len(idxs))
-        cols.extend(idxs)
-    matrix = sparse.csr_matrix(
-        (np.ones(len(rows), dtype=np.int8), (np.asarray(rows, dtype=np.int64), np.asarray(cols, dtype=np.int64))),
-        shape=(len(sample_ids), len(id_map)),
-        dtype=np.int8,
-    )
-    matrix.sum_duplicates()
+    n_cols = len(id_map)
 
-    # Absence from the sub-matrix is a join failure; an all-zero column is a cohort fact. Read the
-    # (small, cached) sub-matrix for the former rather than inferring it from the matrix, which
-    # cannot tell the two apart.
-    _, matched = carrier_union_from_submatrix(submatrix_path, set(seq2idx))
-    n_empty_columns = int((matrix.getnnz(axis=0) == 0).sum())
-    return matrix, set(seq2idx) - matched, n_empty_columns
+    per_column: list[np.ndarray | None] = [None] * n_cols
+    with submatrix_path.open() as fh:
+        for line in fh:
+            seq, sep, rest = line.partition(" | ")
+            if not sep:
+                continue
+            col = seq2idx.get(seq)
+            if col is None:
+                continue
+            rows = {row_of[s] for tok in rest.split() if (s := tok.rpartition(":")[0]) in row_of}
+            # Sorted + de-duplicated: CSC wants ordered indices, and a sample can be listed twice
+            # if a unitig was placed more than once.
+            per_column[col] = np.fromiter(sorted(rows), dtype=np.int32, count=len(rows))
+
+    counts = [0 if c is None else c.size for c in per_column]
+    indptr = np.zeros(n_cols + 1, dtype=np.int64)
+    indptr[1:] = np.cumsum(counts)
+    present = [c for c in per_column if c is not None and c.size]
+    indices = np.concatenate(present) if present else np.zeros(0, dtype=np.int32)
+    matrix = sparse.csc_matrix(
+        (np.ones(indices.size, dtype=np.int8), indices, indptr),
+        shape=(len(sample_ids), n_cols),
+        dtype=np.int8,
+    ).tocsr()
+
+    # A sequence missing from the sub-matrix is a join failure; a column that is present but empty
+    # is a cohort fact (its only carriers fall outside the split table). The matrix alone cannot
+    # tell those apart, so they are tracked separately during the parse.
+    missing = {seq for seq, col in seq2idx.items() if per_column[col] is None}
+    n_empty_columns = int(sum(1 for c in counts if c == 0))
+    return matrix, missing, n_empty_columns
 
 
 def run(

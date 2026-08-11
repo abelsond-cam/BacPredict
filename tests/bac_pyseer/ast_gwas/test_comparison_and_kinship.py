@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from bac_pyseer.ast_gwas.collect_comparison import collect, read_unitig_results
+from bac_pyseer.ast_gwas.collect_comparison import collect, paired_ci_against_ft, read_unitig_results
 from bac_pyseer.ast_gwas.mash_kinship import distances_for_samples, similarity_for_samples
 from bac_pyseer.ast_gwas.mash_kinship import run as kinship_run
 
@@ -168,6 +168,66 @@ def test_collect_without_a_panel_still_emits_unitig_columns(tmp_path: Path) -> N
     table = collect([_results_json(tmp_path / "r.json", "ertapenem", 0.985, 0.982)], None)
     assert list(table["drug"]) == ["ertapenem"]
     assert "delta_vs_ft_auroc" not in table.columns
+
+
+def _scores_npz(path: Path, ids: list[str], y_true: list[int], y_prob: list[float]) -> Path:
+    """An eval_scores.npz in the shape both comparators write."""
+    np.savez(path, y_true=np.array(y_true), y_prob=np.array(y_prob),
+             sample_ids=np.asarray(ids, dtype=np.str_), drug=np.array("ertapenem"),
+             operating_threshold=np.array(0.5))
+    return path
+
+
+def test_paired_ci_pairs_by_sample_id_not_position(tmp_path: Path) -> None:
+    """The two models' holdouts overlap partially and are in different orders — align by id."""
+    ids = [f"S{i}" for i in range(20)]
+    y = [i % 2 for i in range(20)]
+    unitig = _scores_npz(tmp_path / "u.npz", ids, y, [0.9 if v else 0.1 for v in y])
+    # Fine-tune covers a shifted, reordered subset — pairing by position would be wrong.
+    ft_ids = list(reversed(ids[5:]))
+    ft_y = [int(s[1:]) % 2 for s in ft_ids]
+    ft = _scores_npz(tmp_path / "f.npz", ft_ids, ft_y, [0.8 if v else 0.2 for v in ft_y])
+
+    ci = paired_ci_against_ft(unitig, ft, seed=1)
+    assert ci is not None
+    assert ci["n_common_genomes"] == 15
+    # Both models separate the classes perfectly on the common set, so the delta is exactly 0.
+    assert ci["unitig_auroc_on_common"] == pytest.approx(1.0)
+    assert ci["ft_auroc_on_common"] == pytest.approx(1.0)
+    assert ci["delta_unitig_minus_ft"] == pytest.approx(0.0)
+    assert ci["separates_from_zero"] is False
+
+
+def test_paired_ci_needs_sample_ids(tmp_path: Path) -> None:
+    """Without sample_ids the models could only be aligned by position — refuse rather than guess."""
+    ids = [f"S{i}" for i in range(10)]
+    y = [i % 2 for i in range(10)]
+    unitig = _scores_npz(tmp_path / "u.npz", ids, y, [0.9 if v else 0.1 for v in y])
+    legacy = tmp_path / "legacy.npz"
+    np.savez(legacy, y_true=np.array(y), y_prob=np.array([0.5] * 10))  # pre-sample_ids schema
+    assert paired_ci_against_ft(unitig, legacy) is None
+
+
+def test_collect_adds_the_ci_columns(tmp_path: Path) -> None:
+    """A drug with a fine-tune npz gains a delta and a separates_from_zero verdict."""
+    lr_dir = tmp_path / "lr"
+    lr_dir.mkdir()
+    results = _results_json(lr_dir / "results.json", "ertapenem", 0.985, 0.982)
+    ids = [f"S{i}" for i in range(20)]
+    y = [i % 2 for i in range(20)]
+    _scores_npz(lr_dir / "eval_scores.npz", ids, y, [0.9 if v else 0.1 for v in y])
+    ft = _scores_npz(tmp_path / "ft.npz", ids, y, [0.6 if v else 0.4 for v in y])
+
+    table = collect([results], None, ft_scores={"ertapenem": ft})
+    assert table.loc[0, "n_common_genomes"] == 20
+    assert "delta_unitig_minus_ft" in table.columns
+    assert table.loc[0, "separates_from_zero"] in (True, False)
+
+
+def test_collect_without_ft_scores_omits_the_ci(tmp_path: Path) -> None:
+    """No fine-tune predictions means no CI columns — not a column of NaNs implying one was tried."""
+    table = collect([_results_json(tmp_path / "r.json", "ertapenem", 0.985, 0.982)], None)
+    assert "delta_unitig_minus_ft" not in table.columns
 
 
 def test_collect_rejects_an_empty_input() -> None:

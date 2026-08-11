@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+import scipy.sparse as sp
 
 from bac_pyseer.ast_gwas.build_ast_phenotype import build_phenotype, label_column, write_phenotype
 from bac_pyseer.ast_gwas.unitig_design_matrix import load_design, read_hits
@@ -207,6 +208,26 @@ def test_design_matrix_reports_unjoined_hits(split_table: Path, tmp_path: Path) 
     assert (tmp_path / "design" / "unitig_join_misses.txt").read_text().split() == ["TTTT"]
 
 
+def test_design_matrix_separates_unjoined_from_out_of_cohort(split_table: Path, tmp_path: Path) -> None:
+    """A hit whose carriers are all outside the cohort is an empty column, not a join failure.
+
+    Both look like an all-zero column, but one means the hits table and the unitig matrix disagree
+    and the other is an ordinary cohort fact — conflating them would hide a real data bug.
+    """
+    matrix_gz = tmp_path / "u.gz"
+    _write_unitig_matrix(matrix_gz, {
+        "AAAA": _all_samples()[:5],          # in cohort
+        "CCCC": ["NOT_IN_COHORT_1", "NOT_IN_COHORT_2"],  # present, but no carrier is in the splits
+    })
+    hits = tmp_path / "hits.tsv"
+    _write_hits(hits, ["AAAA", "CCCC", "GGGG"])  # GGGG is absent from the matrix entirely
+    manifest = build_design(
+        hits_tsv=hits, matrix_gz=matrix_gz, split_table=split_table, out_dir=tmp_path / "design"
+    )
+    assert manifest["n_unitigs_not_found_in_matrix"] == 1   # GGGG
+    assert manifest["n_unitigs_absent_from_cohort"] == 2    # CCCC (out-of-cohort carriers) + GGGG
+
+
 # --------------------------------------------------------------------------------------- #
 # logistic regression read-out
 # --------------------------------------------------------------------------------------- #
@@ -272,6 +293,61 @@ def test_lr_emits_the_engine_results_schema(signal_cohort, split_table: Path, tm
     coefficients = pd.read_csv(out_dir / "coefficients.tsv", sep="\t")
     assert len(coefficients) == 3
     assert "lr_coef" in coefficients.columns
+
+
+def test_lr_sweeps_c_on_validate_and_records_it(signal_cohort, split_table: Path, tmp_path: Path) -> None:
+    """C is chosen from the grid on validate only, and the choice is recorded, not implicit."""
+    from bac_pyseer.kleb_iso_source.unitig_presence_model import DEFAULT_C_GRID
+
+    matrix_gz, hits = signal_cohort
+    design_dir = tmp_path / "design"
+    build_design(hits_tsv=hits, matrix_gz=matrix_gz, split_table=split_table, out_dir=design_dir)
+    payload = run_lr(
+        design_dir=design_dir, split_table=split_table, drug=_DRUG,
+        organism="kp", out_dir=tmp_path / "lr",
+    )
+    extra = payload["extra"]
+    assert extra["C"] in DEFAULT_C_GRID
+    assert extra["C_selected_on"] == "validate"
+    assert [row["C"] for row in extra["c_sweep"]] == list(DEFAULT_C_GRID)
+    # Every sweep entry is a validate score — the holdout is never touched during selection.
+    assert all(0.0 <= row["validate_auroc"] <= 1.0 for row in extra["c_sweep"])
+
+
+def test_lr_keeps_the_pinned_c_as_a_comparable_secondary(
+    signal_cohort, split_table: Path, tmp_path: Path
+) -> None:
+    """The catalogue ceilings are fitted at C=1.0, so that fit must survive for the ladder."""
+    matrix_gz, hits = signal_cohort
+    design_dir = tmp_path / "design"
+    build_design(hits_tsv=hits, matrix_gz=matrix_gz, split_table=split_table, out_dir=design_dir)
+    payload = run_lr(
+        design_dir=design_dir, split_table=split_table, drug=_DRUG,
+        organism="kp", out_dir=tmp_path / "lr",
+    )
+    pinned = payload["extra"]["pinned_C_metrics"]
+    # None only when the sweep itself chose 1.0; otherwise a full metrics block must be present.
+    if payload["extra"]["C"] == 1.0:
+        assert pinned is None
+    else:
+        assert pinned is not None
+        assert {"auroc", "auprc", "confusion_matrix"} <= set(pinned)
+
+
+def test_sweep_c_falls_back_when_validate_is_degenerate(split_table: Path, tmp_path: Path) -> None:
+    """With no usable validate split, selecting C would mean peeking at the holdout — so don't."""
+    from bac_pyseer.ast_gwas.unitig_lr import sweep_c
+
+    rng = np.random.default_rng(0)
+    matrix = sp.csr_matrix((rng.random((10, 4)) > 0.5).astype(np.int8))
+    tr_rows, y_tr = np.arange(10), np.array([0, 1] * 5)
+    best_c, sweep = sweep_c(matrix, tr_rows, y_tr, np.array([], dtype=np.int64), np.array([]), (0.1, 1.0))
+    assert best_c == 1.0  # the pinned value
+    assert sweep == []
+    # Single-class validate is equally unusable.
+    best_c, sweep = sweep_c(matrix, tr_rows, y_tr, np.array([0, 1]), np.array([1, 1]), (0.1, 1.0))
+    assert best_c == 1.0
+    assert sweep == []
 
 
 def test_lr_scores_only_the_holdout(signal_cohort, split_table: Path, tmp_path: Path) -> None:
