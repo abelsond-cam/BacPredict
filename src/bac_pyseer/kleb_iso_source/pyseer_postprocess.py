@@ -43,6 +43,14 @@ DEFAULT_CONTIG_LEN = 5_315_120  # NC_009648 (K. pneumoniae MGH 78578), bp
 PVAL_COL = "lrt-pvalue"  # structure-adjusted p (fixed-effects + MDS); the one we test on
 CHI2_1DF_MEDIAN = float(chi2.ppf(0.5, 1))  # ≈ 0.4549 — the λ denominator
 
+# Fallback binary-phenotype variance p(1-p), used only when neither --phenotype-tsv nor
+# --pheno-var is given. 0.249 is the value for the balance-sampled isolation-source cohorts
+# (blood/faeces p=0.5276 ⇒ 0.2492; faeces/respiratory p=0.4834 ⇒ 0.2497) and is kept as the
+# default so those runs stay byte-reproducible. Any cohort that is not ~50:50 — every AMR
+# phenotype (e.g. ertapenem p=0.634 ⇒ 0.232, colistin p=0.278 ⇒ 0.201) — must supply its own,
+# otherwise var_explained_pct is misscaled and not comparable across contrasts.
+DEFAULT_PHENO_VAR = 0.249
+
 # --- known Klebsiella invasion / hypervirulence loci, for the cross-reference flag ------
 # Gene-symbol prefixes (matched case-insensitively at the start of the gene name) and
 # product-description keywords. Deliberately focused on the strongest invasion markers so
@@ -117,6 +125,63 @@ def count_unique_patterns(patterns_path: Path) -> int:
 def bonferroni_threshold(n_patterns: int, alpha: float = 0.05) -> float:
     """Bonferroni significance threshold ``alpha / n_patterns`` (guards ``n_patterns==0``)."""
     return alpha / n_patterns if n_patterns > 0 else alpha
+
+
+def phenotype_variance(phenotype_path: Path, column: str | None = None) -> float:
+    """Binary-phenotype variance ``p(1-p)`` over the samples actually tested.
+
+    Reads a pyseer ``--phenotypes`` TSV (first column ``samples``, then one column per
+    phenotype) and returns the variance of the 0/1 label column, which is the correct
+    denominator for ``var_explained_pct``. Rows whose label is not exactly 0 or 1 (blank,
+    ``NA``, fractional) are dropped, matching the samples pyseer itself would test.
+
+    Parameters
+    ----------
+    phenotype_path
+        Path to the pyseer phenotype TSV.
+    column
+        Label column name. Defaults to the second column of the file.
+
+    Returns
+    -------
+    float
+        ``p * (1 - p)`` where ``p`` is the fraction of retained samples labelled 1.
+    """
+    pheno = pd.read_csv(phenotype_path, sep="\t")
+    if pheno.shape[1] < 2:
+        raise SystemExit(f"{phenotype_path} has no label column (columns: {list(pheno.columns)})")
+    col = column if column is not None else pheno.columns[1]
+    if col not in pheno.columns:
+        raise SystemExit(f"{phenotype_path} has no '{col}' column (columns: {list(pheno.columns)})")
+    y = pd.to_numeric(pheno[col], errors="coerce")
+    y = y[y.isin((0, 1))]
+    if y.empty:
+        raise SystemExit(f"{phenotype_path} column '{col}' has no 0/1 labels")
+    p = float(y.mean())
+    if p in (0.0, 1.0):
+        raise SystemExit(f"{phenotype_path} column '{col}' is single-class (p={p}) — variance is 0")
+    return p * (1 - p)
+
+
+def resolve_pheno_var(
+    pheno_var: float | None, phenotype_path: Path | None, phenotype_column: str | None
+) -> tuple[float, str]:
+    """Pick the phenotype variance to normalise ``var_explained_pct`` by, and say where it came from.
+
+    Precedence: an explicit ``pheno_var`` wins; else it is computed from the phenotype file
+    actually used in the run; else :data:`DEFAULT_PHENO_VAR` (which is only right for a
+    ~50:50 cohort — see that constant's note).
+    """
+    if pheno_var is not None:
+        return float(pheno_var), "explicit"
+    if phenotype_path is not None:
+        return phenotype_variance(phenotype_path, phenotype_column), f"computed:{phenotype_path}"
+    logging.warning(
+        "no --phenotype-tsv or --pheno-var given: falling back to pheno_var=%.4f, which assumes a "
+        "~50:50 phenotype. var_explained_pct will be misscaled for any imbalanced cohort.",
+        DEFAULT_PHENO_VAR,
+    )
+    return DEFAULT_PHENO_VAR, "default"
 
 
 def genomic_inflation(pvalues: np.ndarray) -> float:
@@ -201,7 +266,7 @@ def load_consequence_map(effect_map_path: Path) -> dict[tuple[int, str, str], st
 def significant_hits(
     assoc: pd.DataFrame, threshold: float, pval_col: str = PVAL_COL,
     pos_label: str = "blood (invasion)", neg_label: str = "faeces",
-    pheno_var: float = 0.249,
+    pheno_var: float = DEFAULT_PHENO_VAR,
 ) -> pd.DataFrame:
     """Rows with ``pval_col < threshold``, annotated with effect size + clonal-block flags.
 
@@ -514,12 +579,13 @@ def plot_manhattan(
 # orchestration
 # --------------------------------------------------------------------------------------- #
 def run(
-    *, assoc_path: Path, patterns_path: Path, gff_path: Path, out_fig_dir: Path,
+    *, assoc_path: Path, patterns_path: Path, gff_path: Path | None, out_fig_dir: Path,
     out_table: Path, summary_json: Path, contig: str, contig_len: int,
     pval_col: str, alpha: float, k_dimensions: int | None,
     pos_label: str = "blood (invasion)", neg_label: str = "faeces",
     pair_title: str = "blood vs faeces", feature_mode: str = "variants",
-    effect_map: Path | None = None,
+    effect_map: Path | None = None, pheno_var: float | None = None,
+    phenotype_tsv: Path | None = None, phenotype_column: str | None = None,
 ) -> dict[str, object]:
     """Compute the threshold + λ, draw QQ/Manhattan, annotate hits, write the summary.
 
@@ -527,8 +593,19 @@ def run(
     interval-joins it to the GFF. ``feature_mode="unitigs"`` skips that — unitig ids are DNA
     sequences whose gene mapping needs a bwa alignment (deferred ``annotate_hits_pyseer`` step) —
     so it still computes the threshold/λ/QQ and the VE-ranked hit table (with sequences + stats),
-    but leaves the gene columns empty and skips the position-based Manhattan.
+    but leaves the gene columns empty and skips the position-based Manhattan. ``gff_path`` is
+    therefore only required in variant mode.
+
+    ``var_explained_pct`` is normalised by the binary-phenotype variance: pass
+    ``phenotype_tsv`` (the same file given to ``pyseer --phenotypes``) so it is computed from
+    the cohort actually tested, or ``pheno_var`` to set it directly. See
+    :func:`resolve_pheno_var`.
     """
+    if feature_mode != "unitigs" and gff_path is None:
+        raise SystemExit("--gff is required unless --feature-mode unitigs")
+    resolved_pheno_var, pheno_var_source = resolve_pheno_var(pheno_var, phenotype_tsv, phenotype_column)
+    logging.info("pheno_var=%.6f (%s)", resolved_pheno_var, pheno_var_source)
+
     assoc = load_assoc(assoc_path)
     n_variants = len(assoc)
     pvals = pd.to_numeric(assoc[pval_col], errors="coerce").to_numpy()
@@ -543,7 +620,7 @@ def run(
     #     plotting failure can never cost the run its outputs. The precious raw GWAS data
     #     (the .assoc + patterns) is already written by pyseer upstream; everything below is
     #     cheap to recompute from it, and the plots at the end are regenerable by re-running.
-    hits = significant_hits(assoc, threshold, pval_col, pos_label, neg_label)
+    hits = significant_hits(assoc, threshold, pval_col, pos_label, neg_label, resolved_pheno_var)
     logging.info("significant hits (%s < %.3e): %d", pval_col, threshold, len(hits))
 
     if feature_mode == "unitigs":
@@ -600,6 +677,8 @@ def run(
         "alpha": alpha,
         "bonferroni_threshold": threshold,
         "pval_col": pval_col,
+        "pheno_var": resolved_pheno_var,
+        "pheno_var_source": pheno_var_source,
         "genomic_inflation_lambda": lam,
         "max_dimensions_k": k_dimensions,
         "n_significant": int(len(hits)),
@@ -654,7 +733,8 @@ def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--assoc", type=Path, required=True, help="pyseer .assoc output table.")
     p.add_argument("--patterns", type=Path, required=True, help="pyseer --output-patterns file.")
-    p.add_argument("--gff", type=Path, required=True, help="Reference GFF3 (MGH 78578, NC_009648.1).")
+    p.add_argument("--gff", type=Path, default=None,
+                   help="Reference GFF3 (MGH 78578, NC_009648.1). Required unless --feature-mode unitigs.")
     p.add_argument("--out-fig-dir", type=Path, required=True, help="Directory for QQ + Manhattan PNGs.")
     p.add_argument("--out-table", type=Path, required=True, help="Output annotated significant-hit TSV.")
     p.add_argument("--summary-json", type=Path, required=True, help="Output run-summary JSON.")
@@ -671,6 +751,14 @@ def main(argv: list[str] | None = None) -> None:
                    help="variants: parse POS from id + GFF map. unitigs: defer gene mapping (bwa align hits).")
     p.add_argument("--effect-map", type=Path, default=None,
                    help="SnpEff effect map (pos,ref,alt,class) → adds a 'consequence' column per hit (variant mode).")
+    p.add_argument("--phenotype-tsv", type=Path, default=None,
+                   help="The pyseer --phenotypes TSV used for this run; var_explained_pct is normalised by "
+                        "its p(1-p). Give this for any cohort that is not ~50:50 (i.e. every AMR phenotype).")
+    p.add_argument("--phenotype-column", default=None,
+                   help="Label column in --phenotype-tsv (default: its second column).")
+    p.add_argument("--pheno-var", type=float, default=None,
+                   help=f"Override the binary-phenotype variance p(1-p) directly. Falls back to "
+                        f"{DEFAULT_PHENO_VAR} when neither this nor --phenotype-tsv is given.")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -681,6 +769,8 @@ def main(argv: list[str] | None = None) -> None:
         alpha=args.alpha, k_dimensions=args.max_dimensions,
         pos_label=args.pos_label, neg_label=args.neg_label, pair_title=args.pair_title,
         feature_mode=args.feature_mode, effect_map=args.effect_map,
+        pheno_var=args.pheno_var, phenotype_tsv=args.phenotype_tsv,
+        phenotype_column=args.phenotype_column,
     )
 
 

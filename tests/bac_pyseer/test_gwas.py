@@ -12,8 +12,10 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from bac_pyseer.kleb_iso_source.pyseer_postprocess import (
+    DEFAULT_PHENO_VAR,
     bonferroni_threshold,
     count_unique_patterns,
     cross_ref_virulence,
@@ -21,8 +23,11 @@ from bac_pyseer.kleb_iso_source.pyseer_postprocess import (
     genomic_inflation,
     map_positions_to_genes,
     parse_gff_genes,
+    phenotype_variance,
     plot_manhattan,
     plot_qq,
+    resolve_pheno_var,
+    run,
     significant_hits,
     variant_positions,
 )
@@ -149,6 +154,113 @@ def test_cross_ref_virulence() -> None:
     assert out.loc[0, "virulence_match"] == "gene:rmp*"
     assert out.loc[2, "virulence_match"] == "product:aerobactin"  # flagged via product, empty gene
     assert out.loc[3, "virulence_match"] == "gene:iuc*"
+
+
+def _write_pheno(tmp_path: Path, labels: list, column: str = "ertapenem_label") -> Path:
+    """Write a minimal pyseer --phenotypes TSV (first column literally ``samples``)."""
+    p = tmp_path / "phenotype.tsv"
+    pd.DataFrame({"samples": [f"SAM{i:04d}" for i in range(len(labels))], column: labels}).to_csv(
+        p, sep="\t", index=False
+    )
+    return p
+
+
+def test_phenotype_variance_matches_p_times_1_minus_p(tmp_path: Path) -> None:
+    """p(1-p) is computed over the samples actually tested, defaulting to the 2nd column."""
+    # 6 resistant / 4 susceptible -> p=0.6 -> 0.24
+    pheno = _write_pheno(tmp_path, [1] * 6 + [0] * 4)
+    assert phenotype_variance(pheno) == pytest.approx(0.24)
+    assert phenotype_variance(pheno, "ertapenem_label") == pytest.approx(0.24)
+
+
+def test_phenotype_variance_drops_non_binary_rows(tmp_path: Path) -> None:
+    """Blank / NA / fractional labels are excluded, matching the samples pyseer would test."""
+    # 3 ones, 1 zero, plus rows pyseer would never test -> p=0.75 -> 0.1875
+    pheno = _write_pheno(tmp_path, [1, 1, 1, 0, np.nan, 0.5])
+    assert phenotype_variance(pheno) == pytest.approx(0.1875)
+
+
+def test_phenotype_variance_rejects_degenerate_input(tmp_path: Path) -> None:
+    """A missing column, an all-one-class column, or no 0/1 labels are hard errors, not silent zeros."""
+    with pytest.raises(SystemExit, match="no 'nope' column"):
+        phenotype_variance(_write_pheno(tmp_path, [1, 0]), "nope")
+    with pytest.raises(SystemExit, match="single-class"):
+        phenotype_variance(_write_pheno(tmp_path, [1, 1, 1]))
+    with pytest.raises(SystemExit, match="no 0/1 labels"):
+        phenotype_variance(_write_pheno(tmp_path, [np.nan, np.nan]))
+
+
+def test_resolve_pheno_var_precedence(tmp_path: Path) -> None:
+    """Explicit wins over computed, computed wins over the ~50:50 fallback."""
+    pheno = _write_pheno(tmp_path, [1] * 6 + [0] * 4)  # 0.24
+    assert resolve_pheno_var(0.2, pheno, None) == (0.2, "explicit")
+    var, source = resolve_pheno_var(None, pheno, None)
+    assert var == pytest.approx(0.24)
+    assert source.startswith("computed:")
+    assert resolve_pheno_var(None, None, None) == (DEFAULT_PHENO_VAR, "default")
+
+
+def test_significant_hits_scales_by_pheno_var() -> None:
+    """var_explained_pct is af(1-af)β²/pheno_var·100, and the default is unchanged at 0.249."""
+    assoc = pd.DataFrame({
+        "variant": ["v1"], "af": [0.5], "lrt-pvalue": [1e-9], "beta": [1.0],
+    })
+    # af(1-af)β² = 0.25
+    assert significant_hits(assoc, threshold=1e-2).loc[0, "var_explained_pct"] == pytest.approx(
+        0.25 / DEFAULT_PHENO_VAR * 100
+    )
+    assert DEFAULT_PHENO_VAR == 0.249  # the iso-source runs must stay byte-reproducible
+    imbalanced = significant_hits(assoc, threshold=1e-2, pheno_var=0.201).loc[0, "var_explained_pct"]
+    assert imbalanced == pytest.approx(0.25 / 0.201 * 100)
+    # An imbalanced cohort (colistin, p=0.278) is understated by ~19% under the 0.249 default.
+    assert imbalanced > 0.25 / DEFAULT_PHENO_VAR * 100
+
+
+def _write_assoc(tmp_path: Path) -> tuple[Path, Path]:
+    """A two-unitig .assoc plus its patterns file."""
+    assoc = tmp_path / "u.assoc"
+    pd.DataFrame({
+        "variant": ["ACGTACGTACGT", "TTTTGGGGCCCC"],
+        "af": [0.4, 0.5],
+        "filter-pvalue": [1e-12, 1e-3],
+        "lrt-pvalue": [1e-12, 0.4],
+        "beta": [1.5, 0.1],
+        "beta-std-err": [0.1, 0.1],
+    }).to_csv(assoc, sep="\t", index=False)
+    patterns = tmp_path / "patterns.txt"
+    patterns.write_text("aaa\nbbb\n")
+    return assoc, patterns
+
+
+def test_run_unitig_mode_needs_no_gff_and_records_pheno_var(tmp_path: Path) -> None:
+    """--feature-mode unitigs runs without a GFF and pins the phenotype variance it used."""
+    assoc, patterns = _write_assoc(tmp_path)
+    pheno = _write_pheno(tmp_path, [1] * 6 + [0] * 4)  # p=0.6 -> 0.24
+    summary = run(
+        assoc_path=assoc, patterns_path=patterns, gff_path=None,
+        out_fig_dir=tmp_path / "fig", out_table=tmp_path / "hits.tsv",
+        summary_json=tmp_path / "summary.json", contig="NC_009648", contig_len=5_315_120,
+        pval_col="lrt-pvalue", alpha=0.05, k_dimensions=None, feature_mode="unitigs",
+        phenotype_tsv=pheno,
+    )
+    assert summary["pheno_var"] == pytest.approx(0.24)
+    assert summary["pheno_var_source"].startswith("computed:")
+    assert summary["n_significant"] == 1
+    hits = pd.read_csv(tmp_path / "hits.tsv", sep="\t")
+    # af(1-af)β² = 0.4*0.6*1.5² = 0.54, over pheno_var 0.24
+    assert hits.loc[0, "var_explained_pct"] == pytest.approx(0.54 / 0.24 * 100)
+
+
+def test_run_variant_mode_still_requires_gff(tmp_path: Path) -> None:
+    """The GFF is only optional in unitig mode — variant mode still fails loudly without it."""
+    assoc, patterns = _write_assoc(tmp_path)
+    with pytest.raises(SystemExit, match="--gff is required"):
+        run(
+            assoc_path=assoc, patterns_path=patterns, gff_path=None,
+            out_fig_dir=tmp_path / "fig", out_table=tmp_path / "hits.tsv",
+            summary_json=tmp_path / "summary.json", contig="NC_009648", contig_len=5_315_120,
+            pval_col="lrt-pvalue", alpha=0.05, k_dimensions=None, feature_mode="variants",
+        )
 
 
 def test_plots_smoke(tmp_path: Path) -> None:
