@@ -42,20 +42,24 @@ export PYTHONUNBUFFERED=1
 export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 export UV_CACHE_DIR=/home/dca36/rds/hpc-work/.uv_cache
 unset PYTHONPATH PYTHONHOME
-REPO=/home/dca36/workspace/BacPredict
-PIXI_MANIFEST=$REPO/src/bac_pyseer/pixi.toml
+# Cluster-dependent roots are env-overridable; the defaults are the CSD3 iso-source layout, so an
+# unset environment behaves exactly as before. Overriding REPO/PYSEER/OUT_DIR/TMP (plus sbatch's own
+# --partition/--account/--output) is what lets another cohort reuse this build on another cluster —
+# e.g. the AMR cohorts driven by src/bac_pyseer/ast_gwas/scripts/build_unitigs.sh.
+REPO=${REPO:-/home/dca36/workspace/BacPredict}
+PIXI_MANIFEST=${PIXI_MANIFEST:-$REPO/src/bac_pyseer/pixi.toml}
 cd "$REPO"
 
-DATA=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw
-TRAIN=$DATA/david/processed/train_iso_source
-PYSEER=$DATA/david/processed/pyseer_iso_source
+DATA=${DATA:-/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw}
+TRAIN=${TRAIN:-$DATA/david/processed/train_iso_source}
+PYSEER=${PYSEER:-$DATA/david/processed/pyseer_iso_source}
 BF_CSV=$TRAIN/blood_faeces/sampled_country_2_1_all/kpsc_human/binary_blood_vs_faeces_with_split.csv
 RF_CSV=$TRAIN/faeces_respiratory/sampled_country_2_1_all/kpsc_human/binary_respiratory_vs_faeces_labels.csv
 # Default = the blood/faeces cohort; run again with OUT_NAME=faeces_respiratory COHORT_CSVS="$RF_CSV"
 # for the replication contrast (one build per cohort — see header).
 OUT_NAME=${OUT_NAME:-blood_faeces}
 COHORT_CSVS=${COHORT_CSVS:-$BF_CSV}
-OUT_DIR=$PYSEER/unitigs/$OUT_NAME
+OUT_DIR=${OUT_DIR:-$PYSEER/unitigs/$OUT_NAME}
 REFLIST=$OUT_DIR/assembly_refs.txt        # COLOR_NAME(Sample)<TAB>assembly_path — GGCAT -d input
 mkdir -p "$OUT_DIR"
 
@@ -63,7 +67,7 @@ K=${K:-31}
 SVAL=${SVAL:-2}                           # min k-mer multiplicity: drop af≈1/N singletons (« pyseer MAF)
 MEMGB=${MEMGB:-200}                        # GGCAT in-RAM temp budget (-m); rest spills to disk (-t)
 THREADS=$SLURM_CPUS_PER_TASK
-TMP=/home/dca36/rds/hpc-work/ggcat_tmp/$SLURM_JOB_ID    # big scratch (1 TB) for spill temp files
+TMP=${TMP:-/home/dca36/rds/hpc-work/ggcat_tmp/$SLURM_JOB_ID}   # big scratch (1 TB) for spill temp files
 mkdir -p "$TMP"
 trap 'rm -rf "$TMP"' EXIT
 
