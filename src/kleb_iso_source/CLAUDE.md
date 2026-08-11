@@ -29,6 +29,66 @@ cohort the pyseer GWAS ran on, so it is the correct comparator throughout. `all_
 0.827 is country-**confounded** and sits *below* its own linear metadata baseline (0.857);
 do not quote it as a headline.
 
+## Comparator results (2026-08-11) — what the 0.786 is worth
+
+Three independent comparators, all scored on the **same** `sampled_country_2_1_all` holdout
+as the deployed model. Cohort n=14,119 (train 9,885 / validate 1,412 / evaluate 2,822).
+
+**1. Unitig GWAS model** — `bac_pyseer.kleb_iso_source.unitig_presence_model`. The 33,039
+significant hit unitigs as a genome × unitig presence matrix (13,602 × 33,039, 108,796,553
+non-zeros — matches the GWAS placement count exactly), L2 LR with `C` swept on validate.
+
+| | AUROC on the same 2,715 genomes |
+|---|---:|
+| unitig L2 (C=0.01) | 0.781 |
+| **Bacformer** | **0.787** |
+
+A **tie** — and the unitig model held a real advantage, since its feature set was selected by
+an LMM fitted over the whole cohort *including this holdout*. Bacformer matching a
+leakage-advantaged accessory-sequence model is the claim; "beating it" is not.
+`C` mattered: validate fell 0.775 → 0.728 from C=0.01 to C=10, so the repo's pinned C=1.0
+would have understated the comparator by ~2.5 pp. L1 peaked at 0.770 with 817 non-zero
+unitigs (the interpretable shortlist — still gene-unannotated).
+
+**2. Per-Sublineage** — `bacpredict.engine.finetune.stratified_metrics` (95% bootstrap CIs):
+
+| Sublineage | n | AUROC | 95% CI |
+|---|--:|--:|---|
+| pooled | 2,822 | 0.786 | — |
+| SL258 | 472 | **0.858** | 0.823–0.890 |
+| SL15 | 107 | 0.841 | 0.760–0.913 |
+| SL307 | 155 | 0.815 | 0.745–0.878 |
+| SL17 | 189 | 0.806 | 0.744–0.866 |
+| SL147 | 207 | 0.738 | 0.666–0.809 |
+| other (556 rare SLs) | 1,692 | 0.759 | 0.736–0.781 |
+
+Discrimination **holds within every major clone**; four of five sit at or above pooled, SL258
+significantly so. Lineage identity is therefore not what the model is reading.
+*Hypotheses only, pending David's read:* the signal may be within-clone accessory content, and
+pooling across 561 sublineages may cost AUROC (the rare-SL bucket is the weakest stratum). Not
+resolved here — do not plan downstream work off this without discussion.
+
+**3. Kleborate annotation** — `linear_baselines`, no country/Sublineage terms:
+
+| Model | n_feat | AUROC | Bacformer margin |
+|---|--:|--:|--:|
+| virulence_score (total) | 1 | **0.489** | +0.297 |
+| virulence factors one-hot | 6 | 0.552 | +0.234 |
+| virulence + AMR one-hot | 23 | 0.638 | +0.148 |
+| all Kleborate | 27 | 0.640 | +0.146 |
+| *AMR classes alone* | 17 | 0.617 | +0.169 |
+| country + Sublineage | 1,192 | 0.694 | +0.092 |
+| richest linear stack | 1,360 | 0.731 | +0.055 |
+
+**Kleborate's total virulence score is at chance (0.489)** for blood-vs-faeces, and AMR
+annotation predicts invasion *better* than virulence annotation does (0.617 vs 0.552) — likely
+a healthcare-association confound, not a virulence finding. Reproduces the Jun-2026 ladder
+(country+SL 0.694, full stack 0.731) to 3 dp.
+
+Artifacts: `<cohort>/kpsc_human/models/per_sublineage_metrics.{csv,json}` +
+`per_sublineage_auroc.png`; `<cohort>/kpsc_human/linear_baselines_v2.json`;
+`…/pyseer_iso_source/blood_faeces/sampled_country_2_1_all/gwas_unitig_lmm/presence_model/`.
+
 ## Status
 
 - Models already trained on isolation source, achieving **AUROC 0.55–0.62 (poor)**.

@@ -94,14 +94,22 @@ stack by **+0.055** on the pooled cohort (0.786 vs 0.731).
 > `a817ac2`. bf16 re-runs are in flight — see [src/kleb_iso_source/CLAUDE.md](src/kleb_iso_source/CLAUDE.md).
 
 - [x] Stage C full runs on all three cohorts; beat the 0.55–0.62 MAG benchmark decisively
-- [ ] **bf16 re-run on all three cohorts** (fp32→bf16 A/B; `models_bf16/` sibling)
-- [ ] **Unitig-GWAS comparator** — LR on the 33,039 significant unitigs vs Bacformer on
-  the identical holdout subset (leaky-selection upper bound + train-only honest re-run)
-- [ ] **Per-sublineage AUROC** on the holdout (SL258/147/17/307) — does the signal hold
-  *within* a clone? Single-split first, k-fold if promising
-- [ ] **Kleborate comparator** — virulence_score / virulence one-hot / virulence+AMR
+- [x] **Unitig-GWAS comparator (2026-08-11)** — unitig L2 LR **0.781** vs Bacformer **0.787**
+  on the identical 2,715 genomes: a **tie**, with the unitig model holding a selection
+  advantage (its 33,039 features were picked by an LMM that saw this holdout). **Gate passed.**
+- [x] **Per-sublineage AUROC (2026-08-11)** — holds *within* every major clone: SL258 0.858,
+  SL15 0.841, SL307 0.815, SL17 0.806, SL147 0.738, rare-SL bucket 0.759 vs pooled 0.786.
+  Lineage identity is not what the model reads. Mechanism = open, for discussion.
+- [x] **Kleborate comparator (2026-08-11)** — virulence_score alone **0.489 (chance)**,
+  virulence one-hot 0.552, virulence+AMR 0.638, all-Kleborate 0.640 vs Bacformer 0.786.
+- [ ] **bf16 re-run on all three cohorts** (fp32→bf16 A/B; `models_bf16/` sibling) — jobs
+  `33476292/3/4` in flight
+- [ ] **Unitig honest re-run** — re-fit the LMM selection on train rows only, then re-score
+  (`SELECTION_SCOPE=train_only`); the current number is a leakage-advantaged upper bound
 - [ ] Score a user-supplied strain list for predicted invasiveness
-- [ ] **bac-LM forward pass** → per-gene LR → concat ladder (gated on the unitig comparison)
+- [ ] **bac-LM forward pass** → per-gene LR → concat ladder. Gate passed; inputs 99% ready
+  (13,980/14,119 have assembly+GFF). **⚠ Blocked on `flash_attn`, which is absent from the
+  CSD3 venv** — without it baclm is ~100× slower and OOMs at batch 128.
 - [ ] Downstream (parked): Kp pre-training first; complete-genomes-only subset; matched-pair SR-vs-CG contrast; Captum gene attribution; stepwise AUROC across modelling layers
 
 ## Task 6 — `predictHGT` embedding diagnostic ([src/predict_hgt/](src/predict_hgt/))
