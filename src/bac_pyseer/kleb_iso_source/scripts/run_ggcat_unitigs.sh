@@ -90,6 +90,18 @@ echo "GGCAT -d colours (samples): $(wc -l < "$REFLIST")"
 NSAMP=$(wc -l < "$REFLIST")
 MIN_SAMP=$(awk -v n="$NSAMP" 'BEGIN{m=n*0.01; c=int(m); if(c<m)c++; if(c<1)c=1; print c}')
 echo "converter --min-samples (1% MAF floor): $MIN_SAMP of $NSAMP"
+# Mirror at the --max-af end: pyseer cannot test a near-universal unitig either, and those rows
+# carry the longest presence strings, so they dominate matrix size and every later streaming pass.
+# MAX_FRAC=1 disables the cap (the pre-2026-08 behaviour).
+MAX_FRAC=${MAX_FRAC:-0.99}
+MAX_SAMP=$(awk -v n="$NSAMP" -v f="$MAX_FRAC" 'BEGIN{c=int(n*f); if(c<1)c=1; print c}')
+if [ "$MAX_SAMP" -ge "$NSAMP" ]; then
+    echo "converter --max-samples: disabled (MAX_FRAC=$MAX_FRAC covers all $NSAMP samples)"
+    MAX_SAMP_ARG=()
+else
+    echo "converter --max-samples (${MAX_FRAC} ceiling): $MAX_SAMP of $NSAMP"
+    MAX_SAMP_ARG=(--max-samples "$MAX_SAMP")
+fi
 
 echo "=== (2) ggcat build: coloured compacted DBG over the cohort assemblies (reuse if present) ==="
 if [ -s "$OUT_FASTA" ] && [ -s "$COLORS_DAT" ]; then
@@ -135,7 +147,8 @@ fi
 echo "=== (5) disk sort-merge join -> pyseer --kmers matrix (<seq> | <Sample>:1 …) ==="
 uv run python src/bac_pyseer/kleb_iso_source/ggcat_to_pyseer.py \
     --fasta "$OUT_FASTA" --color-names "$NAMES_JSONL" --colormap "$COLORMAP_CSV" \
-    --kmer-length "$K" --min-samples "$MIN_SAMP" --tmp-dir "$TMP" --threads "$THREADS" --out "$MATRIX"
+    --kmer-length "$K" --min-samples "$MIN_SAMP" ${MAX_SAMP_ARG[@]+"${MAX_SAMP_ARG[@]}"} \
+    --tmp-dir "$TMP" --threads "$THREADS" --out "$MATRIX"
 [ -s "$MATRIX" ] || { echo "ERROR: empty pyseer matrix"; exit 1; }
 
 echo "=== done  $(date) ==="
