@@ -70,10 +70,14 @@ def load_eval_scores(npz_path: str | Path) -> dict[str, Any]:
     data = np.load(npz_path, allow_pickle=False)
     sample_ids = [str(s) for s in data["sample_ids"]] if "sample_ids" in data.files else None
     threshold = float(data["operating_threshold"]) if "operating_threshold" in data.files else float("nan")
+    # `split` is present only in whole-cohort archives (score_cohort); an evaluate-only
+    # eval_scores.npz has no such column and every row is implicitly the holdout.
+    split = [str(s) for s in data["split"]] if "split" in data.files else None
     return {
         "y_true": np.asarray(data["y_true"]).astype(int),
         "y_prob": np.asarray(data["y_prob"]).astype(float),
         "sample_ids": sample_ids,
+        "split": split,
         "drug": str(data["drug"]) if "drug" in data.files else None,
         "threshold": threshold,
     }
@@ -128,6 +132,7 @@ def join_groups(
     metadata_path: str | Path,
     group_column: str,
     id_column: str = "Sample",
+    split: list[str] | None = None,
 ) -> pd.DataFrame:
     """Attach the grouping column to the scored holdout rows.
 
@@ -146,6 +151,8 @@ def join_groups(
     lookup = meta.drop_duplicates(subset=id_column, keep="first").set_index(id_column)[group_column]
 
     scored = pd.DataFrame({"Sample": sample_ids, "y_true": y_true, "y_prob": y_prob})
+    if split is not None:
+        scored["split"] = list(split)
     scored["group"] = scored["Sample"].map(lookup)
     n_unmatched = int(scored["group"].isna().sum())
     if n_unmatched:
@@ -294,6 +301,11 @@ def _main_cli() -> None:
                    help="Deployed run dir (holding results.json). Needed only when the npz predates sample_ids.")
     p.add_argument("--drug", type=str, default=None,
                    help="Label column, for the fallback split replay. Defaults to the npz's stored drug.")
+    p.add_argument(
+        "--restrict-split", type=str, default="all", choices=["all", "train", "validate", "evaluate"],
+        help="Which split(s) to score. Needs a whole-cohort npz (score_cohort.py) for anything but "
+             "'all'. 'train' rows are fitted-on and optimistically biased — never quote them.",
+    )
     p.add_argument("--min-group-n", type=int, default=DEFAULT_MIN_GROUP_N)
     p.add_argument("--n-boot", type=int, default=DEFAULT_N_BOOT)
     p.add_argument("--seed", type=int, default=1)
@@ -308,11 +320,37 @@ def _main_cli() -> None:
 
     sample_ids = resolve_sample_ids(scores, args.checkpoint_dir, args.metadata, drug)
     scored = join_groups(
-        sample_ids, scores["y_true"], scores["y_prob"], args.metadata, args.group_column, args.id_column
+        sample_ids, scores["y_true"], scores["y_prob"], args.metadata, args.group_column,
+        args.id_column, split=scores["split"],
     )
+
+    if args.restrict_split != "all":
+        if "split" not in scored.columns:
+            raise SystemExit(
+                f"--restrict-split {args.restrict_split} needs a 'split' array in the npz. This archive "
+                "has none (it is an evaluate-only eval_scores.npz, so every row is already the holdout). "
+                "Use --restrict-split all, or score the cohort with score_cohort.py first."
+            )
+        before = len(scored)
+        scored = scored[scored["split"] == args.restrict_split].reset_index(drop=True)
+        logger.info("restricted to split=%s: %d of %d rows", args.restrict_split, len(scored), before)
+        if scored.empty:
+            raise SystemExit(f"no rows with split == {args.restrict_split!r}")
+    elif "split" in scored.columns:
+        counts = scored["split"].value_counts().to_dict()
+        n_train = int(counts.get("train", 0))
+        if n_train:
+            logger.warning(
+                "scoring ALL splits together (%s). %d rows are TRAIN — the model was fitted on them, so "
+                "these AUROCs are optimistically biased and are NOT a held-out measurement. Read the "
+                "pattern across groups, not the absolute values; use --restrict-split evaluate to quote.",
+                counts, n_train,
+            )
+
     table = stratified_metrics(
         scored, min_group_n=args.min_group_n, n_boot=args.n_boot, seed=args.seed, threshold=scores["threshold"]
     )
+    table.insert(1, "split_scope", args.restrict_split)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     table.to_csv(args.out, index=False)
@@ -323,14 +361,16 @@ def _main_cli() -> None:
         "metadata": str(args.metadata),
         "group_column": args.group_column,
         "drug": drug,
-        "n_holdout": int(len(scored)),
+        "n_scored": int(len(scored)),
+        "restrict_split": args.restrict_split,
         "min_group_n": args.min_group_n,
         "n_boot": args.n_boot,
         "threshold": scores["threshold"],
     }, indent=2))
 
     pooled = table.iloc[0]
-    print(f"\nPooled AUROC {pooled['auroc']:.4f} (n={pooled['n']})  — per-{args.group_column}:")
+    scope = "" if args.restrict_split == "all" else f" [split={args.restrict_split}]"
+    print(f"\nPooled AUROC {pooled['auroc']:.4f} (n={pooled['n']}){scope}  — per-{args.group_column}:")
     for _, r in table.iloc[1:].iterrows():
         if r["single_class"]:
             print(f"  {r['group']:<24} n={r['n']:<6} SINGLE-CLASS (all {'pos' if r['n_pos'] else 'neg'}) — AUROC undefined")
