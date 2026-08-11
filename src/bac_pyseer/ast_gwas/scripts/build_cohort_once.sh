@@ -35,7 +35,10 @@ LOGDIR=${LOGDIR:-$DATA_ROOT/logs}
 # Isambard defaults; CSD3 would be ACCT=FLOTO-PROJECT-K-SL2-CPU PART=icelake-himem QOS=
 ACCT=${ACCT:-brics.u6fp}
 PART=${PART:-workq}
-QOS=${QOS:-normal}
+# ${QOS-normal}, not ${QOS:-normal}: unset gives Isambard's default, but QOS= (explicitly empty)
+# must omit --qos entirely. On CSD3 the FLOTO associations allow only cpu1/intr, so a --qos=normal
+# it cannot be told to drop is a rejected submission.
+QOS=${QOS-normal}
 GGCAT_CPUS=${GGCAT_CPUS:-64}; GGCAT_MEM=${GGCAT_MEM:-350G}; GGCAT_TIME=${GGCAT_TIME:-36:00:00}
 MASH_CPUS=${MASH_CPUS:-32};   MASH_MEM=${MASH_MEM:-128G};   MASH_TIME=${MASH_TIME:-12:00:00}
 

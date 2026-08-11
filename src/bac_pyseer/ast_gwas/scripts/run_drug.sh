@@ -44,7 +44,9 @@ LOGDIR=${LOGDIR:-$DATA_ROOT/logs}
 
 ACCT=${ACCT:-brics.u6fp}
 PART=${PART:-workq}
-QOS=${QOS:-normal}
+# ${QOS-normal}, not ${QOS:-normal}: QOS= (explicitly empty) must omit --qos entirely, as CSD3
+# requires — see the same note in build_cohort_once.sh.
+QOS=${QOS-normal}
 NSHARDS=${NSHARDS:-64}
 CPU=${CPU:-8}
 
