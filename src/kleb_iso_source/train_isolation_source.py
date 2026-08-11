@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pandas as pd
 import torch
+import transformers
 from bacformer.modeling.trainer import BacformerLargeTrainer
 from torch.nn.utils.rnn import pad_sequence
 from transformers import (
@@ -162,6 +163,7 @@ def run(
     n_folds: int | None = None,
     fold: int = 0,
     evaluate_seed: int = 1,
+    precision: str = "bf16",
     # deprecated — ignored; kept for call-site backward compat
     train_data_dir: str | None = None,
     val_data_dir: str | None = None,
@@ -170,7 +172,14 @@ def run(
     """Fine-tune Bacformer on a pair-specific isolation-source label.
 
     Labels are injected at load time; no pre-built per-experiment .pt copies needed.
+
+    ``precision`` sets the master-weight dtype: ``"bf16"`` (default, the deployed AST setting) or
+    ``"fp32"`` (the pre-``a817ac2`` condition that produced the 2026-05 results). It is recorded in
+    ``results.json`` under ``run_config.precision``.
     """
+    if precision not in ("bf16", "fp32"):
+        raise ValueError(f"--precision must be 'bf16' or 'fp32', got {precision!r}")
+
     if train_data_dir or val_data_dir or pt_suffix:
         warnings.warn(
             "--train-data-dir, --val-data-dir, and pt_suffix are deprecated and ignored. "
@@ -295,12 +304,12 @@ def run(
     except Exception as e:  # noqa: BLE001 (debug inspection only — warn and continue on any failure)
         print(f"WARNING: Could not inspect sample: {e}")
 
-    # bf16 master weights — the deployed AST setting (matches bacpredict.engine.finetune.finetune_amr,
-    # where bf16 beat fp32 by ~7pp AUROC on TB rifampin in a controlled A/B). Load the native weights
-    # then cast uniformly to bf16, unconditionally: this is a GPU-only workflow. The previous dtype="auto"
-    # loaded *fp32* master weights on this model (the underperforming pre-b047ed8 / CSD3 condition). CPU
-    # Stage-A smokes are deliberately unsupported here — this task's CLAUDE.md running notes record that
-    # "Every BacPredict Stage A needs a short ampere GPU sbatch" (login-node CPU never produced metrics).
+    # Master-weight precision — mirrors bacpredict.engine.finetune.finetune_amr. bf16 (default) is the
+    # deployed AST setting, where it beat fp32 by ~7pp AUROC on TB rifampin in a controlled A/B. fp32
+    # keeps the native from_pretrained weights, which is what dtype="auto" resolved to for this model —
+    # the underperforming pre-b047ed8 / CSD3 condition that produced every 2026-05 iso-source result.
+    # The bf16 AMP autocast on GPU (TrainingArguments "bf16") is unchanged either way, so fp32-vs-bf16
+    # isolates exactly the master-weight cast (fp32 also re-enables CPU Stage-A smokes).
     bacformer_model = AutoModelForSequenceClassification.from_pretrained(
         model_name_or_path,
         num_labels=1,
@@ -308,7 +317,11 @@ def run(
         return_dict=True,
         trust_remote_code=True,
         dtype="auto",
-    ).to(torch.bfloat16)
+    )
+    if precision == "bf16":
+        bacformer_model = bacformer_model.to(torch.bfloat16)
+    model_revision = getattr(getattr(bacformer_model, "config", None), "_commit_hash", None)
+    print(f"Precision (master weights): {precision}")
 
     if freeze_encoder:
         for param in bacformer_model.bacformer.parameters():
@@ -413,6 +426,19 @@ def run(
             n_folds=n_folds,
             fold=fold if n_folds is not None else None,
             n_evaluate=len(evaluate_ids),
+            model_revision=model_revision,
+            run_config={
+                "precision": precision,
+                "seed": seed,
+                "lr": lr,
+                "early_stopping_patience": early_stopping_patience,
+                "eval_steps": eval_steps,
+                "warmup_proportion": warmup_proportion,
+                "max_steps": max_steps,
+                "max_n_proteins": max_n_proteins,
+                "freeze_encoder": freeze_encoder,
+            },
+            versions={"torch": torch.__version__, "transformers": transformers.__version__},
         )
         results_path = Path(output_dir) / "results.json"
         write_results_json(results_path, payload)
@@ -506,6 +532,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Seed controlling the fixed holdout set. Do not change between folds/seeds "
         "within one experiment — the holdout must remain constant.",
     )
+    p.add_argument(
+        "--precision",
+        type=str,
+        default="bf16",
+        choices=["bf16", "fp32"],
+        help="Master-weight precision. 'bf16' (default) is the deployed AST setting; 'fp32' reproduces "
+        "the pre-a817ac2 dtype='auto' condition that produced the 2026-05 results. Recorded in results.json.",
+    )
     return p
 
 
@@ -569,4 +603,5 @@ if __name__ == "__main__":
         n_folds=args.n_folds,
         fold=args.fold,
         evaluate_seed=args.evaluate_seed,
+        precision=args.precision,
     )

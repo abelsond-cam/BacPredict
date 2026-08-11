@@ -377,10 +377,14 @@ def _evaluate(args: argparse.Namespace) -> None:
 
     out_dir.mkdir(parents=True, exist_ok=True)
     scores_path = out_dir / "eval_scores.npz"
+    # sample_ids are stored so downstream per-stratum scoring (bacpredict.engine.finetune.
+    # stratified_metrics) can join scores to metadata without re-deriving the holdout. The loader
+    # runs shuffle=False over evaluate_ids, so row i of y_true/y_prob is evaluate_ids[i].
     np.savez(
         scores_path,
         y_true=y_true,
         y_prob=y_prob,
+        sample_ids=np.asarray(evaluate_ids, dtype=np.str_),
         drug=np.array(args.drug),
         operating_threshold=np.array(opt_thr if opt_thr is not None else np.nan),
     )
