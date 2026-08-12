@@ -24,16 +24,24 @@ BASE=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_iso_s
 #   cohort       ∈ {all_samples, sampled_country_2_1_stratified, sampled_country_2_1_all}
 #   flavor       ∈ {kpsc_human (default — KPSC+Sublineage+human), mixed_species (pre-fix reference)}
 #   ckpt_subdir  optional, e.g. checkpoint-31000 — pins evaluate.py to a specific
-#                checkpoint. If empty, evaluate.py picks the latest inside models/.
+#                checkpoint. If empty, evaluate.py picks the latest inside $MODELS_DIR.
 # Each flavor dir holds binary_blood_vs_faeces_with_split.csv + models/ (the checkpoint).
 # Note: all_samples's ~4-5k-row evaluate split needs >1h — bump --time when scoring it.
+#
+# MODELS_DIR selects WHICH run to evaluate, and results are written BESIDE that run — never into a
+# hardcoded models/. The output (eval_results.json, eval_scores.npz, ROC/PR PNGs) is the deployed
+# fp32 record that every comparator joins against, so evaluating the bf16 re-runs with the old
+# hardcoded path would have silently overwritten the 0.786 result with a different model's numbers.
+#   MODELS_DIR=models_bf16 bash …/evaluate_iso_source.sh sampled_country_2_1_all
 SUB="${1:-sampled_country_2_1_all}"
 FLAVOR="${2:-kpsc_human}"
 CKPT_SUBDIR="${3:-}"
 DIR="${BASE}/${SUB}/${FLAVOR}"
-CHECKPOINT="${DIR}/models${CKPT_SUBDIR:+/$CKPT_SUBDIR}"
+MODELS_DIR="${MODELS_DIR:-models}"
+CHECKPOINT="${DIR}/${MODELS_DIR}${CKPT_SUBDIR:+/$CKPT_SUBDIR}"
 SHEET="${DIR}/binary_blood_vs_faeces_with_split.csv"
-OUT_DIR="${DIR}/models"
+OUT_DIR="${DIR}/${MODELS_DIR}"
+[ -d "$CHECKPOINT" ] || { echo "ERROR: no checkpoint dir at $CHECKPOINT (MODELS_DIR=$MODELS_DIR)"; exit 1; }
 
 EMB=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/klebsiella_esm_embeddings
 
@@ -43,6 +51,7 @@ module load cudnn/8.9_cuda-12.4 || true
 export PYTHONUNBUFFERED=1
 
 echo "=== Evaluating $CHECKPOINT on evaluate split of $SHEET ==="
+echo "=== results -> $OUT_DIR (MODELS_DIR=$MODELS_DIR) ==="
 uv run python -m bacpredict.engine.finetune.evaluate \
   --checkpoint "$CHECKPOINT" \
   --drug blood_vs_faeces_label \
