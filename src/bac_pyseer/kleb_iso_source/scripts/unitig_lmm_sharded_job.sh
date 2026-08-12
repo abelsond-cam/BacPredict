@@ -23,7 +23,8 @@
 #              run; sharding is exact, not an approximation). Emits chunk_i.assoc + patterns_i.
 #   combine  — concatenate the shard .assoc (one header) + UNION the patterns (the only cross-unitig
 #              quantity is the Bonferroni pattern count, a set union), then pyseer_postprocess
-#              --feature-mode unitigs. Removes the scratch chunks on success.
+#              --feature-mode unitigs. Removes only this cohort's scratch work_* dirs — the chunks
+#              are KEPT (they are cohort-independent and cost ~3 h of IO to rebuild).
 #
 # Why sharded (not just lower --cpu): pyseer ships each worker a copy of the n×n LMM rotation matrix,
 # so peak RAM ≈ cpu × n² — that OOM'd the single 32-cpu run at 134 GB. Sharding bounds per-job cpu×n²
