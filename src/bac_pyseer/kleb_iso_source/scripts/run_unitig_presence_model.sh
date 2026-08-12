@@ -79,7 +79,13 @@ fi
 
 echo "=== fitting + head-to-head vs Bacformer ==="
 EXTRA=()
-[ "${ALSO_L1:-0}" = "1" ] && EXTRA+=(--also-l1)
+# `if`, not `[ … ] && …`. Measured, because the folk rule is wrong in both directions: a false
+# `[ … ] && cmd` does NOT abort here — set -e exempts non-final commands of an AND-OR list, so
+# mid-script at top level it is safe. It IS fatal in two places: as a script's last command (the
+# non-zero status becomes the exit status, and SLURM reports FAILED) and as a function's last
+# command (the function returns 1 and set -e kills the caller). `if` is immune to both, so it costs
+# nothing to be the form that survives someone later moving the line.
+if [ "${ALSO_L1:-0}" = "1" ]; then EXTRA+=(--also-l1); fi
 
 uv run python -m $MOD fit \
   --matrix-dir "$MATRIX_DIR" \
