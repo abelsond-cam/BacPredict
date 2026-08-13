@@ -53,7 +53,8 @@ headline.
 | `resolve_ast_assemblies.py` | AST cohort → `Sample<TAB>assembly_path` (flat, BioSample-keyed; no `metadata_v2`) |
 | `build_ast_phenotype.py` | `<drug>_split.csv` → pyseer `--phenotypes` TSV, train+validate only |
 | `mash_kinship.py` | `mash sketch`/`triangle` once per organism; per-drug similarity + distance subsets |
-| `lineage_from_distances.py` | mash distances → `Sample<TAB>cluster` for `--lineage` and the permutation null |
+| `lineage_from_distances.py` | mash distances → `Sample<TAB>cluster` — **TB only**; collapsed on Kp |
+| `sublineage_from_metadata.py` | curated Kleborate `Sublineage` → the same file — **Kp, the method of record** |
 | `unitig_design_matrix.py` | hits → sparse genomes × unitigs CSR over **all** split genomes |
 | `unitig_lr.py` | fit train → Youden on validate → score holdout → `results.json` (schema v1.2) |
 | `collect_comparison.py` | unitig-LR + FT + catalogue → one table per organism |
@@ -107,10 +108,48 @@ are fitted at that `C` — stays like-for-like.
       `ggcat` risk was Isambard-specific and does not apply: CSD3 is `linux-64`, exactly what
       `pixi.toml` targets. pyseer 1.4.1 · ggcat 2.2.0 · unitig-caller 1.3.0 · mash 2.3.
 - [x] Step 0b cohort resolution on CSD3 — Kp 7,080/7,088, TB 36,692/36,692
-- [ ] Kp cohort build → `ertapenem` (positive control) → `colistin`
+- [x] Kp cohort build (2026-08-11) — see *Measured on CSD3* below
+- [x] Kp lineage clusters switched from mash to curated Kleborate `Sublineage` — the mash cut
+      collapsed to one cluster (see *Lineage clusters* below)
+- [x] Kp `ertapenem` GWAS — λ=4.198, 31,856 significant of 3,371,827 tested
+- [ ] Kp `ertapenem` read-out (design matrix → LR) — **the positive-control gate**
+- [ ] Kp `colistin`
 - [ ] TB cohort build → `ethionamide` (smaller n first) → `rifampin`
-- [ ] Calibration: λ by af + within-lineage permutation null
+- [ ] Calibration: λ by af + within-lineage permutation null (`--exclude-cluster other`)
 - [ ] Fan out to the remaining 20 Kp + 8 TB drugs
+
+## Measured on CSD3 — size TB from these, not from the plan's estimates
+
+The plan's guesses were conservative by a wide margin. Kp, 7,080 genomes (~10.6 GB of assemblies):
+
+| Stage | Requested | Actual | Output |
+|---|---|---|---|
+| GGCAT build | 38 cpu / 250 G / 36 h | **54 min / ~38 GB** | 5,829,181 unitigs → **3,760,582** features, **27 GB** matrix |
+| mash sketch+triangle | 32 cpu / 210 G / 6 h | **3.7 min / ~13 GB** | 240 MB triangle |
+| `ertapenem` LMM (n=1,697) | 16c prep / 8c×64 array / 8c combine | **36 min + ~5 min/shard + 3.6 min** | λ=4.198, 31,856 hits |
+
+TB is ~5× the genomes and near-clonal, so the unitig count should be *lower* but carrier lists ~5×
+longer. The `--max-samples` 99% cap is what keeps that in hand; it dropped nothing pathological on
+Kp (`--min-samples` 71, `--max-samples` 7009).
+
+## Lineage clusters — Kp uses Kleborate, TB uses mash
+
+`lineage_from_distances` cut the Kp mash matrix at 0.02 into **one** cluster (6,852 of 7,080 in
+`sl0001`): the whole species complex sits inside a 0.02 mash radius. That is inert rather than
+merely coarse — `--lineage` carries no information and the permutation null degenerates into a
+global shuffle.
+
+So Kp now uses `sublineage_from_metadata.py` (curated Kleborate `Sublineage` from `metadata_v2`,
+which *is* present on CSD3): **10 clusters** at `min_size=100`, coverage 6,458/7,080 (91.2%). The
+collapsed mash file is kept beside it as `mash_lineage_clusters.tsv` for the methods comparison.
+**TB still needs the mash route** — no TB lineage labels exist until TB-Profiler runs over ~39k
+assemblies — so the two organisms derive clusters differently and methods must say so.
+
+`other` holds 3,190 genomes (45%): 622 unlabelled plus 2,568 in sublineages under the cut. It is not
+a lineage, so `permute_phenotype_within_lineage.py --exclude-cluster other` drops those from the
+null; **the paired real run must be scored on the same subset** or λ_perm and λ_real describe
+different cohorts. `min_size=50` was measured (17 clusters, `other` 45%→38%) and **rejected as not
+worth the complexity** — do not regenerate it.
 
 ## Running on CSD3
 
