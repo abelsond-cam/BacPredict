@@ -69,6 +69,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 from bac_kleborate.parsing import (
@@ -344,6 +345,58 @@ def _fit_and_score_recipe(
     model.fit(X_train, y_train)
     y_prob = model.predict_proba(X_test)[:, 1]
     return compute_full_metrics(y_test, y_prob), int(n_feat), repr(model)
+
+
+def fit_and_predict_new(
+    cohort_df: pd.DataFrame,
+    new_df: pd.DataFrame,
+    recipe_blocks: list[str],
+    label_column: str,
+    train_mask: np.ndarray | pd.Series,
+) -> tuple[np.ndarray, int]:
+    """Fit a recipe on the cohort's train rows and predict on an unlabelled new frame.
+
+    The rest of this module fits on train and scores a labelled holdout; this is the path for
+    genomes that have no label at all — a collaborator's collection, say — where the output is a
+    probability per genome rather than a metric.
+
+    The two frames are concatenated under a fresh ``RangeIndex`` before materialising features. That
+    is not cosmetic: ``new_df`` may contain genomes that are *also* in ``cohort_df`` (a lab isolate
+    already in the fine-tuning cohort), so a Sample-keyed index would collide and ``.loc`` would
+    silently fan out. Materialising on the union also guarantees both sides see identical feature
+    columns even when the new frame lacks one entirely.
+
+    Encoders and standardisation statistics are fitted on the **cohort train rows only**
+    (``_build_design_matrix`` does this), so an unseen K-locus or a differently-distributed
+    virulence score in the new collection cannot leak into the transform.
+
+    Returns
+    -------
+    tuple
+        ``(probabilities in new_df row order, n_features)``.
+    """
+    blocks = {b: FEATURE_BLOCKS[b] for b in recipe_blocks}
+    combined = pd.concat([cohort_df, new_df], ignore_index=True, sort=False)
+    cat_all, bin_all, num_all = _materialise_blocks(combined, blocks)
+
+    n_cohort = len(cohort_df)
+    mask = np.asarray(train_mask, dtype=bool)
+    if mask.shape[0] != n_cohort:
+        raise ValueError(f"train_mask has {mask.shape[0]} entries for {n_cohort} cohort rows")
+    train_idx = combined.index[:n_cohort][mask]
+    new_idx = combined.index[n_cohort:]
+    if not len(train_idx):
+        raise ValueError("train_mask selected no rows — cannot fit")
+
+    cats = [cat_all[b] for b in recipe_blocks if b in cat_all]
+    bins = [bin_all[b] for b in recipe_blocks if b in bin_all]
+    nums = [num_all[b] for b in recipe_blocks if b in num_all]
+    X_train, X_new, n_feat = _build_design_matrix(cats, bins, train_idx, new_idx, numeric_frames=nums)
+
+    y_train = cohort_df.loc[mask, label_column].astype(int).to_numpy()
+    model = LogisticRegression(max_iter=2000, solver="lbfgs")
+    model.fit(X_train, y_train)
+    return model.predict_proba(X_new)[:, 1], int(n_feat)
 
 
 # ---------------------------------------------------------------------------

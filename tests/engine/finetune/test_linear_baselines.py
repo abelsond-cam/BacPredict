@@ -113,3 +113,89 @@ def test_numeric_and_binary_blocks_stack_on_a_comparable_scale(idx):
     cols = X_tr.toarray()
     # Both columns end up within the same order of magnitude, unlike raw 0-5 vs 0-1.
     assert 0.3 < cols[:, 1].std() / cols[:, 0].std() < 3.0
+
+
+# ---------------------------------------------------------------------------
+# Predict-on-new-frame: fitting on the cohort and scoring an unlabelled collection.
+# ---------------------------------------------------------------------------
+
+
+def _cohort_frame(n=200, seed=0):
+    rng = np.random.default_rng(seed)
+    vs = rng.integers(0, 6, n)
+    return pd.DataFrame({
+        "Sample": [f"C{i}" for i in range(n)],
+        "virulence_score": vs,
+        "K_locus": rng.choice(["KL1", "KL2", "KL64"], n),
+        "blood_vs_faeces_label": (vs >= 3).astype(int),
+    })
+
+
+def test_fit_and_predict_new_returns_one_probability_per_new_row():
+    from bacpredict.engine.finetune.linear_baselines import fit_and_predict_new
+
+    cohort = _cohort_frame()
+    new = pd.DataFrame({"Sample": ["L1", "L2", "L3"], "virulence_score": [0, 5, 3],
+                        "K_locus": ["KL1", "KL2", "KL1"]})
+    mask = np.ones(len(cohort), dtype=bool)
+
+    probs, n_feat = fit_and_predict_new(cohort, new, ["virulence_score"],
+                                        "blood_vs_faeces_label", mask)
+    assert probs.shape == (3,)
+    assert ((probs >= 0) & (probs <= 1)).all()
+    assert n_feat == 1
+    # The cohort label is virulence_score >= 3, so the ordering must follow the score.
+    assert probs[0] < probs[2] <= probs[1]
+
+
+def test_unseen_category_in_the_new_frame_does_not_break_the_transform():
+    """handle_unknown='ignore' must absorb a K-locus the cohort never contained."""
+    from bacpredict.engine.finetune.linear_baselines import fit_and_predict_new
+
+    cohort = _cohort_frame()
+    new = pd.DataFrame({"Sample": ["L1"], "virulence_score": [2], "K_locus": ["KL_NEVER_SEEN"]})
+    probs, _ = fit_and_predict_new(cohort, new, ["k_locus"], "blood_vs_faeces_label",
+                                   np.ones(len(cohort), dtype=bool))
+    assert probs.shape == (1,) and 0 <= probs[0] <= 1
+
+
+def test_standardisation_uses_train_statistics_not_the_new_frame():
+    """A new collection on a different scale must not re-centre the model's features.
+
+    Same new genome, two collections that differ only in the OTHER rows' values: if the transform
+    used the new frame's own mean/std, the shared genome's probability would move.
+    """
+    from bacpredict.engine.finetune.linear_baselines import fit_and_predict_new
+
+    cohort = _cohort_frame()
+    mask = np.ones(len(cohort), dtype=bool)
+    target = {"Sample": "L1", "virulence_score": 4, "K_locus": "KL1"}
+
+    small = pd.DataFrame([target, {"Sample": "L2", "virulence_score": 4, "K_locus": "KL1"}])
+    skewed = pd.DataFrame([target] + [{"Sample": f"L{i}", "virulence_score": 0, "K_locus": "KL1"}
+                                      for i in range(2, 40)])
+
+    p_small, _ = fit_and_predict_new(cohort, small, ["virulence_score"], "blood_vs_faeces_label", mask)
+    p_skewed, _ = fit_and_predict_new(cohort, skewed, ["virulence_score"], "blood_vs_faeces_label", mask)
+    assert p_small[0] == pytest.approx(p_skewed[0], abs=1e-12)
+
+
+def test_new_frame_may_share_samples_with_the_cohort():
+    """Lab genomes are often already in the cohort; a Sample-keyed index would collide and fan out."""
+    from bacpredict.engine.finetune.linear_baselines import fit_and_predict_new
+
+    cohort = _cohort_frame()
+    new = cohort.iloc[:5][["Sample", "virulence_score", "K_locus"]].copy()
+    probs, _ = fit_and_predict_new(cohort, new, ["virulence_score"], "blood_vs_faeces_label",
+                                   np.ones(len(cohort), dtype=bool))
+    assert probs.shape == (5,), "one row in, one probability out"
+
+
+def test_train_mask_length_is_validated():
+    from bacpredict.engine.finetune.linear_baselines import fit_and_predict_new
+
+    cohort = _cohort_frame(n=50)
+    new = pd.DataFrame({"Sample": ["L1"], "virulence_score": [1], "K_locus": ["KL1"]})
+    with pytest.raises(ValueError, match="train_mask"):
+        fit_and_predict_new(cohort, new, ["virulence_score"], "blood_vs_faeces_label",
+                            np.ones(10, dtype=bool))
