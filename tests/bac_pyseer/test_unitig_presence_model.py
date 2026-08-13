@@ -7,9 +7,12 @@ non-carriers) and the alignment of the matrix to the deployed train/validate/eva
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
+import scipy.sparse as sp
 
 from bac_pyseer.kleb_iso_source.unitig_presence_model import (
     align_to_split,
@@ -17,8 +20,11 @@ from bac_pyseer.kleb_iso_source.unitig_presence_model import (
     build_presence_matrix,
     fit_l2_with_c_sweep,
     load_matrix,
+    load_model,
     paired_delta_ci,
+    predict_from_coefficients,
     read_sample_universe,
+    save_model,
 )
 
 
@@ -238,3 +244,73 @@ def test_paired_delta_ci_separates_when_one_model_is_clearly_better():
     assert r["delta"] > 0
     assert r["ci_lo"] > 0
     assert r["separates_from_zero"] is True
+
+
+# ---------------------------------------------------------------------------
+# Model persistence — the coefficients have to survive a round trip, because the
+# GWAS that selected them costs a 64-shard LMM and cannot be repeated per use.
+# ---------------------------------------------------------------------------
+
+
+def _toy_fit(n=300, p=40, seed=0):
+    """A separable toy problem with a train/validate/evaluate split."""
+    rng = np.random.default_rng(seed)
+    X = sp.csr_matrix((rng.random((n, p)) < 0.3).astype(float))
+    beta = np.zeros(p)
+    beta[:5] = 2.0
+    y = (X @ beta + rng.normal(0, 0.5, n) > 1.5).astype(int)
+    split = np.array(["train"] * (n // 2) + ["validate"] * (n // 4) + ["evaluate"] * (n - n // 2 - n // 4))
+    return X, y, split, [f"UNITIG{i}" for i in range(p)]
+
+
+def test_saved_coefficients_reproduce_the_fitted_probabilities(tmp_path):
+    """save -> load -> re-score must be identical, or the persisted model is not the fitted one."""
+    X, y, split, unitigs = _toy_fit()
+    res = fit_l2_with_c_sweep(X, y, split, c_grid=(0.1, 1.0))
+    save_model(tmp_path, res["model"], unitigs, C=res["C"], selection_scope="trainval_only",
+               label_column="blood_vs_faeces_label")
+
+    coef, intercept, meta = load_model(tmp_path)
+    reloaded = predict_from_coefficients(X, coef, intercept, unitigs, meta)
+    direct = res["model"].predict_proba(X)[:, 1]
+    np.testing.assert_allclose(reloaded, direct, atol=1e-10)
+
+
+def test_intercept_is_persisted(tmp_path):
+    """Coefficients without an intercept can only rank, not predict — the ast_gwas sibling's gap."""
+    X, y, split, unitigs = _toy_fit()
+    res = fit_l2_with_c_sweep(X, y, split, c_grid=(1.0,))
+    save_model(tmp_path, res["model"], unitigs, C=res["C"], selection_scope="trainval_only",
+               label_column="lab")
+    meta = json.loads((tmp_path / "unitig_model.json").read_text())
+    assert "intercept" in meta and isinstance(meta["intercept"], float)
+    assert meta["intercept"] == pytest.approx(float(res["model"].intercept_[0]))
+
+
+def test_reordered_unitigs_are_refused_not_silently_scored(tmp_path):
+    """Positional coefficients on a re-ordered matrix give a plausible, meaningless probability."""
+    X, y, split, unitigs = _toy_fit()
+    res = fit_l2_with_c_sweep(X, y, split, c_grid=(1.0,))
+    save_model(tmp_path, res["model"], unitigs, C=res["C"], selection_scope="trainval_only",
+               label_column="lab")
+    coef, intercept, meta = load_model(tmp_path)
+
+    shuffled = list(reversed(unitigs))
+    with pytest.raises(ValueError, match="does not match the saved model"):
+        predict_from_coefficients(X, coef, intercept, shuffled, meta)
+
+
+def test_column_count_mismatch_is_refused(tmp_path):
+    X, y, split, unitigs = _toy_fit()
+    res = fit_l2_with_c_sweep(X, y, split, c_grid=(1.0,))
+    save_model(tmp_path, res["model"], unitigs, C=res["C"], selection_scope="trainval_only",
+               label_column="lab")
+    coef, intercept, meta = load_model(tmp_path)
+    with pytest.raises(ValueError, match="coefficients"):
+        predict_from_coefficients(X[:, :10], coef, intercept, unitigs[:10], meta)
+
+
+def test_fit_parser_exposes_score_all_splits():
+    args = build_parser().parse_args(["fit", "--matrix-dir", "m", "--split-csv", "s.csv",
+                                      "--out-dir", "o", "--score-all-splits"])
+    assert args.score_all_splits is True

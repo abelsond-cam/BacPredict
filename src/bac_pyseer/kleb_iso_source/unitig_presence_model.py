@@ -50,6 +50,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import warnings
@@ -71,6 +72,70 @@ MATRIX_NPZ = "X.npz"
 SAMPLES_CSV = "samples.csv"
 UNITIGS_CSV = "unitigs.csv"
 BUILD_JSON = "build_manifest.json"
+# The persisted model: coefficients (one per unitig, in matrix column order) + everything needed to
+# turn them back into a probability on a new genome.
+COEF_TSV = "unitig_model_coefficients.tsv"
+MODEL_JSON = "unitig_model.json"
+
+
+def unitig_order_hash(unitigs: list[str]) -> str:
+    """SHA-256 of the unitig column order.
+
+    Coefficients are positional, so applying them to a matrix built with a different unitig order
+    silently produces a well-formed, meaningless probability. Stored with the model and checked at
+    predict time; this is the one guard that makes a saved linear model safe to reuse.
+    """
+    h = hashlib.sha256()
+    for u in unitigs:
+        h.update(u.encode())
+        h.update(b"\n")
+    return h.hexdigest()
+
+
+def save_model(out_dir: Path, model: LogisticRegression, unitigs: list[str], *, C: float,
+               selection_scope: str, label_column: str) -> None:
+    """Persist coefficients + intercept so the model can score genomes it was not fitted on."""
+    coef = np.asarray(model.coef_).ravel()
+    if len(coef) != len(unitigs):
+        raise ValueError(f"coefficient/unitig length mismatch: {len(coef)} vs {len(unitigs)}")
+    pd.DataFrame({"unitig": unitigs, "coef": coef}).to_csv(out_dir / COEF_TSV, sep="\t", index=False)
+    meta = {
+        # The intercept is not optional. ast_gwas/unitig_lr.py writes coefficients without it, which
+        # makes those coefficients unusable for prediction — only for ranking.
+        "intercept": float(np.asarray(model.intercept_).ravel()[0]),
+        "C": float(C),
+        "penalty": "l2",
+        "n_features": int(len(unitigs)),
+        "n_nonzero_coef": int((coef != 0).sum()),
+        "unitig_order_sha256": unitig_order_hash(unitigs),
+        "selection_scope": selection_scope,
+        "label_column": label_column,
+    }
+    (out_dir / MODEL_JSON).write_text(json.dumps(meta, indent=2))
+    logger.info("saved model: %d coefficients + intercept %.4f -> %s", len(coef), meta["intercept"], out_dir)
+
+
+def load_model(model_dir: Path) -> tuple[np.ndarray, float, dict[str, Any]]:
+    """Read back ``(coefficients, intercept, metadata)`` written by :func:`save_model`."""
+    meta = json.loads((model_dir / MODEL_JSON).read_text())
+    coef = pd.read_csv(model_dir / COEF_TSV, sep="\t")
+    return coef["coef"].to_numpy(dtype=float), float(meta["intercept"]), meta
+
+
+def predict_from_coefficients(X: sp.csr_matrix, coef: np.ndarray, intercept: float,
+                              unitigs: list[str], meta: dict[str, Any]) -> np.ndarray:
+    """Apply saved coefficients to a presence matrix, refusing a mismatched unitig order."""
+    if X.shape[1] != len(coef):
+        raise ValueError(f"matrix has {X.shape[1]} columns but the model has {len(coef)} coefficients")
+    expected = meta.get("unitig_order_sha256")
+    if expected and unitig_order_hash(unitigs) != expected:
+        raise ValueError(
+            "unitig column order does not match the saved model. The coefficients are positional, so "
+            "scoring with a re-built matrix in a different order would produce a plausible, wrong "
+            "probability. Rebuild the matrix from the model's unitig list, or refit."
+        )
+    logits = X @ coef + intercept
+    return 1.0 / (1.0 + np.exp(-logits))
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +347,10 @@ def fit_l2_with_c_sweep(
         "y_true": y[ev],
         "y_prob": y_prob,
         "n_nonzero_coef": int((model.coef_ != 0).sum()),
+        # The fitted estimator itself. Returning it is what makes the model reusable: without it the
+        # only way to score a new genome is to refit the whole thing, and the coefficients that took
+        # a 64-shard GWAS to select would be thrown away at the end of the function.
+        "model": model,
     }
 
 
@@ -423,7 +492,7 @@ def _cmd_build(args: argparse.Namespace) -> None:
 
 
 def _cmd_fit(args: argparse.Namespace) -> None:
-    X, samples, _unitigs = load_matrix(args.matrix_dir)
+    X, samples, unitigs = load_matrix(args.matrix_dir)
     X, split_df = align_to_split(X, samples, args.split_csv, args.label_column)
 
     y = split_df[args.label_column].to_numpy().astype(int)
@@ -445,7 +514,7 @@ def _cmd_fit(args: argparse.Namespace) -> None:
         "label_column": args.label_column,
         "n_features": int(X.shape[1]),
         "unitig_l2": {
-            k: v for k, v in res.items() if k not in ("y_true", "y_prob", "eval_sample_ids")
+            k: v for k, v in res.items() if k not in ("y_true", "y_prob", "eval_sample_ids", "model")
         } | {"evaluate_auroc": unitig_auroc},
     }
 
@@ -480,6 +549,29 @@ def _cmd_fit(args: argparse.Namespace) -> None:
             }
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
+    save_model(args.out_dir, res["model"], unitigs, C=res["C"],
+               selection_scope=args.selection_scope, label_column=args.label_column)
+
+    if args.score_all_splits:
+        # Score every genome in the matrix, keeping its split label, so this model can be compared
+        # genome-for-genome against Bacformer's cohort_scores.npz. Train rows are fitted-on and their
+        # AUROC is not a measurement — the split array is what lets a consumer restrict to evaluate.
+        all_prob = res["model"].predict_proba(X)[:, 1]
+        np.savez(
+            args.out_dir / "unitig_cohort_scores.npz",
+            y_true=y, y_prob=all_prob,
+            sample_ids=np.asarray(split_df["Sample"].tolist(), dtype=np.str_),
+            split=np.asarray(split, dtype=np.str_),
+            drug=np.array(args.label_column),
+            operating_threshold=np.array(np.nan),
+        )
+        by_split = {
+            name: float(roc_auc_score(y[split == name], all_prob[split == name]))
+            for name in ("train", "validate", "evaluate") if (split == name).sum() > 0
+        }
+        payload["cohort_scores"] = {"n_scored": int(X.shape[0]), "auroc_by_split": by_split}
+        logger.info("scored all %d cohort genomes; AUROC by split %s", X.shape[0], by_split)
+
     (args.out_dir / "unitig_model_results.json").write_text(json.dumps(payload, indent=2, default=str))
     np.savez(
         args.out_dir / "unitig_eval_scores.npz",
@@ -525,6 +617,10 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("--max-iter", type=int, default=2000)
     f.add_argument("--seed", type=int, default=1, help="Seed for the paired bootstrap on the head-to-head delta.")
     f.add_argument("--also-l1", action="store_true", help="Also fit L1 for an interpretable locus shortlist.")
+    f.add_argument("--score-all-splits", action="store_true",
+                   help="Also score every genome in the matrix (not just the holdout) and write "
+                        "unitig_cohort_scores.npz with a per-genome split label, mirroring "
+                        "score_cohort.py's cohort_scores.npz so the two models align by Sample.")
     f.add_argument("--selection-scope", type=str, default="full_cohort",
                    choices=["full_cohort", "trainval_only"],
                    help="Provenance of the hit-unitig selection. 'full_cohort' saw the holdout labels "
