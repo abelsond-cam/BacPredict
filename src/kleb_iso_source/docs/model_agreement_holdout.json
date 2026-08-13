@@ -1,0 +1,13 @@
+{
+  "main": {
+    "n": 2715,
+    "r2_prob": 0.3673651038591138,
+    "r2_logit": 0.4159277700743258,
+    "spearman_rho": 0.6454739752107949,
+    "slope_logit": 0.29444361652025663,
+    "sd_ratio_logit": 0.456555085297888
+  },
+  "inset": null,
+  "restrict_split": "evaluate",
+  "scale_plotted": "logit"
+}
