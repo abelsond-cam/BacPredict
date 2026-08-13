@@ -314,3 +314,10 @@ def test_fit_parser_exposes_score_all_splits():
     args = build_parser().parse_args(["fit", "--matrix-dir", "m", "--split-csv", "s.csv",
                                       "--out-dir", "o", "--score-all-splits"])
     assert args.score_all_splits is True
+
+
+def test_predict_parser_supplies_every_attribute_the_handler_reads():
+    args = build_parser().parse_args(["predict", "--matrix-dir", "m", "--model-dir", "d",
+                                      "--out", "o.csv"])
+    for attr in ("matrix_dir", "model_dir", "out", "func"):
+        assert hasattr(args, attr), f"predict subparser is missing {attr!r}"

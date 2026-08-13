@@ -593,8 +593,24 @@ def _cmd_fit(args: argparse.Namespace) -> None:
     print(f"\nWrote {args.out_dir/'unitig_model_results.json'}")
 
 
+def _cmd_predict(args: argparse.Namespace) -> None:
+    """Apply a saved model to a presence matrix built for genomes it was never fitted on."""
+    X, samples, unitigs = load_matrix(args.matrix_dir)
+    coef, intercept, meta = load_model(args.model_dir)
+    logger.info("scoring %d genomes with %d saved coefficients (selection scope: %s)",
+                X.shape[0], len(coef), meta.get("selection_scope"))
+    probs = predict_from_coefficients(X, coef, intercept, unitigs, meta)
+
+    out = pd.DataFrame({"Sample": samples, "unitig_prob": probs})
+    out["unitig_logit"] = np.log(np.clip(probs, 1e-6, 1 - 1e-6) / (1 - np.clip(probs, 1e-6, 1 - 1e-6)))
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    out.to_csv(args.out, index=False)
+    print(f"Wrote {args.out}: {len(out)} genomes, mean p={probs.mean():.4f} "
+          f"[{probs.min():.4f}, {probs.max():.4f}]")
+
+
 def build_parser() -> argparse.ArgumentParser:
-    """Build the CLI parser (``build`` and ``fit`` subcommands)."""
+    """Build the CLI parser (``build``, ``fit`` and ``predict`` subcommands)."""
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="command", required=True)
 
@@ -628,6 +644,14 @@ def build_parser() -> argparse.ArgumentParser:
                         "fitted with every holdout genome removed (train + validate, n=10,887) — the "
                         "honest number. Named for what it is: validate is used, the holdout is not.")
     f.set_defaults(func=_cmd_fit)
+
+    pr = sub.add_parser("predict", help="Apply a saved model to genomes it was never fitted on.")
+    pr.add_argument("--matrix-dir", type=Path, required=True,
+                    help="Presence matrix for the new genomes (from unitig_presence_from_assemblies).")
+    pr.add_argument("--model-dir", type=Path, required=True,
+                    help="Directory holding unitig_model.json + unitig_model_coefficients.tsv.")
+    pr.add_argument("--out", type=Path, required=True)
+    pr.set_defaults(func=_cmd_predict)
     return p
 
 
