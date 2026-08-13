@@ -37,7 +37,10 @@ lr=0.00015
 eval_steps=700              # cohort ~14.2k (train ~9.9k); batch=1 × grad_accum=8 → ~1240 steps/epoch,
                            # so eval_steps=700 ≈ every ~0.55 epoch (between strict ~0.5 and all-sample ~0.4)
 max_steps=100000           # generous cap; early-stopping decides actual stop
-early_stopping_patience=30
+# SUPERSEDED by train_isolation_source_cohort.sh (this copy also hardcodes output_dir).
+# Patience was 30: the 2026-08-11 bf16 runs peaked at steps 31,500/30,500/15,000 and were still
+# 9/15/23 non-improving evals short of firing when the 36 h wall killed them. See the cohort script.
+early_stopping_patience=8
 
 module purge
 module load cuda/12.4

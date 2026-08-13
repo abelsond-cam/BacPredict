@@ -60,8 +60,17 @@ eval_steps=${EVAL_STEPS:-$default_eval_steps}
 seed=${SEED:-1}
 lr=${LR:-0.00015}
 warmup_proportion=0.1
-max_steps=100000            # generous cap; early stopping decides the real stop
-early_stopping_patience=30
+# ⚠ max_steps is NOT just a cap — it defines the LR SCHEDULE. warmup_steps = max_steps *
+# warmup_proportion and the LR decays to zero at max_steps, so lowering it to "save time" changes the
+# learning-rate trajectory and therefore the model. Every result to date (fp32 and bf16) used
+# 100,000; changing it makes a different experiment, not the same one stopped earlier. Leave it.
+max_steps=100000
+# Patience is what actually ends the run, and 30 was far too long: measured on the 2026-08-11 bf16
+# runs, validation AUROC peaked at steps 31,500 / 30,500 / 15,000 and never recovered, but only
+# 9 / 15 / 23 non-improving evals had accrued when the 36 h wall killed all three. Early stopping
+# was configured and never got the chance to fire; ~108 GPU-hours ran past the useful point. At 8,
+# each run stops 4,000-8,000 steps past its peak — enough to confirm the plateau, not a day of it.
+early_stopping_patience=8
 
 [ -f "$sheet_path" ] || { echo "MISSING split CSV: $sheet_path"; exit 1; }
 
