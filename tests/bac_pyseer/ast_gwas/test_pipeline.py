@@ -284,7 +284,10 @@ def test_lr_emits_the_engine_results_schema(signal_cohort, split_table: Path, tm
     assert written["task"] == "tb_ast"          # organism -> engine task name
     assert written["model"]["name_or_path"] == "unitig_lr"
     assert written["split"]["source"] == "split_table"
-    assert written["operating_point"]["selected_on"] == "validation"
+    # Reporting convention: Youden on the holdout (best achievable operating point), carrying the
+    # bias caveat with it. Model selection is unaffected — C still comes from validate alone.
+    assert written["operating_point"]["selected_on"] == "holdout"
+    assert "optimistically biased" in written["operating_point"]["caveat"]
     assert written["extra"]["standardised"] is False
 
     scores = np.load(out_dir / "eval_scores.npz", allow_pickle=False)

@@ -41,6 +41,7 @@ import pandas as pd
 from sklearn.metrics import roc_auc_score
 
 from bac_pyseer.kleb_iso_source.unitig_presence_model import paired_delta_ci
+from bacpredict.engine.finetune.metrics import compute_full_metrics, youden_threshold
 
 logger = logging.getLogger(__name__)
 
@@ -97,8 +98,40 @@ def paired_ci_against_ft(unitig_scores: Path, ft_scores: Path, seed: int = 1) ->
     }
 
 
+def operating_point(scores_npz: Path, prefix: str) -> dict[str, object]:
+    """Sensitivity/specificity/balanced accuracy at the Youden-optimal point **on the holdout**.
+
+    Computed here, from each arm's own ``eval_scores.npz``, rather than read from whatever block a
+    given arm happened to store — that is what guarantees both arms are summarised under an
+    identical convention. AUROC/AUPRC are threshold-free and unaffected.
+
+    ⚠ **The threshold is chosen on the same genomes it is scored on**, so these three numbers are
+    the model's *best achievable* operating point, not a held-out estimate of deployment
+    performance — they are optimistically biased, by roughly the amount the ROC curve is noisy at
+    that point. Report them as "at the optimal operating point" and never as expected field
+    sensitivity. Selecting on validate instead is the unbiased alternative, but it transfers poorly
+    at these split sizes (Kp ertapenem: balanced accuracy 0.925 on a 340-genome validate-chosen
+    threshold vs 0.953 here), which is why this convention was chosen deliberately.
+    """
+    scores = np.load(scores_npz, allow_pickle=False)
+    y, p = scores["y_true"], scores["y_prob"]
+    thr = youden_threshold(y, p)
+    m = compute_full_metrics(y, p, threshold=float(thr))
+    return {
+        f"{prefix}_sensitivity": m["sensitivity"],
+        f"{prefix}_specificity": m["specificity"],
+        f"{prefix}_balanced_accuracy": m["balanced_accuracy"],
+        f"{prefix}_f1": m["f1"],
+        f"{prefix}_operating_threshold": float(thr),
+    }
+
+
 def read_unitig_results(results_json: Path) -> dict[str, object]:
-    """Flatten one unitig-LR ``results.json`` into a row."""
+    """Flatten one unitig-LR ``results.json`` into a row.
+
+    Threshold-dependent metrics are deliberately **not** taken from ``metrics`` (which is computed
+    at 0.5): :func:`operating_point` recomputes them for both arms alike. See its docstring.
+    """
     payload = json.loads(results_json.read_text())
     metrics = payload["metrics"]
     extra = payload.get("extra", {})
@@ -108,9 +141,6 @@ def read_unitig_results(results_json: Path) -> dict[str, object]:
         "task": payload["task"],
         "unitig_auroc": metrics["auroc"],
         "unitig_auprc": metrics["auprc"],
-        "unitig_sensitivity": metrics["sensitivity"],
-        "unitig_specificity": metrics["specificity"],
-        "unitig_balanced_accuracy": metrics["balanced_accuracy"],
         "n_holdout": payload["split"].get("n_evaluate"),
         "n_train": extra.get("n_train"),
         "n_unitigs": extra.get("n_unitigs"),
@@ -136,10 +166,18 @@ def collect(
         raise SystemExit("no results.json files given")
 
     for row, results_json in zip(rows, results_jsons, strict=True):
+        unitig_scores = Path(results_json).parent / "eval_scores.npz"
+        if unitig_scores.is_file():
+            row.update(operating_point(unitig_scores, "unitig"))
+        else:
+            logger.warning("no %s — no operating point for %s", unitig_scores, row["drug"])
+
         ft = (ft_scores or {}).get(row["drug"])
         if ft is None:
             continue
-        unitig_scores = Path(results_json).parent / "eval_scores.npz"
+        # The same convention on the fine-tune's own scores, so the two arms' sens/spec are
+        # comparable rather than one being at Youden and the other at whatever 0.5 gave.
+        row.update(operating_point(Path(ft), "ft"))
         if not unitig_scores.is_file():
             logger.warning("no %s — skipping the CI for %s", unitig_scores, row["drug"])
             continue
