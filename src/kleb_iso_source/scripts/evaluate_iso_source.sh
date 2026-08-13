@@ -2,7 +2,44 @@
 # Score a fine-tuned iso-source checkpoint on its held-out 'evaluate' split.
 # Wraps bacpredict.engine.finetune.evaluate (task-agnostic). Inference on a few-thousand
 # Bacformer-large genomes needs a GPU, so this is a short ampere sbatch, not login CPU.
-# Edit CHECKPOINT / SHEET / OUT_DIR inline per cohort.
+#
+# ===================================================================================================
+# THE CHECKPOINT INVENTORY — which trained models exist and which to evaluate
+# ===================================================================================================
+# This is the record of what has been trained for blood-vs-faeces, kept here (rather than in a
+# chat log or someone's head) because picking the wrong directory silently produces a number that
+# looks publishable and isn't. Nothing here is auto-generated; update it when a run lands.
+#
+#   <cohort>/kpsc_human/
+#     models/         fp32  — THE DEPLOYED MODELS. Every published number comes from these.
+#                             `dtype="auto"` resolved to fp32; the bf16 cast landed in a817ac2
+#                             (2026-07-26), AFTER these May-2026 runs. DO NOT OVERWRITE.
+#     models_bf16/    bf16  — the 2026-08-11 precision A/B (jobs 33476292/3/4). All three hit the
+#                             36 h wall (patience 30 could not fire), so there is no results.json
+#                             and no "final" model — only checkpoints. load_best_model_at_end=True
+#                             protected the best-by-eval_auroc checkpoint from save_total_limit
+#                             rotation, so the peak IS on disk in every case. Evaluate THAT one,
+#                             never the higher-numbered checkpoint, which is the overfit tail.
+#
+# | cohort                         | fp32 models/ (holdout) | bf16 best ckpt | bf16 peak VAL auroc |
+# |--------------------------------|-----------------------:|----------------|--------------------:|
+# | sampled_country_2_1_all        |   0.7858  <- headline  | checkpoint-31500 |            0.7830   |
+# | sampled_country_2_1_stratified |   0.762                | checkpoint-30500 |            0.7696   |
+# | all_samples                    |   0.8267 (country-conf)| checkpoint-15000 |            0.8339   |
+#
+# Two traps in that table. (1) bf16 "peak val" is the VALIDATE split (n=1,412 pooled), not the
+# holdout — comparable to fp32's validate 0.7943, not to its evaluate 0.7858. (2) all_samples is
+# country-confounded and loses to its own linear metadata baseline (0.857); it is not quotable
+# whatever precision it was trained in. The defensible cohort is sampled_country_2_1_all.
+#
+# Usage:
+#   sbatch .../evaluate_iso_source.sh                                   # fp32 pooled (deployed)
+#   MODELS_DIR=models_bf16 sbatch .../evaluate_iso_source.sh sampled_country_2_1_all kpsc_human checkpoint-31500
+#   MODELS_DIR=models_bf16 sbatch --time=4:00:00 .../evaluate_iso_source.sh all_samples kpsc_human checkpoint-15000
+#
+# Training entry point is train_isolation_source_cohort.sh (parameterised by cohort). It replaced
+# train_isolation_source_stage_c{,_pooled,_stratified}.sh, which hardcoded output_dir=<cohort>/models
+# and would have overwritten the deployed fp32 checkpoints above in place — deleted 2026-08-13.
 
 #SBATCH --job-name=eval_iso_blood_faeces
 #SBATCH --output=/rds/user/dca36/hpc-work/logs/eval_iso_blood_faeces_%j.out

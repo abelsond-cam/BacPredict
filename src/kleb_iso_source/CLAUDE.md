@@ -302,13 +302,22 @@ Stage A + Stage B — both PASS in one GPU run (SLURM job 29713406, 7:06 elapsed
   (~30 min walltime is fine).
 
 Stage C — single fold × single seed, full data, 36 h ampere:
-- Script: [`scripts/train_isolation_source_stage_c.sh`](scripts/train_isolation_source_stage_c.sh)
-  (commit `48fc7c1`).
-- Pinned: complete-genomes model, v2-derived split CSV, `stage_c_full` output dir.
-- Linted (`bash -n` + `sbatch --test-only`); SLURM accepted, projected start
-  `2026-05-27 17:00` (ampere queue depth).
-- **Not submitted.** User to fire when ready:
-  `sbatch src/kleb_iso_source/scripts/train_isolation_source_stage_c.sh`.
+- Script: [`scripts/train_isolation_source_cohort.sh`](scripts/train_isolation_source_cohort.sh),
+  parameterised by cohort. It replaced the three `train_isolation_source_stage_c{,_pooled,_stratified}.sh`
+  copies, **deleted 2026-08-13**: each hardcoded `output_dir=<cohort>/models`, so re-running one
+  would have overwritten the deployed fp32 checkpoints in place.
+- Pinned: complete-genomes model, v2-derived split CSV; writes to `models_bf16/` (never `models/`).
+- **The checkpoint inventory — which trained models exist, fp32 vs bf16, and which checkpoint to
+  evaluate for each cohort — is documented in the header of
+  [`scripts/evaluate_iso_source.sh`](scripts/evaluate_iso_source.sh).** Read it before evaluating
+  anything; picking the wrong directory yields a plausible-looking number from the wrong model.
+- Early stopping: `metric_for_best_model=eval_auroc`, patience **12**. It was 30, which could not
+  fire inside a 36 h wall — the 2026-08-11 bf16 runs peaked at steps 31,500 / 30,500 / 15,000 and
+  all three were killed by the wall having accrued only 9 / 15 / 23 non-improving evals.
+- ⚠ `max_steps=100000` is **not** a mere cap — `warmup_steps = max_steps × warmup_proportion` and the
+  LR decays to zero at `max_steps`, so it defines the learning-rate schedule. Lowering it to shorten
+  runs makes a different model, not the same one stopped earlier, and breaks comparability with
+  every fp32 result. Shorten runs with patience, never with `max_steps`.
 
 Open follow-ups (parked, not blocking Stage C):
 - Backport `dtype="auto"` to [`../kleb_ast/train_amr.py`](../kleb_ast/train_amr.py)

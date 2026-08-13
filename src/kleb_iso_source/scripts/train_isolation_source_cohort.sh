@@ -65,12 +65,18 @@ warmup_proportion=0.1
 # learning-rate trajectory and therefore the model. Every result to date (fp32 and bf16) used
 # 100,000; changing it makes a different experiment, not the same one stopped earlier. Leave it.
 max_steps=100000
-# Patience is what actually ends the run, and 30 was far too long: measured on the 2026-08-11 bf16
-# runs, validation AUROC peaked at steps 31,500 / 30,500 / 15,000 and never recovered, but only
-# 9 / 15 / 23 non-improving evals had accrued when the 36 h wall killed all three. Early stopping
-# was configured and never got the chance to fire; ~108 GPU-hours ran past the useful point. At 8,
-# each run stops 4,000-8,000 steps past its peak — enough to confirm the plateau, not a day of it.
-early_stopping_patience=8
+# The best-model objective is eval_auroc (metric_for_best_model in train_isolation_source.py), so
+# patience counts evals with no AUROC improvement — not epochs, not loss.
+#
+# 30 was too long to ever fire: on the 2026-08-11 bf16 runs validation AUROC peaked at steps
+# 31,500 / 30,500 / 15,000 and never recovered, yet only 9 / 15 / 23 non-improving evals had accrued
+# when the 36 h wall killed all three. Early stopping was configured and structurally could not
+# trigger inside the budget; ~108 GPU-hours ran past the useful point.
+#
+# 12 (David's call): deliberately still generous — safer than a tight value on jobs whose AUROC
+# plateaus and then recovers. It would have stopped these three ~8,400 / 6,000 / 12,000 steps past
+# their peaks, i.e. inside the wall with room to spare.
+early_stopping_patience=12
 
 [ -f "$sheet_path" ] || { echo "MISSING split CSV: $sheet_path"; exit 1; }
 
