@@ -37,6 +37,7 @@ export COHORT=${COHORT:-sampled_country_2_1_all}
 export LABEL_COL=${LABEL_COL:-blood_vs_faeces_label}
 export OUT_STEM=${OUT_STEM:-blood_vs_faeces_unitig}
 export POS_LABEL="${POS_LABEL:-blood (invasion)}"
+export NEG_LABEL="${NEG_LABEL:-faeces}"   # AMR passes "susceptible"; was hardcoded in the job script
 export PAIR_TITLE="${PAIR_TITLE:-blood vs faeces (unitigs)}"
 export COHORT_CSV=${COHORT_CSV:-$TRAIN/$PAIR/$COHORT/kpsc_human/binary_blood_vs_faeces_with_split.csv}
 export NSHARDS=${NSHARDS:-64}   # ~100k unitigs/shard for the ~6.3M-unitig matrix (calibrated: ~26 GB peak)

@@ -55,6 +55,7 @@ COHORT=${COHORT:-sampled_country_2_1_all}
 LABEL_COL=${LABEL_COL:-blood_vs_faeces_label}
 OUT_STEM=${OUT_STEM:-blood_vs_faeces_unitig}
 POS_LABEL="${POS_LABEL:-blood (invasion)}"
+NEG_LABEL="${NEG_LABEL:-faeces}"   # was hardcoded; AMR needs "susceptible", not an iso-source class
 PAIR_TITLE="${PAIR_TITLE:-blood vs faeces (unitigs)}"
 COHORT_CSV=${COHORT_CSV:-$TRAIN/$PAIR/$COHORT/kpsc_human/binary_blood_vs_faeces_with_split.csv}
 NSHARDS=${NSHARDS:-16}
@@ -190,11 +191,17 @@ combine)
     echo "combined assoc lines: $(wc -l < "$ASSOC")   patterns (pre-dedup): $(wc -l < "$PATTERNS")"
 
     echo "=== postprocess (--feature-mode unitigs: lambda/QQ/threshold + VE-ranked hit table) ==="
+    # --phenotype-tsv is what makes pheno_var reachable: without it significant_hits() falls back to
+    # the 0.249 literal and var_explained_pct is normalised by the wrong denominator. That literal was
+    # derived from the ~50:50 iso-source cohorts, so passing the phenotype changes those by <0.3%, but
+    # it matters for every imbalanced AMR cohort (ertapenem p=0.31 -> 0.225, ~11% off) and so for the
+    # cross-drug VE league table the fan-out produces.
     uv run python src/bac_pyseer/kleb_iso_source/pyseer_postprocess.py \
         --assoc "$ASSOC" --patterns "$PATTERNS" --gff "$GFF" --feature-mode unitigs \
+        --phenotype-tsv "$PHENO" --phenotype-column "$LABEL_COL" \
         --out-fig-dir "$GD" --out-table "$GD/${OUT_STEM}_hits_annotated.tsv" \
         --summary-json "$GD/${OUT_STEM}_gwas_summary.json" \
-        --contig NC_009648 --pos-label "$POS_LABEL" --neg-label faeces --pair-title "$PAIR_TITLE"
+        --contig NC_009648 --pos-label "$POS_LABEL" --neg-label "$NEG_LABEL" --pair-title "$PAIR_TITLE"
     echo "=== cleanup this cohort's scratch work dirs (keep $GD outputs AND the shared chunks) ==="
     rm -rf "$SHARD_DIR"/work_*
     echo "=== combine done  $(date) ==="; ls -lh "$GD"

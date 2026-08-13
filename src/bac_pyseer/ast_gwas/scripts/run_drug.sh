@@ -71,7 +71,10 @@ uv run python -m bac_pyseer.ast_gwas.mash_kinship kinship \
 echo "=== (3) sharded pyseer LMM ==="
 # Reuses the calibrated three-phase prep -> array -> combine chain. Peak RAM is ~cpu x n^2, so for a
 # large phenotype (TB rifampin, n~29k) either drop CPU and raise NSHARDS or ask for a whole node.
+# The label/title vars default to the isolation-source contrast, so AMR must override all three or
+# every drug's QQ/Manhattan is captioned "blood (invasion)" vs "faeces".
 GWAS_JOB=$(PAIR="$DRUG" LABEL_COL="${DRUG}_label" OUT_STEM="$DRUG" \
+    POS_LABEL="resistant" NEG_LABEL="susceptible" PAIR_TITLE="$DRUG ($ORGANISM, unitigs)" \
     PHENO="$PHENO" SIM="$SIMILARITY" DIST="$DISTANCES" CLUSTERS_TSV="$CLUSTERS" \
     MATRIX="$MATRIX" GWAS_DIR="$GWAS_DIR" NSHARDS="$NSHARDS" CPU="$CPU" \
     ACCT="$ACCT" PART="$PART" QOS="$QOS" LOGDIR="$LOGDIR" \
