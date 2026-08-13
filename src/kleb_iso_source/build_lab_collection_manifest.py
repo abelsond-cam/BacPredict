@@ -67,24 +67,33 @@ COHORTS = {
 }
 
 
-def load_spreadsheet(xlsx: Path) -> pd.DataFrame:
-    """Join the ``Files`` and ``Kleborate`` tabs on ``sample_accession``.
+JOIN_KEYS = [ID_COL, "strain"]
 
-    Both tabs are one row per isolate and share the identity columns, so the Kleborate tab is
-    reduced to its feature columns before merging to avoid ``_x``/``_y`` suffix noise.
+
+def load_spreadsheet(xlsx: Path) -> pd.DataFrame:
+    """Join the ``Files`` and ``Kleborate`` tabs, one row per isolate.
+
+    Joined on ``(sample_accession, strain)``, not on the accession alone: three accessions appear
+    twice (the same deposit sequenced/assembled twice), so an accession-only merge fans 680 rows out
+    to 684 and can pair a Files row with the *other* assembly's Kleborate output. ``strain`` is
+    unique in both tabs, so the pair is a genuine one-to-one key — asserted by ``validate``, which
+    turns any future duplication into an exception instead of silent row inflation.
     """
     files = pd.read_excel(xlsx, sheet_name="Files")
     kleb = pd.read_excel(xlsx, sheet_name="Kleborate")
     for name, df in (("Files", files), ("Kleborate", kleb)):
-        if ID_COL not in df.columns:
-            raise ValueError(f"{xlsx} tab {name!r} has no {ID_COL!r} column")
+        missing = [c for c in JOIN_KEYS if c not in df.columns]
+        if missing:
+            raise ValueError(f"{xlsx} tab {name!r} is missing join column(s) {missing}")
 
     feature_cols = [c for c in (KLEBORATE_SUMMARY_COLS + VIRULENCE_ALLELE_COLS) if c in kleb.columns]
     acquired = acquired_column_names(list(kleb.columns))
-    keep = [ID_COL, *feature_cols, *acquired]
+    keep = [*JOIN_KEYS, *feature_cols, *acquired]
     kleb_sub = kleb[list(dict.fromkeys(keep))].copy()  # de-duplicate, preserving order
 
-    merged = files.merge(kleb_sub, on=ID_COL, how="left", validate="many_to_many")
+    merged = files.merge(kleb_sub, on=JOIN_KEYS, how="left", validate="one_to_one")
+    if len(merged) != len(files):
+        raise ValueError(f"join changed the row count: {len(files)} -> {len(merged)}")
     logger.info("spreadsheet: %d Files rows x %d Kleborate cols -> %d merged rows (%d acquired-AMR cols)",
                 len(files), kleb.shape[1], len(merged), len(acquired))
     return merged

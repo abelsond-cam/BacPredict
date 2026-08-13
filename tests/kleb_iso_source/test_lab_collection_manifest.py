@@ -18,6 +18,7 @@ from kleb_iso_source.build_lab_collection_manifest import (
     attach_sublineage,
     build_exclusions,
     flag_availability,
+    load_spreadsheet,
     resolve_duplicates,
 )
 
@@ -41,6 +42,28 @@ def _write_cohort(tmp_path, cohort, rows):
     d.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(rows).to_csv(d / "binary_blood_vs_faeces_with_split.csv", index=False)
     return tmp_path
+
+
+# --------------------------------------------------------------------------- tab join
+
+
+def test_repeated_accession_does_not_fan_out_the_join(tmp_path):
+    """Three accessions appear twice in the real sheet; joining on accession alone inflated 680 -> 684
+    and could pair a Files row with the other assembly's Kleborate output."""
+    xlsx = tmp_path / "lab.xlsx"
+    files = pd.DataFrame({ID_COL: ["A", "A", "B"], "strain": ["a_v1", "a_v2", "b"],
+                          "assembly_file": ["p1", "p2", "p3"], "gff_file": ["g1", "g2", "g3"]})
+    kleb = pd.DataFrame({ID_COL: ["A", "A", "B"], "strain": ["a_v1", "a_v2", "b"],
+                         "virulence_score": [0, 5, 3], "ST": ["ST258", "ST258", "ST147"]})
+    with pd.ExcelWriter(xlsx) as xw:
+        files.to_excel(xw, sheet_name="Files", index=False)
+        kleb.to_excel(xw, sheet_name="Kleborate", index=False)
+
+    out = load_spreadsheet(xlsx)
+    assert len(out) == 3, "one row per isolate, no fan-out"
+    # Each Files row keeps ITS OWN assembly's Kleborate result, not the sibling's.
+    got = out.set_index("strain")["virulence_score"].to_dict()
+    assert got == {"a_v1": 0, "a_v2": 5, "b": 3}
 
 
 # --------------------------------------------------------------------------- sublineage join
