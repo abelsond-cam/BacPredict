@@ -200,7 +200,8 @@ def _open_matrix_writer(out: Path, threads: int):
 
 def convert(
     fasta: Path, color_names: Path, colormap: Path, out: Path, kmer_length: int = 31,
-    min_samples: int = 0, tmp_dir: Path | None = None, sort_buffer: str = "2G", threads: int = 4,
+    min_samples: int = 0, max_samples: int | None = None, tmp_dir: Path | None = None,
+    sort_buffer: str = "2G", threads: int = 4,
 ) -> tuple[int, int, int]:
     """Disk-based sort-merge join of the GGCAT artifacts → a gzipped pyseer ``--kmers`` matrix.
 
@@ -211,7 +212,9 @@ def convert(
     2. external-sort it by ``subset_id`` (GNU ``sort``, spills to ``tmp_dir``);
     3. merge the sorted segments against the subset-id-ordered colormap, expanding each subset's
        ranges to Sample IDs exactly once (consecutive segments share it) and filtering by
-       ``min_samples`` (subsets below the MAF floor are skipped, never expanded).
+       ``min_samples`` / ``max_samples`` (subsets outside the testable band are skipped, never
+       expanded — which is also what keeps the output small, since a near-core subset expands to a
+       presence string hundreds of KB long).
 
     Parameters
     ----------
@@ -224,6 +227,13 @@ def convert(
     min_samples
         Drop segments whose colour subset spans fewer than this many samples (untestable below the
         pyseer MAF floor). Default 0 (emit everything; let pyseer's ``--min-af`` filter).
+    max_samples
+        Drop segments whose colour subset spans *more* than this many samples — the mirror of
+        ``min_samples`` at the ``--max-af`` end. pyseer cannot test a near-universal unitig either,
+        yet those are precisely the rows with the longest presence strings, so they dominate matrix
+        size and every subsequent streaming pass over it. Matters most for a low-diversity cohort
+        (e.g. TB), where the core genome is carried by nearly every sample. Default ``None``
+        (no upper bound, preserving the previous behaviour).
     tmp_dir
         Directory for the temp segment file + external-sort spill (default: ``out``'s parent).
     sort_buffer
@@ -233,8 +243,10 @@ def convert(
     -------
     (n_written, n_unitigs, n_segments)
         Lines written, unitigs seen, and total colour segments (``n_written`` < ``n_segments`` when
-        ``min_samples`` drops some).
+        ``min_samples``/``max_samples`` drop some; the per-bound drop counts go to stderr).
     """
+    if max_samples is not None and min_samples and max_samples < min_samples:
+        raise ValueError(f"max_samples ({max_samples}) < min_samples ({min_samples}) — no unitig can pass")
     names = load_color_names(color_names)
     k = kmer_length
     tmp = Path(tmp_dir) if tmp_dir is not None else out.parent
@@ -273,6 +285,7 @@ def convert(
 
         cur_sub: int | None = None
         cur_presence: str | None = None
+        n_drop_rare = n_drop_common = 0
         for segline in segs:
             sub_s, _, subseq = segline.rstrip("\n").partition("\t")
             sub = int(sub_s)
@@ -284,14 +297,23 @@ def convert(
                 if ranges is None:
                     raise KeyError(f"subset {sub} absent from colormap {colormap}")
                 toks = ranges.split(",")
-                cur_presence = (None if (min_samples and _count_range_tokens(toks) < min_samples)
-                                else " ".join(f"{names[c]}:1" for c in _expand_range_tokens(toks)))
+                # Count first, expand only if testable — an out-of-band subset is never
+                # materialised, which is the whole point of the bounds.
+                n_carriers = _count_range_tokens(toks)
+                if min_samples and n_carriers < min_samples:
+                    cur_presence, n_drop_rare = None, n_drop_rare + 1
+                elif max_samples is not None and n_carriers > max_samples:
+                    cur_presence, n_drop_common = None, n_drop_common + 1
+                else:
+                    cur_presence = " ".join(f"{names[c]}:1" for c in _expand_range_tokens(toks))
             if cur_presence is None:
                 continue
             ofh.write(f"{subseq} | {cur_presence}\n")
             n_written += 1
     close_out()
     sorted_path.unlink()
+    print(f"  colour subsets dropped: {n_drop_rare} below min_samples={min_samples}, "
+          f"{n_drop_common} above max_samples={max_samples}", file=sys.stderr)
     return n_written, n_unitigs, n_segments
 
 
@@ -307,6 +329,10 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--kmer-length", type=int, default=31, help="k used for the GGCAT build (default 31).")
     p.add_argument("--min-samples", type=int, default=0,
                    help="Drop segments in fewer than N samples (default 0 — let pyseer --min-af filter).")
+    p.add_argument("--max-samples", type=int, default=None,
+                   help="Drop segments in MORE than N samples (default: no cap). pyseer cannot test a "
+                        "near-universal unitig, and those rows have the longest presence strings, so "
+                        "capping at the --max-af equivalent is the main lever on matrix size.")
     p.add_argument("--tmp-dir", type=Path, default=None,
                    help="Dir for the temp segment file + external-sort spill (default: --out's parent).")
     p.add_argument("--sort-buffer", default="2G", help="GNU sort -S memory buffer (default 2G).")
@@ -314,7 +340,7 @@ def main(argv: list[str] | None = None) -> None:
     args = p.parse_args(argv)
     n_written, n_unitigs, n_segments = convert(
         args.fasta, args.color_names, args.colormap, args.out,
-        kmer_length=args.kmer_length, min_samples=args.min_samples,
+        kmer_length=args.kmer_length, min_samples=args.min_samples, max_samples=args.max_samples,
         tmp_dir=args.tmp_dir, sort_buffer=args.sort_buffer, threads=args.threads,
     )
     print(f"wrote {n_written} features from {n_unitigs} unitigs ({n_segments} colour segments) -> {args.out}")

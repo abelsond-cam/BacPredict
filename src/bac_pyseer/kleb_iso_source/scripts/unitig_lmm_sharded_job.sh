@@ -62,14 +62,19 @@ CPU=${CPU:-${SLURM_CPUS_PER_TASK:-8}}
 MIN_AF=${MIN_AF:-0.01}; MAX_AF=${MAX_AF:-0.99}
 MIN_SL_SIZE=${MIN_SL_SIZE:-100}
 
-CO=$P/$PAIR/$COHORT
-GD=$CO/gwas_unitig_lmm
-M=$P/unitigs/$PAIR/unitigs.pyseer.gz
+# Paths default to the CSD3 iso-source layout; each is env-overridable so another cohort (e.g. the
+# AMR cohorts driven by ast_gwas/scripts/run_drug.sh) can reuse this chain unchanged.
+CO=${CO:-$P/$PAIR/$COHORT}
+GD=${GWAS_DIR:-$CO/gwas_unitig_lmm}
+M=${MATRIX:-$P/unitigs/$PAIR/unitigs.pyseer.gz}
 CACHE=$GD/lmm_cache.npz
-DIST=$CO/jaccard_distances.tsv
-SIM=$CO/similarity.tsv
-CLUST=$GD/sublineage_clusters.tsv
-PHENO=$CO/phenotype.tsv
+DIST=${DIST:-$CO/jaccard_distances.tsv}
+SIM=${SIM:-$CO/similarity.tsv}
+# CLUSTERS_TSV lets a caller supply a ready-made Sample<TAB>cluster file (the AMR cohorts derive one
+# from mash distances, having no Kleborate Sublineage column); otherwise the prep phase builds one
+# from COHORT_CSV's Sublineage as before.
+CLUST=${CLUSTERS_TSV:-$GD/sublineage_clusters.tsv}
+PHENO=${PHENO:-$CO/phenotype.tsv}
 GFF=$DATA/david/raw/related_lr/gff/GCF_000016305.1.gff
 # Chunks vs results are separated deliberately.
 #
