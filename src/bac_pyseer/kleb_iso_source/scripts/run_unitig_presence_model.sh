@@ -25,7 +25,7 @@
 #   # the honest re-run: hit set selected by an LMM that never saw a holdout genome. Note the
 #   # submatrix must still cover the WHOLE cohort (the holdout genomes need presence values to be
 #   # scored) — only the unitig SELECTION is restricted, never the rows.
-#   SELECTION_SCOPE=trainval_only HITS_SUBMATRIX=<submatrix for the trainval hit set> sbatch ...
+#   SELECTION_SCOPE=trainval_only SCORE_ALL_SPLITS=1 HITS_SUBMATRIX=<trainval hit submatrix> sbatch ...
 
 set -euo pipefail
 export PYTHONUNBUFFERED=1
@@ -86,6 +86,10 @@ EXTRA=()
 # command (the function returns 1 and set -e kills the caller). `if` is immune to both, so it costs
 # nothing to be the form that survives someone later moving the line.
 if [ "${ALSO_L1:-0}" = "1" ]; then EXTRA+=(--also-l1); fi
+# SCORE_ALL_SPLITS writes unitig_cohort_scores.npz over every genome in the matrix (with its split
+# label), not just the holdout — the artifact that lets this model be compared genome-for-genome
+# against Bacformer's cohort_scores.npz, and the input to the agreement scatter.
+if [ "${SCORE_ALL_SPLITS:-0}" = "1" ]; then EXTRA+=(--score-all-splits); fi
 
 uv run python -m $MOD fit \
   --matrix-dir "$MATRIX_DIR" \
