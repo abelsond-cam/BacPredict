@@ -180,11 +180,12 @@ def plot_agreement(scores_a: Path, scores_b: Path, out_path: Path, *, label_a: s
                              label_a, label_b, inset_title, use_logit=use_logit)
 
     fig.suptitle(
-        f"Do the two models predict the same thing?   r²={main_stats['r2_logit']:.3f}, "
-        f"ρ={main_stats['spearman_rho']:.3f}   |   "
-        f"{label_b} log-odds are {main_stats['sd_ratio_logit']:.2f}× as wide as {label_a}'s "
-        "(a scale difference, which does NOT affect r²)", fontsize=10)
-    fig.tight_layout(rect=(0, 0, 1, 0.94))
+        f"Do the two models predict the same thing?   r² = {main_stats['r2_logit']:.3f}   "
+        f"(Spearman ρ = {main_stats['spearman_rho']:.3f}, n = {main_stats['n']})\n"
+        f"{label_b} log-odds are {main_stats['sd_ratio_logit']:.2f}× as wide as {label_a}'s — "
+        "a confidence-scale difference, which does not affect r²",
+        fontsize=10, y=0.985)
+    fig.tight_layout(rect=(0, 0, 1, 0.90))
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
