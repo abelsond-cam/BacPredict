@@ -18,12 +18,39 @@ say how far *known* determinants get; a unitig screen says how much signal is in
 
 Phase 1 is a 2 + 2 pilot bracketing the performance range:
 
-| Organism | Drug | Bacformer FT AUROC | Catalogue ceiling | Why |
+| Organism | Drug | Bacformer FT AUROC / AUPRC | Catalogue ceiling | Why |
 |---|---|---|---|---|
-| Kp | `ertapenem` | 0.9870 | 0.977 (CARD) | Saturated — the positive control. If unitig-LR is not ~0.98 here, the pipeline is broken. |
-| Kp | `colistin` | 0.8072 | 0.649 (CARD) | Worst Kp drug; chromosomal `mgrB` truncation / IS insertion is exactly what a unitig sees. |
-| TB | `rifampin` | 0.9046 | 0.967 (WHO) | FT *underperforms* the catalogue; unitig-LR should land near the RRDR one-hot (0.960). |
-| TB | `ethionamide` | 0.7742 | 0.871 (WHO) | Worst TB drug, widest catalogue gap; `inhA` **promoter** + `ethA` LoF are invisible to a protein-only model. |
+| Kp | `ertapenem` | 0.9882 / 0.9937 | 0.9828 (CARD) | Saturated — the positive control. If unitig-LR is not ~0.98 here, the pipeline is broken. |
+| Kp | `colistin` | 0.9094 / 0.8330 | 0.6563 (CARD) | **Largest FT-over-catalogue gap in Kp (+0.253)** — the model knows something the catalogue does not, and chromosomal `mgrB` truncation / IS insertion is exactly what a unitig sees. |
+| TB | `rifampin` | 0.9642 / 0.9160 | 0.9666 (WHO) | FT sits *at* the catalogue ceiling — the TB positive control. |
+| TB | `ethionamide` | 0.8097 / 0.5962 | 0.8706 (WHO) | FT *underperforms* the catalogue (−0.061), on the lowest AUPRC of the pilot; `inhA` **promoter** + `ethA` LoF are invisible to a protein-only model. |
+
+> **Every FT number above is read from the deployed checkpoint's own `results.json`** (32 runs,
+> 15–21 Jul 2026, all `kfold` fold 0 / seed 1 on `bacformer-large-masked-complete-genomes`).
+> Kp ceilings are the `__ALL_CARD__` row of
+> `train_kleb_ast/card_ceiling/<drug>/card_determinant_lr_<drug>_allele.csv`; TB's come from
+> `visualisations/tb/tb_amr_summary_panel.csv` (there is no `card_ceiling` dir for TB).
+> **An earlier version of this table was wrong on all four FT numbers** — colistin by +0.10 and
+> rifampin by +0.06 — which inverted two of the four selection rationales (colistin was billed as
+> "worst Kp drug", rifampin as "underperforms the catalogue"; neither is true). Quote the
+> checkpoints, never a summary panel: see *Comparator provenance* below.
+
+## Comparator provenance — where each number must come from
+
+Three traps, all of which fail silently and all of which have already bitten once:
+
+1. **Fine-tune numbers come from the checkpoint's `results.json`, or from re-scoring it with
+   `engine.finetune.evaluate`.** Never from `*_amr_summary_panel.csv` — those carry
+   `concat_auroc`/`concat_auprc`, which belong to the **concat-ladder model**, a different model
+   from the plain fine-tune. `collect_comparison` therefore takes only the ceiling from a panel and
+   computes the FT columns from its `eval_scores.npz`.
+2. **The panels are partial** — Kp covers 7 of 22 drugs (**no ertapenem**), TB 5 of 10. A missing
+   drug merges to NaN, which reads as "no ceiling exists" rather than "never added". Now warned.
+3. **The TB panel keys on `rifampicin` (UK) while the AST column is `rifampin` (US)** — a plain
+   merge silently drops the headline TB drug. `PANEL_DRUG_ALIASES` handles it.
+
+Worst Kp drug by FT AUROC is `azithromycin` (0.7993, ceiling 0.5584 → gap +0.241, second-largest);
+worst TB is `moxifloxacin` (0.7945 / AUPRC 0.5002). Both are fan-out candidates, not pilot ones.
 
 Then fan out to all 22 Kp and 10 TB drugs.
 

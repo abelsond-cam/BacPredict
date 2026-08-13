@@ -60,10 +60,23 @@ Phase 1 (this plan) is a 2 + 2 correctness pilot chosen to bracket the performan
 
 | Organism | Drug | Bacformer FT AUROC / AUPRC | Catalogue ceiling AUROC | Why this drug |
 |---|---|---|---|---|
-| Kp | `ertapenem` | 0.9870 / 0.9843 | 0.977 (CARD) | Saturated. Positive control — unitigs must also hit ~0.98 or the pipeline is broken. |
-| Kp | `colistin` | 0.8072 / 0.6855 | 0.649 (CARD) | Worst Kp drug. Chromosomal `mgrB` truncation / IS insertion — the exact thing a unitig sees and an embedding does not. |
-| TB | `rifampin` | 0.9046 / 0.8558 | 0.967 (WHO) | FT *underperforms* the catalogue. Unitig-LR should land near the RRDR one-hot (0.960). |
-| TB | `ethionamide` | 0.7742 / 0.4742 | 0.871 (WHO) | Worst TB drug, widest catalogue gap. `inhA` **promoter** SNP + `ethA` LoF — invisible to a protein-only model. Best case for unitigs in the repo. |
+| Kp | `ertapenem` | 0.9882 / 0.9937 | 0.9828 (CARD) | Saturated. Positive control — unitigs must also hit ~0.98 or the pipeline is broken. |
+| Kp | `colistin` | 0.9094 / 0.8330 | 0.6563 (CARD) | **Largest FT-over-catalogue gap in Kp (+0.253).** Chromosomal `mgrB` truncation / IS insertion — the exact thing a unitig sees and an embedding does not. |
+| TB | `rifampin` | 0.9642 / 0.9160 | 0.9666 (WHO) | FT sits *at* the catalogue ceiling. The TB positive control. |
+| TB | `ethionamide` | 0.8097 / 0.5962 | 0.8706 (WHO) | FT *underperforms* the catalogue (−0.061), lowest AUPRC of the pilot. `inhA` **promoter** SNP + `ethA` LoF — invisible to a protein-only model. |
+
+> **⚠ Corrected 2026-08-13 — the previous version of this table was wrong on all four FT numbers**
+> (ertapenem 0.9870, colistin 0.8072, rifampin 0.9046, ethionamide 0.7742). They predate the
+> July re-runs. The errors were not uniform: colistin was understated by +0.10 and rifampin by
+> +0.06, which **inverted two of the four selection rationales** — colistin is not the worst Kp
+> drug (that is `azithromycin`, 0.7993) and rifampin does not underperform its catalogue, it
+> matches it. The drug choices survive on corrected reasoning; the stated reasons did not.
+>
+> Numbers now come from the deployed checkpoints' own `results.json` — 32 runs, 15–21 Jul 2026,
+> all `kfold` fold 0 / seed 1 on `bacformer-large-masked-complete-genomes`. See
+> *Comparator provenance* in [`../CLAUDE.md`](../CLAUDE.md) for why a summary panel must never be
+> the source, and the three silent failure modes that were found and fixed in
+> `collect_comparison` while chasing this.
 
 Note the TB AST column is **`rifampin`** (US spelling), not `rifampicin`. Only the figure
 *directory* uses `rifampicin`.

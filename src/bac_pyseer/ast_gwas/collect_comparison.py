@@ -45,7 +45,14 @@ from bacpredict.engine.finetune.metrics import compute_full_metrics, youden_thre
 
 logger = logging.getLogger(__name__)
 
-PANEL_COLUMNS = ("drug", "ceiling_auroc", "ceiling_auprc", "ft_auroc", "ft_auprc")
+# The panel CSVs supply the CATALOGUE CEILING only. They also carry concat_auroc/concat_auprc, which
+# belong to the *concat-ladder* model, not the plain fine-tune — reading those as "ft" silently
+# compares against a different model. Fine-tune numbers come from its own eval_scores.npz instead.
+PANEL_COLUMNS = ("drug", "ceiling_auroc", "ceiling_auprc")
+
+# The TB AST column is `rifampin` (US); the figure panels key on `rifampicin` (UK). Merging without
+# this alias silently drops the headline TB drug — it matches nothing and the row comes back NaN.
+PANEL_DRUG_ALIASES = {"rifampin": "rifampicin"}
 
 
 def _load_scores(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
@@ -118,11 +125,17 @@ def operating_point(scores_npz: Path, prefix: str) -> dict[str, object]:
     thr = youden_threshold(y, p)
     m = compute_full_metrics(y, p, threshold=float(thr))
     return {
+        # AUROC/AUPRC come from the same scored genomes as everything else, deliberately: taking a
+        # fine-tune's headline from a summary panel instead is how a stale or partial table silently
+        # becomes the comparator (see the panel notes on PANEL_COLUMNS).
+        f"{prefix}_auroc": m["auroc"],
+        f"{prefix}_auprc": m["auprc"],
         f"{prefix}_sensitivity": m["sensitivity"],
         f"{prefix}_specificity": m["specificity"],
         f"{prefix}_balanced_accuracy": m["balanced_accuracy"],
         f"{prefix}_f1": m["f1"],
         f"{prefix}_operating_threshold": float(thr),
+        f"{prefix}_n_holdout": int(y.size),
     }
 
 
@@ -187,19 +200,39 @@ def collect(
 
     table = pd.DataFrame(rows).sort_values("drug").reset_index(drop=True)
 
+    # Positive deltas mean the unitig screen found signal the other arm did not. ft_auroc comes from
+    # the fine-tune's own scores (above), so this exists whenever --ft-scores was supplied.
+    if "ft_auroc" in table.columns:
+        table["delta_vs_ft_auroc"] = table["unitig_auroc"] - table["ft_auroc"]
+
     if panel_csv is not None and panel_csv.is_file():
         panel = pd.read_csv(panel_csv)
         available = [c for c in PANEL_COLUMNS if c in panel.columns]
         if "drug" not in available:
             raise SystemExit(f"{panel_csv} has no 'drug' column (has {list(panel.columns)[:10]})")
-        table = table.merge(panel[available], on="drug", how="left")
-        # Positive deltas mean the unitig screen found signal the other arm did not.
-        if "ft_auroc" in table.columns:
-            table["delta_vs_ft_auroc"] = table["unitig_auroc"] - table["ft_auroc"]
+        if "ceiling_auroc" not in available:
+            logger.warning(
+                "%s has no ceiling_auroc (has %s) — no catalogue ceiling to compare against",
+                panel_csv, list(panel.columns)[:8],
+            )
+        # Alias before merging, or `rifampin` matches nothing and comes back NaN without complaint.
+        table["_panel_key"] = table["drug"].replace(PANEL_DRUG_ALIASES)
+        merged = table.merge(
+            panel[available].rename(columns={"drug": "_panel_key"}), on="_panel_key", how="left"
+        )
+        missing = merged.loc[merged.get("ceiling_auroc", pd.Series(dtype=float)).isna(), "drug"].tolist()
+        if missing:
+            # These panels are partial (Kp covers 7 of 22 drugs, TB 5 of 10). A silent NaN reads as
+            # "no ceiling exists" when it means "this drug was never added to the panel".
+            logger.warning(
+                "%d drug(s) absent from %s, so they have no ceiling: %s",
+                len(missing), panel_csv.name, ", ".join(sorted(missing)),
+            )
+        table = merged.drop(columns="_panel_key")
         if "ceiling_auroc" in table.columns:
             table["delta_vs_ceiling_auroc"] = table["unitig_auroc"] - table["ceiling_auroc"]
     else:
-        logger.warning("no panel CSV — emitting unitig-LR columns only, with nothing to compare against")
+        logger.warning("no panel CSV — no catalogue ceiling column")
     return table
 
 

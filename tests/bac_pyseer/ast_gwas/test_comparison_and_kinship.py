@@ -140,8 +140,9 @@ def test_read_unitig_results_flattens_gwas_provenance(tmp_path: Path) -> None:
     assert row["pheno_var"] == 0.232
 
 
-def test_collect_joins_ft_and_ceiling_and_computes_deltas(tmp_path: Path) -> None:
-    """The output is the head-to-head table: unitig-LR vs fine-tune vs catalogue ceiling."""
+def test_panel_supplies_the_ceiling_only_never_the_fine_tune(tmp_path: Path) -> None:
+    """The real panels carry `concat_*`, not `ft_*` — reading those as the fine-tune compares
+    against the concat-ladder model instead, which is a different model entirely."""
     results = [
         _results_json(tmp_path / "ert.json", "ertapenem", 0.985, 0.982),
         _results_json(tmp_path / "col.json", "colistin", 0.860, 0.720),
@@ -150,17 +151,41 @@ def test_collect_joins_ft_and_ceiling_and_computes_deltas(tmp_path: Path) -> Non
     pd.DataFrame({
         "drug": ["ertapenem", "colistin"],
         "ceiling_auroc": [0.97701, 0.67987], "ceiling_auprc": [0.98490, 0.49568],
-        "ft_auroc": [0.9870, 0.8072], "ft_auprc": [0.9843, 0.6855],
-        "concat_auroc": [1.0, 0.92536],  # known-unreliable for Kp; must be ignored
+        "concat_auroc": [1.0, 0.92536],  # a DIFFERENT model — must never be read as the fine-tune
     }).to_csv(panel, index=False)
 
     table = collect(results, panel).set_index("drug")
     assert "concat_auroc" not in table.columns
-    # Colistin is the case with real headroom: unitigs beat both the fine-tune and the catalogue.
-    assert table.loc["colistin", "delta_vs_ft_auroc"] == pytest.approx(0.860 - 0.8072)
+    assert "ft_auroc" not in table.columns          # no --ft-scores given, so no fine-tune arm
+    assert "delta_vs_ft_auroc" not in table.columns  # and therefore no fine-tune delta invented
     assert table.loc["colistin", "delta_vs_ceiling_auroc"] == pytest.approx(0.860 - 0.67987)
-    # Ertapenem is the saturated positive control: essentially a tie with the fine-tune.
-    assert abs(table.loc["ertapenem", "delta_vs_ft_auroc"]) < 0.01
+
+
+def test_rifampin_matches_the_panels_rifampicin_spelling(tmp_path: Path) -> None:
+    """The AST column is `rifampin` (US), the panels key on `rifampicin` (UK). Without the alias
+    the headline TB drug merges to NaN and the table looks like it simply has no ceiling."""
+    results = [_results_json(tmp_path / "rif.json", "rifampin", 0.94, 0.90)]
+    panel = tmp_path / "tb_panel.csv"
+    pd.DataFrame({"drug": ["rifampicin"], "ceiling_auroc": [0.96658],
+                  "ceiling_auprc": [0.93916]}).to_csv(panel, index=False)
+
+    table = collect(results, panel).set_index("drug")
+    assert table.loc["rifampin", "ceiling_auroc"] == pytest.approx(0.96658)
+    assert table.loc["rifampin", "delta_vs_ceiling_auroc"] == pytest.approx(0.94 - 0.96658)
+
+
+def test_a_drug_absent_from_a_partial_panel_is_warned_about(tmp_path: Path, caplog) -> None:
+    """Kp's panel covers 7 of 22 drugs and has no ertapenem at all; a silent NaN would read as
+    'no catalogue ceiling exists' rather than 'nobody added this drug to the panel'."""
+    results = [_results_json(tmp_path / "ert.json", "ertapenem", 0.985, 0.982)]
+    panel = tmp_path / "panel.csv"
+    pd.DataFrame({"drug": ["colistin"], "ceiling_auroc": [0.67987],
+                  "ceiling_auprc": [0.49568]}).to_csv(panel, index=False)
+
+    with caplog.at_level("WARNING"):
+        table = collect(results, panel)
+    assert pd.isna(table.loc[0, "ceiling_auroc"])
+    assert "ertapenem" in caplog.text
 
 
 def test_collect_without_a_panel_still_emits_unitig_columns(tmp_path: Path) -> None:
