@@ -81,3 +81,29 @@ def test_missing_evaluate_rows_fail_loudly(tmp_path):
     source = _write(tmp_path / "source.csv", _cohort_rows(["A"], [1], ["train"]))
     with pytest.raises(SystemExit, match="no evaluate rows"):
         build_split(frozen, source)
+
+
+def test_keep_out_of_train_forces_genomes_into_validate(tmp_path):
+    """Lab isolates must never be trained on — a memorised score is not a prediction, and these are
+    exactly the genomes the collaborator will act on."""
+    frozen = _write(tmp_path / "frozen.csv", _cohort_rows(["A"], [1], ["evaluate"]))
+    source = _write(tmp_path / "source.csv", _cohort_rows(
+        [f"S{i}" for i in range(30)] + ["A", "LAB1", "LAB2"],
+        [i % 2 for i in range(30)] + [1, 0, 1], ["train"] * 33))
+
+    out, manifest = build_split(frozen, source, validate_frac=0.1, seed=0,
+                                keep_out_of_train={"LAB1", "LAB2", "A"})
+    split = out.set_index("Sample")["train_val_eval"].to_dict()
+    assert split["LAB1"] == "validate" and split["LAB2"] == "validate"
+    assert split["A"] == "evaluate", "one already in the frozen test set stays there"
+    assert manifest["kept_out_split_counts"].get("train", 0) == 0
+    assert manifest["n_kept_out_of_train_requested"] == 3
+
+
+def test_keep_out_ids_absent_from_the_cohort_are_harmless(tmp_path):
+    frozen = _write(tmp_path / "frozen.csv", _cohort_rows(["A"], [1], ["evaluate"]))
+    source = _write(tmp_path / "source.csv", _cohort_rows(
+        ["A"] + [f"S{i}" for i in range(9)], [1] + [i % 2 for i in range(9)], ["train"] * 10))
+    _out, manifest = build_split(frozen, source, validate_frac=0.1, seed=0,
+                                 keep_out_of_train={"NOT_IN_COHORT"})
+    assert manifest["n_kept_out_of_train_in_cohort"] == 0
