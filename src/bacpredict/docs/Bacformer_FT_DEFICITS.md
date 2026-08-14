@@ -115,7 +115,7 @@ We built the natural remedy: a **learned gated-attention MIL pool** (one softmax
 token, then a weighted sum), trained freeze-first then end-to-end. **It lost to the mean** (e2e **0.868**,
 frozen **~0.78** < the mean-pool's 0.905). Since a uniform set of weights *is* the mean, losing to it means
 the head never concentrated on *rpoB*. Three label-blind routing diagnostics (detail in
-[`docs/PROGRESS_REPORT.md` §6](docs/PROGRESS_REPORT.md)) explain why:
+[`docs/PROGRESS_REPORT.md` §6](_archive/PROGRESS_REPORT.md)) explain why:
 
 - The **frozen** model attends *rpoB* in the top ~0.2% — but **R ≈ WT**: it attends the *conserved gene*,
   not the *mutation* (structural hub-ness from masked-genome pretraining, not a resistance signal).
@@ -342,7 +342,7 @@ With reliable labels in hand, the plan:
 *The full arc of Task 7 (`pangena_predict`): why Bacformer's mean-embedding AMR prediction underperforms in
 TB, how we recovered it, how far that gets us against the WHO catalogue, and the one barrier that remains.
 The detailed diagnostic phase (the routing experiments, the surprisal sub-studies, every sub-figure) is in
-[`docs/PROGRESS_REPORT.md`](docs/PROGRESS_REPORT.md); operational detail is in [`CLAUDE.md`](CLAUDE.md);
+[`docs/PROGRESS_REPORT.md`](_archive/PROGRESS_REPORT.md); operational detail is in [`CLAUDE.md`](../../../CLAUDE.md);
 the forward plan is `~/.claude/plans/i-d-like-to-start-crystalline-allen.md`. Per-drug figures live under
 [`../visualisations/tb/<drug>/`](../visualisations/).*
 

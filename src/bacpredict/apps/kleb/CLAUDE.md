@@ -28,23 +28,44 @@
 > as the gold standard. Both ceiling runners share `engine.ref_catalogues.base.score_onehot_frame`. (Memory
 > `kleborate-ceiling-vs-amr-tools` updated to match.)
 
-See the root [CLAUDE.md](../../../CLAUDE.md) for §0 global conventions (base model, three-stage protocol, paths, reporting requirements). Cross-task status lives in [ToDo.md](../../../ToDo.md).
+See the root [CLAUDE.md](../../../../CLAUDE.md) for §0 global conventions (base model, three-stage protocol, paths, reporting requirements). Cross-task status lives in [PROJECT_STATE.md](../../../../PROJECT_STATE.md).
 
 ## Aim
 
-Predict susceptibility for clinically relevant antibiotics in *Klebsiella pneumoniae*, where we expect Bacformer to do best — resistance is heavily HGT-driven (carbapenemases, ESBLs, *mcr*) on plasmids and ICEs. This is the natural home for our AUROC 0.99 result, **and the strong test of the central HGT-vs-vertical hypothesis** (see Task 1 [tb_ast/CLAUDE.md](../tb_ast/CLAUDE.md)): unlike TB, Kp has both classes of mechanism well-represented in the same dataset, so a clean stratified comparison is possible.
+Predict susceptibility for clinically relevant antibiotics in *Klebsiella pneumoniae*, where we expect Bacformer to do best — resistance is heavily HGT-driven (carbapenemases, ESBLs, *mcr*) on plasmids and ICEs. This is the natural home for our AUROC 0.99 result, **and the strong test of the central HGT-vs-vertical hypothesis** (see Task 1 [tb_ast/CLAUDE.md](../tb/CLAUDE.md)): unlike TB, Kp has both classes of mechanism well-represented in the same dataset, so a clean stratified comparison is possible.
 
 ## Status
 
-- We already have trained Kp prediction models but have **not formally evaluated** them.
-- All previous training used the **older Bacformer weights** (now superseded) and the MAG-trained model.
-- Source notebook: `/Users/davidabelson/developer/BacHGT/docs/notebooks/amr_ebi_records.ipynb`.
+**Status lives in [`PROJECT_STATE.md`](../../../../PROJECT_STATE.md) §3.1** — this file holds the
+mechanics and the ceiling argument.
+
+In short: **all 22 Kp drugs are fine-tuned, deployed and evaluated** on the refreshed
+complete-genomes model, in bf16, and the CARD ceiling is complete and current for all 22. The lines
+that used to sit here — "not formally evaluated", "all previous training used the older MAG-trained
+weights" — were about a month stale and are removed.
+
+Source notebook: `/Users/davidabelson/developer/BacHGT/docs/notebooks/amr_ebi_records.ipynb`.
 
 ## Central hypothesis being tested here
 
 Bacformer should excel where resistance is driven by **HGT / gene acquisition** (carbapenemases like KPC/NDM/OXA-48, ESBLs, aminoglycoside-modifying enzymes, *mcr*) and add much less where resistance is driven by **chromosomal point mutations** (e.g. FQ via *gyrA*/*parC* QRDR, *ramR/ramA*-driven efflux, *ompK35*/*K36* porin loss, *pmrAB*/*phoPQ* colistin). Kp is the **strong** test — both classes are well-represented. Every AMR result MUST be **stratified by resistance mechanism**.
 
-## Kleborate determinant "ceiling" — the catalogue baseline (pangena_predict port)
+## Kleborate determinant "ceiling" — SUPERSEDED as the default, kept for its argument
+
+> **⚠ The default Kp ceiling is CARD, not Kleborate** (decided 2026-07; Kleborate is retained as a
+> comparator). The current ceiling is `visualisations/kp/catalogue_ceiling_panel.csv`, built from
+> `card_ceiling/<drug>/card_determinant_lr_<drug>_allele.csv`.
+>
+> **This section is kept, not deleted, because its argument is method-of-record and transfers
+> verbatim to CARD:** a determinant one-hot gives a *measured* ceiling that is a **lower bound on the
+> true one** — the catalogue can only under-call, never over-call, so beating the measured ceiling is
+> weaker evidence than it looks, and failing to reach it is stronger. That asymmetry is how every
+> ceiling comparison in this project must be read, whichever catalogue supplies it.
+>
+> Two mechanical details below are also stale: `src/pangena_predict/` no longer exists (see
+> `PROJECT_STATE.md` §2), and the Kp ceiling is no longer scored by `run_kfold_probe` — it moved to
+> the deployment-holdout scorer, which is exactly the migration TB has **not** had. That difference is
+> why TB's ceiling is provisional; see `visualisations/PROVENANCE.md`.
 
 The TB diagnostic (Task 7, `src/pangena_predict/`) measures every drug's Bacformer read-out against a
 **catalogue ceiling** — the AUROC a one-hot of all known resistance determinants reaches through the
@@ -141,7 +162,7 @@ report block alongside the cipro / ceftriaxone / meropenem / gentamicin
 Stage C results, even on the first eval-bias re-run.
 
 Open follow-up (still applies): backport `dtype="auto"` HF loading idiom
-to [train_amr.py](train_amr.py) — `.to(torch.bfloat16)` regression hits
+to [train_amr.py](../../engine/finetune/finetune_amr.py) — `.to(torch.bfloat16)` regression hits
 the CPU Stage A path (already fixed in tb_ast `4956f91` and
 kleb_iso_source `2d5866e`).
 
@@ -185,7 +206,7 @@ Kleb-specific metadata / embedding curation
 Determinant ceiling / mechanism stratification
 - `kleborate_determinant_lr.py` — per-drug Kleborate determinant one-hot LR → the catalogue **ceiling** + per-mechanism bars (HGT vs chromosomal). The Kp analogue of `pangena_predict/tbprofiler_gene_lr.py`. See the section above.
 
-Imports from [`../tl/train/`](../tl/train/) (split_utils, datasets) and [`../tl/embed/`](../tl/embed/) and [`../tl/genome_download/`](../tl/genome_download/) for shared infrastructure, and from [`../pangena_predict/`](../pangena_predict/) (`kfold_probe`, and `locate_gene` for the Kp gene→embedding-index port).
+Imports from [`../../engine/finetune/`](../../engine/finetune/) (split_utils, datasets) and [`../../engine/embedding/`](../../engine/embedding/) and [`../../engine/download/`](../../engine/download/) for shared infrastructure, and from [`../../engine/gene_lr/`](../../engine/gene_lr/) (`kfold_probe`, and `locate_gene` for the Kp gene→embedding-index port).
 
 ## Downstream / parked experiments (all on hold)
 

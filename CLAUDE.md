@@ -2,7 +2,14 @@
 
 Guidance for Claude Code working in this repository. Per-task detail lives in each task folder's own `CLAUDE.md`.
 
-> **Plans.** The living plan + tracker for this repo is [`ToDo.md`](ToDo.md) — current forward priorities and per-task state. (The earlier `~/.claude/PROGRAM_PLAN_2026-05-30.md` is superseded.)
+> ## ⛔ Read [`PROJECT_STATE.md`](PROJECT_STATE.md) first
+>
+> **It is the single authority on current state** — status, numbers of record, what is in flight, and
+> what is next, per layer. **This file holds conventions only and deliberately contains no results.**
+>
+> If a number here, in a task `CLAUDE.md`, in a memory, or anywhere else disagrees with
+> `PROJECT_STATE.md`, **`PROJECT_STATE.md` wins**. A number is quotable only if it names the artifact
+> it was read from. `ToDo.md` is **retired** — see [`docs/_retired/`](docs/_retired/).
 
 ## Project purpose
 
@@ -15,7 +22,7 @@ Fine-tune [Bacformer](https://github.com/amina-BS/bacformer) on bacterial genome
 
 | Area | Folder | Notes |
 |---|---|---|
-| **Engine** (organism-agnostic pipeline) | [src/bacpredict/engine/](src/bacpredict/engine/) | stages `labels` · `download` · `embedding` · `finetune` · `gene_lr` · `concat` · `catalogue` · `plots` |
+| **Engine** (organism-agnostic pipeline) | [src/bacpredict/engine/](src/bacpredict/engine/) | stages `ast_labels` · `download` · `embedding` · **`splits`** · `finetune` · `gene_lr` · `segment_amr_lr` · `concat` · `ref_catalogues` · `plots` |
 | **App: TB AST** | [src/bacpredict/apps/tb/](src/bacpredict/apps/tb/) | WHO/TB-Profiler adapter, tbprofiler pixi, download helpers |
 | **App: Kp AST** | [src/bacpredict/apps/kleb/](src/bacpredict/apps/kleb/) | CARD + Kleborate adapters, AMR sidecar pipeline, metadata curation |
 | **Archived** (concluded TB SNP diagnostic) | [src/bacpredict/_archive/](src/bacpredict/_archive/) | excluded from wheel/ruff/pytest |
@@ -24,11 +31,20 @@ Fine-tune [Bacformer](https://github.com/amina-BS/bacformer) on bacterial genome
 | Pyseer GWAS | [src/bac_pyseer/](src/bac_pyseer/) | separate package |
 | gene_array_lasso | [src/gene_array_lasso/](src/gene_array_lasso/) | separate package |
 
-Task 4 (mixed-assembly detection) and Task 5 (DefensePredictor on short reads) are deferred — condensed plans live in [ToDo.md](ToDo.md). `dp_short_read` exists as a stub; recreate `src/admixture/` when Task 4 starts.
+Mixed-assembly detection and the `predictHGT` embedding diagnostic are **parked** — their milestones
+are in [docs/_parked/](docs/_parked/). DefensePredictor on short reads is deferred; `dp_short_read`
+exists as a stub and keeps its own milestones.
+
+`splits` is the newest stage and the one that must not be bypassed: it materialises a per-drug
+`<drug>_split.csv`, and **`engine.splits.load_splits` is the one reader every downstream arm uses**.
+Resolving a holdout any other way is what caused the 2026-07 read-out leak (§ *Data-leakage guarantees*).
 
 The single AMR trainer is `bacpredict.engine.finetune.finetune_amr` (run `python -m …`, `--task tb_ast|kleb_ast`; both organisms train in **bf16**).
 
-This root file holds only global conventions and shared-infra docs. **Per-task plans, status, and running notes live in each task folder's `CLAUDE.md`.** The cross-task live tracker (current state + remaining milestones per task) is [ToDo.md](ToDo.md). Three to four agents run concurrently, one per active task (see §0.5).
+This root file holds only global conventions and shared-infra docs. **Per-task mechanics and running
+notes live in each task folder's `CLAUDE.md`; state and numbers live only in
+[`PROJECT_STATE.md`](PROJECT_STATE.md).** Three to four agents run concurrently, one per active task
+(see §0.5).
 
 ## §0 — Global conventions (apply to every task)
 
@@ -45,11 +61,24 @@ Every experiment goes through these stages in order. **Do not skip ahead.**
 
 | Stage | Purpose | Scale | Folds × seeds | Where |
 | :-- | :-- | :-- | :-- | :-- |
-| **A. Smoke** | Pipeline runs end-to-end | n=10 | 1 × 1 | MacBook M1 CPU (or HPC login). Code MUST run with CUDA disabled. |
+| **A. Smoke** | Pipeline runs end-to-end | n=10 | 1 × 1 | **A short GPU sbatch — not the login node.** See below |
 | **B. Overfit** | Loss → ~0 on a tiny set | n=10, train=test | 1 × 1 | Local or HPC interactive |
 | **C. Full** | Headline result | full data, one canonical drug/task first | 1 × 1 | GPU HPC SLURM, ~36 h budget, early-stopping ≈ 15 epochs |
 
 Folds × seeds (≥5 each) are an **advanced final step**, only for external publication. Do not burn compute on them during exploration.
+
+> **⚠ Stage A must be a short GPU sbatch.** The old "MacBook CPU or HPC login, CUDA disabled" rule
+> was wrong for this codebase: Bacformer-large plus per-sample RDS embedding I/O exceeds login-node
+> limits, and a CPU login-node Stage A **silently produces empty tensorboard events** — it looks like
+> it passed. A ~90 s single-GPU job is the correct smoke test.
+>
+> This is also why `dtype="auto"` must never be used to load Bacformer: it was introduced to make a
+> CPU smoke test work, it resolves to **fp32** for Bacformer-large, and fp32 is measurably worse
+> (~5 pp on TB rifampin). Cast explicitly to bf16. The smoke test it was serving is unsupported anyway.
+
+**Known gap — no shared 36 h GPU template.** Per-task Stage C scripts exist but were never unified.
+The gotcha they each encode: `--max-steps` must fit the 36 h wall at ~3 s/step, or the run must rely
+on early stopping.
 
 ### §0.3 Paths
 
@@ -58,9 +87,9 @@ on both — only the root differs). Code resolves the root via one env var,
 `bacpredict.engine.config.resolve_data_root()` (`--data-root` arg → `$BACPREDICT_DATA_ROOT` →
 `$SCRATCHDIR` → CSD3 path → error); individual input/output paths stay CLI-overridable.
 
-- **Isambard (active):** root **`$SCRATCHDIR`** = `/scratch/u6fp/dca36.u6fp` (single root; model
+- **Isambard:** root **`$SCRATCHDIR`** = `/scratch/u6fp/dca36.u6fp` (single root; model
   weights are the exception — `HF_HOME`/`TORCH_HOME` sit on `$PROJECTDIR/david/cache/`).
-- **CSD3/UoHPC (down since 27 Jun 2026):** root `/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/`
+- **CSD3/UoHPC (operational again 29 Jul 2026; only tape cold-storage down):** root `/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/`
 - Raw data: `<root>/raw/<task>/` · Processed: `<root>/processed/<task>/` · Curated: `<root>/final/`
 - Local dev: `/Users/davidabelson/developer/BacPredict/`
 
@@ -100,7 +129,9 @@ running or tuning any `#SBATCH` directive — do not re-derive them here:
   [`~/.claude/cluster_uohpc.md`](~/.claude/cluster_uohpc.md) (CSD3 x86 `icelake`/`ampere`;
   `FLOTO-*` accounts; RDS `project_k`).
 
-> **As of 27 Jun 2026 CSD3 is down; active work is on Isambard** — currently the sole cluster.
+> **As of 29 Jul 2026 CSD3 is fully operational again** (SSH, RDS, `ampere` GPU + CPU jobs; only
+> cold-storage *tape* files still inaccessible). Both CSD3 and Isambard are available — confirm
+> which cluster each session.
 
 When in doubt: **more**. The cost of asking for more than you need is zero;
 the cost of asking for less is the entire job.
@@ -123,8 +154,8 @@ archived under `src/bacpredict/_archive/`.)
 
 **Editing the shared engine affects every organism** — call it out when you touch `src/bacpredict/engine/`.
 App-only changes stay within `src/bacpredict/apps/<organism>/` and its tests.
-Touch shared code ([src/tl/](src/tl/)), top-level configs, or root docs only when truly necessary,
-and call it out explicitly so the user can coordinate.
+Touch the shared engine ([src/bacpredict/engine/](src/bacpredict/engine/)), top-level configs, or root
+docs only when truly necessary, and call it out explicitly so the user can coordinate.
 
 **Commits & pushes — ALL of your work, and ONLY your work:**
 
@@ -161,8 +192,8 @@ and call it out explicitly so the user can coordinate.
 ## HPC connection
 
 **Which cluster / login / SSH / storage tiers — see the global cluster docs** (the user says which
-cluster each session): [`~/.claude/cluster_isambard.md`](~/.claude/cluster_isambard.md) (active) and
-[`~/.claude/cluster_uohpc.md`](~/.claude/cluster_uohpc.md) (CSD3, down since 27 Jun 2026), plus the
+cluster each session): [`~/.claude/cluster_isambard.md`](~/.claude/cluster_isambard.md) and
+[`~/.claude/cluster_uohpc.md`](~/.claude/cluster_uohpc.md) (CSD3, operational again 29 Jul 2026), plus the
 agnostic [`~/.claude/CLAUDE.md`](~/.claude/CLAUDE.md) → "Working on HPC clusters".
 
 - **Python:** always `uv run python` (never `python`/`python3` directly). On Isambard use an
@@ -172,23 +203,46 @@ agnostic [`~/.claude/CLAUDE.md`](~/.claude/CLAUDE.md) → "Working on HPC cluste
   may run inline; anything heavier (model inference, embedding, training, large-data parses) → a
   SLURM job. On Isambard, login-node processes are additionally *killed* on SSH disconnect — see its
   doc. Worked example of a fine login-node task: regenerating combined figures / summary CSVs from
-  saved per-drug `eval_scores.npz` (see [src/kleb_ast/scripts/regen_panel_summary.sh](src/kleb_ast/scripts/regen_panel_summary.sh)).
+  saved per-drug `eval_scores.npz` (see [src/bacpredict/engine/scripts/](src/bacpredict/engine/scripts/)).
 
 ## Package layout
 
-`src/` is flat — nine top-level packages, no `bacpredict/` wrapper. Distribution name stays `bacpredict`.
+`src/` holds **one wrapper package plus six standalone packages**. Distribution name is `bacpredict`.
 
-**Shared toolbox** ([src/tl/](src/tl/), umbrella package — drop any generic helper here):
+**[src/bacpredict/](src/bacpredict/) — the AMR pipeline.** The engine is organism-agnostic; the apps
+are thin adapters that supply only what differs between organisms.
 
-| Package | What it does |
+| Engine subpackage | What it does |
 |---|---|
-| [src/tl/embed/](src/tl/embed/) | Protein sequences → ESM-C → Bacformer embeddings |
-| [src/tl/genome_download/](src/tl/genome_download/) | Acquire and catalogue raw genomic data (BakRep, NCBI Datasets) |
-| [src/tl/train/](src/tl/train/) | `split_utils.py` (70/10/20 + k-fold + fixed evaluate holdout) and `datasets.py` (`LabelInjectingFileDataset` — lazy load + runtime label injection) |
+| [engine/ast_labels/](src/bacpredict/engine/ast_labels/) | EBI/WHO AST tables → a binary label frame |
+| [engine/download/](src/bacpredict/engine/download/) | Acquire and catalogue raw genomic data (BakRep, NCBI Datasets) |
+| [engine/embedding/](src/bacpredict/engine/embedding/) | Protein sequences → ESM-C → Bacformer; baclm coding + non-coding |
+| [engine/splits/](src/bacpredict/engine/splits/) | **The one holdout authority.** Materialises `<drug>_split.csv`; `load_splits` is the only reader |
+| [engine/finetune/](src/bacpredict/engine/finetune/) | `finetune_amr` (the single AMR trainer), `evaluate`, `holdout.py`, `metrics`, `datasets` |
+| [engine/gene_lr/](src/bacpredict/engine/gene_lr/) | Per-gene and per-region frozen-embedding logistic regressions |
+| [engine/segment_amr_lr/](src/bacpredict/engine/segment_amr_lr/) | The clean-core segment LR (coding / intergenic / rRNA / upstream) |
+| [engine/concat/](src/bacpredict/engine/concat/) | The AMR concat ladder |
+| [engine/ref_catalogues/](src/bacpredict/engine/ref_catalogues/) | Catalogue determinant handling behind the ceilings |
+| [engine/plots/](src/bacpredict/engine/plots/) | Every figure |
 
-**Task packages** (one per experiment; each owns its own scripts, prep code, train entrypoint, and `CLAUDE.md`): [tb_ast](src/tb_ast/), [kleb_ast](src/kleb_ast/), [kleb_iso_source](src/kleb_iso_source/), [predict_hgt](src/predict_hgt/).
+Apps: [apps/tb/](src/bacpredict/apps/tb/) (WHO / TB-Profiler) and
+[apps/kleb/](src/bacpredict/apps/kleb/) (CARD + Kleborate, AMR sidecar, metadata curation).
 
-Task packages import shared helpers as `from tl.train.split_utils import ...`, `from tl.train.datasets import ...`, `from tl.embed.* import ...`. They do not import each other.
+**Standalone packages** (each with its own `CLAUDE.md`): [bac_pyseer](src/bac_pyseer/) (GWAS —
+`kleb_iso_source` for invasion, `ast_gwas` for AMR), [kleb_iso_source](src/kleb_iso_source/)
+(invasion fine-tuning), [amr_over_time](src/amr_over_time/),
+[gene_array_lasso](src/gene_array_lasso/), [genome_prep](src/genome_prep/),
+[dp_short_read](src/dp_short_read/) (stub).
+
+They import engine helpers as `from bacpredict.engine.splits.load_splits import ...`,
+`from bacpredict.engine.finetune.metrics import ...`, and so on. They do not import each other —
+except that `bac_pyseer.ast_gwas` deliberately reuses `bac_pyseer.kleb_iso_source`'s GGCAT build and
+sharded LMM rather than forking them.
+
+> **⚠ Dead paths in older docs and every pre-2026-07-11 memory.** `src/tl/` → `engine/`;
+> `src/tb_ast/`, `src/kleb_ast/` → `apps/{tb,kleb}/`; `src/pangena_predict/` → split across
+> `engine/gene_lr/` and `_archive/`; `src/predict_hgt/`, `src/admixture/` → never existed / retired,
+> see [docs/_parked/](docs/_parked/). Full table in [`PROJECT_STATE.md`](PROJECT_STATE.md) §2.
 
 ## Commands
 
@@ -196,7 +250,10 @@ Task packages import shared helpers as `from tl.train.split_utils import ...`, `
 # Install (editable) — on HPC use uv run python, locally use uv run
 uv pip install -e .
 
-# Run a script (path is now src/<package>/<module>.py — no bacpredict middle layer)
+# Run an engine stage as a module
+uv run python -m bacpredict.engine.finetune.finetune_amr --help
+
+# Run a standalone-package script by path
 uv run python src/kleb_iso_source/stratified_isolation_source_sampling.py --help
 
 # Tests
@@ -258,6 +315,30 @@ The Slurm array `--array=0-14` runs 5 folds × 3 seeds = 15 jobs: `FOLD = SLURM_
 
 ## Data-leakage guarantees
 
+> ### ⚠ The leak that actually happened was NOT in split generation
+>
+> Everything below was true and tested throughout, and it did not prevent a real leak — because the
+> leak was in **downstream read-out scoring**, one layer away from where the guarantees live.
+>
+> **What happened.** Models are trained k-fold (fold 0 / seed 1). The ladder, the concat modules and
+> the FT genome-mean cache each resolved "evaluate" independently, by reading the CSV's *single-split*
+> `train_val_eval` column — a different partition entirely. For the worst-affected Kp drug, **81% of
+> the genomes scored as held-out were in the model's own train/validate**, inflating its reported
+> AUROC by more than a tenth (the figures are in `PROJECT_STATE.md` §7 and
+> `visualisations/_superseded/README.md`).
+>
+> **Why the guarantees did not catch it.** They assert that a *split* is disjoint. They say nothing
+> about whether a *consumer* asked for the right split. Every module that resolved a holdout its own
+> way was a separate opportunity to ask wrongly, and one of them did.
+>
+> **The fix is structural, not a patch.** `engine/splits` materialises a per-drug `<drug>_split.csv`
+> and **`load_splits` is the single reader**; the ladder fits on the FT train set and tests on the FT
+> holdout, and guards its cache coverage (`9060617` → `eb39ce5` → `25e48cc`). Split-table ↔ deployed
+> holdout equivalence is verified for all 32 drugs. **Never resolve a holdout any other way** — if you
+> find yourself reading `train_val_eval` directly, you are reproducing this bug.
+>
+> **The fine-tunes were never affected**, which is why the July checkpoints remain authoritative.
+
 The split logic is designed so that **no Sample ID can appear in more than one split within a single training run**, and the evaluate holdout is preserved across the entire k-fold sweep.
 
 - **Single-split.** `add_splits()` shuffles unique `Sample` values, partitions into train 70 / validate 10 / evaluate 20. Tested in [tests/engine/finetune/test_split_utils.py::test_add_splits_no_overlap](tests/engine/finetune/test_split_utils.py).
@@ -268,7 +349,8 @@ The split logic is designed so that **no Sample ID can appear in more than one s
 - **Duplicate isolates under different accessions.** Split is over unique `Sample` values. If one biological isolate appears under multiple accessions, those copies are split independently and could land in both train and evaluate. Deduplication is an upstream metadata problem.
 - **Bacformer pre-training overlap.** Bacformer was pre-trained on MAGs / complete genomes. Samples in our evaluate set may have been in that corpus — representation-level leakage not addressable by sample splitting in this repo.
 - **Changing `--evaluate-seed` mid-experiment.** Evaluate holdout is only stable while `evaluate_seed` is held constant. Pin once per experiment.
-- **Pre-existing `train_val_eval` column when `--n-folds` is set.** Ignored in k-fold mode — a sample previously labelled `evaluate` may end up in `train` for some fold. By design; k-fold owns its own splitting.
+- **Pre-existing `train_val_eval` column when `--n-folds` is set.** Ignored in k-fold mode — a sample previously labelled `evaluate` may end up in `train` for some fold. By design; k-fold owns its own splitting. **This is the exact gap the read-out leak fell through** — the column still exists and still looks authoritative to a reader who does not know it is ignored.
+- **Anything that resolves a holdout without `engine.splits.load_splits`.** The guarantees above cover split *generation* only. A consumer reading the wrong split is not a split bug and will not be caught by any test of the splitter.
 
 ## Code style
 

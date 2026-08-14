@@ -1,0 +1,436 @@
+# BacPredict — project state
+
+> **Last verified: 2026-08-14 @ `9aa5e71`** (branch `refactor/consolidate-engine`).
+> **Verification scope:** repo tree read directly; all 32 fine-tune numbers read from each
+> checkpoint's own `results.json` on CSD3; both catalogue ceilings re-extracted from their source
+> CSVs; split-table ↔ deployed-holdout equivalence checked for all 32 drugs (0 mismatches).
+> Not re-verified this pass: the invasion GWAS numbers (taken from the sibling agent's committed
+> write-ups) and the concat-ladder rungs (pending regeneration).
+
+## 0. How to use this file
+
+This is the **single authority on current state** for this repository.
+
+| Question | Answer lives |
+|---|---|
+| What is the current status / next step of anything? | **Here**, §3, in that layer's section |
+| What number do I quote? | **Here**, §3 "Numbers of record" — and only if it names its artifact |
+| How does a thing work, and why was it built that way? | The sub-project's `CLAUDE.md` or `docs/` write-up |
+| What are the global conventions? | Root [`CLAUDE.md`](CLAUDE.md) |
+| What is the argument behind a result? | The `PROGRESS*.md` / write-up docs — those keep their science |
+
+Three rules make this work:
+
+1. **Status, numbers and next-steps live only here.** Sub-project docs hold mechanics and argument.
+   When a doc and this file disagree about state, **this file wins**.
+2. **A number is of record only if §3 names the artifact it was read from.** A number without a path
+   is a quotation, not a fact. This file was written because quotations had been circulating for
+   three weeks after the runs behind them were redone.
+3. **Update this file in the same commit as the work that changed a fact**, and move the stamp above.
+
+Where a memory and this file disagree, **this file wins** — memories are not versioned and cannot be
+reviewed.
+
+---
+
+## 1. What this project is
+
+Fine-tune [Bacformer](https://github.com/macwiatrak/Bacformer) genome embeddings to predict bacterial
+phenotypes, and work out **which genes carry the signal**.
+
+Two organisms, two phenotype families:
+
+- **AMR / AST** — 22 *Klebsiella pneumoniae* drugs, 10 *M. tuberculosis* drugs. The programme
+  hypothesis is that Bacformer reads **HGT / acquired** resistance well and **chromosomal point
+  mutation** less well. Kp is the HGT-rich regime; TB is almost purely chromosomal.
+- **Invasion / isolation source** — blood vs faeces in *Klebsiella*, as a virulence proxy.
+
+Deliverables, in the order they matter:
+
+1. **An honest headline per drug**, against a catalogue ceiling that says what a known-determinant
+   model can do, and against a mechanism-agnostic unitig GWAS baseline that says what *any* sequence
+   feature can do.
+2. **A descriptive gene-level account** — the concat ladder — of which genes and weights the model
+   uses, compared against CARD / WHO. This is **descriptive, not causal**: see §6.
+3. **Downstream application** — resistance trends over time, and ranking a lab collection for
+   *Galleria* testing.
+
+---
+
+## 2. Repo map
+
+`src/` holds one wrapper package plus six standalone packages.
+
+| Path | What it is |
+|---|---|
+| [`src/bacpredict/engine/`](src/bacpredict/engine/) | **The organism-agnostic pipeline.** Every AMR stage lives here |
+| [`src/bacpredict/apps/tb/`](src/bacpredict/apps/tb/) | TB adapter — WHO / TB-Profiler catalogue, tbprofiler pixi env |
+| [`src/bacpredict/apps/kleb/`](src/bacpredict/apps/kleb/) | Kp adapter — CARD + Kleborate, AMR sidecar, metadata curation |
+| [`src/bacpredict/visualisations/`](src/bacpredict/visualisations/) | Publication mirror — see its [`PROVENANCE.md`](src/bacpredict/visualisations/PROVENANCE.md) |
+| [`src/bacpredict/_archive/`](src/bacpredict/_archive/) | Concluded TB SNP diagnostic. Excluded from wheel/ruff/pytest |
+| [`src/bac_pyseer/`](src/bac_pyseer/) | Pyseer GWAS — `kleb_iso_source` (invasion) and `ast_gwas` (AMR) |
+| [`src/kleb_iso_source/`](src/kleb_iso_source/) | Invasion fine-tuning (distinct from the GWAS subfolder of the same name) |
+| [`src/amr_over_time/`](src/amr_over_time/) | Predict AST across ~80k genomes → resistance trends |
+| [`src/gene_array_lasso/`](src/gene_array_lasso/) | Sparse-group-lasso over gene-presence arrays |
+| [`src/genome_prep/`](src/genome_prep/) | Assembly/GFF preparation shared by the GWAS packages |
+| [`src/dp_short_read/`](src/dp_short_read/) | Stub. Deferred — see [`docs/_parked/`](docs/_parked/) |
+
+Engine subpackages: `ast_labels` · `download` · `embedding` · `finetune` · `splits` · `gene_lr` ·
+`segment_amr_lr` · `concat` · `ref_catalogues` · `plots` · `config.py` · `scripts`.
+
+### ⚠ Dead paths — these no longer exist
+
+They are still referenced by older docs and by every memory written before 2026-07-11.
+
+| Referenced as | Actually |
+|---|---|
+| `src/tl/` (`tl.train.*`, `tl.embed.*`) | `src/bacpredict/engine/` — `finetune/`, `embedding/` |
+| `src/tb_ast/`, `src/kleb_ast/` | `src/bacpredict/apps/{tb,kleb}/` + the shared engine |
+| `src/pangena_predict/` | Split across `engine/gene_lr/` and `_archive/tb_snp_diagnostic/` |
+| `src/predict_hgt/` | Retired. Milestones parked in [`docs/_parked/`](docs/_parked/) |
+| `src/admixture/` | Never created. Deferred — [`docs/_parked/`](docs/_parked/) |
+| `snp_vs_esm_prediction.py` | Deleted. Its holdout resolver is now `engine/finetune/holdout.py` |
+
+---
+
+## 3. Layers
+
+### 3.1 AMR prediction — fine-tune, catalogue ceilings, concat ladder
+
+**Status.** All 32 fine-tunes are **trained and deployed**: 22 Kp + 10 TB, k-fold fold 0 / seed 1,
+`n_folds=5`, `evaluate_seed=1`, base model `macwiatrak/bacformer-large-masked-complete-genomes`, all
+**bf16**, run 15–21 July 2026. Kp ceilings are complete and current for all 22 drugs. **TB ceilings
+are provisional** (§3.1 Caveats). The concat ladder is correct in code but its rendered outputs
+predate the fixes and need regenerating.
+
+**Numbers of record.**
+
+*Kp fine-tune* — `$R/bac_ast_prediction/processed/train_kleb_ast/models/finetune/klebsiella_pneumoniae_<drug>_lr_0.00015_finetuned_fold00_seed1/results.json`, AUROC / AUPRC / balanced accuracy / n:
+
+| Drug | AUROC | AUPRC | Bal.acc | n | Drug | AUROC | AUPRC | Bal.acc | n |
+|---|--:|--:|--:|--:|---|--:|--:|--:|--:|
+| amikacin | 0.9501 | 0.8786 | 0.8777 | 708 | imipenem | 0.9578 | 0.9543 | 0.9116 | 509 |
+| ampicillin-sulbactam | 0.9463 | 0.9847 | 0.8027 | 450 | levofloxacin | 0.9636 | 0.9889 | 0.9165 | 482 |
+| **azithromycin** | **0.7993** | 0.9544 | 0.7070 | 384 | meropenem | 0.9713 | 0.9494 | 0.9334 | 924 |
+| aztreonam | 0.8630 | 0.9454 | 0.8191 | 602 | piperacillin-tazobactam | 0.9384 | 0.9515 | 0.8848 | 690 |
+| cefazolin | 0.9861 | 0.9968 | 0.9353 | 594 | tetracycline | 0.8694 | 0.9112 | 0.8428 | 423 |
+| cefepime | 0.8724 | 0.9249 | 0.7393 | 557 | tobramycin | 0.9743 | 0.9800 | 0.9389 | 570 |
+| cefotaxime | 0.9861 | 0.9885 | 0.9330 | 464 | trimethoprim-sulfamethoxazole | 0.9614 | 0.9721 | 0.9056 | 848 |
+| cefoxitin | 0.9207 | 0.9503 | 0.8606 | 619 | ceftazidime | 0.9852 | 0.9928 | 0.9485 | 951 |
+| ceftriaxone | 0.9852 | 0.9958 | 0.9177 | 682 | cefuroxime | 0.9804 | 0.9981 | 0.8975 | 485 |
+| ciprofloxacin | 0.9717 | 0.9863 | 0.9328 | 877 | colistin | 0.9094 | 0.8330 | 0.8312 | 282 |
+| **ertapenem** | **0.9882** | 0.9937 | 0.9786 | 424 | gentamicin | 0.9707 | 0.9394 | 0.9468 | 984 |
+
+*TB fine-tune* — `$R/bac_ast_prediction/processed/train_tb_ast/checkpoints/mycobacterium_tuberculosis_<drug>_.../results.json`:
+
+| Drug | AUROC | AUPRC | Bal.acc | n | Drug | AUROC | AUPRC | Bal.acc | n |
+|---|--:|--:|--:|--:|---|--:|--:|--:|--:|
+| ethambutol | 0.8861 | 0.6984 | 0.7989 | 5841 | pyrazinamide | 0.9163 | 0.7644 | 0.8229 | 3166 |
+| ethionamide | 0.8097 | 0.5962 | 0.6736 | 2535 | rifabutin | 0.8381 | 0.7798 | 0.7890 | 2427 |
+| isoniazid | 0.8922 | 0.8723 | 0.8294 | 6909 | **rifampin** | **0.9642** | 0.9160 | 0.9214 | 7127 |
+| kanamycin | 0.8431 | 0.6338 | 0.7180 | 3493 | streptomycin | 0.8727 | 0.7770 | 0.7943 | 1792 |
+| levofloxacin | 0.8262 | 0.5929 | 0.6531 | 2761 | **moxifloxacin** | **0.7945** | 0.5002 | 0.6478 | 3460 |
+
+*Catalogue ceilings* — [`visualisations/kp/catalogue_ceiling_panel.csv`](src/bacpredict/visualisations/kp/catalogue_ceiling_panel.csv)
+(22 drugs, CARD, **current**) and [`visualisations/tb/catalogue_ceiling_panel.csv`](src/bacpredict/visualisations/tb/catalogue_ceiling_panel.csv)
+(9 drugs, WHO/TB-Profiler, **provisional**). Each row carries its own `ceiling_estimator` and
+`ceiling_status`.
+
+**In flight.** Nothing. No AMR jobs are queued or running.
+
+**Next.**
+1. Regenerate the concat ladders and the `*_card_cause_histogram_*` figures — the checked-in copies
+   predate the presentation fixes, and the untracked ladder CSVs predate the leak fix entirely.
+2. Add the head-vs-mean comparison across all drugs (a summary column plus a scatter). The one
+   measured point is rifampin: LR-on-mean 0.958 vs deployed head 0.964 (Δ −0.006, ~2 SE), i.e. the
+   head's LayerNorm is **not** shedding signal.
+3. Rebuild the TB ceiling — all 10 drugs including rifabutin, through `load_splits` +
+   `score_onehot_frame`, into a Kp-mirroring `who_ceiling/` layout. This is the first task of any
+   TB work.
+
+**Caveats.**
+- **The TB ceiling is not comparable to the TB fine-tune.** It came from the retired whole-cohort
+  k-fold probe, on a different evaluation set, and is missing rifabutin. A TB ceiling-vs-FT gap
+  cannot yet be read in either direction. Full detail: [`visualisations/PROVENANCE.md`](src/bacpredict/visualisations/PROVENANCE.md).
+- The `bacformer/` embedding store is **empty for both organisms** on CSD3.
+- Kp and TB use **different checkpoint directory layouts** (see the paths above).
+- Kp azithromycin **0.799** is the deployed head; **0.816** is the ladder's `ft_mean` re-probe. Both
+  are honest — they are different estimators. Always say which.
+
+**Owns.** `src/bacpredict/engine/`, `src/bacpredict/apps/`, `src/bacpredict/visualisations/`.
+
+---
+
+### 3.2 Invasion / isolation source
+
+**Status.** Stage C **done** on all three KPSC-clean cohorts. The pooled, country-controlled cohort
+is the headline. The signal survives country control and holds *within* every major clone.
+
+**Numbers of record** (`src/kleb_iso_source/`, eval-holdout AUROC):
+
+| Cohort | n | AUROC | Note |
+|---|--:|--:|---|
+| `sampled_country_2_1_all` (pooled) | 14,211 | **0.786** | **The headline.** The cohort the GWAS ran on |
+| `sampled_country_2_1_stratified` | 9,866 | 0.762 | |
+| `all_samples` | 21,533 | 0.827 | **Country-confounded — do not quote.** Sits *below* its own linear metadata baseline (0.857) |
+
+Comparators, all on the pooled cohort: strongest linear metadata stack 0.731 (Bacformer +0.055);
+all-Kleborate 0.640; Kleborate virulence+AMR 0.638; virulence one-hot 0.552; **virulence_score alone
+0.489 — chance.** Per-sublineage: SL258 0.858, SL15 0.841, SL307 0.815, SL17 0.806, rare-SL 0.759,
+SL147 0.738. Lineage identity is not what the model reads.
+
+**In flight.** bf16 re-runs of all three cohorts (the originals were fp32; the bf16 cast landed later
+in `a817ac2`), and an `all_samples_2` retrain that keeps all 251 labelled lab genomes out of training.
+
+**Next.**
+1. Land the bf16 A/B and the `all_samples_2` retrain, then apply the model-choice rule in §6.
+2. **Unitig honest re-run** — re-fit the LMM selection on train rows only (`SELECTION_SCOPE=trainval_only`)
+   and re-score. The current tie is a leakage-advantaged upper bound for the unitig arm.
+3. Score the lab collection for predicted invasiveness and hand over the ranking.
+4. bac-LM forward pass → per-gene LR → concat ladder. **Demoted to the last job.**
+
+**Caveats.**
+- Every published iso-source number is **fp32**, not bf16. Absence of `run_config.precision` in a
+  pre-`a817ac2` `results.json` means fp32.
+- **A win for `all_samples_2` is not conclusive** — see the asymmetry rule in §6.
+- Mechanism is an **open hypothesis**. Do not assert it.
+
+**Owns.** `src/kleb_iso_source/`.
+
+---
+
+### 3.3 Mechanism-agnostic baselines — the unitig GWAS
+
+This is deliberately a **layer, not a package**: the same yardstick serves both §3.1 and §3.2, and
+that convergence is the point. It answers "how good is the fine-tune, *really*" without assuming any
+mechanism.
+
+**Status — AMR (`src/bac_pyseer/ast_gwas/`).** Pilot complete on 2 of 22 Kp drugs. The Kp cohort,
+unitig matrix and lineage clusters are **built and shared**, so the remaining 20 drugs are read-out
+only. TB is not started.
+
+**Numbers of record** — identical holdouts, all genomes shared, paired bootstrap CI:
+
+| Drug | FT AUROC/AUPRC | Unitig-LR AUROC/AUPRC | Bal.acc @Youden | Δ (unitig − FT) | Verdict |
+|---|---|---|--:|---|---|
+| ertapenem | 0.9878 / 0.9937 | 0.9775 / 0.9853 | 0.9804 vs 0.9530 | **−0.0103** [−0.0187, −0.0031] | separates from zero |
+| colistin | 0.9100 / 0.8333 | 0.9188 / 0.8077 | 0.8444 vs 0.8477 | **+0.0088** [−0.0171, +0.0347] | **a tie** |
+
+Cohort: 7,080 of 7,088 genomes resolved; 5,829,181 unitigs → 3,760,582 features (27 GB matrix); af
+filters min 71 / max 7009. ertapenem λ=4.198, 31,856 significant of 3,371,827 tested; colistin
+λ=1.232, 9,277 of 2,486,812. Lineage clusters: **10** at `min_size=100`, covering 6,458/7,080 (91.2%).
+
+**Status — invasion (`src/bac_pyseer/kleb_iso_source/`).** Complete and written up.
+[`PROGRESS_UNITIGS.md`](src/bac_pyseer/docs/PROGRESS_UNITIGS.md) ·
+[`unitig_IGR_bias.md`](src/bac_pyseer/docs/unitig_IGR_bias.md).
+
+- **Calibration settled.** The LMM with core-SNP kinship ablates under a within-lineage permutation at
+  **both** sublineage and clonal-group resolution; the MDS fixed-effects model does **not** (λ_perm
+  stays ~3.5–4 at common af). **The LMM is the method of record on both axes.** The common-af
+  inflation is genuine signal, not structure — there is no af ceiling.
+- **Hits mapped exhaustively** — all 33,039 significant unitigs placed in all 13,171 carriers
+  (108.8M placements, ASM-recall 1.0). Invasion signal ~82% chromosomal / ~17% plasmid; faeces signal
+  ~67% plasmid + ~13% prophage. **IS elements are not the hidden home** of the chromosomal fraction
+  (0.01% IS overlap on the blood side).
+- **IGR bias.** Hit unitigs touch intergenic DNA at ~2.3–2.5× a uniform-placement null, flat across
+  thresholds, with an af-matched non-significant control sitting *at* the null. Holds on both
+  chromosome and plasmid.
+- **Head-to-head vs Bacformer** — unitig L2 LR **0.781** vs Bacformer **0.787** on the identical 2,715
+  genomes: **a tie**, with the unitig arm holding a selection advantage.
+
+**Next.**
+1. **Kp AMR fan-out** — the remaining 20 drugs, in batches of ~5. Per drug ~57 min wall, ~55 core-h,
+   ~12 min GPU, 1.6 GB; 20 drugs ≈ 1,100 core-h and ~5 GPU-h. LD-deduped control on all 20; FT
+   re-score on all 20 (without `eval_scores.npz` there is no paired CI, and a gap cannot be told from
+   a tie). Permutation null on the pilot plus any surprise only.
+2. Invasion: DefenseFinder mapping; the faeces↔respiratory run and blood↔resp concordance;
+   locus-level annotation.
+
+**Caveats.**
+- **Only 2 of 32 drugs have `eval_scores.npz`.** Every other drug needs an `evaluate.py` pass before
+  it can carry a paired CI.
+- Threshold convention is **Youden on the holdout**, one convention for both arms. Sensitivity,
+  specificity and balanced accuracy are therefore **optimistically biased** and must be reported as
+  "at the optimal operating point". AUROC and AUPRC are unaffected.
+- Hits are **LD-redundant, not independent**. Report at the pattern/locus level, never per-unitig.
+- Mechanism readings in both write-ups are **hypotheses**, explicitly flagged as such.
+
+**Owns.** `src/bac_pyseer/`.
+
+---
+
+### 3.4 Downstream applications
+
+**Status.** `amr_over_time` has run; results mixed. The lab-collection ranking has an interim output —
+`lab_collection_invasion_predictions.csv`, 677 genomes ranked with unitig and Kleborate comparators —
+gated on the `all_samples_2` decision in §3.2.
+
+**Numbers of record.** Backup AUROC on the 44 fully-held-out lab genomes is **0.719 [0.49, 0.91]**,
+n=44 — **not** 0.90. SL258 predictions span 0.013–0.997.
+
+**Next.** Resolve pooled vs `all_samples_2` per the §6 rule, then finalise the ranking for *Galleria*.
+
+**Caveats.** The two candidate models agree only ρ=0.68 on the 673 lab genomes, with **top-20 overlap
+2/20** (SL258: ρ=0.53, top-5 overlap 2/5). Different tubes go into the animal model depending on the
+choice, so it is worth getting right.
+
+**Owns.** `src/amr_over_time/`.
+
+---
+
+### 3.5 Clustering / homology
+
+**Status.** `gene_array_lasso` migrated from groupyr to skglm; Phase-1 build order A–D. The
+`syntology` synteny-map work is a **sibling repo**, not this one.
+
+**Next.** Phase-1 remainder.
+
+**Caveats.** groupyr's prox built a dense O(n_groups²) mask — 367 GB at 5% prevalence, 4.4 TB at 1% —
+which is why it was abandoned. The >5% prevalence filter is **scaffolding only** and biologically
+wrong long-term: target AMR genes are individually rare but collectively penetrant.
+
+**Owns.** `src/gene_array_lasso/`.
+
+---
+
+## 4. Artifact dependency table
+
+Every shared artifact, once. **This is the table whose absence caused the drift this file exists to
+correct.**
+
+| Artifact | Produced by | Consumed by | Regenerating it invalidates |
+|---|---|---|---|
+| `<drug>_split.csv` | `engine/splits` | ladder, `ast_gwas`, ceilings, per-gene LR | **Everything** — it defines the holdout |
+| FT `results.json` | `engine/finetune/finetune_amr` | every quoted FT number | Every FT AUROC in §3.1 |
+| `eval_scores.npz` | `engine/finetune/evaluate` | paired CI in `collect_comparison` | The CI only |
+| `catalogue_ceiling_panel.csv` | `apps/kleb` (CARD) · `apps/tb` (WHO) | ladder, comparison table | The ceiling column |
+| `unitigs.pyseer.gz` | `ast_gwas/build_cohort_once` | every Kp drug | All Kp unitig GWAS |
+| `lineage_clusters.tsv` | `ast_gwas/sublineage_from_metadata` | `--lineage`, permutation null | Calibration only |
+| `mge_hits.parquet/` | `kleb_iso_source/map_unitig_hits_genomad` | the MGE/IS/IGR write-ups | §3.3's invasion mapping |
+
+**Split-table ↔ deployed-holdout equivalence: verified for all 32 drugs, 0 mismatches** (FT
+`n_samples` equals the split-table holdout count). Re-check with exactly that comparison. This is
+what makes the §3.3 comparison arms directly comparable.
+
+---
+
+## 5. Shared infrastructure
+
+**Cluster.** Both CSD3 (UoHPC) and Isambard are available; **the user says which each session.**
+Recent AMR and GWAS work is on **CSD3**. Per-cluster detail is in `~/.claude/cluster_uohpc.md` and
+`~/.claude/cluster_isambard.md` — do not duplicate it here.
+
+**Data roots.** Code resolves the root through `bacpredict.engine.config.resolve_data_root()`
+(`--data-root` → `$BACPREDICT_DATA_ROOT` → `$SCRATCHDIR` → CSD3 path → error).
+
+| Cluster | Root |
+|---|---|
+| CSD3 | `/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david` (referred to as `$R`) |
+| Isambard | `$SCRATCHDIR` = `/scratch/u6fp/dca36.u6fp` |
+
+**Cohorts — never write a bare count.** Three different numbers exist per organism and they mean
+different things:
+
+| Organism | Canonical AST cohort | Deprecated (May) | Embedding superset |
+|---|--:|--:|--:|
+| Kp | **7,088** | 6,838 | 9,724 |
+| TB | **36,692** | 36,684 | 38,257 |
+
+The canonical cohort lives under `$R/bac_ast_prediction/`. **`$R/processed/` is the deprecated May
+tree** — the TB ceiling was built there, which is one of its four defects.
+
+**Assembly resolution on CSD3.** TB resolves unchanged. **Kp does not** — there is no flat BioSample
+directory and `raw/assemblies` is GCA-keyed whole-*Klebsiella*. Use
+`raw/assemblies_file_list.tsv` (`Sample<TAB>path`, already the right format) → 7,080 of 7,088.
+
+**Tests.** 572 collected; `pytest tests/` is the gate. `tests/docs/` additionally enforces the
+conventions in §0.
+
+---
+
+## 6. Decisions of record
+
+Dated, and harvested from the agent-memory snapshot in
+[`docs/_archive/memory_snapshot_2026-08-14/`](docs/_archive/memory_snapshot_2026-08-14/) before that
+directory was consolidated. Several of these existed nowhere else.
+
+### Data-safety guards — losing these causes destructive mistakes
+
+| Date | Decision |
+|---|---|
+| 2026-08-13 | **`min_size` stays 100** for the invasion lineage clusters. The `min_size=50` variant (17 clusters; moved `other` from 45% to 38%) was measured and **dropped as not worth the complexity**. `lineage_clusters_min50.*` was deleted — **do not regenerate it**. |
+| 2026-07-24 | **git-rm scope for contaminated ladder tables.** Untracked auto-generated `visualisations/**/*_amr_ladder_table.csv` **regenerate freely**. The tracked curated publication tables — Kp `azithromycin_card_ladder_table_family.csv`, `azithromycin_card_ladder_family.png`, the `card_esm_vs_ft_*`/`esm_vs_ft_*` chain; TB `rif_ladder_table.csv`/`.md`, `rifampicin_ladder_barplot.png` — are hand-assembled from other code paths. **Confirm the scope with David before deleting any of them.** The label-blind rungs are clean — keep. |
+| 2026-08-13 | **Keep `mash_lineage_clusters.tsv`** for the methods comparison. |
+
+### Statistical method
+
+| Date | Decision |
+|---|---|
+| 2026-07-19 | **Do not net out lineage.** The exercise is **raw AUROC recovery**. |
+| 2026-07-19 | **Non-coding rung = core region** (prevalence ≥ ~0.9), carrier / zero-imputed embedding, **not** presence. Select the best across `upstream ∪ per_unit`; parcel = `baclm_reembed`. The selection band must include core up to 1.0, plus an `n_pos` floor (~20–50) to kill low-n CRISPR artifacts. |
+| 2026-07-21 | **The gene rung was mathematically wrong, not merely suboptimal** — selected by carrier-only AUROC but zero-imputed into a *linear* head, so a low-penetrance gene becomes a mostly-zero block the model reads as "no contribution", and concat can *degrade* against FT-mean. Fixed by hard-failing without an imputed ranking. |
+| 2026-07-21 | **Screens run imputed AND non-imputed**, in separate plots, with a carrier-vs-imputed density comparison. Not one or the other. |
+| 2026-07-16 | **The plain LR fits on train+validate** (it needs no early-stop set) and tests on the untouched **evaluate** split — for both coding and non-coding, so the figure carries one consistent metric. |
+| 2026-08-05 | **Keep the carrier-only catalogue comparison; relabel it as a within-carrier question.** The panel had compared an all-sample presence one-hot against a carrier-only embedding LR, so penetrant HGT genes went single-class and showed a blank bar — an artifact, not model failure. |
+| 2026-07 | **CARD is the default Kp ceiling; Kleborate is a retained comparator.** This reversed the earlier "Kleborate alone" decision. |
+| 2026-08-13 | **Youden on the holdout, one convention for both arms** — with the optimistic-bias caveat stated wherever sens/spec/balanced accuracy appear. |
+| 2026-08-13 | **Exclude the `other` cluster from the permutation null** (drop those samples rather than un-shuffling them). The paired real run must be scored on the same subset. |
+| 2026-06-26 | **`gene_array_lasso`: groupyr → skglm**, on a user-authored plan. Absence encoding = **zero embedding block** (sparse CSR, never stored); do **not** mean-impute. **Grouping must be a swappable input** — never hard-wire Panaroo into the estimator. Memory levers ranked: CSR sparse → float32 (validate) → warm-started decreasing-alpha path → regrouping → out-of-core last. |
+| — | **Kept as a warning:** an earlier unilateral swap to *celer* silently changed the estimator to squared-loss group lasso. That was **wrong and was reverted.** A package change *is* a change of statistical method. |
+
+### Embedding and representation
+
+| Date | Decision |
+|---|---|
+| 2026-07-16 | **Embed regulatory regions both ways** — fragments at bakta-call granularity **and** whole_igr. It is a comparison, not a choice. **Pooling stays mean**, not max or concat. |
+| 2026-07-16 | **Name a regulatory region by the gene it sits 5′ of** (`upstream:<gene>`), not by the flanking pair — keeps regions next to hypotheticals and names them as the catalogues do. |
+| 2026-07-09 | **Re-embed all non-coding rather than salvaging the current IGR build.** RNA regions embedded **separately**; all other regions as blocks. Un-truncate long regions via overlapping windows and pool; emit a named-RNA index so `rrs`/`rrl` are locatable by name; keep `protein_embeddings`; do **not** re-run ESM or Bacformer. |
+| 2026-07 | **The fragment channel needs its own keying scheme and reader — it is not a relabel.** `fragment_*` regions are IGRs split by adjacent RNA or truncation, so they are not cleanly CDS-flanked and the flank-pair namer drops them. Deferred; whole-IGR parity delivered instead. |
+| 2026-07-15 | **IGR identity = the ordered 5′→3′ flanking-gene pair.** Best gene / best IGR = single top by own-LR AUROC. |
+
+### Scope and sequencing
+
+| Date | Decision |
+|---|---|
+| 2026-07-21 | **GBDT accessory concat is deferred to its own plan** — its own subpackage (not `engine/concat`) and its own output folder. |
+| 2026-07-30 | **Cluster migration: keep the laptop bridge** (no Globus). **Prove the headline first**, in parallel with the transfer. **Move baclm-coding too.** The frozen Bacformer store is **not** tape-only, so transferring it directly saves ~50 GPU-h. |
+| 2026-08-11 | **Do not use BacLM's SDPA fallback — too slow.** flash-attn can never load on CSD3 (glibc 2.28 against wheels built for 2.32). Port to Isambard, embed there, bring the store back. A stop-gap, **demoted to the last job**. |
+| 2026-07-24 | **Target architecture: a clean-core `segment_amr_lr`** — one segment-type parameter, routed through the single `holdout.py` resolver and one fit/score primitive, then delete the duplicates. **Not a greenfield rewrite.** The leaks recurred because of accreted merge/split code and overloaded "gene" vocabulary. |
+| 2026-07-21 | **Short CPU array jobs take a tight `--time`**, not the "be generous" default. |
+
+### Invasion / lab collection
+
+| Date | Decision |
+|---|---|
+| 2026-08-13 | **All 251 labelled lab genomes stay out of training** (207 forced to validate, 44 already in the frozen test set). They were deliberately *not* put in evaluate: the pooled model trained on 154 of them, which would break the pooled-vs-new comparison. Quote the 44 for a fully held-out read. |
+| 2026-08-13 | **Model-choice rule.** If the `all_samples_2` advantage collapses, use the country-controlled pooled model for clean interpretation; if `all_samples_2` is still somewhat better, use that. **Asymmetry that must survive: a collapse is clean evidence, but a win is *not* conclusive** — the bigger training pool may hold near-identical outbreak siblings of the frozen test genomes, so a win still needs a **near-duplicate audit** to separate "more data helps" from clonal leakage. |
+
+### Framing rules
+
+| Date | Rule |
+|---|---|
+| 2026-07-21 | **Never call a non-catalogue high-penetrance AMR gene a "lineage correlate."** Causal-vs-lineage is an open hypothesis, not a conclusion. Flagged repeatedly as a mistaken belief that kept returning. |
+| 2026-08-01 | **The ladder deliverable is descriptive** — which genes and weights, comparing CARD → LR → ladder. It is **not** a causal-vs-phylogeny verdict on the model's worth. |
+| — | **Frame GWAS results as invasion** — orient to the invasion allele (`invasive_af`, `\|β\|`) and lead with direction-free `var_explained`. Do not read by reference-allele β sign. |
+| — | **Gather the data, then stop.** Present the statistics, offer hypotheses, and ask for direction. Do not leap to "the model is unusable" or "this is real effect X". |
+
+### Open questions — not decisions
+
+- **Head vs mean, across all drugs.** One point measured (rifampin: 0.958 vs 0.964); a full column and
+  scatter were wanted.
+- **Does the chromosomal-blindness hypothesis survive?** It was motivated by a TB rifampicin gap that
+  the re-runs have largely closed, while the chromosomal / rRNA / promoter drugs remain weakest in
+  both organisms. For discussion — see the banner in `docs/Bacformer_FT_DEFICITS.md`.
+- **RNA blocks nuance, never confirmed at launch:** do the non-coding *blocks* exclude RNA, or include
+  it as the code currently emits?
+
+---
+
+## 7. Retired documents
+
+| Document | Where it went | Why |
+|---|---|---|
+| `ToDo.md` | [`docs/_retired/`](docs/_retired/) | Superseded by this file. Its Task 2 claimed Kp was "not formally evaluated" when 22 checkpoints existed, and it had no entry at all for the work at HEAD |
+| `~/.claude/PROGRAM_PLAN_2026-05-30.md` | Kept as a dated historical record | Superseded |
+| `visualisations/{kp,tb}/amr_summary_panel.csv` | [`visualisations/_superseded/`](src/bacpredict/visualisations/_superseded/) | The physical origin of the wrong FT numbers |
+| Task 6 `predictHGT`, Task 4 admixture | [`docs/_parked/`](docs/_parked/) | Never started; milestones preserved |

@@ -9,9 +9,12 @@ from bacpredict.engine.plots import plot_segment_ranking as P
 def _ranking(tmp_path, n_eval):
     csv = tmp_path / "per_gene_lr_rifampin.csv"
     pd.DataFrame([
-        {"gene_name": "rpoB", "lr_auroc_rifampin": 0.96, "n_eval": n_eval[0]},
-        {"gene_name": "katG", "lr_auroc_rifampin": 0.80, "n_eval": n_eval[1]},
-        {"gene_name": "rare", "lr_auroc_rifampin": 0.99, "n_eval": n_eval[2]},  # would top the plot but rare
+        # Selection is on lr_auroc_ (train OOF); display is on eval_auroc_ (deployment holdout).
+        # The two differ on purpose — a fixture carrying only lr_auroc_ cannot exercise that split.
+        {"gene_name": "rpoB", "lr_auroc_rifampin": 0.96, "eval_auroc_rifampin": 0.95, "n_eval": n_eval[0]},
+        {"gene_name": "katG", "lr_auroc_rifampin": 0.80, "eval_auroc_rifampin": 0.78, "n_eval": n_eval[1]},
+        {"gene_name": "rare", "lr_auroc_rifampin": 0.99, "eval_auroc_rifampin": 0.99,
+         "n_eval": n_eval[2]},  # would top the plot but rare
     ]).to_csv(csv, index=False)
     return csv
 

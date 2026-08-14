@@ -4,10 +4,19 @@ Where BacPredict's data lives on **CSD3/UoHPC** (Cambridge), and how the data-ro
 it. Sibling doc: [`ISAMBARD_DATA.md`](ISAMBARD_DATA.md) (live-verified). Cluster reference:
 [`~/.claude/cluster_uohpc.md`](~/.claude/cluster_uohpc.md).
 
-> ⚠️ **Seeded from `cluster_uohpc.md`, NOT live-verified — CSD3 is down (data-centre failure,
-> 27 Jun 2026).** Roots and tiers below are from the cluster doc; **all per-store contents, file
-> counts, and checkpoint/`final/` locations are `TODO (confirm)` on CSD3's return.** Once verified,
-> promote this to the same live-checked status as `ISAMBARD_DATA.md`.
+> **CSD3 has been operational again since 29 Jul 2026** (SSH, RDS, `ampere` GPU and CPU jobs; only
+> cold-storage *tape* files remain inaccessible). The "CSD3 is down, seeded not verified" banner that
+> used to sit here was itself stale — it is the reason parts of this doc were treated as unusable long
+> after they could have been checked.
+>
+> **Verified live 2026-08-14:** the canonical AST root and cohorts below, the Kp `card_ceiling/` tree
+> (22 drugs), and the TB `tbprofiler_gene_lr/` tree (9 drugs). **Not re-verified:** per-store file
+> counts for the embedding stores. Treat an unverified count as a claim, not a fact.
+>
+> **The canonical AST root is `$R/bac_ast_prediction/`** — Kp **7,088** / TB **36,692**.
+> `$R/processed/` is the **deprecated May cohort** (6,838 / 36,684); the embedding stores are a
+> *superset* again (9,724 / 38,257). These three numbers are different things — see
+> [`PROJECT_STATE.md`](../../../PROJECT_STATE.md) §5 and never write a bare cohort count.
 
 ## Root — the single knob
 

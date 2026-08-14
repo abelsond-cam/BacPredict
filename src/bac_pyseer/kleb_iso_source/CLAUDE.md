@@ -3,7 +3,7 @@
 Pyseer + hotspot GWAS for the invasive-disease signal, starting with **blood vs
 faeces** isolation source. Package overview: [CLAUDE.md](../CLAUDE.md); global
 conventions: root [CLAUDE.md](../../../CLAUDE.md) §0. Milestones are tracked in
-[ToDo.md](../../../ToDo.md) under "Pyseer GWAS → kleb_iso_source".
+[PROJECT_STATE.md](../../../PROJECT_STATE.md) under "Pyseer GWAS → kleb_iso_source".
 
 > **Results narrative lives in the per-axis docs under [`../docs/`](../docs/):** overview hub
 > [`PROGRESS.md`](../docs/PROGRESS.md), then [`PROGRESS_VARIANTS.md`](../docs/PROGRESS_VARIANTS.md) /
@@ -154,7 +154,7 @@ only ~10-30% dense); (3) writing the dense 13,602² distance TSV. Levers before 
 - 2026-06-17 — **GWAS RUN — blood vs faeces, the result.** Ran on the four inputs below
   (cohort `sampled_country_2_1_all`, n=13,602, 372,238 variants af 1–99%, big-SL `--lineage`
   with ≥100-sample SLs kept). Two structure-correction methods compared — **LMM is the method
-  of record.** Figures + hit tables under [docs/visualise/](docs/visualise/) (`mds_model/`,
+  of record.** Figures + hit tables under [docs/visualise/](../docs/visualise/) (`mds_model/`,
   `lmm_model/`), each with a README.
   - **Fixed-effects MDS (`--distances` + K=10): λ=4.34 — dead.** Severe under-correction;
     scree shows K=10 captures 1.6% of relatedness, K=200 only 12.8% — no low-K projection
@@ -181,7 +181,7 @@ only ~10-30% dense); (3) writing the dense 13,602² distance TSV. Levers before 
   - **Validation (next):** (1) **unitig GWAS** — same genes in an accessory-inclusive space =
     strong evidence + the acquired-vs-chromosomal test; (2) **other invasion contrasts** (faeces
     vs respiratory, faeces vs liver/abscess) — same genes across independent splits = strong
-    evidence. Queued in [ToDo.md](../../../ToDo.md); **faeces vs respiratory is the immediate next step.**
+    evidence. Queued in [PROJECT_STATE.md](../../../PROJECT_STATE.md); **faeces vs respiratory is the immediate next step.**
 
 - 2026-06-16 — **Stage C COMPLETE — the four pyseer inputs are built and validated.**
   Extraction array `30593900` → 20,776/20,776 cache files, 0 failures. Reduce on pooled

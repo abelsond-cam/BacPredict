@@ -2,7 +2,7 @@
 
 This is a task folder under `src/`. See the root [CLAUDE.md](../../CLAUDE.md) for §0 global conventions
 (base model, three-stage A/B/C protocol, paths, reporting, HPC resourcing) and
-[ToDo.md](../../ToDo.md) for cross-task state. **All code, `/data`, `/visualisations` and `/docs` for this
+[PROJECT_STATE.md](../../PROJECT_STATE.md) for cross-task state. **All code, `/data`, `/visualisations` and `/docs` for this
 work live under `src/gene_array_lasso/`.**
 
 > **Status:** plan **approved** 2026-06-25, **building Step A**. Biology + full multi-stage programme:
@@ -14,7 +14,7 @@ work live under `src/gene_array_lasso/`.**
 
 The overarching design builds a **pangenome-aligned `genes × 960` Bacformer embedding matrix** fed to
 **group-sparse penalised linear models** (sparse-group lasso / group elastic net), doubling as a
-population-corrected GWAS method. It extends the [`../kleb_ast/`](../kleb_ast/) result — concatenating one
+population-corrected GWAS method. It extends the [`../bacpredict/apps/kleb/`](../bacpredict/apps/kleb/) result — concatenating one
 *hand-picked, Bakta-annotated* gene's embedding onto the fine-tuned genome-mean clears the CARD ceiling — by
 letting a group-sparse penalty over **all** genes select the causal family itself.
 
@@ -45,7 +45,7 @@ pipeline/feasibility test — **the >1% cutoff is the important test** (the head
 Beyond the embedding ladder for the gene blocks — **B1 frozen ESM-C → B2 frozen Bacformer → Bacformer-FT**
 (swap "Bacformer instead of ESM" and FT embeddings are explicit planned tests, not just follow-ups) — keep
 Axis C (⊕ FT genome-mean) in view. **Why group lasso at all:** the parked attention-head attempt
-([`../tl/train/attention_pool.py`](../tl/train/attention_pool.py), gated-attention MIL pool) *lost* to the
+([`../bacpredict/engine/finetune/attention_pool.py`](../bacpredict/engine/finetune/attention_pool.py), gated-attention MIL pool) *lost* to the
 mean (~0.905 → ~0.868) because it treats the genome as an unordered bag of millions of dims with no
 ortholog/synteny structure. The structured group lasso exists precisely to impose that known per-gene
 grouping — this is the motivation of record.
@@ -126,8 +126,8 @@ big arrays on RDS `processed/gene_array_lasso/{panaroo,gene_arrays}/<drug>/`) ·
 - Panaroo: `~/developer/BacHGT/src/bac_panaroo/` — runner `slurm_scripts/panaroo_run_strain.sh` →
   `run_panaroo/panaroo_run_strain.py` (`--sample-metadata-file`; emits SR `sample_accession` + LRA `Sample`
   genomes; writes `panaroo_genomes.tsv`). metadata_v2 default `…/david/final/metadata_v2_all_samples_and_columns.tsv`.
-- Splits: [`../tl/train/split_utils.py`](../tl/train/split_utils.py) (`add_splits` 70/10/20); split-CSV producer
-  [`../kleb_ast/prepare_esmc_embeddings_and_labels_to_finetune_amr.py`](../kleb_ast/prepare_esmc_embeddings_and_labels_to_finetune_amr.py).
-- Embeddings: SR-only extractor [`../tl/embed/preprocess_assemblies_to_protein_sequences.py`](../tl/embed/preprocess_assemblies_to_protein_sequences.py);
+- Splits: [`../bacpredict/engine/finetune/split_utils.py`](../bacpredict/engine/finetune/split_utils.py) (`add_splits` 70/10/20); split-CSV producer
+  [`../bacpredict/engine/splits/`](../bacpredict/engine/splits/).
+- Embeddings: SR-only extractor [`../bacpredict/engine/embedding/preprocess_assemblies_to_protein_sequences.py`](../bacpredict/engine/embedding/preprocess_assemblies_to_protein_sequences.py);
   `{Sample}_esm_embeddings.pt` store + `klebsiella_protein_sequences/{Sample}_protein_sequences.parquet`. Upstream
   success we extend: kleb_ast Plot #1 / ladder / panel under `../bacpredict/visualisations/kp/`.

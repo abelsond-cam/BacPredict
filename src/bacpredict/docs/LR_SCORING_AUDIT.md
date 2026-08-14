@@ -1,5 +1,12 @@
 # LR scoring audit — what every AMR figure actually computes
 
+> **✅ Correct and current as of 2026-08-14.** Re-checked in full against the code and the artifacts
+> during the state audit; nothing in it needed changing. Unusually for the docs in this tree, **this
+> one can be trusted as written** — it is the reference for whether any given AMR comparison is fair,
+> and it is why the flat ladder and the "terrible" catalogue bar are understood rather than mysteries.
+> Read it before questioning any AMR figure. Numbers of record are in
+> [`PROJECT_STATE.md`](../../../PROJECT_STATE.md) §3.1.
+
 This is the reference for the sample scope, imputation, feature, split, and metric behind **each number** in
 the Kp/TB AMR figures (ladder, catalogue comparison panel, causal comparison, per-protein LR, IGR). It exists
 so we never re-litigate "is this comparison fair?" — it was written after a full code audit prompted by two

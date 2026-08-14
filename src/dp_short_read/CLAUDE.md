@@ -6,7 +6,7 @@ compare per-genome defence-protein calls between the two assembly types. Defence
 cluster at MGE / contig boundaries — exactly where SR assemblies fragment — so the **LR-vs-SR
 delta** is the headline quantity. Output lands in `processed/defence_predictor/`.
 
-This is the baseline arm of Task 5 in [ToDo.md](../../ToDo.md) ("DP-CG applied to SR — quantify
+This is the baseline arm of Task 5 in [PROJECT_STATE.md](../../PROJECT_STATE.md) ("DP-CG applied to SR — quantify
 the shortfall"). Retraining DP on SR and adding a distance-to-contig-break feature are later
 milestones, not built yet.
 
@@ -110,3 +110,19 @@ arms = the pairing key), `sr_biosample`, and `is_reference`. Pair LR↔SR predic
 - ✅ metadata_v2 carries distinct `sr_*` vs `lr_*` paths after the 2026-06-03 rebuild.
 - ✅ Bakta `seqid`s match assembly FASTA headers (convert succeeded on all 20 arms).
 - ✅ DP wall time on `esm2_t30_150M` ≈ 80 s/arm.
+
+## Remaining milestones
+
+Carried out of the retired `ToDo.md` (Task 5) on 2026-08-14, where they were the only record. The
+work is **deferred**; this list exists so picking it up does not mean re-planning it.
+
+The premise: DefensePredictor is trained on complete genomes and applied to short-read assemblies
+with contig-border hacks. Defence systems sit at MGE boundaries — exactly where short-read contigs
+break — so training *on* short reads should do better than patching a complete-genome model.
+
+- [x] Translate CG defence-protein labels onto matched SR assemblies (minimap2)
+- [ ] **Baseline: DP-CG applied to SR — quantify the shortfall.** This is the arm the package
+      currently implements, and the LR↔SR delta is its headline quantity
+- [ ] Retrain **DP-SR** from scratch on SR assemblies, same architecture
+- [ ] Add **distance-to-contig-break** as an input feature → DP-SR+break
+- [ ] Compare DP-CG vs DP-SR vs DP-SR+break on a held-out SR test set

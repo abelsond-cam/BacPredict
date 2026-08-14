@@ -12,7 +12,7 @@
 > attention read-out diagnostic is concluded and archived at `engine/_archive/tb_snp_diagnostic/`. Several
 > file/import references below predate the move — trust the engine layout.
 
-See the root [CLAUDE.md](../../../CLAUDE.md) for §0 global conventions (base model, three-stage protocol, paths, reporting requirements). Cross-task status lives in [ToDo.md](../../../ToDo.md).
+See the root [CLAUDE.md](../../../../CLAUDE.md) for §0 global conventions (base model, three-stage protocol, paths, reporting requirements). Cross-task status lives in [PROJECT_STATE.md](../../../../PROJECT_STATE.md).
 
 ## Aim
 
@@ -20,11 +20,18 @@ Predict antibiotic susceptibility in TB from genome embeddings, starting with ES
 
 ## Status
 
-- AST labels downloaded from EBI for the full TB set.
-- Assemblies + GFFs already in `project_k/david/raw/tb/`.
-- Protein lists extracted into `project_k/david/processed/train_tb_ast/`.
-- Per-antibiotic resistance stats: `project_k/david/processed/train_tb_ast/antibiotic_testing_stats.csv`.
-- **Not yet done:** ESM-C embeddings; Bacformer fine-tuning; refreshed-model run.
+**Status lives in [`PROJECT_STATE.md`](../../../../PROJECT_STATE.md) §3.1** — this file holds the
+mechanics and the drug-tiering argument.
+
+In short, so nobody re-derives it: **all 10 TB drugs are fine-tuned and deployed** on the refreshed
+complete-genomes model, in bf16. The line that used to sit here — "Not yet done: ESM-C embeddings;
+Bacformer fine-tuning; refreshed-model run" — was about a month stale and is removed. **The TB
+catalogue ceiling is the genuinely open piece:** provisional, missing rifabutin, and built with a
+different estimator on a different evaluation set, so rebuilding it is the first task of any TB work.
+
+Standing inputs: AST labels from EBI for the full TB set; assemblies + GFFs in
+`project_k/david/raw/tb/`; protein lists and per-antibiotic resistance stats
+(`antibiotic_testing_stats.csv`) under `processed/train_tb_ast/`.
 
 ## The "goldilocks zone" — which drugs to train on
 
@@ -102,7 +109,7 @@ Per root §0.4: AUROC, AUPRC, sensitivity, specificity, balanced accuracy, confu
 - `scripts/run_download_bakrep.sh` — CPU SLURM: download TB Bakta GFF3s from BakRep. Same auto-retry loop.
 - `scripts/run_embeddings_array_tb.sh` — GPU array SLURM: run ESM-C embeddings over the TB protein set.
 
-Generic shared infrastructure lives in [`../tl/embed/`](../tl/embed/), [`../tl/genome_download/`](../tl/genome_download/), [`../tl/train/`](../tl/train/) (k-fold + lazy-dataset helpers). The actual training loop will reuse `train_amr.py` style code from [`../kleb_ast/`](../kleb_ast/) — when first needed, copy and adapt rather than abstract prematurely.
+Generic shared infrastructure lives in [`../../engine/embedding/`](../../engine/embedding/), [`../../engine/download/`](../../engine/download/), [`../../engine/finetune/`](../../engine/finetune/) (k-fold + lazy-dataset helpers). The actual training loop will reuse `train_amr.py` style code from [`../kleb/`](../kleb/) — when first needed, copy and adapt rather than abstract prematurely.
 
 ## Open questions / parked
 
@@ -119,9 +126,9 @@ runs end-to-end on CPU. Confirmed HPC has more done than this doc previously
 suggested.
 
 Bacformer model ID refreshed (root §0.1):
-- [src/tl/embed/generate_embeddings.py](../tl/embed/generate_embeddings.py) default
+- [src/tl/embed/generate_embeddings.py](../../engine/embedding/generate_embeddings.py) default
   now `macwiatrak/bacformer-large-masked-complete-genomes`.
-- New [`train_amr.py`](train_amr.py) defaults to the same.
+- New [`train_amr.py`](../../engine/finetune/finetune_amr.py) defaults to the same.
 
 State on HPC at `project_k/david/processed/train_tb_ast/`:
 - `binary_ast.csv` (40,021 rows × 20 drug columns) and `ebi_parsed_ast_metadata.csv`
@@ -160,7 +167,7 @@ checkpoint coincidentally matched), but for real runs we should bump
 race the cleanup.
 
 Open follow-ups (not blocking Stage A but should be addressed before Stage C):
-- Backport `dtype="auto"` HF loading idiom to [src/kleb_ast/train_amr.py](../kleb_ast/train_amr.py)
+- Backport `dtype="auto"` HF loading idiom to [src/kleb_ast/train_amr.py](../../engine/finetune/finetune_amr.py)
   (the `.to(torch.bfloat16)` cast there pegs the kleb Stage A on CPU).
   [Resolved for kleb_iso_source already; kleb_ast still pending.]
 - Adopt the richer kleb_ast/metrics module (now provides `build_results_payload`,
@@ -193,12 +200,12 @@ already serves as the overfit check) and go straight to Stage C. The
 early stopping bounds the run.
 
 Shared §0.4 metrics adopted:
-- `metrics.py` now lives at [../tl/train/metrics.py](../tl/train/metrics.py)
+- `metrics.py` now lives at [../../engine/finetune/metrics.py](../../engine/finetune/metrics.py)
   (moved out of kleb_ast into the shared toolbox). NB: the move had been
   committed upstream but left two `from kleb_ast.metrics import` statements
   dangling (kleb_ast/train_amr.py + the moved test) — repointed both to
   `tl.train.metrics` in the same commit, which un-breaks those imports.
-- [train_amr.py](train_amr.py) re-synced to the §0.4 reporting path: sets
+- [train_amr.py](../../engine/finetune/finetune_amr.py) re-synced to the §0.4 reporting path: sets
   `split_source` + `evaluate_ids` per branch (smoke/kfold/csv) and writes a
   versioned `results.json` (full metric set: AUROC, AUPRC, sens, spec, bal-acc,
   F1, confusion matrix, calibration) on the evaluate holdout after training.

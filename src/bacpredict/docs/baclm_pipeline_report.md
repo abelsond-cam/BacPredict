@@ -6,12 +6,12 @@ A run-through of the pipeline that turns EBI antibiograms into baclm genome embe
 that those embeddings carry AMR signal. Structured as the four stages of the pipeline: **parse →
 download → audit → validate.** Companion docs: the baclm store schema is in
 [`Baclm_embeddings.md`](Baclm_embeddings.md); the earlier TB SNP-signal-loss diagnostic is in
-[`PROGRESS_REPORT.md`](PROGRESS_REPORT.md) (a prior phase, not superseded by this).
+[`PROGRESS_REPORT.md`](_archive/PROGRESS_REPORT.md) (a prior phase, not superseded by this).
 
 > **Reproducibility.** Every number below is regenerable. Stage 1 parser:
-> [`parse_ebi_ast_to_binary.py`](../parse_ebi_ast_to_binary.py). Stage 3 audit:
-> [`audit_noncoding_regions.py`](../audit_noncoding_regions.py) +
-> [`scripts/audit_noncoding_regions.sh`](../scripts/audit_noncoding_regions.sh) (organism-agnostic —
+> [`parse_ebi_ast_to_binary.py`](../engine/ast_labels/parse_ebi_ast_to_binary.py). Stage 3 audit:
+> [`audit_noncoding_regions.py`](../engine/embedding/non_coding_segment_audit.py) +
+> [`scripts/audit_noncoding_regions.sh`](../engine/embedding/scripts/) (organism-agnostic —
 > point `--input-csv` at any cohort's `embedding_input.csv` to run E. coli etc.). Audit JSON output:
 > `…/processed/train_{tb,kleb}_ast/pangena_predict/audit_noncoding/audit_{tb,kp}_<jobid>.json`.
 
@@ -20,7 +20,7 @@ download → audit → validate.** Companion docs: the baclm store schema is in
 ## 1. Parsing the AMR table from EBI
 
 EBI AMR records (one row per sample × antibiotic × test) are parsed to a binary resistance matrix by
-the organism-agnostic [`parse_ebi_ast_to_binary.py`](../parse_ebi_ast_to_binary.py): `resistant → 1`,
+the organism-agnostic [`parse_ebi_ast_to_binary.py`](../engine/ast_labels/parse_ebi_ast_to_binary.py): `resistant → 1`,
 `susceptible → 0`, `intermediate → NaN`; MIC → log scale with censoring adjustments; **repeat tests
 per sample × antibiotic are averaged** (a sample whose DSTs disagree becomes a fractional label,
 dropped downstream as ambiguous); antibiotics with < 1,000 tests are dropped.

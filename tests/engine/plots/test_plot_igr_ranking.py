@@ -18,12 +18,13 @@ def _ranking(n=40, drug="ciprofloxacin"):
             "left_gene": genes[i], "right_gene": genes[i + 1],
             "prevalence": float(rng.uniform(0.05, 1.0)),
             f"lr_auroc_{drug}": float(rng.uniform(0.5, 0.99)),
+            f"eval_auroc_{drug}": float(rng.uniform(0.5, 0.99)),
             "n_train": 2000, "n_pos": 1000, "kept_filtered": False,
         })
     # make gyrA→parC the clear top hit (a causal pair)
     rows.append({"igr_pair": "gyrA→parC", "left_gene": "gyrA", "right_gene": "parC",
-                 "prevalence": 0.95, f"lr_auroc_{drug}": 0.985, "n_train": 2000, "n_pos": 1000,
-                 "kept_filtered": True})
+                 "prevalence": 0.95, f"lr_auroc_{drug}": 0.985, f"eval_auroc_{drug}": 0.981,
+                 "n_train": 2000, "n_pos": 1000, "kept_filtered": True})
     return pd.DataFrame(rows)
 
 
@@ -70,8 +71,10 @@ def test_runs_without_presence(tmp_path):
 
 
 def _imputed(rank, drug="ciprofloxacin"):
+    rng = np.random.default_rng(7)
     return pd.DataFrame({"igr_pair": rank["igr_pair"],
-                         f"lr_auroc_{drug}": np.random.default_rng(7).uniform(0.5, 0.9, size=len(rank))})
+                         f"lr_auroc_{drug}": rng.uniform(0.5, 0.9, size=len(rank)),
+                         f"eval_auroc_{drug}": rng.uniform(0.5, 0.9, size=len(rank))})
 
 
 def test_run_three_series_with_imputed(tmp_path):
@@ -98,6 +101,7 @@ def test_run_per_unit_keyed_table(tmp_path):
         "unit": [f"rrna:u{i}" for i in range(n)], "feature_type": ["rrna"] * n,
         "feature_name": [f"u{i}" for i in range(n)], "prevalence": rng.uniform(0.1, 1.0, n),
         "lr_auroc_streptomycin": rng.uniform(0.5, 0.95, n),
+        "eval_auroc_streptomycin": rng.uniform(0.5, 0.95, n),
     })
     csv = tmp_path / "per_unit_lr_streptomycin.csv"
     rank.to_csv(csv, index=False)
@@ -105,7 +109,8 @@ def test_run_per_unit_keyed_table(tmp_path):
     pd.DataFrame({"unit": rank["unit"], "presence_lr_auroc_streptomycin": rng.uniform(0.5, 0.6, n)}).to_csv(pcsv, index=False)
     icsv = tmp_path / "imp" / "per_unit_lr_streptomycin.csv"
     icsv.parent.mkdir()
-    pd.DataFrame({"unit": rank["unit"], "lr_auroc_streptomycin": rng.uniform(0.5, 0.9, n)}).to_csv(icsv, index=False)
+    pd.DataFrame({"unit": rank["unit"], "lr_auroc_streptomycin": rng.uniform(0.5, 0.9, n),
+                  "eval_auroc_streptomycin": rng.uniform(0.5, 0.9, n)}).to_csv(icsv, index=False)
 
     base = P.run(species="tb", drug="streptomycin", method="per_unit", csv=csv, presence_csv=pcsv,
                  imputed_csv=icsv, out_dir=tmp_path / "viz", causal_genes=["rrs"])

@@ -2,7 +2,7 @@
 
 Full canonical evaluate fold (`binary_ast_with_split.csv`, n≈6.9k). All rows are the same rifampin
 eval, so AUROC is directly comparable. Metrics are §0.4 (`tl/train/metrics.py`). Bar plot:
-[`visualisations/rif_ladder_barplot.png`](visualisations/rif_ladder_barplot.png).
+[`visualisations/rif_ladder_barplot.png`](rifampicin_ladder_barplot.png).
 
 | Method | family | AUROC | AUPRC | sens | spec | n_eval | source |
 |---|---|---:|---:|---:|---:|---:|---|

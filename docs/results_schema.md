@@ -1,6 +1,6 @@
 # BacPredict results JSON schema (v1.1)
 
-Canonical results file written by [src/tl/train/metrics.py](../src/tl/train/metrics.py) (`write_results_json`). Written next to a checkpoint as `results.json` (training-time, threshold 0.5 only) or `eval_results.json` (the shared evaluator [src/tl/train/evaluate.py](../src/tl/train/evaluate.py), which also adds the optional `operating_point` block). Shared by every AST/phenotype task (`kleb_ast`, `tb_ast`, `kleb_iso_source`).
+Canonical results file written by [src/tl/train/metrics.py](../src/bacpredict/engine/finetune/metrics.py) (`write_results_json`). Written next to a checkpoint as `results.json` (training-time, threshold 0.5 only) or `eval_results.json` (the shared evaluator [src/tl/train/evaluate.py](../src/bacpredict/engine/finetune/evaluate.py), which also adds the optional `operating_point` block). Shared by every AST/phenotype task (`kleb_ast`, `tb_ast`, `kleb_iso_source`).
 
 ## Example
 

@@ -1,6 +1,6 @@
 # Task 3 — Isolation source in *Klebsiella*
 
-This is one of the task folders under `src/`. See the root [CLAUDE.md](../../CLAUDE.md) for §0 global conventions. Cross-task status lives in [ToDo.md](../../ToDo.md).
+This is one of the task folders under `src/`. See the root [CLAUDE.md](../../CLAUDE.md) for §0 global conventions. Cross-task status lives in [PROJECT_STATE.md](../../PROJECT_STATE.md).
 
 ## Aim
 
@@ -229,7 +229,7 @@ Label / cohort prep
 - `scripts/prepare_iso_source_data_for_training.sh` — CPU SLURM wrapper.
 - `scripts/cpu_slurm.sh` — generic CPU job template used by the prep step.
 
-Imports from [`../tl/train/`](../tl/train/) (split_utils, datasets) and [`../tl/embed/`](../tl/embed/) for shared infrastructure.
+Imports from [`../bacpredict/engine/finetune/`](../bacpredict/engine/finetune/) (split_utils, datasets) and [`../bacpredict/engine/embedding/`](../bacpredict/engine/embedding/) for shared infrastructure.
 
 Documentation
 - [`docs/iso_source_summary.ipynb`](docs/iso_source_summary.ipynb) — summary notebook for the blood-vs-faeces workstream. Three sampling methods, stratification stats + plots (pooled headline), Bacformer §0.4 + ROC, linear-model baseline (`linear_baselines.json`) comparison, and a Bacformer-vs-linear-baseline overlay ROC. Built by `docs/_build_summary_notebook.py`; pre-rendered figures sit in `docs/figures/`.
@@ -320,9 +320,9 @@ Stage C — single fold × single seed, full data, 36 h ampere:
   every fp32 result. Shorten runs with patience, never with `max_steps`.
 
 Open follow-ups (parked, not blocking Stage C):
-- Backport `dtype="auto"` to [`../kleb_ast/train_amr.py`](../kleb_ast/train_amr.py)
+- Backport `dtype="auto"` to [`../bacpredict/engine/finetune/finetune_amr.py`](../bacpredict/engine/finetune/finetune_amr.py)
   (Task 2 will hit the same CPU Stage A crash — already flagged in
-  [tb_ast/CLAUDE.md](../tb_ast/CLAUDE.md) running notes).
+  [tb_ast/CLAUDE.md](../bacpredict/apps/tb/CLAUDE.md) running notes).
 - `train_isolation_source.py`'s `PROCESSED_BASE_DIR_DEFAULT` is `processed/`
   (not `processed/train_on_sr_mags/`); inconsistent with the prep script's
   default base. The Stage A and Stage C sbatch scripts pass

@@ -1,4 +1,29 @@
-# BacPredict — live tracker
+# BacPredict — live tracker  ⛔ RETIRED 2026-08-14
+
+> **This file is superseded by [`PROJECT_STATE.md`](../../PROJECT_STATE.md) at the repo root.**
+> It is kept, not deleted, so `git blame` survives and so the history of a wrong number stays
+> traceable. **Do not read it for state and do not update it.**
+>
+> **Known wrong at the time of retirement:**
+>
+> - **Task 2** says Kp models are "not formally evaluated… No run yet on the refreshed
+>   complete-genomes model." **22 Kp checkpoints exist**, all on the refreshed model, run 15–21 July
+>   2026. Numbers in `PROJECT_STATE.md` §3.1.
+> - **Task 1**'s state block is dated 2026-05-28 and describes a single in-flight rifampin job.
+>   **All 10 TB drugs are trained**; rifampin is **0.9642**, not the ~0.905 implied here.
+> - The Task 2 note quotes the bf16-over-fp32 gap as **~7 pp**. It is **~5 pp** (0.9600 against
+>   0.9109, both val-peak). The 7 pp figure came from comparing an fp32 val-peak with a bf16
+>   eval-holdout, which is not a valid comparison.
+> - Every `src/tl/`, `src/tb_ast/`, `src/kleb_ast/`, `src/pangena_predict/` and `src/predict_hgt/`
+>   path below **stopped existing on 2026-07-11**. See `PROJECT_STATE.md` §2.
+> - There is **no entry at all** for the `ast_gwas` unitig-vs-fine-tune comparison, which was the
+>   active work when this file was retired.
+>
+> **What was carried out before retiring**, because it existed nowhere else: Task 6 and Task 4
+> milestones → [`docs/_parked/`](../_parked/); Task 5 milestones →
+> [`src/dp_short_read/CLAUDE.md`](../../src/dp_short_read/CLAUDE.md); the Stage-A-must-be-a-GPU-sbatch
+> rule and the 36 h template gap → root `CLAUDE.md` §0.2; the "hotspot rates blocked on Aaron" item →
+> `PROJECT_STATE.md` §3.3.
 
 Single live status + plan tracker for all BacPredict experiments. Each task block
 gives **current state** (a rolling summary) followed by **remaining milestones**

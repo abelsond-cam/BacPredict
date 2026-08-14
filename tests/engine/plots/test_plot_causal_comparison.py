@@ -21,15 +21,23 @@ def test_prev_alpha_floor_and_nan():
 
 
 def test_best_by_key_floors_and_aliases():
+    """Entries are ``(select_auroc, display_auroc, source, prevalence, key)``.
+
+    The first two are separate because selection happens on the train-OOF ``lr_auroc_`` while the
+    figure displays the deployment-holdout ``eval_auroc_``. With no ``eval_auroc_`` column the
+    display value falls back to the selection value, which is what these fixtures exercise.
+    """
     coding = pd.DataFrame([{"gene_name": "rpoB", "lr_auroc_x": 0.96, "n_pos": 500, "prevalence": 0.98},
                            {"gene_name": "art", "lr_auroc_x": 1.0, "n_pos": 3, "prevalence": 0.003}])
     upstream = pd.DataFrame([{"upstream_gene": "upstream:fabg1", "lr_auroc_x": 0.80, "n_pos": 900,
                               "prevalence": 0.997}])
     best = C._best_by_key([(coding, "gene_name", "coding"), (upstream, "upstream_gene", "upstream"),
                            (None, "unit", "per_unit")], min_n_pos=20)
-    assert "rpob" in best and best["rpob"][0] == 0.96 and best["rpob"][2] == 0.98  # (auroc, source, prevalence)
+    assert "rpob" in best
+    assert best["rpob"][0] == 0.96 and best["rpob"][1] == 0.96  # select, then display (fallback)
+    assert best["rpob"][2] == "coding" and best["rpob"][3] == 0.98
     assert "art" not in best  # n_pos < 20 → the low-n artifact is floored out
-    assert "fabg1" in best and best["fabg1"][1] == "upstream"  # bare-gene alias of the upstream key
+    assert "fabg1" in best and best["fabg1"][2] == "upstream"  # bare-gene alias of the upstream key
     assert "upstream:fabg1" in best
 
 
