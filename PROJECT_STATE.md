@@ -388,15 +388,25 @@ correct.**
 | FT `results.json` | `engine/finetune/finetune_amr` | every quoted FT number | Every FT AUROC in §3.1 |
 | `eval_scores.npz` | `engine/finetune/evaluate` | paired CI in `collect_comparison` | The CI only |
 | per-drug ceiling CSVs (`card_ceiling/…`, `tbprofiler_gene_lr_…`) | `apps/kleb/card_determinant_lr` (CARD) · the retired TB probe (WHO) | `catalogue_ceiling_panel.csv` | The ceiling column |
-| `catalogue_ceiling_panel.csv` | **⚠ nothing — hand-assembled from the per-drug CSVs above** | ladder, comparison table | The ceiling column |
+| `catalogue_ceiling_panel.csv` | `engine/ref_catalogues/build_ceiling_panel` | ladder, comparison table | The ceiling column |
 | `unitigs.pyseer.gz` | `ast_gwas/build_cohort_once` | every Kp drug | All Kp unitig GWAS |
 | `lineage_clusters.tsv` | `ast_gwas/sublineage_from_metadata` | `--lineage`, permutation null | Calibration only |
 | `mge_hits.parquet/` | `kleb_iso_source/map_unitig_hits_genomad` | the MGE/IS/IGR write-ups | §3.3's invasion mapping |
 
-**⚠ `catalogue_ceiling_panel.csv` has no producer module.** It was assembled by hand from the
-per-drug CSVs. Writing one is the right fix, and it is a precondition for rebuilding the TB ceiling —
-because the alternative, hand-copying, is exactly what §3.1's "do not copy the June CSVs into the
-canonical path, that launders them" forbids.
+**`catalogue_ceiling_panel.csv` is reproducible.** It was hand-assembled once, which was itself the
+defect this file exists to prevent; `engine/ref_catalogues/build_ceiling_panel` now regenerates it
+byte-for-byte from the per-drug CSVs, and the checked-in panels are that command's output (verified:
+re-running is byte-identical, and the values differ from the hand-made ones by at most one float64
+ULP). It **requires** `--estimator` to be declared and refuses a `deployment_holdout` claim over data
+carrying a non-zero spread — so the TB ceiling cannot be relabelled `current` to make a comparison
+look like-for-like:
+
+```
+python -m bacpredict.engine.ref_catalogues.build_ceiling_panel \
+  --ceiling-dir <…>/train_kleb_ast/card_ceiling --catalogue card --grain allele \
+  --estimator deployment_holdout --status current \
+  --out-csv src/bacpredict/visualisations/kp/catalogue_ceiling_panel.csv
+```
 
 **Split-table ↔ deployed-holdout equivalence: verified for all 32 drugs, 0 mismatches.** The weak
 form is `n_samples` == the split-table holdout row count. For ertapenem and colistin — the two the

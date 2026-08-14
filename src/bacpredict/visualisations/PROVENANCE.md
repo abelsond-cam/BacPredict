@@ -28,6 +28,12 @@ doc someone may not read:
   like-for-like comparison.
 - `ceiling_status` — `current` or `provisional`.
 
+**Regenerate with** `python -m bacpredict.engine.ref_catalogues.build_ceiling_panel` — it takes the
+per-drug catalogue directory and writes the panel byte-reproducibly. `--estimator` is required and is
+**checked against the data**: a `deployment_holdout` claim over rows carrying a non-zero spread is
+refused, because that scorer fits once. That is the guard against the one edit that would matter —
+relabelling TB as `current` to make its ceiling look comparable.
+
 **Rebuilt from** (CSD3, `$R = /home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david`):
 
 - Kp — `$R/bac_ast_prediction/processed/train_kleb_ast/card_ceiling/<drug>/card_determinant_lr_<drug>_allele.csv`,
