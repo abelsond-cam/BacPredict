@@ -28,8 +28,9 @@ def test_load_sublineages_drops_placeholder_labels(tmp_path: Path) -> None:
     """Blank/NA/unknown are absences, not lineages — they must not become their own cluster."""
     meta = tmp_path / "metadata_v2.tsv"
     _write_metadata(meta, {"A": "SL258", "B": "unknown", "C": None, "D": "  SL307  "})
-    got = load_sublineages(meta)
+    got, recovered = load_sublineages(meta)
     assert got == {"A": "SL258", "D": "SL307"}  # whitespace stripped
+    assert recovered == {}  # nothing needed a fallback id here
 
 
 def test_rare_sublineages_and_unlabelled_collapse_to_other(tmp_path: Path) -> None:
@@ -67,7 +68,8 @@ def test_run_writes_headerless_two_column_file_for_pyseer(tmp_path: Path) -> Non
     assert len(rows) == 10
     assert all(len(r) == 2 for r in rows)
     assert manifest["n_clusters"] == 1
-    assert manifest["coverage"] == 1.0
+    assert manifest["label_coverage"] == 1.0
+    assert manifest["named_cluster_coverage"] == 1.0
     assert json.loads(out.with_suffix(".manifest.json").read_text())["min_size"] == 5
 
 
@@ -93,3 +95,73 @@ def test_a_failed_join_is_an_error_not_an_all_other_file(tmp_path: Path) -> None
     _write_reflist(reflist, ["a", "b", "c"])
     with pytest.raises(SystemExit, match="min-coverage"):
         sublineage_run(reflist=reflist, metadata_tsv=meta, out_tsv=tmp_path / "c.tsv")
+
+
+def _write_metadata_with_alt_id(path: Path, rows: list[tuple[str | None, str, str | None]]) -> None:
+    """metadata_v2 as it really is: some rows keyed by BioSample, some by GCA accession."""
+    pd.DataFrame({
+        "Sample": [r[0] for r in rows],
+        "Sublineage": [r[1] for r in rows],
+        "sample_accession": [r[2] for r in rows],
+    }).to_csv(path, sep="\t", index=False)
+
+
+def test_long_read_genomes_are_recovered_through_a_fallback_id(tmp_path: Path) -> None:
+    """The BioSample key misses long-read genomes, which were deposited under a GCA accession.
+
+    Those rows exist and carry a Sublineage; keying only on ``Sample`` drops them into ``other``.
+    They are also the best-assembled genomes in the cohort, so losing them biases the clusters
+    toward draft assemblies.
+    """
+    meta = tmp_path / "metadata_v2.tsv"
+    _write_metadata_with_alt_id(meta, [
+        ("SAMN0001", "SL258", "SAMN0001"),        # short read: keyed by BioSample
+        ("GCA_00001.1", "SL307", "SAMN0002"),     # long read: Sample is a GCA accession
+    ])
+    got, recovered = load_sublineages(meta)
+    assert got["SAMN0001"] == "SL258"
+    assert got["SAMN0002"] == "SL307", "the GCA-keyed row must be reachable by its BioSample"
+    assert recovered == {"sample_accession": {"SAMN0002"}}
+
+
+def test_the_primary_key_wins_over_a_fallback(tmp_path: Path) -> None:
+    """A fallback must never override a row that the primary key already resolved."""
+    meta = tmp_path / "metadata_v2.tsv"
+    _write_metadata_with_alt_id(meta, [
+        ("SAMN0001", "SL258", "SAMN0001"),
+        ("GCA_00009.1", "SL999", "SAMN0001"),  # same BioSample, different label, via fallback
+    ])
+    got, recovered = load_sublineages(meta)
+    assert got["SAMN0001"] == "SL258"
+    assert recovered == {}
+
+
+def test_an_ambiguous_fallback_is_dropped_not_guessed(tmp_path: Path) -> None:
+    """Two sublineages for one id is worse than none — it corrupts the null silently."""
+    meta = tmp_path / "metadata_v2.tsv"
+    _write_metadata_with_alt_id(meta, [
+        ("GCA_00001.1", "SL258", "SAMN0002"),
+        ("GCA_00002.1", "SL307", "SAMN0002"),  # same BioSample, conflicting labels
+    ])
+    got, recovered = load_sublineages(meta)
+    assert "SAMN0002" not in got
+    assert recovered == {}
+
+
+def test_recovered_genomes_are_counted_in_the_manifest(tmp_path: Path) -> None:
+    """The recovery must be visible as a number, or a change in keying returns silently."""
+    meta = tmp_path / "metadata_v2.tsv"
+    _write_metadata_with_alt_id(meta, [
+        ("SAMN0001", "SL258", "SAMN0001"), ("SAMN0002", "SL258", "SAMN0002"),
+        ("GCA_00001.1", "SL258", "SAMN0003"),
+    ])
+    reflist = tmp_path / "refs.txt"
+    _write_reflist(reflist, ["SAMN0001", "SAMN0002", "SAMN0003"])
+    manifest = sublineage_run(
+        reflist=reflist, metadata_tsv=meta, out_tsv=tmp_path / "c.tsv", min_size=3
+    )
+    assert manifest["n_recovered_via_fallback_id"] == 1
+    assert manifest["recovered_by_column"] == {"sample_accession": 1}
+    # Without the recovery SL258 would be n=2 and collapse to `other` at min_size=3.
+    assert manifest["n_clusters"] == 1
+    assert manifest["n_in_other"] == 0

@@ -252,6 +252,30 @@ Cohort: 7,080 of 7,088 genomes resolved; 5,829,181 unitigs → 3,760,582 feature
 filters min 71 / max 7009. ertapenem λ=4.198, 31,856 significant of 3,371,827 tested; colistin
 λ=1.232, 9,277 of 2,486,812. **Ertapenem's λ and hit count are in its `lr/results.json`; colistin's are not — they are in `…/pyseer_ast/kp/colistin/gwas/colistin_gwas_summary.json`.** The two pilot drugs were written by different code versions and do not have the same fields.
 
+**⚠ The unlabelled genomes are a JOIN failure, not a Kleborate failure — and the fix is pending a
+rerun.** Of the 622 Kp AST genomes with no sublineage, **620 have no `Sample`-keyed row at all** and
+only **2** have an ST without an SL. `Sample` holds a **BioSample** accession, which keys the
+**short-read** genomes; the **long-read** genomes were deposited under a **GCA assembly accession**,
+so their rows exist and carry labels but the primary join misses them. **349 are recoverable** this
+way (178 already carrying a label); `sublineage_from_metadata` now searches the fallback id columns
+and reports the recovery in its manifest, but **`lineage_clusters.tsv` has not yet been regenerated**,
+so the live cluster file still excludes them.
+
+The recovered set is the **best-assembled in the cohort** (median 60 contigs vs 122 for the
+short-read set), so excluding them biases the clusters toward draft assemblies.
+
+**271 appear nowhere in `metadata_v2` under any identity column**, are markedly worse assembled
+(median 318 contigs; 54% over 300), and have no species call. Those are the genuine Kleborate-run
+candidates — **open, awaiting David.**
+
+**⚠ The no-label set is phenotypically non-random, and so is `other`.** Resistance differs
+significantly on **9 of 16 drugs** between labelled and unlabelled (ertapenem — a pilot drug — 0.820
+vs 0.648, p=4.5e-5), and the two subgroups diverge from each other (ceftazidime 0.486 GCA-keyed vs
+0.752 unmatched). `other`, which §6 drops from the permutation null, is far less resistant than the
+retained clusters (ciprofloxacin 0.393 vs 0.887; ceftazidime 0.422 vs 0.888). **Dropping it removes
+the less-resistant 45%, not a random 45%.** Mechanism is **open** — recoverable-join artifact,
+assembly quality, and study/provenance structure are all live readings.
+
 **⚠ Lineage-cluster coverage — two different numbers, do not conflate.**
 `…/pyseer_ast/kp/structure/lineage_clusters.manifest.json`: **10** named clusters at `min_size=100`
 holding **3,890 of 7,080 genomes (54.9%)**; `n_in_other = 3,190`. The 6,458/7,080 (91.2%) figure is
