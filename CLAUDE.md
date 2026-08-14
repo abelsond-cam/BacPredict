@@ -189,6 +189,38 @@ docs only when truly necessary, and call it out explicitly so the user can coord
   process or agent is mid-operation — and prefer to flag it to the user instead.
 - Push frequently and in small units so your work is durable, but apply every rule above first.
 
+### §0.6 What may be saved as a memory
+
+Memories are unversioned, unreviewable, and loaded into every session. That makes a stale one
+actively harmful: it is read constantly and corrected never. Fifty-one of them accumulated eighteen
+mutual contradictions, and one — recommending `dtype="auto"` — was the documented root cause of a
+precision bug, still filed as durable advice weeks after the fix.
+
+**A fact belongs in a memory only if all three hold:**
+
+1. **Rerun-invariant** — it stays true when a job is re-run. A limit of the machine or of a library
+   qualifies; a result does not.
+2. **Not repo-shaped** — it is not something the code, the tests, or `PROJECT_STATE.md` already say.
+   Anything the repo records belongs in the repo, where it can be reviewed and diffed.
+3. **Costly on first contact** — it took a failed job, a wasted turn, or a real debugging session to
+   learn.
+
+**Four things that may never appear in a memory**, because each is a dated claim wearing the costume
+of a durable one — and all four are greppable, so they can be checked:
+
+- **SLURM job IDs** and **git SHAs** — pointers to a moment, not to a fact.
+- **Status words** (`RUNNING`, `PENDING`, `NEXT:`, `★`, `LIVE`) — state belongs in `PROJECT_STATE.md`.
+- **Dates used as state** ("as of last Tuesday, X is in flight").
+- **Which cluster is currently active** — it changes, and a stale answer is worse than no answer.
+
+**Results and numbers live in `PROJECT_STATE.md` §3**, named against the artifact they were read
+from. Two carve-outs: a frozen measurement that *is* the lesson (a controlled A/B whose whole point
+is the comparison), and a hard limit of the machine.
+
+**The filename must assert the conclusion, never the superseded belief.** A file called
+`isambard-cpu-jobs-need-gpu` whose body says they do not is a retrieval hazard — the name is what
+gets matched.
+
 ## HPC connection
 
 **Which cluster / login / SSH / storage tiers — see the global cluster docs** (the user says which
