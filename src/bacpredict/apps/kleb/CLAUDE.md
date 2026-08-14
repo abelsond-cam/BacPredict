@@ -6,7 +6,7 @@
 > `ref_catalogues`, `plots`); this folder holds only Kp specifics (CARD/Kleborate adapters, the AMR sidecar
 > pipeline, metadata curation, the epidemiology plotter). **Fine-tuning is now the single shared trainer**
 > `bacpredict.engine.finetune.finetune_amr` (invoke `python -m …`, `--task kleb_ast`); the old
-> `kleb_ast/train_amr.py` + `prepare_esmc_…` are gone (merged into the engine). Both organisms train in
+> `engine/finetune/finetune_amr.py` + `prepare_esmc_…` are gone (merged into the engine). Both organisms train in
 > **bf16**. Many file/import references in the sections below predate the move — trust the engine layout.
 >
 > **Concat/cache consolidation (2026-07-15).** The per-gene ESM-vs-FT LR, the concat drivers, and the
@@ -32,7 +32,7 @@ See the root [CLAUDE.md](../../../../CLAUDE.md) for §0 global conventions (base
 
 ## Aim
 
-Predict susceptibility for clinically relevant antibiotics in *Klebsiella pneumoniae*, where we expect Bacformer to do best — resistance is heavily HGT-driven (carbapenemases, ESBLs, *mcr*) on plasmids and ICEs. This is the natural home for our AUROC 0.99 result, **and the strong test of the central HGT-vs-vertical hypothesis** (see Task 1 [tb_ast/CLAUDE.md](../tb/CLAUDE.md)): unlike TB, Kp has both classes of mechanism well-represented in the same dataset, so a clean stratified comparison is possible.
+Predict susceptibility for clinically relevant antibiotics in *Klebsiella pneumoniae*, where we expect Bacformer to do best — resistance is heavily HGT-driven (carbapenemases, ESBLs, *mcr*) on plasmids and ICEs. This is the natural home for our AUROC 0.99 result, **and the strong test of the central HGT-vs-vertical hypothesis** (see Task 1 [apps/tb/CLAUDE.md](../tb/CLAUDE.md)): unlike TB, Kp has both classes of mechanism well-represented in the same dataset, so a clean stratified comparison is possible.
 
 ## Status
 
@@ -62,18 +62,18 @@ Bacformer should excel where resistance is driven by **HGT / gene acquisition** 
 > weaker evidence than it looks, and failing to reach it is stronger. That asymmetry is how every
 > ceiling comparison in this project must be read, whichever catalogue supplies it.
 >
-> Two mechanical details below are also stale: `src/pangena_predict/` no longer exists (see
+> Two mechanical details below are also stale: `engine/gene_lr/` no longer exists (see
 > `PROJECT_STATE.md` §2), and the Kp ceiling is no longer scored by `run_kfold_probe` — it moved to
 > the deployment-holdout scorer, which is exactly the migration TB has **not** had. That difference is
 > why TB's ceiling is provisional; see `visualisations/PROVENANCE.md`.
 
-The TB diagnostic (Task 7, `src/pangena_predict/`) measures every drug's Bacformer read-out against a
+The TB diagnostic (Task 7, `engine/gene_lr/`) measures every drug's Bacformer read-out against a
 **catalogue ceiling** — the AUROC a one-hot of all known resistance determinants reaches through the
 same k-fold LR. For TB that catalogue is the WHO/TB-Profiler variant set. **For Kp the catalogue is
 Kleborate**, whose per-isolate determinant calls are already in `metadata_v2` (no re-run needed).
 
 - **Module:** [`kleborate_determinant_lr.py`](kleborate_determinant_lr.py) — the Kp analogue of
-  `pangena_predict/tbprofiler_gene_lr.py`. Per drug it builds a determinant one-hot from the relevant
+  `apps/tb/tbprofiler_gene_lr.py`. Per drug it builds a determinant one-hot from the relevant
   Kleborate columns and scores it through `pangena_predict.kfold_probe.run_kfold_probe`, emitting one
   **bar per Kleborate column** (tagged `acquired_hgt` / `chromosomal_coding` / `chromosomal_mutation` /
   `porin_truncation` / `truncation_lof` — the HGT-vs-chromosomal axis) plus the combined
@@ -126,7 +126,7 @@ this folder.
 and (ii) short-read assemblies further dilute the per-protein signal.
 
 - **B4 — re-run Stage C with eval-bias-toward-complete.** Once
-  `tl/train/split_utils.py` learns `bias_eval_toward` (B2) and the prepare
+  `engine/finetune/split_utils.py` learns `bias_eval_toward` (B2) and the prepare
   script propagates `is_complete` (B1), re-run Stage C for meropenem,
   ceftriaxone, gentamicin **plus cipro** (cipro is added as the chromosomal-
   leaning bellwether). Compare AUROC to the 2026-05-29 unbiased baselines
@@ -147,7 +147,7 @@ and (ii) short-read assemblies further dilute the per-protein signal.
   of Bacformer.
 - **E2 — attention-weighted genome pooling.** Only if E1 warrants. Replace
   Bacformer's mean-pool with a learned attention head
-  (`src/tl/train/attention_pool.py`, owned by shared-infra agent). Smoke +
+  (`engine/finetune/attention_pool.py`, owned by shared-infra agent). Smoke +
   Stage C on cipro and blood/faeces. Headline test: cipro AUROC delta vs
   mean-pool baseline. Don't expect movement on meropenem (HGT-bound, 0.97+).
 - **E3 — Klebsiella-specific continued masked pretraining.** Only if E1
@@ -161,10 +161,12 @@ hypothesis) is still required for every result. Produce the stratified
 report block alongside the cipro / ceftriaxone / meropenem / gentamicin
 Stage C results, even on the first eval-bias re-run.
 
-Open follow-up (still applies): backport `dtype="auto"` HF loading idiom
-to [train_amr.py](../../engine/finetune/finetune_amr.py) — `.to(torch.bfloat16)` regression hits
-the CPU Stage A path (already fixed in tb_ast `4956f91` and
-kleb_iso_source `2d5866e`).
+> ⛔ **DELETED — `dtype="auto"` must NOT be backported anywhere.** For Bacformer-large it resolves to
+> **fp32**, which is measurably *worse* (~5 pp AUROC on TB rifampin, like-for-like). Every trainer casts
+> unconditionally to bf16 and that is correct. The motivation — making a CPU Stage A work — is moot:
+> Stage A must be a short **GPU** sbatch (root `CLAUDE.md` §0.2), because a CPU Stage A silently writes
+> empty tensorboard events and only looks like it passed.
+
 
 ## Three-stage testing protocol (recap of root §0.2)
 
@@ -191,8 +193,8 @@ Training entrypoints
 Label / data prep
 - `prepare_esmc_embeddings_and_labels_to_finetune_amr.py` — merge AST labels + embeddings → split CSV.
 - `preprocess_ebi_amr_records.py` — thin Kp wrapper; delegates to the canonical parser.
-- **Canonical EBI AST → binary parser now lives in `pangena_predict/parse_ebi_ast_to_binary.py`**
-  (organism-agnostic; was the misnamed `kleb_ast/convert_ast_data.py`). Use it for TB and Kp alike.
+- **Canonical EBI AST → binary parser now lives in `engine/ast_labels/parse_ebi_ast_to_binary.py`**
+  (organism-agnostic; was the misnamed `engine/ast_labels/parse_ebi_ast_to_binary.py`). Use it for TB and Kp alike.
 
 Kleb-specific metadata / embedding curation
 - `add_paths_gff_fna_to_metadata.py` — populate `sr_assembly_file` + `sr_gff_file` in the Kleb metadata TSV.
@@ -204,7 +206,7 @@ Kleb-specific metadata / embedding curation
 - `scripts/add_paths_gff_fna_to_metadata.sh` — wrapper.
 
 Determinant ceiling / mechanism stratification
-- `kleborate_determinant_lr.py` — per-drug Kleborate determinant one-hot LR → the catalogue **ceiling** + per-mechanism bars (HGT vs chromosomal). The Kp analogue of `pangena_predict/tbprofiler_gene_lr.py`. See the section above.
+- `kleborate_determinant_lr.py` — per-drug Kleborate determinant one-hot LR → the catalogue **ceiling** + per-mechanism bars (HGT vs chromosomal). The Kp analogue of `apps/tb/tbprofiler_gene_lr.py`. See the section above.
 
 Imports from [`../../engine/finetune/`](../../engine/finetune/) (split_utils, datasets) and [`../../engine/embedding/`](../../engine/embedding/) and [`../../engine/download/`](../../engine/download/) for shared infrastructure, and from [`../../engine/gene_lr/`](../../engine/gene_lr/) (`kfold_probe`, and `locate_gene` for the Kp gene→embedding-index port).
 
@@ -236,7 +238,7 @@ per-drug fan-out (keep `--array=0-14` for the publication 5×3 sweep).
 threshold collapse seen on n=10 is a tiny-set/early-checkpoint artifact — absent
 at full scale (confirmed below).
 
-**Stage C benchmarks** (CG weights, kfold fold 0 / seed 1, fixed evaluate holdout):
+**Stage C benchmarks** ⚠ **SUPERSEDED — these predate the July 2026 re-runs.** Current numbers for all 22 drugs: `PROJECT_STATE.md` §3.1 (e.g. ceftriaxone 0.9852, gentamicin 0.9707, meropenem 0.9713, and the `n_eval` here is the deprecated May cohort). Kept for the shape of the table only:
 
 | Drug | n_eval | AUROC | AUPRC | Sens | Spec | Bal acc |
 |---|---|---|---|---|---|---|

@@ -128,6 +128,14 @@ Artifacts: `<cohort>/kpsc_human/models/cohort_scores.npz` +
 
 ## Status
 
+> ⚠ **SUPERSEDED — status lives in `PROJECT_STATE.md` §3.2.** Stage C is **done** on all three
+> KPSC-clean cohorts; the headline is the country-controlled pooled cohort at **0.786**, not the
+> 0.55–0.62 below (that was the old MAG-weights benchmark this work was built to beat, and it did,
+> decisively). The design decision below to "use all samples from all countries" was also
+> **reversed**: `all_samples` reaches 0.827 but sits *below* its own linear metadata baseline, so it
+> is country-confounded and **must not be quoted**. What follows is kept for the labelling notes and
+> the reasoning, not the state.
+
 - Models already trained on isolation source, achieving **AUROC 0.55–0.62 (poor)**.
 - Those models used the **old Bacformer weights** and the **MAG-trained model** — both to be replaced.
 - Labels are noisy: ~50k human samples with isolation source, of which ~13k urine, ~13k blood, ~10k stool, ~7k respiratory, ~3k wound/abscess (a messy mixed category — liver abscess, ascites, surgical drains, etc.).
@@ -186,7 +194,7 @@ cohorts well enough that country/SL are demonstrably not doing the work.
   Stage C `results.json` under a new `baselines` key.
 - **A5 — explainability (occlusion + integrated gradients).** New code in
   `bacpredict/engine/explain/` (generic, Captum-based; the old plan said
-  `src/tl/explain/`) + `explain_iso_source.py` wrapper.
+  `engine/explain/ (does not exist — `) + `explain_iso_source.py` wrapper.
   Run on both the country-confounded (`all_samples`) and country-controlled
   (`stratified`) checkpoints; rank proteins by aggregated importance.
   **Rank-shift between cohorts is the phylogeny-vs-signal filter:** genes
@@ -199,7 +207,7 @@ cohorts well enough that country/SL are demonstrably not doing the work.
   sharpest phylogeny-vs-signal separation.
 
 **Dependency on Workstream B** (complete-genome eval-set surgery): once B2
-lands `bias_eval_toward` in `tl/train/split_utils.py`, re-run the stratified
+lands `bias_eval_toward` in `engine/finetune/split_utils.py`, re-run the stratified
 Stage C with `--bias-eval-toward is_complete` and compare AUROC delta.
 
 ## Three-stage testing protocol (recap of root §0.2)
@@ -260,7 +268,7 @@ Codebase prep (all on `restructure/flatten-to-task-folders`):
   `metadata_v2_all_samples_and_columns.tsv` across all task folders (commit
   `6a97c77` from a parallel session).
 - [train_isolation_source.py:289](train_isolation_source.py#L289) ported to the
-  `dtype="auto"` HF loading idiom (same fix `tb_ast/train_amr.py` got in
+  `dtype="auto"` HF loading idiom (same fix `engine/finetune/finetune_amr.py` got in
   `4956f91`). The previous unconditional `.to(torch.bfloat16)` crashed on CPU in
   Bacformer's classifier einsum.
   > **⚠ SUPERSEDED — see the 2026-08-11 precision note below.** `dtype="auto"`
@@ -320,9 +328,11 @@ Stage C — single fold × single seed, full data, 36 h ampere:
   every fp32 result. Shorten runs with patience, never with `max_steps`.
 
 Open follow-ups (parked, not blocking Stage C):
-- Backport `dtype="auto"` to [`../bacpredict/engine/finetune/finetune_amr.py`](../bacpredict/engine/finetune/finetune_amr.py)
-  (Task 2 will hit the same CPU Stage A crash — already flagged in
-  [tb_ast/CLAUDE.md](../bacpredict/apps/tb/CLAUDE.md) running notes).
+  - ⛔ **DELETED — `dtype="auto"` must NOT be backported anywhere.** For Bacformer-large it resolves to
+  **fp32**, which is measurably *worse* (~5 pp AUROC on TB rifampin, like-for-like). Every trainer casts
+  unconditionally to bf16 and that is correct. The motivation — making a CPU Stage A work — is moot:
+  Stage A must be a short **GPU** sbatch (root `CLAUDE.md` §0.2), because a CPU Stage A silently writes
+  empty tensorboard events and only looks like it passed.
 - `train_isolation_source.py`'s `PROCESSED_BASE_DIR_DEFAULT` is `processed/`
   (not `processed/train_on_sr_mags/`); inconsistent with the prep script's
   default base. The Stage A and Stage C sbatch scripts pass

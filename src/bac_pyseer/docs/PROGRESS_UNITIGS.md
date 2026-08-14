@@ -76,10 +76,18 @@ the common end is signal, not structure to "fix".)*
 
 ## How to read the hits — LD-redundant, not independent
 
-*Klebsiella* is clonal and accessory DNA travels in large co-inherited blocks: a single niche-associated
-**megaplasmid (1–2 Mb)** contributes a unitig — often several, from within-plasmid mutational variants — at
-*each* locus, so **λ = 24 is one (or a few) biological events multiplied across thousands of co-inherited
-unitigs**, not 24× independent findings. Report at the **independent-pattern / locus** level (pyseer's
+*Klebsiella* is clonal and accessory DNA travels in large co-inherited blocks, so a high λ at common af is
+**consistent with LD redundancy rather than p-value inflation** — the permutation null (above) is what rules
+out structure, and it does. On that basis, treat the hits as far fewer independent findings than the raw
+count suggests.
+
+> **The specific carrier is a HYPOTHESIS, not a finding.** An earlier version of this paragraph asserted
+> that a niche-associated **megaplasmid (1–2 Mb)** contributes a unitig at each locus, so that "λ = 24 is
+> one (or a few) biological events". That is a plausible reading and it is **untested** — nothing here
+> measures how many independent events there are, and the geNomad mapping below tests plasmid-vs-chromosome
+> *class*, not the identity or size of any replicon. It also sits oddly with the mapping's own result that
+> the **blood/invasion** side is ~82% chromosomal. Read the redundancy claim as: report at the
+> pattern/locus level because co-inheritance inflates the unitig count by an unknown factor. Report at the **independent-pattern / locus** level (pyseer's
 pattern-count Bonferroni already does this for significance), never per-unitig.
 
 ## What the unitigs are — mapping the hits to their genomic home (geNomad + ISEScan)
@@ -180,4 +188,4 @@ concentrated at common af and LD-redundant. Mapping — **all 33,039 hits placed
 (108.8M placements, ASM-recall 1.0): invasion signal ~82% chromosomal / ~17% plasmid, faeces signal
 MGE-borne, and **IS elements are not the hidden home of the chromosomal fraction**. **Open:** DefenseFinder (1),
 unitig blood↔resp concordance + faeces↔resp run (2), locus-level annotation + causal-vs-lineage on the plasmid
-share (3). Cross-task tracker: [`../../../ToDo.md`](../../../ToDo.md).
+share (3). Cross-task tracker: [`PROJECT_STATE.md`](../../../PROJECT_STATE.md).

@@ -19,4 +19,4 @@ resolution.
 **Decision: deferred.** Revisit only if the unitig + geNomad mapping leaves a specific **gene-level** question
 GPA would answer, *and* a scalable pangenome (or per-sublineage Panaroo) becomes available. If run, it reuses
 the same pyseer LMM + calibration/reliability protocol (locus filter → af-stratified λ → within-lineage
-permutation) as the other axes. Inputs TBD. Cross-task tracker: [`../../../ToDo.md`](../../../ToDo.md).
+permutation) as the other axes. Inputs TBD. Cross-task tracker: [`PROJECT_STATE.md`](../../../PROJECT_STATE.md).

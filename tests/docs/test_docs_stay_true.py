@@ -66,30 +66,52 @@ def test_doc_links_resolve(doc: Path) -> None:
 # the dead-path tables have to name them — but a doc that mentions one without anywhere saying it is
 # gone is telling a reader to use it.
 RETIRED_PACKAGES = ("tl", "tb_ast", "kleb_ast", "pangena_predict", "predict_hgt", "admixture")
-_RETIRED = re.compile(rf"src/({'|'.join(RETIRED_PACKAGES)})/")
-_MARKS_THEM_DEAD = re.compile(
-    r"retired|dead|no longer exist|stopped existing|superseded|consolidat|DELETED|not exist",
+# Two shapes, both code references. No `src/` prefix is required for the module form, because docs
+# cite these as `tl/train/split_utils.py` as often as with it.
+#
+# Data paths are deliberately NOT matched. Several cluster directories are *named* after the retired
+# packages — `…/train_kleb_ast/pangena_predict/amr_ladder/<drug>.csv` is a live artifact path — and
+# flagging those would train everyone to ignore this test. Hence: a `.py`/`.md` suffix, or an
+# explicitly `src/`-prefixed package directory.
+_RETIRED = re.compile(
+    rf"(?:^|[\s(`\[])(?:src/)?(?:{'|'.join(RETIRED_PACKAGES)})/[\w./-]*\.(?:py|md)\b"
+    rf"|(?:^|[\s(`\[])src/(?:{'|'.join(RETIRED_PACKAGES)})/"
+)
+_MARKS_IT_DEAD = re.compile(
+    # Said outright...
+    r"retired|dead|no longer|stopped existing|superseded|DELETED|not exist|never|formerly|used to|"
+    r"⚠|⛔|historical"
+    # ...or shown, by giving the live path on the same line. That is what a dead-path table row and
+    # a "X → Y" note both look like, and both are exactly what this test wants people to write.
+    r"|→|src/bacpredict/|engine/|apps/",
     re.IGNORECASE,
 )
 
 
 @pytest.mark.parametrize("doc", _tracked_markdown(), ids=lambda p: p.relative_to(REPO).as_posix())
 def test_retired_packages_are_only_named_as_retired(doc: Path) -> None:
-    """A doc naming a retired package must somewhere say the package is gone.
+    """Every *line* naming a retired package must mark it dead — not merely the document.
 
     `test_doc_links_resolve` only inspects link *targets*, so it misses the two ways a dead path
     actually reaches a reader: inside a code span or table cell (README described the whole AMR
     pipeline as `src/kleb_ast/...` for a month after it stopped existing), and as a link *label*
     whose target happens to be live (`docs/results_schema.md` rendered `src/tl/train/metrics.py`
     while pointing at the real file, so it passed while still telling the reader the wrong path).
+
+    **The check is per line, deliberately.** A document-scoped version of this test — "the file
+    mentions retirement somewhere" — gives any doc carrying a post-consolidation banner a blanket
+    pass for every dead path inside it. That is not hypothetical: it passed
+    `apps/tb/CLAUDE.md`'s `[src/tl/embed/generate_embeddings.py](../../engine/...)`, the precise
+    defect described above, because line 3 of that file happens to say "consolidation".
     """
-    text = doc.read_text(encoding="utf-8")
-    hits = sorted(set(_RETIRED.findall(text)))
-    if not hits:
-        return
-    assert _MARKS_THEM_DEAD.search(text), (
-        f"{doc.relative_to(REPO)} names retired package(s) {hits} but never says they are gone. "
-        "Either repoint to the engine/apps path or add a banner marking them retired — see "
+    offenders = []
+    for n, line in enumerate(doc.read_text(encoding="utf-8").splitlines(), 1):
+        hit = _RETIRED.search(line)
+        if hit and not _MARKS_IT_DEAD.search(line):
+            offenders.append(f"{n}: {hit.group(0).strip()}")
+    assert not offenders, (
+        f"{doc.relative_to(REPO)} names retired package(s) on lines that do not mark them dead: "
+        f"{offenders}. Repoint to the engine/apps path, or mark that line ⚠/superseded — see "
         "PROJECT_STATE.md §2."
     )
 

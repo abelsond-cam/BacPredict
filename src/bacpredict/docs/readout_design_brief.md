@@ -1,7 +1,21 @@
 # TB-AST read-out design brief — pooling, attention heads, and per-gene logistic regression
 
-*A self-contained hand-off for a design discussion (e.g. a Claude app chat). It states where the
-science stands and lays out the architecture options to weigh. No prior context needed.*
+*A self-contained hand-off for a design discussion (e.g. a Claude app chat). It lays out the
+architecture options to weigh.*
+
+> ## ⚠ Every number in this brief is superseded — 2026-08-14
+>
+> It says it "states where the science stands". It no longer does, and it carries **no artifact paths**,
+> so nothing in it can be checked in place. Current numbers: `PROJECT_STATE.md` §3.1.
+>
+> - Kp ciprofloxacin **≈0.979** → **0.9717** deployed (0.979 was an in-training epoch value).
+> - TB rifampicin **≈0.905** → **0.9642**.
+> - "full **7,074**-genome eval" → the rifampin holdout is **7,127**.
+> - The section headed "**In flight right now**" describes the TB attention/surprisal diagnostic,
+>   which is **concluded and archived** under `_archive/tb_snp_diagnostic/`.
+>
+> **The architecture options it enumerates are still the useful part** and are unaffected by the
+> numbers. Read it for those, not for status.
 
 ---
 

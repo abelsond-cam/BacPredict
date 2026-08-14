@@ -28,10 +28,10 @@ Panaroo nodes green-lights PangenomeFormer; a negative on all three drugs says t
 
 | Decision | Choice |
 |---|---|
-| **Drugs (3 separate runs — all <3500 ⇒ all-in-one with a real in-run test)** | **imipenem** (~2,370; acquired carbapenemase KPC/OXA/NDM **+** porin loss ompK35/36 — mixed/HGT; kleb_ast AUROC 0.973), **tetracycline** (~1,945; acquired *tet* efflux — accessory/HGT, catalogue-gap, 0.914), **colistin** (~1,400; chromosomal mgrB/pmrB — hard SNP-localisation case, 0.807, heavy lineage confound). Counts ≈ 5× the per-drug evaluate holdout in `../bacpredict/visualisations/kp/eval/eval_summary.csv`. |
+| **Drugs (3 separate runs — all <3500 ⇒ all-in-one with a real in-run test)** | **imipenem** (~2,370; acquired carbapenemase KPC/OXA/NDM **+** porin loss ompK35/36 — mixed/HGT; kleb_ast AUROC 0.973), **tetracycline** (~1,945; acquired *tet* efflux — accessory/HGT, catalogue-gap, 0.914), **colistin** (~1,400; chromosomal mgrB/pmrB — hard SNP-localisation case, heavy lineage confound). ⚠ The AUROCs that used to annotate this row (imipenem 0.973, tetracycline 0.914, colistin 0.807) were **stale and one was badly wrong** — colistin is **0.9094**, not 0.807, so it is not the weak drug this rationale assumed. Current values: `PROJECT_STATE.md` §3.1. The holdout counts formerly cited from `visualisations/kp/eval/eval_summary.csv` came from the **deprecated May cohort**; that file is now in `visualisations/_superseded/kp_eval_2026-06/`. Use each `<drug>_split.csv` instead. |
 | **Embedding (Axis B)** | **B1 frozen ESM-C** (best single-residue localisation; already in the store, no GPU pass). Axis C (FT genome-mean concat) + B2 frozen-Bacformer are follow-ups once B1 works. |
-| **Engine** | **`groupyr`** (sklearn-compatible Sparse Group Lasso, JOSS 2021, copt-backed, 2–10× faster than `group_lasso`, built-in CV). `group_lasso` (Moe 2020) = documented fallback. Both = Simon et al. 2013 SGL (**A1**); **A2** group elastic-net = same core, relaxed L1/L2 group ratio. Confirm `copt` installs under uv at Step D. |
-| **Branch** | **None — stay on `dev`** (shared project space; pyseer + other work run here). |
+| **Engine** | ⛔ **`groupyr` was ABANDONED — the engine is `skglm` (pinned 0.5).** groupyr's prox allocates a dense `(n_groups × n_features)` mask, i.e. O(960·n_groups²): **367 GiB** at >5% prevalence (it OOM-killed a real colistin fit) and ~4.4 TB at >1%, capping it near ~3,000 gene-groups regardless of RAM. The stack and the agreed design constraints are in [`skglm_sgl_handover_plan.md`](skglm_sgl_handover_plan.md), which is the source of truth. **A package change is a change of statistical method** — do not swap back without surfacing it. |
+| **Branch** | ⚠ Superseded by root `CLAUDE.md` §0.5: **one branch per agent**, never commit to `dev`. |
 
 **Run-scoping rule (Decision A).** Panaroo caps ~4000–4500 *genomes*/run; runs can't be linked. The 6500 figure
 is the **union across drugs**; any one drug is far smaller. **If total labelled < 3500: one run over ALL its
@@ -52,7 +52,7 @@ grouping — this is the motivation of record.
 
 ## Resolved facts (from the code, 2026-06-25)
 
-- **Embeddings derive from the SR assembly (Open #1 closed).** `tl/embed/preprocess_assemblies_to_protein_sequences.py`
+- **Embeddings derive from the SR assembly (Open #1 closed).** `engine/embedding/preprocess_assemblies_to_protein_sequences.py`
   reads **only** `sr_gff_file`/`sr_assembly_file` — no long-read path. So every embedded `Sample` has an SR
   Bakta assembly; the ESM store + `klebsiella_protein_sequences` parquet both come from it.
 - **One-genome-per-Sample = keep SR, null LR.** BacHGT `panaroo_run_strain.py` emits an SR genome
@@ -90,7 +90,7 @@ grouping — this is the motivation of record.
    **block-sparse** (groups = genes). Paralogue cells (≥2 loci) → **mean the copies**. Axis C off.
    `build_gene_embedding_array.py`; reuse kleb_ast per-gene LR machinery for the locus_tag→index join.
 
-**D) fit + score.** `groupyr`, groups = genes. **A1 sparse-group lasso** + **A2 group elastic net** (one core,
+**D) fit + score.** `skglm` (see the Engine row — *not* groupyr), groups = genes. **A1 sparse-group lasso** + **A2 group elastic net** (one core,
    exposed L1/L2 ratio). Fit on train, tune on validate, **report on the in-run evaluate test**.
    `fit_group_sparse.py` + `aggregate_selection.py`. **Gate:** beat genome **mean-pool** AND recover the causal
    family — imipenem → carbapenemase (KPC/OXA/NDM)/porin (ompK35/36); colistin → mgrB/pmrB (constant-presence

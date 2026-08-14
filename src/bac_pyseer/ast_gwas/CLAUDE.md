@@ -86,7 +86,7 @@ headline.
 | `lineage_from_distances.py` | mash distances → `Sample<TAB>cluster` — **TB only**; collapsed on Kp |
 | `sublineage_from_metadata.py` | curated Kleborate `Sublineage` → the same file — **Kp, the method of record** |
 | `unitig_design_matrix.py` | hits → sparse genomes × unitigs CSR over **all** split genomes |
-| `unitig_lr.py` | fit train → Youden on validate → score holdout → `results.json` (schema v1.2) |
+| `unitig_lr.py` | fit train → Youden on the **holdout** (one convention for both arms; sens/spec/bal-acc are therefore optimistically biased and must be reported as "at the optimal operating point") → score holdout → `results.json` (schema v1.2) |
 | `collect_comparison.py` | unitig-LR + FT + catalogue → one table per organism |
 
 Scripts: `probe_toolchain.sh` (step 0 gate) · `build_cohort_once.sh` (per organism) ·
@@ -170,7 +170,7 @@ merely coarse — `--lineage` carries no information and the permutation null de
 global shuffle.
 
 So Kp now uses `sublineage_from_metadata.py` (curated Kleborate `Sublineage` from `metadata_v2`,
-which *is* present on CSD3): **10 clusters** at `min_size=100`, coverage 6,458/7,080 (91.2%). The
+which *is* present on CSD3): **10 clusters** at `min_size=100` holding **3,890/7,080 (54.9%)** — the 6,458/7,080 (91.2%) figure is *Kleborate label* coverage, a different quantity; the rest fall below `min_size` into `other`. The
 collapsed mash file is kept beside it as `mash_lineage_clusters.tsv` for the methods comparison.
 **TB still needs the mash route** — no TB lineage labels exist until TB-Profiler runs over ~39k
 assemblies — so the two organisms derive clusters differently and methods must say so.

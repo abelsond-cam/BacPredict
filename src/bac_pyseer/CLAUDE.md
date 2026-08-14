@@ -2,7 +2,7 @@
 
 New package under `src/` compartmentalising **pyseer + GWAS** analyses, with **one
 subfolder per task**. See the root [CLAUDE.md](../../CLAUDE.md) for §0 global conventions;
-cross-task status is in [ToDo.md](../../ToDo.md) under "Pyseer GWAS".
+cross-task status is in [PROJECT_STATE.md](../../PROJECT_STATE.md) under "Pyseer GWAS".
 
 | Task folder | Scope |
 |---|---|

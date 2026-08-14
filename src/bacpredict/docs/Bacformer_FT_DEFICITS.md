@@ -299,7 +299,7 @@ Run the same lens on the **opposite substrate**. Kp AMR is largely **HGT / gene-
 Bacformer's strong regime — and the deployed fine-tuned model is **near-perfect across most of the 22-drug
 panel** (AUROC > 0.95 on 14 drugs, topping out at cefotaxime 0.990 / ertapenem 0.987). The point that
 matters for the thesis: it **beats the Kleborate/CARD determinant ceiling exactly where the catalogue is
-weakest** — the chromosomal / efflux / regulatory drugs. azithromycin **0.827 vs 0.578 (+0.25)**, colistin
+weakest** — the chromosomal / efflux / regulatory drugs. ⚠ *(gaps recomputed: azithromycin **0.7993 vs 0.5584 = +0.241**; colistin **0.9094 vs 0.6563 = +0.253**, the largest in Kp; tetracycline **+0.049**, not the +0.09 stated below)* azithromycin 0.827 vs 0.578, colistin
 **0.807 vs 0.649 (+0.16)**, tetracycline **0.914 vs 0.828 (+0.09)**: the mirror image of TB's pyrazinamide,
 where the embedding *exceeds* the catalogue because it reads a functional consequence the one-hot cannot
 enumerate. On the well-catalogued β-lactams and fluoroquinolones the Kleborate one-hot still edges fine-tuning
@@ -323,7 +323,7 @@ some drugs and is **not** plotted above. We therefore re-identified AMR genes th
 **`minimap2` of the CARD acquired + chromosomal (QRDR / OmpK / MgrB) references against every genome
 assembly**, Kleborate's thresholds (acquired ≥ 90 % identity / ≥ 80 % coverage), authoritative
 **allele-level** labels attached to the embedded CDS by coordinate overlap — across all **6,418** AST-cohort
-genomes (**52,602 acquired + 31,870 chromosomal** calls; no re-embedding).
+genomes (**52,602 acquired + 31,870 chromosomal** calls; no re-embedding). ⚠ The **6,418** cohort size quoted here is a *fourth* Kp count and matches none of the three of record (7,088 canonical / 6,838 deprecated / 9,724 embedding superset) — see `PROJECT_STATE.md` §5.
 
 Validated against Kleborate's own metadata_v2 calls: **carrier recall 0.90** (the residual is within-family
 allele naming + classes outside the AST panel). And the motivating bias, quantified at cohort scale —

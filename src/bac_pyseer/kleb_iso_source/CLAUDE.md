@@ -21,7 +21,7 @@ Current state of the analysis axes (results detail in the per-axis docs):
   per-gene dN/dS + the phylogenetically-**independent recurrent-mutation** flag (`is_sig`) that drives §5.
 - **(c) Unitig (accessory/HGT) LMM** — **DONE + calibration resolved**: the within-lineage permutation shows
   the common-af inflation is **real accessory signal, not structure** (no af ceiling); λ=24 is LD-redundant
-  (megaplasmid). **Next: geNomad chromosome/plasmid/virus mapping** (the HGT test) + DefenseFinder +
+  (carrier untested). **geNomad mapping is DONE** — invasion side ~82% chromosomal, faeces side MGE-borne; see `../docs/PROGRESS_UNITIGS.md`. Still open: DefenseFinder +
   faeces↔resp concordance. → [`PROGRESS_UNITIGS.md`](../docs/PROGRESS_UNITIGS.md).
 - **(d) Panaroo gene-presence/absence GWAS** — **may not run** (Panaroo doesn't scale; the unitig axis may
   subsume it). → [`PROGRESS_PANAROO.md`](../docs/PROGRESS_PANAROO.md).

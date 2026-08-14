@@ -233,7 +233,7 @@ own documents:
 - **Unitig (accessory/HGT) LMM → [`PROGRESS_UNITIGS.md`](PROGRESS_UNITIGS.md).** *Headline:* the unitig axis
   is calibrated at **every** af (within-lineage permutation λ_perm ≈ 1), so its common-af inflation
   (observed λ up to 24) is **real, LD-redundant accessory signal**, not structure — there is **no af
-  ceiling**. Next: map the hits to **chromosome / plasmid / virus** (geNomad) — the direct
+  ceiling**. ⚠ The geNomad mapping is **DONE** (see `PROGRESS_UNITIGS.md`); what follows described it as the next step and is superseded. It was framed as the direct
   HGT-vs-chromosomal test — and DefenseFinder.
 - **Panaroo gene presence/absence GWAS → [`PROGRESS_PANAROO.md`](PROGRESS_PANAROO.md).** Placeholder; **may
   not run** (Panaroo doesn't scale to ~80k genomes, and the unitig axis may already capture the accessory
@@ -266,4 +266,4 @@ blood↔resp concordance + lineage breadth + independent-origin hotspots: **done
 agent):** (1) **revisit the MDS abandonment** (above — λ=4.34 may be redundancy, not under-correction);
 (2) deeper **hotspot mapping**; (3) a **Bakta re-annotation** of the reference for richer gene symbols.
 Accessory axes are tracked separately: [`PROGRESS_UNITIGS.md`](PROGRESS_UNITIGS.md),
-[`PROGRESS_PANAROO.md`](PROGRESS_PANAROO.md). Cross-task tracker: [`../../../ToDo.md`](../../../ToDo.md).
+[`PROGRESS_PANAROO.md`](PROGRESS_PANAROO.md). Cross-task tracker: [`PROJECT_STATE.md`](../../../PROJECT_STATE.md).

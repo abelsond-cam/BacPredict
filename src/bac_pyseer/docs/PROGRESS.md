@@ -18,10 +18,13 @@ to its **invasion allele**. The detailed write-ups live in per-axis documents:
   concordant**, p≈1.1×10⁻²⁴, r²=0.78); most invasion variance sits in **common, population-wide alleles**;
   coherent themes = **transcriptional-regulator de-repression** + **iron / Fe-S acquisition**. Conservative
   (λ<1) and permutation-validated.
-- **Unitig axis**: the common-af inflation is **real accessory (HGT) signal**, not structure (within-lineage
-  permutation λ_perm≈1 at *all* af) — so no af ceiling, and the signal is concentrated at common af but
-  **LD-redundant** (clonal co-inheritance). The next step — **geNomad** chromosome/plasmid/virus mapping of
-  the hits — is the **direct test of the HGT-vs-chromosomal hypothesis** central to the programme.
+- **Unitig axis**: the common-af inflation is **real accessory signal**, not structure (within-lineage
+  permutation λ_perm≈1 at *all* af, at sublineage **and** clonal-group resolution) — so no af ceiling, and
+  the signal is concentrated at common af but **LD-redundant** (clonal co-inheritance).
+  ⚠ **Do not label it "HGT".** The geNomad mapping is **done**
+  ([`PROGRESS_UNITIGS.md`](PROGRESS_UNITIGS.md)) and it splits by direction: the **blood/invasion** side is
+  ~82% **chromosomal**, while the faeces side is MGE-borne. An accessory-genome signal is not automatically
+  an acquired one.
 
 ## Method common to every axis
 
@@ -32,4 +35,4 @@ penetrance** (~2.04M → ~372k variant loci); **(2)** **allele-frequency-stratif
 real signal from residual structure. See each axis doc for the numbers.
 
 Pipeline / run detail: [`../kleb_iso_source/CLAUDE.md`](../kleb_iso_source/CLAUDE.md). Cross-task tracker:
-[`../../../ToDo.md`](../../../ToDo.md).
+[`PROJECT_STATE.md`](../../../PROJECT_STATE.md).

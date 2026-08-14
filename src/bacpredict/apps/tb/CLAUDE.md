@@ -6,7 +6,7 @@
 > `ref_catalogues`/`plots`); this folder holds only TB specifics (the WHO/TB-Profiler catalogue adapter
 > `tbprofiler_gene_lr`, `parse_tbprofiler_calls`, the `tbprofiler/` pixi env, download/input helpers).
 > **Fine-tuning is now the single shared trainer** `bacpredict.engine.finetune.finetune_amr` (invoke
-> `python -m …`, `--task tb_ast`); the old `tb_ast/train_amr.py` is gone (it *became* the engine trainer).
+> `python -m …`, `--task tb_ast`); the old `engine/finetune/finetune_amr.py` is gone (it *became* the engine trainer).
 > **TB now trains in bf16** (was fp32 `dtype="auto"`) — matching Kp's proven setting; the existing TB
 > fp32 checkpoints are superseded and TB is re-run under bf16 when a cluster returns. The rpoB / surprisal /
 > attention read-out diagnostic is concluded and archived at `engine/_archive/tb_snp_diagnostic/`. Several
@@ -70,7 +70,7 @@ Bacformer should excel where resistance is driven by **HGT / gene acquisition** 
 Anchor: program plan `~/.claude/PROGRAM_PLAN_2026-05-30.md`.
 
 - **B4 — re-queue rifampin Stage C with eval-bias-toward-complete.** Once
-  `tl/train/split_utils.py` learns `bias_eval_toward` (B2) and the prepare
+  `engine/finetune/split_utils.py` learns `bias_eval_toward` (B2) and the prepare
   script propagates `is_complete` (B1), re-queue the rifampin run currently
   in flight (job 29776879 — let it finish for the unbiased baseline; the
   eval-bias re-run is the comparison). Same drill for the other 9
@@ -126,7 +126,7 @@ runs end-to-end on CPU. Confirmed HPC has more done than this doc previously
 suggested.
 
 Bacformer model ID refreshed (root §0.1):
-- [src/tl/embed/generate_embeddings.py](../../engine/embedding/generate_embeddings.py) default
+- [engine/embedding/generate_embeddings.py](../../engine/embedding/generate_embeddings.py) default
   now `macwiatrak/bacformer-large-masked-complete-genomes`.
 - New [`train_amr.py`](../../engine/finetune/finetune_amr.py) defaults to the same.
 
@@ -178,8 +178,8 @@ Open follow-ups (not blocking Stage A but should be addressed before Stage C):
 
 - Adopt the richer shared metrics module (`engine.finetune.metrics` provides `build_results_payload`,
   `compute_full_metrics`, `write_results_json` per root §0.4 reporting requirements).
-  Either move it to `tl/train/metrics.py` and share, or copy + adapt into `tb_ast/`.
-  The current `tb_ast/train_amr.py` carries an older inline metrics function.
+  Either move it to `engine/finetune/metrics.py` and share, or copy + adapt into `tb_ast/`.
+  The current `engine/finetune/finetune_amr.py` carries an older inline metrics function.
 
 ### 2026-05-28 — status before Stage B/C
 
@@ -209,13 +209,14 @@ Shared §0.4 metrics adopted:
 - `metrics.py` now lives at [../../engine/finetune/metrics.py](../../engine/finetune/metrics.py)
   (moved out of kleb_ast into the shared toolbox). NB: the move had been
   committed upstream but left two `from kleb_ast.metrics import` statements
-  dangling (kleb_ast/train_amr.py + the moved test) — repointed both to
+  dangling (engine/finetune/finetune_amr.py + the moved test) — repointed both to
   `tl.train.metrics` in the same commit, which un-breaks those imports.
 - [train_amr.py](../../engine/finetune/finetune_amr.py) re-synced to the §0.4 reporting path: sets
   `split_source` + `evaluate_ids` per branch (smoke/kfold/csv) and writes a
   versioned `results.json` (full metric set: AUROC, AUPRC, sens, spec, bal-acc,
   F1, confusion matrix, calibration) on the evaluate holdout after training.
-  Keeps `dtype="auto"` (no `.to(torch.bfloat16)` regression) and TB defaults.
+  ⚠ Historical note: this described keeping `dtype="auto"`. That is **wrong** and was reversed — see
+  the DELETED block above. The trainer casts to bf16 unconditionally.
 
 Split regenerated at 100% embedding coverage
 (`prepare_esmc_embeddings_and_labels_to_finetune_amr.py`, 2026-05-28 14:29):

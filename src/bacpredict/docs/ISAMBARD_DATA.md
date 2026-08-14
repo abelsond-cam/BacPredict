@@ -87,5 +87,5 @@ The pre-outage BacPredict jobs **all completed** — nothing was left hanging (q
 - `download-tb-ast` (7h34m) + `download-kleb-ast` (2h30m) COMPLETED 2026-07-04.
 - Pipeline work ran through 2026-07-09: `coding-ladder-tb`, `igr-amr-tb`, `prepare-kp-ast`,
   `audit-nc-tb`, `audit-nc-kleb`, `coding-ladder-kleb` all COMPLETED.
-- No finetune (`finetune_amr`) run recorded yet on Isambard — the AST training checkpoints are the
+- ⚠ **Superseded:** all 32 fine-tunes are trained and deployed (`PROJECT_STATE.md` §3.1). What follows described the state before that. The AST training checkpoints are the
   next headline job (and TB's first bf16 run, per the consolidation).

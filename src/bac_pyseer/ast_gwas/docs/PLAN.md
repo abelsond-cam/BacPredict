@@ -441,7 +441,7 @@ Checkpoints marked **[look]** are where a human should read results before conti
 - [ ] **6. Kp `ertapenem`** — `ORGANISM=kp DRUG=ertapenem scripts/run_drug.sh`, through to
       `results.json`. **[look]** the positive control: expect ~0.98. Anything much lower is a
       pipeline bug, not a result — stop and debug rather than running the other three.
-- [ ] **7. Kp `colistin`.** **[look]** the first real result. Bacformer 0.807, CARD ceiling 0.649.
+- [x] **7. Kp `colistin`.** **[look]** DONE. ⚠ The numbers this step was written against were retracted: Bacformer is **0.9094** (not 0.807) and the CARD ceiling **0.6563** (not 0.649). Result: unitig-LR 0.9188 vs FT 0.9100, delta +0.0088 [−0.0171, +0.0347] — **a tie**. See `PROJECT_STATE.md` §3.3.
 - [ ] **8. TB cohort build, then `ethionamide`** (smaller n first, ~8k vs rifampin's ~29k). **[look]**
 - [ ] **9. TB `rifampin`**, with the scale mitigations above. **[look]**
 - [ ] **10. Calibration** — λ by allele frequency + the within-lineage permutation null — and the

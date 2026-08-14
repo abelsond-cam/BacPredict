@@ -1,6 +1,6 @@
 # BacPredict — project state
 
-> **Last verified: 2026-08-14 @ `93f0b71`** (branch `refactor/consolidate-engine`).
+> **Last verified: 2026-08-14 @ `23bf069`** (branch `refactor/consolidate-engine`).
 > **Verification scope:** repo tree read directly; all 32 fine-tune numbers read from each
 > checkpoint's own `results.json` on CSD3; both catalogue ceilings re-extracted from their source
 > CSVs; split-table ↔ deployed-holdout equivalence checked for all 32 drugs (0 mismatches).
@@ -142,7 +142,14 @@ predate the fixes and need regenerating.
 
 **Next.**
 1. Regenerate the concat ladders and the `*_card_cause_histogram_*` figures — the checked-in copies
-   predate the presentation fixes, and the untracked ladder CSVs predate the leak fix entirely.
+   predate the presentation fixes, and the untracked ladder CSVs predate the leak fix entirely. The
+   *cluster* ladder tables are current; it is the checked-in mirror that is not.
+   **⚠ While doing it, fix where the ladder's RED ceiling comes from.** `build_amr_ladder._catalogue_csv`
+   resolves it to `visualisations/kp/<drug>/card_determinant_lr_<drug>_family.csv` — a **checked-in
+   mirror of the retired k-fold probe** (all 44 of those files carry a non-zero `mut_auroc_sd`, and
+   e.g. ertapenem reads 0.9905/155/1992 against the current 0.9828/168/2121). So the ladder's ceiling
+   line is **not** the ceiling in `catalogue_ceiling_panel.csv`, and `tests/docs/` does not see those
+   44 files. Point it at the panel, or regenerate the mirror from the current artifacts.
 2. Add the head-vs-mean comparison across all drugs (a summary column plus a scatter). The one
    measured point is rifampin: LR-on-mean 0.958 vs deployed head 0.964 (Δ −0.006, ~2 SE), i.e. the
    head's LayerNorm is **not** shedding signal.
@@ -188,8 +195,8 @@ in `a817ac2`), and an `all_samples_2` retrain that keeps all 251 labelled lab ge
 
 **Next.**
 1. Land the bf16 A/B and the `all_samples_2` retrain, then apply the model-choice rule in §6.
-2. **Unitig honest re-run** — re-fit the LMM selection on train rows only (`SELECTION_SCOPE=trainval_only`)
-   and re-score. The current tie is a leakage-advantaged upper bound for the unitig arm.
+2. ~~Unitig honest re-run~~ — **DONE.** The leakage-free re-fit (selection on train+validate only)
+   landed; its numbers are in §3.4, and they change the verdict — see §3.3.
 3. Score the lab collection for predicted invasiveness and hand over the ranking.
 4. bac-LM forward pass → per-gene LR → concat ladder. **Demoted to the last job.**
 
@@ -229,14 +236,21 @@ inference-time non-determinism, not a different model or a different holdout. **
 record here** because the paired CI must come from the same `eval_scores.npz` the deltas do. Per §0
 Rule 2, always say which pass a number came from.
 
-**⚠ Threshold convention is not yet uniform across the pilot.** `…/ertapenem/lr/results.json` records
-`operating_point.selected_on: "validation"`, while colistin's records `"holdout"`. The §6 decision is
-Youden-on-holdout for both arms, so **ertapenem's unitig balanced accuracy needs recomputing** before
-the fan-out standardises on it; its AUROC/AUPRC are unaffected.
+**⚠ Ertapenem's unitig balanced accuracy (0.9530) is not a Youden number and not from the model
+beside it.** It is `extra.pinned_C_metrics.balanced_accuracy` — the **pinned `C=1.0`** model at
+**threshold 0.5** — whereas the 0.9775/0.9853 AUROC/AUPRC in the same row come from the swept-C model
+(`C=0.001`). The same file also holds `operating_point.balanced_accuracy = 0.9255`
+(`selected_on: "validation"`) and `metrics.balanced_accuracy = 0.9494` (threshold 0.5). Colistin's
+0.8477 *is* its headline model's holdout-Youden operating point, so **the two rows of this table are
+not measuring the same thing** and the "@Youden" column header is wrong for ertapenem.
+
+**Fix before the fan-out standardises on this table:** re-score ertapenem's swept-C model at
+Youden-on-holdout. AUROC and AUPRC are unaffected. The two pilot drugs were produced by different
+code versions — the holdout-Youden convention (§6, 2026-08-13) landed between them.
 
 Cohort: 7,080 of 7,088 genomes resolved; 5,829,181 unitigs → 3,760,582 features (27 GB matrix); af
 filters min 71 / max 7009. ertapenem λ=4.198, 31,856 significant of 3,371,827 tested; colistin
-λ=1.232, 9,277 of 2,486,812 (`…/pyseer_ast/kp/<drug>/lr/results.json`).
+λ=1.232, 9,277 of 2,486,812. **Ertapenem's λ and hit count are in its `lr/results.json`; colistin's are not — they are in `…/pyseer_ast/kp/colistin/gwas/colistin_gwas_summary.json`.** The two pilot drugs were written by different code versions and do not have the same fields.
 
 **⚠ Lineage-cluster coverage — two different numbers, do not conflate.**
 `…/pyseer_ast/kp/structure/lineage_clusters.manifest.json`: **10** named clusters at `min_size=100`
@@ -260,8 +274,14 @@ null, that null runs on ~55% of the cohort, **not ~91%**.
 - **IGR bias.** Hit unitigs touch intergenic DNA at ~2.3–2.5× a uniform-placement null, flat across
   thresholds, with an af-matched non-significant control sitting *at* the null. Holds on both
   chromosome and plasmid.
-- **Head-to-head vs Bacformer** — unitig L2 LR **0.781** vs Bacformer **0.787** on the identical 2,715
-  genomes: **a tie**, with the unitig arm holding a selection advantage.
+- **Head-to-head vs Bacformer — the tie does not survive a leakage-free unitig arm.** The original
+  comparison (unitig **0.781** vs Bacformer **0.787**, a tie) gave the unitig model a **selection
+  advantage**: its hit set was chosen by an LMM that had seen the holdout. Re-fitting that selection
+  on train+validate only gives unitig **0.7655** [0.7472, 0.7824] against Bacformer **0.7858**, a
+  delta of **+0.0210 [+0.0041, +0.0385] that separates from zero** — n=2,715, artifact
+  `…/sampled_country_2_1_all_trainval/gwas_unitig_lmm/presence_model/unitig_cohort_scores.npz`
+  (`"hit set selected on train+validate only"`). Full comparison in §3.4.
+  **Quote the leakage-free number.** The selection-advantaged 0.7810 is a footnote, not the result.
 
 **Next.**
 1. **Kp AMR fan-out** — the remaining 20 drugs, in batches of ~5. Per drug ~57 min wall, ~55 core-h,
@@ -388,7 +408,8 @@ correct.**
 | FT `results.json` | `engine/finetune/finetune_amr` | every quoted FT number | Every FT AUROC in §3.1 |
 | `eval_scores.npz` | `engine/finetune/evaluate` | paired CI in `collect_comparison` | The CI only |
 | per-drug ceiling CSVs (`card_ceiling/…`, `tbprofiler_gene_lr_…`) | `apps/kleb/card_determinant_lr` (CARD) · the retired TB probe (WHO) | `catalogue_ceiling_panel.csv` | The ceiling column |
-| `catalogue_ceiling_panel.csv` | `engine/ref_catalogues/build_ceiling_panel` | ladder, comparison table | The ceiling column |
+| `catalogue_ceiling_panel.csv` | `engine/ref_catalogues/build_ceiling_panel` | **`ast_gwas/collect_comparison` only** | The comparison table's ceiling column |
+| `visualisations/kp/<drug>/card_determinant_lr_<drug>_family.csv` | ⚠ a **k-fold-probe-vintage mirror**, producer unclear | **the concat ladder's RED ceiling rung** (`build_amr_ladder._catalogue_csv`) | The ladder's ceiling line |
 | `unitigs.pyseer.gz` | `ast_gwas/build_cohort_once` | every Kp drug | All Kp unitig GWAS |
 | `lineage_clusters.tsv` | `ast_gwas/sublineage_from_metadata` | `--lineage`, permutation null | Calibration only |
 | `mge_hits.parquet/` | `kleb_iso_source/map_unitig_hits_genomad` | the MGE/IS/IGR write-ups | §3.3's invasion mapping |
@@ -445,8 +466,7 @@ tree** — the TB ceiling was built there, which is one of its four defects.
 directory and `raw/assemblies` is GCA-keyed whole-*Klebsiella*. Use
 `raw/assemblies_file_list.tsv` (`Sample<TAB>path`, already the right format) → 7,080 of 7,088.
 
-**Tests.** 624 collected; `pytest tests/` is the gate. `tests/docs/` additionally enforces the
-conventions in §0.
+**Tests.** `uv run pytest tests/` is the gate — run it rather than trusting a number here. (A count was quoted twice in this file and was wrong both times; it moves with every commit, which makes it exactly the kind of fact that does not belong in a state document.) `tests/docs/` additionally enforces the conventions in §0.
 
 ---
 

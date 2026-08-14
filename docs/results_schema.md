@@ -77,7 +77,7 @@ All required, all computed on the evaluate holdout (see §0.4 of root [CLAUDE.md
 
 ### `operating_point` block (optional, schema v1.1)
 
-Written by the **evaluator** (`evaluate.py`), not by training. Holds metrics at a tuned threshold instead of the fixed 0.5. The threshold is chosen by **Youden's J** (max sensitivity+specificity) on the **validation** split and reported on the **evaluate** split, so the numbers stay unbiased. Absent in training-time `results.json` (which is 0.5-only) — readers must treat it as optional.
+Written by the **evaluator** (`evaluate.py`), not by training. Holds metrics at a tuned threshold instead of the fixed 0.5. The threshold is chosen by **Youden's J** (max sensitivity+specificity). ⚠ **The convention changed on 2026-08-13 to Youden on the HOLDOUT**, one convention for both arms of any comparison — which means sens/spec/balanced accuracy are **optimistically biased** and must be reported as "at the optimal operating point". AUROC/AUPRC are unaffected. Older files selected on validation; `operating_point.selected_on` records which, and the two pilot GWAS drugs differ. Absent in training-time `results.json` (which is 0.5-only) — readers must treat it as optional.
 
 | Field | Type | Notes |
 |---|---|---|
