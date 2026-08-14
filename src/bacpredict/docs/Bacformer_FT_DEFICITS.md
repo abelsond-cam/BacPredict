@@ -1,5 +1,38 @@
 # Why TB-AST prediction with Bacformer underperforms, and how to fix it
 
+> ## ⚠ Read this before quoting anything below — 2026-08-14
+>
+> **Every absolute number in this document predates the July 2026 re-runs.** All 32 fine-tunes were
+> redone on `bacformer-large-masked-complete-genomes` between 15 and 21 July; this write-up was not
+> regenerated. The current values are in `PROJECT_STATE.md` §3.1, read from each checkpoint's own
+> `results.json`.
+>
+> | Quoted here | Actually | Effect on this document |
+> |---|---|---|
+> | TB rifampicin **~0.905** | **0.9642** | **The headline anomaly is largely gone.** The premise of §"The question" is that rifampicin sits far below its catalogue ceiling; at 0.9642 against a ceiling of 0.9666 that gap is ~0.002, not ~0.06 |
+> | Kp colistin **0.807** (billed as the floor) | **0.9094** | Colistin is not the Kp floor and is not weak |
+> | Kp azithromycin **0.827** | **0.7993** | Azithromycin *is* the Kp floor, and it is lower than stated |
+> | TB moxifloxacin 0.792 / ethionamide 0.774 | **0.7945 / 0.8097** | Roughly as stated; these remain the weak TB drugs |
+>
+> **What still stands.** The localisation ladder (§4–§8) compares rungs that were all built from the
+> **same split**, so its **deltas — which are the actual argument — are unaffected**. The finding that
+> a single-residue signal is recoverable, and where it is lost, does not depend on the absolutes.
+>
+> **What is now an open question, for David — not settled here.** The programme hypothesis that
+> Bacformer reads HGT/acquisition well but is comparatively blind to chromosomal point mutation was
+> motivated by the rifampicin gap. That gap has closed on the best TB drug while the chromosomal /
+> rRNA / promoter drugs (moxifloxacin, ethionamide, levofloxacin) remain the weakest in both
+> organisms. Whether that is the same hypothesis surviving in a weaker form, or a different pattern,
+> is a question for discussion rather than something to be resolved by editing this file.
+>
+> **One further caveat on the comparison itself:** the TB ceiling quoted throughout is the retired
+> whole-cohort k-fold probe, scored on a *different evaluation set* from the fine-tune. TB
+> ceiling-vs-FT is therefore not yet like-for-like in either direction — see
+> `visualisations/PROVENANCE.md`. Rebuilding it is the first task of any TB work.
+>
+> The two summary-panel figures below now point into `visualisations/_superseded/`, where the panels
+> were quarantined for carrying the stale numbers above.
+
 ## The question
 
 *M. tuberculosis* rifampicin AST underperforms (deployed Bacformer eval AUROC ~0.905, against a
@@ -132,7 +165,7 @@ holds across the whole TB panel. Scoring every drug's concat against the **WHO c
 TB-Profiler (WHO v2) over all **36,684 genomes**, a one-hot of *all* that drug's catalogued mutations → LR —
 sorts the nine drugs into three clean regimes:
 
-![TB summary panel — ceiling vs FT vs concat](../visualisations/tb/amr_summary_panel.png)
+![TB summary panel — ceiling vs FT vs concat](../visualisations/_superseded/tb_amr_summary_panel.png)
 
 *The whole §5 result at a glance (AUROC top, AUPRC bottom): per drug, the **WHO / TB-Profiler one-hot
 ceiling** (red), the **deployed fine-tuned Bacformer** (indigo), and **Bacformer FT + concat best
@@ -266,7 +299,7 @@ enumerate. On the well-catalogued β-lactams and fluoroquinolones the Kleborate 
 by ~0.005–0.03 — the gap the **FT + concat** read-out is built to close (the same recipe that tops the TB
 ladder in §4–§5).
 
-![Kp summary panel — ceiling vs FT](../visualisations/kp/amr_summary_panel.png)
+![Kp summary panel — ceiling vs FT](../visualisations/_superseded/kp_amr_summary_panel.png)
 
 *Kp panel (AUROC top, AUPRC bottom), sorted by fine-tuned AUROC: **Kleborate / CARD one-hot ceiling** (red)
 vs **deployed fine-tuned Bacformer** (indigo). Fine-tuning matches the ceiling across the HGT-driven majority

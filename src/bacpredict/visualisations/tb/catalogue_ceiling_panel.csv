@@ -1,0 +1,10 @@
+drug,ceiling_auroc,ceiling_auprc,ceiling_auroc_sd,n_determinants,n_carriers,ceiling_catalogue,ceiling_grain,ceiling_estimator,ceiling_status
+ethambutol,0.9354272802969602,0.7822790071288284,0.0008480221378133809,67,6920,WHO_tbprofiler,one_hot,kfold_probe,provisional
+ethionamide,0.8706444277604234,0.718845031157042,0.002331167607002547,361,2845,WHO_tbprofiler,one_hot,kfold_probe,provisional
+isoniazid,0.9581492962419704,0.9383908843562322,0.00021751063789157186,396,12527,WHO_tbprofiler,one_hot,kfold_probe,provisional
+kanamycin,0.8985241596874007,0.7735772454889674,0.0005178342306069336,13,2169,WHO_tbprofiler,one_hot,kfold_probe,provisional
+levofloxacin,0.9155687283957233,0.795938964986167,0.00160832536003101,35,2719,WHO_tbprofiler,one_hot,kfold_probe,provisional
+moxifloxacin,0.9257379453403183,0.7751686562643233,0.0009072175217114642,36,3013,WHO_tbprofiler,one_hot,kfold_probe,provisional
+pyrazinamide,0.854428236195633,0.7290923435793117,0.008382369162603688,466,2432,WHO_tbprofiler,one_hot,kfold_probe,provisional
+rifampin,0.966581111296031,0.9391640628243818,0.0002551922152802917,149,11293,WHO_tbprofiler,one_hot,kfold_probe,provisional
+streptomycin,0.9081418894334355,0.8465526106724016,0.0013678882222797862,149,2599,WHO_tbprofiler,one_hot,kfold_probe,provisional

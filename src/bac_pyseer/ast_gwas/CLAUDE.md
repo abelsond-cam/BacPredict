@@ -27,9 +27,11 @@ Phase 1 is a 2 + 2 pilot bracketing the performance range:
 
 > **Every FT number above is read from the deployed checkpoint's own `results.json`** (32 runs,
 > 15–21 Jul 2026, all `kfold` fold 0 / seed 1 on `bacformer-large-masked-complete-genomes`).
-> Kp ceilings are the `__ALL_CARD__` row of
-> `train_kleb_ast/card_ceiling/<drug>/card_determinant_lr_<drug>_allele.csv`; TB's come from
-> `visualisations/tb/tb_amr_summary_panel.csv` (there is no `card_ceiling` dir for TB).
+> Ceilings come from `visualisations/{kp,tb}/catalogue_ceiling_panel.csv`, extracted from the
+> `__ALL_CARD__` row of `train_kleb_ast/card_ceiling/<drug>/card_determinant_lr_<drug>_allele.csv`
+> (Kp, all 22, current) and the `__ALL_WHO_one_hot__` row of
+> `train_tb_ast/snp_embeddings/tbprofiler_gene_lr/tbprofiler_gene_lr_<drug>.csv` (TB, 9 of 10,
+> **provisional** — a different estimator, see `visualisations/PROVENANCE.md`).
 > **An earlier version of this table was wrong on all four FT numbers** — colistin by +0.10 and
 > rifampin by +0.06 — which inverted two of the four selection rationales (colistin was billed as
 > "worst Kp drug", rifampin as "underperforms the catalogue"; neither is true). Quote the
@@ -40,10 +42,11 @@ Phase 1 is a 2 + 2 pilot bracketing the performance range:
 Three traps, all of which fail silently and all of which have already bitten once:
 
 1. **Fine-tune numbers come from the checkpoint's `results.json`, or from re-scoring it with
-   `engine.finetune.evaluate`.** Never from `*_amr_summary_panel.csv` — those carry
-   `concat_auroc`/`concat_auprc`, which belong to the **concat-ladder model**, a different model
-   from the plain fine-tune. `collect_comparison` therefore takes only the ceiling from a panel and
-   computes the FT columns from its `eval_scores.npz`.
+   `engine.finetune.evaluate`.** Never from `*_amr_summary_panel.csv` — those carry a stale
+   `ft_auroc` *and* a `concat_auroc`/`concat_auprc` belonging to the **concat-ladder model**, a
+   different model from the plain fine-tune. Those panels are now in `visualisations/_superseded/`
+   precisely so they cannot be read by accident. `collect_comparison` takes only the ceiling, from
+   `catalogue_ceiling_panel.csv`, and computes the FT columns from `eval_scores.npz`.
 2. **The panels are partial** — Kp covers 7 of 22 drugs (**no ertapenem**), TB 5 of 10. A missing
    drug merges to NaN, which reads as "no ceiling exists" rather than "never added". Now warned.
 3. **The TB panel keys on `rifampicin` (UK) while the AST column is `rifampin` (US)** — a plain

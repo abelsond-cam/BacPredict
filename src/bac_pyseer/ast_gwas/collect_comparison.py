@@ -4,11 +4,16 @@ The deliverable of the whole exercise is one table per organism answering: for e
 mechanism-agnostic unitig screen compare to the fine-tuned model, and to the ceiling set by known
 resistance determinants?
 
-Reads each drug's unitig-LR ``results.json`` (schema v1.2) and joins it to the numbers already
-checked into ``src/bacpredict/visualisations/<organism>/amr_summary_panel.csv``, which carries
-``ceiling_auroc``/``ceiling_auprc`` (CARD for Kp, WHO/TB-Profiler for TB) and ``ft_auroc``/
-``ft_auprc``. The output is deliberately a plain CSV with one row per drug so it drops into the
-existing ladder plots without touching them.
+Reads each drug's unitig-LR ``results.json`` (schema v1.2) and joins it to
+``src/bacpredict/visualisations/<organism>/catalogue_ceiling_panel.csv``, which carries
+``ceiling_auroc``/``ceiling_auprc`` (CARD for Kp, WHO/TB-Profiler for TB) plus the per-row provenance
+that says how each ceiling was estimated. The output is deliberately a plain CSV with one row per
+drug so it drops into the existing ladder plots without touching them.
+
+That panel deliberately replaced the older ``amr_summary_panel.csv``, now in
+``visualisations/_superseded/``. The old one carried an ``ft_auroc`` column from a superseded set of
+fine-tunes — reading it is how colistin came to be quoted as 0.8072 when it is 0.9094 — and its
+ceiling column was stale as well.
 
 **A point estimate per drug is not enough.** With four drugs and deltas that may be a few
 thousandths, a bare table invites reading a tie as a win — the sibling invasion comparator hit
@@ -21,8 +26,10 @@ position.
 
 Two caveats worth carrying into any write-up, both inherited rather than introduced here:
 
-* The Kp ``concat_*`` column in that panel is known-unreliable (``Bacformer_FT_DEFICITS.md`` §8);
-  this module reads ``ft_*`` and ``ceiling_*`` only.
+* **The TB ceiling is provisional** and the output says so per row, via ``ceiling_estimator`` /
+  ``ceiling_status``. It came from the retired whole-cohort k-fold probe rather than the
+  deployment-holdout scorer Kp uses, so a TB ceiling-vs-unitig gap is not yet like-for-like. It is
+  also missing rifabutin. See ``visualisations/PROVENANCE.md``.
 * The ladder's "same holdout" property holds because every arm was built from the same
   ``<drug>_split.csv`` — a convention, not an enforced cross-check. ``n_holdout`` is carried into
   the output so a mismatch is at least visible.
@@ -45,10 +52,13 @@ from bacpredict.engine.finetune.metrics import compute_full_metrics, youden_thre
 
 logger = logging.getLogger(__name__)
 
-# The panel CSVs supply the CATALOGUE CEILING only. They also carry concat_auroc/concat_auprc, which
-# belong to the *concat-ladder* model, not the plain fine-tune — reading those as "ft" silently
-# compares against a different model. Fine-tune numbers come from its own eval_scores.npz instead.
-PANEL_COLUMNS = ("drug", "ceiling_auroc", "ceiling_auprc")
+# The panel supplies the CATALOGUE CEILING only — fine-tune numbers come from its own eval_scores.npz.
+# The provenance columns travel with the number on purpose: TB's ceiling is a different estimator on a
+# different evaluation set, and a bare ceiling_auroc gives a reader no way to know that.
+PANEL_COLUMNS = (
+    "drug", "ceiling_auroc", "ceiling_auprc",
+    "ceiling_catalogue", "ceiling_estimator", "ceiling_status",
+)
 
 # The TB AST column is `rifampin` (US); the figure panels key on `rifampicin` (UK). Merging without
 # this alias silently drops the headline TB drug — it matches nothing and the row comes back NaN.
@@ -222,11 +232,22 @@ def collect(
         )
         missing = merged.loc[merged.get("ceiling_auroc", pd.Series(dtype=float)).isna(), "drug"].tolist()
         if missing:
-            # These panels are partial (Kp covers 7 of 22 drugs, TB 5 of 10). A silent NaN reads as
-            # "no ceiling exists" when it means "this drug was never added to the panel".
+            # A silent NaN reads as "no ceiling exists" when it means "this drug is not in the panel".
+            # TB is the live case: the panel has 9 of 10 drugs, rifabutin having never been built.
             logger.warning(
                 "%d drug(s) absent from %s, so they have no ceiling: %s",
                 len(missing), panel_csv.name, ", ".join(sorted(missing)),
+            )
+        provisional = (
+            merged.loc[merged["ceiling_status"] == "provisional", "drug"]
+            if "ceiling_status" in merged.columns
+            else pd.Series(dtype=str)
+        )
+        if len(provisional):
+            # Say it once, loudly, rather than trusting whoever reads the CSV to check the column.
+            logger.warning(
+                "%d drug(s) carry a PROVISIONAL ceiling — not a like-for-like comparison: %s",
+                len(provisional), ", ".join(sorted(provisional)),
             )
         table = merged.drop(columns="_panel_key")
         if "ceiling_auroc" in table.columns:
@@ -267,7 +288,8 @@ def main(argv: list[str] | None = None) -> None:
                    help="One or more unitig-LR results.json files.")
     p.add_argument("--out-csv", type=Path, required=True)
     p.add_argument("--panel-csv", type=Path, default=None,
-                   help="visualisations/<organism>/amr_summary_panel.csv for the FT + ceiling columns.")
+                   help="visualisations/<organism>/catalogue_ceiling_panel.csv — the catalogue ceiling "
+                        "and its provenance. Never a summary panel: those carry a stale ft_auroc.")
     p.add_argument("--ft-scores", nargs="+", default=None, metavar="DRUG=PATH",
                    help="Fine-tune eval_scores.npz per drug, e.g. ertapenem=/path/eval_scores.npz. "
                         "Adds a paired bootstrap CI on the unitig-minus-FT AUROC delta.")
