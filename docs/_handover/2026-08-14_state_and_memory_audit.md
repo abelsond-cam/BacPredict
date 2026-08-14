@@ -1,5 +1,24 @@
 # Handover — the state and memory audit, 2026-08-14
 
+> **✅ The independent review asked for below has been done, and its findings are fixed.** This file
+> is kept as the record of what was asked and what the original agent was unsure of. **§4's items 1
+> and 3 were both found to be wrong and have since been corrected in the repo** — do not act on them
+> as written. What the review changed:
+>
+> - The `mut_auroc_sd == 0.0` rule in §4.1 was a **weaker check than claimed**: it answers "fit
+>   once?", not "fit on the deployment holdout?", and the k-fold probe *can* report exactly 0.0. The
+>   test now reads the explicit `ceiling_estimator` field instead.
+> - The `Bacformer_FT_DEFICITS.md` closure claim in §4.3 **was** overstated, exactly as suspected —
+>   the two numbers are not commensurable. The banner now says so.
+> - Two genuinely wrong numbers were found: the lineage-cluster coverage (91.2% is *label* coverage;
+>   the clusters hold **54.9%**) and a "re-checked in full" stamp on `LR_SCORING_AUDIT.md` whose table
+>   is stale.
+> - Three documents the audit missed entirely: `README.md`, root `CLAUDE.md`'s "Training data
+>   architecture" section, and a surviving `dtype="auto"` to-do.
+>
+> §4.4 (leave the 44 PNGs uncommitted), §4.5 (`docs/api.md` as a pointer) and the two data-safety
+> guards were all reviewed and upheld.
+
 **For an agent with no prior context. Your job is to try to break this, not to confirm it.**
 
 I did the cleanup described below, which makes me the worst available judge of whether it is right.
@@ -42,7 +61,7 @@ The table was fixed. Three read-only audits then found the same failure everywhe
 | **Catalogue ceiling rebuilt** from source artifacts, with per-row provenance | `visualisations/{kp,tb}/catalogue_ceiling_panel.csv` |
 | Stale panels **quarantined** with a README naming which wrong number came from which file | `visualisations/_superseded/` |
 | **`tests/docs/`** — five invariants, enforced | `tests/docs/test_docs_stay_true.py` |
-| **Memories 51 → 18**, `MEMORY.md` rebuilt as an index (17 KB → 2.9 KB); admissibility rule added | memory dir, `CLAUDE.md` §0.6 |
+| **Memories 51 → 19**, `MEMORY.md` rebuilt as an index (17 KB → ~3 KB); admissibility rule added | memory dir, `CLAUDE.md` §0.6 |
 | 7 plot tests fixed that had been red since 2026-08-05 | `tests/engine/plots/` |
 
 The pre-consolidation memories are preserved verbatim at
@@ -52,7 +71,7 @@ The pre-consolidation memories are preserved verbatim at
 
 Do not take my word for any of this.
 
-**The suite.** `uv run pytest tests/` → expect 622 passing. `uv run pytest tests/docs/` is the new
+**The suite.** `uv run pytest tests/` → expect 624 passing. `uv run pytest tests/docs/` is the new
 part; read the test file, it explains what defect each check corresponds to.
 
 **The fine-tune numbers** (`PROJECT_STATE.md` §3.1). Every one came from a checkpoint's own
@@ -106,7 +125,7 @@ I found 0 mismatches across all 32. If you find one, the comparison for that dru
 5. **`docs/api.md` I reduced to a pointer** rather than regenerating it, because every `automodule`
    target was unimportable. That is a judgement about value, not correctness.
 
-6. **The 18 memories are my compression of 51.** Read them against the snapshot in
+6. **The 18 memories I wrote (a sibling has since added a 19th) are my compression of 51.** Read them against the snapshot in
    `docs/_archive/memory_snapshot_2026-08-14/` and tell me what I dropped that mattered. I am
    most exposed on the **decisions of record** (`PROJECT_STATE.md` §6): nine memories held the sole
    record of a decision, and if I mis-transcribed one it is now the only copy that anyone will read.

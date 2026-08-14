@@ -4,7 +4,7 @@ How the `macwiatrak/baclm-350m-masked` genome embeddings are stored, and how to 
 back to the input assembly / GFF. Written after the full-cohort run (TB 38257 + Kp 9724 genomes,
 2026-07-07).
 
-Producing code: [`src/tl/embed/baclm_embed.py`](../engine/embedding/baclm_embed.py). Output store:
+Producing code: [`engine/embedding/baclm_embed.py`](../engine/embedding/baclm_embed.py). Output store:
 
 ```
 $SCRATCHDIR/processed/train_tb_ast/baclm/{Sample}_baclm_embeddings.pt      # TB

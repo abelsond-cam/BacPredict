@@ -66,7 +66,15 @@ quoted or consumed — see its own README for what each file is and which number
 ## Everything else in this tree
 
 Per-drug figures and tables rendered by the plotting modules. They carry no provenance columns, so
-treat any number in a filename or a figure as **undated** unless `PROJECT_STATE.md` names it. In
-particular the checked-in `*_card_cause_histogram_*.png` files and the untracked
-`*_amr_ladder_table.csv` files predate the presentation fixes and the read-out leak fix respectively;
-regenerate rather than cite them.
+treat any number in a filename or a figure as **undated** unless `PROJECT_STATE.md` names it.
+
+**Figures are the easiest thing here to quote by accident**, because a reader sees a number without
+ever opening a CSV, and no test covers image content. Known stale:
+
+- `*_card_cause_histogram_*.png` — predate the presentation fixes.
+- `*_amr_ladder_table.csv` (untracked) — predate the read-out leak fix; the *cluster* ladder tables
+  are current, it is the checked-in mirror that is not.
+- `amr_panel_auroc.png` (both organisms) — **quarantined**; they plotted the superseded per-drug
+  fine-tune numbers with those numbers in the captions.
+
+Regenerate rather than cite any of them.

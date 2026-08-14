@@ -19,7 +19,8 @@ from an `engine.finetune.evaluate` re-score — **never** from a summary panel. 
 | `kp_card_vs_best_bacformer.csv` | CARD ceiling vs best Bacformer, with a `gap` column | Same vintage. Its azithromycin row (ceiling 0.5552, bacformer 0.8564) predates both the re-runs and the read-out leak fix |
 | `kp_ceiling_concat_panel_2026-07-21.csv` | ceiling + concat only, no `ft_` column | Was untracked, misfiled under `tb/` as `kp_amr_summary_panel.csv`. Its `concat_*` values predate the leak fix |
 | `tb_ceiling_concat_panel_2026-07-21.csv` | ceiling + concat only | Was untracked as `tb/tb_amr_summary_panel.csv` and cited by `ast_gwas/CLAUDE.md` as the TB ceiling source. Ceiling values are the provisional June k-fold probe; `concat_*` predates the leak fix |
-| `*.png` | the rendered forms of the above | Same numbers, harder to grep |
+| `kp_amr_panel_auroc.png`, `tb_amr_panel_auroc.png` | per-drug fine-tuned held-out AUROC panels | Rendered 19 and 22 June 2026. **These plot the wrong per-drug numbers directly**, with captions reading "rifampicin 0.905", "moxifloxacin 0.792 / ethionamide 0.774", "colistin 0.807 and azithromycin 0.827". Arguably the most misleading artifacts in the tree, because a figure is quoted without anyone opening a CSV |
+| `*_amr_summary_panel.png`, `kp_card_vs_best_bacformer.png` | the rendered forms of the CSVs above | Same numbers, harder to grep |
 
 ## The two defects behind all of them
 

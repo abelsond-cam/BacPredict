@@ -1,11 +1,38 @@
 # LR scoring audit — what every AMR figure actually computes
 
-> **✅ Correct and current as of 2026-08-14.** Re-checked in full against the code and the artifacts
-> during the state audit; nothing in it needed changing. Unusually for the docs in this tree, **this
-> one can be trusted as written** — it is the reference for whether any given AMR comparison is fair,
-> and it is why the flat ladder and the "terrible" catalogue bar are understood rather than mysteries.
-> Read it before questioning any AMR figure. Numbers of record are in
-> [`PROJECT_STATE.md`](../../../PROJECT_STATE.md) §3.1.
+> ## ⚠ The reasoning is sound; the numbers in §"The redundancy proof" are stale — 2026-08-14
+>
+> **Correction to an earlier banner on this file.** A previous version of this note claimed the
+> document had been "re-checked in full against the artifacts; nothing needed changing." **That was
+> wrong.** The *code paths* were re-checked; the *numbers* were not, and an independent review then
+> found they do not match the current ladder artifacts.
+>
+> **What this document gets right, and it is the important part:** the *explanations*. Rung-1
+> `ft_mean` is a fresh L2 logistic regression re-probing the frozen FT genome-mean — not the deployed
+> head's logit — so a small head-vs-mean gap is expected rather than a regression. A near-zero
+> gene/IGR lift is **genuine redundancy** with the FT genome-mean. The equal-width-block and
+> zero-imputation arguments hold. That is what this file is for, and it stands.
+>
+> **What is stale:** every figure in the redundancy-proof table below, and two of its three block
+> identities. Against the current cluster artifacts
+> (`…/train_tb_ast/pangena_predict/amr_ladder/<drug>/<drug>_amr_ladder_table.csv`):
+>
+> | drug | table says rung-1 | artifact | table says +gene | artifact | table says +non-coding | artifact |
+> |---|--:|--:|---|---|---|---|
+> | isoniazid | 0.940 | **0.8944** | +0.028 (katG) | **+0.0536** (katG) | −0.004 | −0.0041 |
+> | ethionamide | 0.863 | **0.8151** | −0.011 (rpoB) | **+0.0194** (rpoB) | +0.057 (fabG1) | **+0.0933** |
+> | kanamycin | 0.894 | **0.8587** | +0.002 (rpoB) | **−0.0054 (embB)** | +0.022 (rrs rRNA) | **+0.0426 (`mura→ogt`)** |
+>
+> **The kanamycin row matters most and is the most wrong.** It is cited as the rRNA positive control,
+> and the current artifact did not select an rRNA block at all. Do not quote it as evidence that the
+> rRNA channel works.
+>
+> **The direction of the argument survives, and on the current numbers it survives more strongly** —
+> the non-redundant lifts are *larger* than stated (katG +0.054, fabG1 +0.093), which is what the
+> redundancy claim needs. But do not quote a figure from the table below. Regenerate it from the
+> artifacts; the cluster tables are current (post-leak-fix), it is the checked-in mirror that is not.
+>
+> Numbers of record: [`PROJECT_STATE.md`](../../../PROJECT_STATE.md) §3.1.
 
 This is the reference for the sample scope, imputation, feature, split, and metric behind **each number** in
 the Kp/TB AMR figures (ladder, catalogue comparison panel, causal comparison, per-protein LR, IGR). It exists

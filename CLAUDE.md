@@ -317,20 +317,35 @@ conflate them (this was the pre-2026-07 confusion):
 
 Each `.pt` holds `prot_embeddings` (shape `[n_proteins, dim]`), `attention_mask`, contig indices. **No labels.**
 
-**2. Split CSV (canonical record of who-went-where):** each prepare script writes one CSV per experiment to RDS — these are **permanent**.
+**2. Label CSV — labels, NOT the holdout.**
 
 | Experiment | CSV path |
 |---|---|
-| AMR | `processed/binary_ast_with_split.csv` |
+| AMR | `bac_ast_prediction/processed/train_<org>_ast/binary_ast_with_split.csv` |
 | Isolation-source pair | `processed/<experiment_dir>/binary_<pair_slug>_with_split.csv` |
 
-Columns: `Sample` (joins to `{Sample}_esm_embeddings.pt`), `<label_column>` (binary; NaN allowed), `train_val_eval` (one of `train` / `validate` / `evaluate`).
+Columns: `Sample` (joins to `{Sample}_esm_embeddings.pt`), `<label_column>` (binary; NaN allowed), `train_val_eval`.
 
-By default the prepare script writes **only** this CSV. Legacy per-sample labeled `.pt` files are gated behind `--write-pt-files`.
+> **⛔ `train_val_eval` is NOT the holdout of record for any k-fold-trained model — which is all of
+> them.** It is a *single-split* partition that k-fold mode ignores entirely, while still sitting
+> there looking authoritative. Reading it to resolve "evaluate" is precisely the 2026-07 read-out
+> leak (see *Data-leakage guarantees*). Treat this CSV as the **label** source only.
 
-**3. Training (lazy, runtime label injection):** `LabelInjectingFileDataset` (`tl/train/datasets.py`) takes the sample-ID list for one split, a `label_map: dict[sample_id → int]` built from the CSV in memory, and the path to the shared embedding store. `__getitem__` opens one `.pt` at a time and attaches the label. **No labeled `.pt` copies are created.**
+**2b. `<drug>_split.csv` — THE holdout authority.** Materialised by `engine/splits`, one per drug,
+read by **`engine.splits.load_splits` and nothing else**. Every arm — trainer, ladder, ceilings,
+per-gene LR, `ast_gwas` — resolves its holdout through it, which is what makes their numbers
+comparable to each other. Regenerating it invalidates *everything* downstream.
 
-**4. Reproducing a result:** `(input split CSV) + (training script CLI args)`. CSV pins labels + single-split assignment; CLI args pin checkpoint, LR, and (for k-fold) `n_folds`/`fold`/`seed`/`evaluate_seed`. Keep the CSV alongside the checkpoints under the experiment directory.
+**3. Training (lazy, runtime label injection):** `LabelInjectingFileDataset`
+(`bacpredict/engine/finetune/datasets.py`) takes the sample-ID list for one split, a
+`label_map: dict[sample_id → int]` built in memory, and the path to the shared embedding store.
+`__getitem__` opens one `.pt` at a time and attaches the label. **No labelled `.pt` copies are
+created** — the `ast_training/{train,validate,evaluate}/{Sample}_with_ast.pt` layout some older docs
+describe does not exist.
+
+**4. Reproducing a result:** `(<drug>_split.csv) + (label CSV) + (training CLI args)`. The split table
+pins who was held out; the label CSV pins the labels; CLI args pin checkpoint, LR, and (for k-fold)
+`n_folds`/`fold`/`seed`/`evaluate_seed`. Keep both CSVs alongside the checkpoints.
 
 ## K-fold CV and split semantics
 

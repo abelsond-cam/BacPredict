@@ -2,8 +2,8 @@
 
 > **⚠️ Post-consolidation note (2026-07).** This package moved from `src/tb_ast/` to
 > `src/bacpredict/apps/tb/` in the engine consolidation. The organism-agnostic pipeline now lives in
-> `src/bacpredict/engine/` (stages `labels`/`download`/`embedding`/`finetune`/`gene_lr`/`concat`/
-> `catalogue`/`plots`); this folder holds only TB specifics (the WHO/TB-Profiler catalogue adapter
+> `src/bacpredict/engine/` (stages `ast_labels`/`download`/`embedding`/**`splits`**/`finetune`/`gene_lr`/`segment_amr_lr`/`concat`/
+> `ref_catalogues`/`plots`); this folder holds only TB specifics (the WHO/TB-Profiler catalogue adapter
 > `tbprofiler_gene_lr`, `parse_tbprofiler_calls`, the `tbprofiler/` pixi env, download/input helpers).
 > **Fine-tuning is now the single shared trainer** `bacpredict.engine.finetune.finetune_amr` (invoke
 > `python -m …`, `--task tb_ast`); the old `tb_ast/train_amr.py` is gone (it *became* the engine trainer).
@@ -89,7 +89,7 @@ No new code in this folder unless E3 fires.
 
 | Stage | Scale | Folds × seeds | Where |
 | :-- | :-- | :-- | :-- |
-| **A. Smoke** | n=10 | 1 × 1 | MacBook M1 CPU (or HPC login) — code must run with CUDA disabled |
+| **A. Smoke** | n=10 | 1 × 1 | A short **GPU** sbatch — NOT the login node (a CPU Stage A silently writes empty tensorboard events). See root §0.2 |
 | **B. Overfit** | n=10, train=test | 1 × 1 | Local or HPC interactive |
 | **C. Full** | full data, one canonical drug first | 1 × 1 | GPU HPC SLURM, ~36 h, early-stopping ≈ 15 epochs |
 
@@ -167,10 +167,16 @@ checkpoint coincidentally matched), but for real runs we should bump
 race the cleanup.
 
 Open follow-ups (not blocking Stage A but should be addressed before Stage C):
-- Backport `dtype="auto"` HF loading idiom to [src/kleb_ast/train_amr.py](../../engine/finetune/finetune_amr.py)
-  (the `.to(torch.bfloat16)` cast there pegs the kleb Stage A on CPU).
-  [Resolved for kleb_iso_source already; kleb_ast still pending.]
-- Adopt the richer kleb_ast/metrics module (now provides `build_results_payload`,
+
+> **⛔ The "backport `dtype="auto"`" item that used to sit here is DELETED, and must not come back.**
+> It was exactly backwards. For Bacformer-large `dtype="auto"` resolves to **fp32**, which is
+> measurably *worse* — ~5 pp of AUROC on TB rifampin, like-for-like. Every trainer now casts
+> unconditionally to bf16. The `.to(torch.bfloat16)` it proposed removing is the correct behaviour,
+> not a bug. Its stated motivation — that the cast "pegs the kleb Stage A on CPU" — is moot: Stage A
+> must be a short **GPU** sbatch (root `CLAUDE.md` §0.2), because a CPU Stage A silently writes empty
+> tensorboard events and only looks like it passed.
+
+- Adopt the richer shared metrics module (`engine.finetune.metrics` provides `build_results_payload`,
   `compute_full_metrics`, `write_results_json` per root §0.4 reporting requirements).
   Either move it to `tl/train/metrics.py` and share, or copy + adapt into `tb_ast/`.
   The current `tb_ast/train_amr.py` carries an older inline metrics function.

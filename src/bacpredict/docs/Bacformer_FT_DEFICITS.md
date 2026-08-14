@@ -9,7 +9,7 @@
 >
 > | Quoted here | Actually | Effect on this document |
 > |---|---|---|
-> | TB rifampicin **~0.905** | **0.9642** | **The headline anomaly is largely gone.** The premise of §"The question" is that rifampicin sits far below its catalogue ceiling; at 0.9642 against a ceiling of 0.9666 that gap is ~0.002, not ~0.06 |
+> | TB rifampicin **~0.905** | **0.9642** | **The fine-tune improved a lot.** What that does to the "sits far below its ceiling" premise is *not* measurable from these artifacts — see the caveat below |
 > | Kp colistin **0.807** (billed as the floor) | **0.9094** | Colistin is not the Kp floor and is not weak |
 > | Kp azithromycin **0.827** | **0.7993** | Azithromycin *is* the Kp floor, and it is lower than stated |
 > | TB moxifloxacin 0.792 / ethionamide 0.774 | **0.7945 / 0.8097** | Roughly as stated; these remain the weak TB drugs |
@@ -25,13 +25,20 @@
 > organisms. Whether that is the same hypothesis surviving in a weaker form, or a different pattern,
 > is a question for discussion rather than something to be resolved by editing this file.
 >
-> **One further caveat on the comparison itself:** the TB ceiling quoted throughout is the retired
-> whole-cohort k-fold probe, scored on a *different evaluation set* from the fine-tune. TB
-> ceiling-vs-FT is therefore not yet like-for-like in either direction — see
-> `visualisations/PROVENANCE.md`. Rebuilding it is the first task of any TB work.
+> **⚠ The size of the remaining gap is not measurable from these artifacts — in either direction.**
+> An earlier version of this banner said the gap was "~0.002, not ~0.06". **That was overstated.**
+> The two numbers are not commensurable: **0.9642** is the fine-tune's holdout score on the canonical
+> 36,692-genome cohort, while **0.9666** is a whole-cohort *k-fold probe* read from the **deprecated**
+> May tree on a 36,684-genome cohort. Subtracting them produces a number, not a measurement.
 >
-> The two summary-panel figures below now point into `visualisations/_superseded/`, where the panels
-> were quarantined for carrying the stale numbers above.
+> What is defensible is the fine-tune's own improvement: **~0.905 → 0.9642**, same estimator, and that
+> is real. Whether it now meets, exceeds or still trails a properly-built ceiling is unknown until that
+> ceiling is rebuilt — all 10 drugs including rifabutin, through `load_splits` + `score_onehot_frame`.
+> That is the first task of any TB work. See `visualisations/PROVENANCE.md`.
+>
+> **All four figures below now point into `visualisations/_superseded/`** — the two summary panels and
+> the two per-drug AUROC panels. The latter were rendered in June and plot exactly the stale
+> per-drug numbers in the table above, captions included.
 
 ## The question
 
@@ -47,14 +54,14 @@ everywhere — most drugs AUROC > 0.95 — and the floor sits at **colistin 0.80
 (both chromosomal / efflux). TB rifampicin's deployed ~0.905 — *below a one-hot of a single SNP codon* — is
 the anomaly we explain.
 
-![TB AMR panel — fine-tuned held-out AUROC](../visualisations/tb/amr_panel_auroc.png)
+![TB AMR panel — fine-tuned held-out AUROC](../visualisations/_superseded/tb_amr_panel_auroc.png)
 
 *The anomaly, plotted — the deployed fine-tuned Bacformer across the nine-drug TB panel. Even the best
 drug (rifampicin 0.905) sits below its single-SNP catalogue ceiling, and performance falls to
 **moxifloxacin 0.792 / ethionamide 0.774** — the chromosomal / rRNA / promoter drugs. Contrast the
 Klebsiella panel below, where the same model is strong almost everywhere.*
 
-![Kp AMR panel — held-out AUROC](../visualisations/kp/amr_panel_auroc.png)
+![Kp AMR panel — held-out AUROC](../visualisations/_superseded/kp_amr_panel_auroc.png)
 
 *Klebsiella AMR is mostly HGT-driven — Bacformer's strong regime — and it predicts the whole panel well
 (from the `kleb_ast` eval). The few weak Kp drugs (colistin, azithromycin, cefepime, aztreonam) are

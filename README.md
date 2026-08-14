@@ -2,6 +2,28 @@
 
 Use Bacformer to predict Klebsiella behaviour in AST testing and niche (using isolation source as a proxy for infection vs colonisation at a body site).
 
+> ## ⚠ The pipeline tables below describe a layout retired on 2026-07-11
+>
+> **Start at [`PROJECT_STATE.md`](PROJECT_STATE.md)** — the single authority on where this project
+> actually is — and [`CLAUDE.md`](CLAUDE.md) for conventions and the current package map.
+>
+> Every `src/kleb_ast/…` and `src/tb_ast/…` path below is dead. Those packages were consolidated into
+> one organism-agnostic engine plus thin per-organism apps: `src/bacpredict/engine/` and
+> `src/bacpredict/apps/{tb,kleb}/`. The single AMR trainer is now
+> `python -m bacpredict.engine.finetune.finetune_amr --task tb_ast|kleb_ast`.
+>
+> **Two specifics below are not merely renamed but wrong:**
+>
+> - **Labelled per-sample `.pt` files are not created.** `ast_training/{train,validate,evaluate}/{Sample}_with_ast.pt`
+>   was replaced by lazy loading with runtime label injection — the embedding store is read-only and
+>   never duplicated per experiment.
+> - **`binary_ast_with_split.csv` is not the holdout authority.** Its `train_val_eval` column is a
+>   single-split partition that k-fold training ignores. The holdout comes from the materialised
+>   per-drug `<drug>_split.csv` via `engine.splits.load_splits`, and reading anything else is how the
+>   2026-07 read-out leak happened.
+>
+> This file is kept as an orientation to the *shape* of the two tasks, which has not changed.
+
 ---
 
 ## Project flow (two prediction tasks)

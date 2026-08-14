@@ -1,6 +1,6 @@
 # BacPredict results JSON schema (v1.1)
 
-Canonical results file written by [src/tl/train/metrics.py](../src/bacpredict/engine/finetune/metrics.py) (`write_results_json`). Written next to a checkpoint as `results.json` (training-time, threshold 0.5 only) or `eval_results.json` (the shared evaluator [src/tl/train/evaluate.py](../src/bacpredict/engine/finetune/evaluate.py), which also adds the optional `operating_point` block). Shared by every AST/phenotype task (`kleb_ast`, `tb_ast`, `kleb_iso_source`).
+Canonical results file written by [engine/finetune/metrics.py](../src/bacpredict/engine/finetune/metrics.py) (`write_results_json`). Written next to a checkpoint as `results.json` (training-time, threshold 0.5 only) or `eval_results.json` (the shared evaluator [engine/finetune/evaluate.py](../src/bacpredict/engine/finetune/evaluate.py), which also adds the optional `operating_point` block). Shared by every AST/phenotype task (`apps/kleb`, `apps/tb`, `kleb_iso_source`).
 
 ## Example
 
@@ -105,4 +105,4 @@ That addition is non-breaking — `metrics` stays the all-isolates view.
 
 ## Producing the file
 
-`src/kleb_ast/train_amr.py` writes the JSON automatically after `trainer.train()` completes. Sub-step 3 (MAG contrast) just re-runs training with `--model-name-or-path macwiatrak/bacformer-large-masked-MAG`; the JSON lands next to the resulting checkpoint dir.
+The shared trainer `bacpredict.engine.finetune.finetune_amr` writes the JSON automatically after `trainer.train()` completes. Sub-step 3 (MAG contrast) just re-runs training with `--model-name-or-path macwiatrak/bacformer-large-masked-MAG`; the JSON lands next to the resulting checkpoint dir.

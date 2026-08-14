@@ -13,6 +13,7 @@ points at things that exist, and whether the artifacts it must not use have come
 
 from __future__ import annotations
 
+import csv as csv_module
 import re
 import subprocess
 from pathlib import Path
@@ -61,6 +62,38 @@ def test_doc_links_resolve(doc: Path) -> None:
     assert not broken, f"{doc.relative_to(REPO)} links to paths that do not exist: {broken}"
 
 
+# Top-level packages retired in the 2026-07-11 consolidation. Naming one is not itself a defect —
+# the dead-path tables have to name them — but a doc that mentions one without anywhere saying it is
+# gone is telling a reader to use it.
+RETIRED_PACKAGES = ("tl", "tb_ast", "kleb_ast", "pangena_predict", "predict_hgt", "admixture")
+_RETIRED = re.compile(rf"src/({'|'.join(RETIRED_PACKAGES)})/")
+_MARKS_THEM_DEAD = re.compile(
+    r"retired|dead|no longer exist|stopped existing|superseded|consolidat|DELETED|not exist",
+    re.IGNORECASE,
+)
+
+
+@pytest.mark.parametrize("doc", _tracked_markdown(), ids=lambda p: p.relative_to(REPO).as_posix())
+def test_retired_packages_are_only_named_as_retired(doc: Path) -> None:
+    """A doc naming a retired package must somewhere say the package is gone.
+
+    `test_doc_links_resolve` only inspects link *targets*, so it misses the two ways a dead path
+    actually reaches a reader: inside a code span or table cell (README described the whole AMR
+    pipeline as `src/kleb_ast/...` for a month after it stopped existing), and as a link *label*
+    whose target happens to be live (`docs/results_schema.md` rendered `src/tl/train/metrics.py`
+    while pointing at the real file, so it passed while still telling the reader the wrong path).
+    """
+    text = doc.read_text(encoding="utf-8")
+    hits = sorted(set(_RETIRED.findall(text)))
+    if not hits:
+        return
+    assert _MARKS_THEM_DEAD.search(text), (
+        f"{doc.relative_to(REPO)} names retired package(s) {hits} but never says they are gone. "
+        "Either repoint to the engine/apps path or add a banner marking them retired — see "
+        "PROJECT_STATE.md §2."
+    )
+
+
 def test_convention_docs_carry_no_results() -> None:
     """The root CLAUDE.md states conventions and must not state results.
 
@@ -81,29 +114,46 @@ def test_convention_docs_carry_no_results() -> None:
 
 
 def test_no_pre_migration_ceiling_outside_superseded() -> None:
-    """No live ceiling CSV may use the retired k-fold-probe estimator.
+    """No live ceiling row may claim to be current unless it declares the deployment-holdout scorer.
 
-    Kp's catalogue ceiling was migrated onto the deployment-holdout scorer; TB's was not, so the two
-    are a different estimator on a different evaluation set. Both schemas carry a `mut_auroc_sd`
-    column, so its presence proves nothing — the marker is its *value*: the holdout scorer fits once
-    and reports exactly 0.0, the k-fold probe reports the spread across folds.
+    Kp's catalogue ceiling was migrated onto the deployment-holdout scorer (it fits on `train` and
+    scores on `holdout` via `load_splits` — see `apps/kleb/card_determinant_lr.py`); TB's was not, so
+    TB is a different estimator on a different evaluation set and its rows must say `provisional`.
 
-    The live panels must therefore either be all-zero SD, or say `provisional` about themselves.
+    **The check is on `ceiling_estimator`, deliberately.** An earlier version of this test inferred
+    the estimator from `ceiling_auroc_sd == 0.0`, on the theory that fitting once gives no spread.
+    That is a weaker check in two ways, both of which matter:
+
+    * It answers "was it fit once?", not "was it fit on the *deployment holdout*?" — and the
+      pre-fix leaky read-out path also fit once, on the wrong split, so it would report 0.0 and pass.
+    * Zero spread is not exclusive to the holdout scorer. The k-fold probe reports exactly 0.0 for a
+      determinant whose AUROC happens to be identical across folds (`tbprofiler_gene_lr_isoniazid.csv`,
+      row `inhA/coding`, is a live example).
+
+    `ceiling_estimator` states the answer outright, so read it rather than inferring it. The SD is
+    still checked, but only as a corroborating signal on rows claiming to be current.
     """
     vis = REPO / "src/bacpredict/visualisations"
     for csv in vis.rglob("catalogue_ceiling_panel.csv"):
         if _is_exempt(csv):
             continue
-        lines = csv.read_text(encoding="utf-8").strip().splitlines()
-        header = lines[0].split(",")
-        assert "ceiling_status" in header, f"{csv.relative_to(REPO)} has no ceiling_status column"
-        sd_i, status_i = header.index("ceiling_auroc_sd"), header.index("ceiling_status")
-        for line in lines[1:]:
-            row = line.split(",")
-            if float(row[sd_i]) != 0.0:
-                assert row[status_i] == "provisional", (
-                    f"{csv.relative_to(REPO)}: {row[0]} has a non-zero ceiling_auroc_sd "
-                    f"({row[sd_i]}), so it came from the k-fold probe, but is not marked provisional"
+        with csv.open(newline="", encoding="utf-8") as fh:
+            rows = list(csv_module.DictReader(fh))
+        assert rows, f"{csv.relative_to(REPO)} has no data rows"
+        for col in ("ceiling_estimator", "ceiling_status", "ceiling_auroc_sd"):
+            assert col in rows[0], f"{csv.relative_to(REPO)} has no {col} column"
+        for row in rows:
+            drug, estimator, status = row["drug"], row["ceiling_estimator"], row["ceiling_status"]
+            if status != "provisional":
+                assert estimator == "deployment_holdout", (
+                    f"{csv.relative_to(REPO)}: {drug} claims status '{status}' but its estimator is "
+                    f"'{estimator}'. Only deployment_holdout rows may be quoted as current; anything "
+                    "else is a different estimator on a different evaluation set."
+                )
+                sd = float(row["ceiling_auroc_sd"] or 0.0)
+                assert sd == 0.0, (
+                    f"{csv.relative_to(REPO)}: {drug} claims the deployment-holdout scorer, which "
+                    f"fits once, but reports a non-zero spread ({sd}). One of the two is wrong."
                 )
 
 

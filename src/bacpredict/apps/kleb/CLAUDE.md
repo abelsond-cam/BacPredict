@@ -2,8 +2,8 @@
 
 > **⚠️ Post-consolidation note (2026-07).** This package moved from `src/kleb_ast/` to
 > `src/bacpredict/apps/kleb/` in the engine consolidation. The organism-agnostic pipeline now lives in
-> `src/bacpredict/engine/` (stages: `labels`, `download`, `embedding`, `finetune`, `gene_lr`, `concat`,
-> `catalogue`, `plots`); this folder holds only Kp specifics (CARD/Kleborate adapters, the AMR sidecar
+> `src/bacpredict/engine/` (stages: `ast_labels`, `download`, `embedding`, **`splits`**, `finetune`, `gene_lr`, `segment_amr_lr`, `concat`,
+> `ref_catalogues`, `plots`); this folder holds only Kp specifics (CARD/Kleborate adapters, the AMR sidecar
 > pipeline, metadata curation, the epidemiology plotter). **Fine-tuning is now the single shared trainer**
 > `bacpredict.engine.finetune.finetune_amr` (invoke `python -m …`, `--task kleb_ast`); the old
 > `kleb_ast/train_amr.py` + `prepare_esmc_…` are gone (merged into the engine). Both organisms train in
@@ -170,7 +170,7 @@ kleb_iso_source `2d5866e`).
 
 | Stage | Scale | Folds × seeds | Where |
 | :-- | :-- | :-- | :-- |
-| **A. Smoke** | n=10 | 1 × 1 | MacBook M1 CPU (or HPC login) — code must run with CUDA disabled |
+| **A. Smoke** | n=10 | 1 × 1 | A short **GPU** sbatch — NOT the login node (a CPU Stage A silently writes empty tensorboard events). See root §0.2 |
 | **B. Overfit** | n=10, train=test | 1 × 1 | Local or HPC interactive |
 | **C. Full** | full data | 1 × 1 | GPU HPC SLURM, ~36 h |
 
