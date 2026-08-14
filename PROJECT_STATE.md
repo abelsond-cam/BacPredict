@@ -1,6 +1,6 @@
 # BacPredict — project state
 
-> **Last verified: 2026-08-14 @ `9aa5e71`** (branch `refactor/consolidate-engine`).
+> **Last verified: 2026-08-14 @ `93f0b71`** (branch `refactor/consolidate-engine`).
 > **Verification scope:** repo tree read directly; all 32 fine-tune numbers read from each
 > checkpoint's own `results.json` on CSD3; both catalogue ceilings re-extracted from their source
 > CSVs; split-table ↔ deployed-holdout equivalence checked for all 32 drugs (0 mismatches).
@@ -245,6 +245,10 @@ filters min 71 / max 7009. ertapenem λ=4.198, 31,856 significant of 3,371,827 t
    a tie). Permutation null on the pilot plus any surprise only.
 2. Invasion: DefenseFinder mapping; the faeces↔respiratory run and blood↔resp concordance;
    locus-level annotation.
+3. **Blocked externally** — hotspot rates by isolation source (per-source rates against the
+   whole-population background mutation rate at each locus, χ² for hotspots associated with invasive
+   disease). Waiting on Aaron uploading the hotspots to HPC. Also blocked: the faeces vs
+   liver/abscess contrast, pending recuration of the mixed `isolation_source_category` in BacHGT.
 
 **Caveats.**
 - **Only 2 of 32 drugs have `eval_scores.npz`.** Every other drug needs an `evaluate.py` pass before
