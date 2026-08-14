@@ -6,6 +6,8 @@
 > CSVs; split-table ↔ deployed-holdout equivalence checked for all 32 drugs (0 mismatches).
 > Not re-verified this pass: the invasion GWAS numbers (taken from the sibling agent's committed
 > write-ups) and the concat-ladder rungs (pending regeneration).
+> Added 2026-08-14 (§3.4 model comparison): both invasion score archives re-scored from their npz on
+> load and matched to the AUROC of record (0.785816 / 0.765471) before any threshold was derived.
 
 ## 0. How to use this file
 
@@ -267,7 +269,8 @@ filters min 71 / max 7009. ertapenem λ=4.198, 31,856 significant of 3,371,827 t
 
 **Status.** `amr_over_time` has run; results mixed. The lab-collection ranking has an interim output —
 `lab_collection_invasion_predictions.csv`, 677 genomes ranked with unitig and Kleborate comparators —
-gated on the `all_samples_2` decision in §3.2.
+gated on the `all_samples_2` decision in §3.2. The head-to-head model comparison over that table is
+**built** (see below) and is ordered by the pooled model, so it is not itself gated on that decision.
 
 **Numbers of record.** Backup AUROC on the 44 fully-held-out lab genomes is **0.719 [0.49, 0.91]**,
 n=44 — **not** 0.90. SL258 predictions span 0.013–0.997.
@@ -277,6 +280,60 @@ n=44 — **not** 0.90. SL258 predictions span 0.013–0.997.
 **Caveats.** The two candidate models agree only ρ=0.68 on the 673 lab genomes, with **top-20 overlap
 2/20** (SL258: ρ=0.53, top-5 overlap 2/5). Different tubes go into the animal model depending on the
 choice, so it is worth getting right.
+
+**Model comparison — Bacformer vs unitig vs annotation (2026-08-14).** Built by
+`kleb_iso_source.build_model_comparison_report` (`thresholds` → `compare` → `shortlists`); every figure
+below is in `processed/train_iso_source/lab_collection/model_comparison_summary.json` with its source
+path. The module re-scores both npz archives on load and refuses to run if they are not the files of
+record — the leakage-free and selection-advantaged unitig cohorts differ only by a `_trainval`
+directory suffix and hold an identically named `unitig_cohort_scores.npz`.
+
+- **Numbers of record, pooled cohort holdout** (the only scope where all three are comparable):
+  Bacformer **0.7858 [0.7695, 0.8024]** n=2,822 · unitig leakage-free **0.7655 [0.7472, 0.7824]**
+  n=2,715 · richest linear stack 0.7307 · country+sublineage 0.6940 · all-Kleborate 0.6396 ·
+  virulence+AMR 0.6384 · AMR-classes 0.6171 · virulence one-hot 0.5522 · Kleborate `virulence_score`
+  **0.4885** (below chance). Footnote only: selection-advantaged unitig 0.7810, whose hit set saw the
+  holdout genomes.
+- **Paired delta — the framing depends on which unitig model.** vs leakage-free:
+  **+0.0210 [+0.0041, +0.0385], separates from zero.** vs selection-advantaged: +0.0055
+  [−0.0110, +0.0230], a tie. Quote the first as the honest comparison and name the second as the
+  handicap it removes.
+- **Agreement on the 671 lab genomes** with both scores, at each model's own Youden point
+  (Bacformer 0.4349, unitig 0.5272): both-invasive 220 · both-faeces 285 · unitig-only 124 ·
+  Bacformer-only 42 · concordance **0.753**, κ **0.508**. Sensitivity: at 0.5, κ 0.479; at median
+  split, κ 0.559. The unitig model calls far more genomes invasive (344 vs 262).
+- **Correlation on the lab collection** (n=671): r² 0.430 logit / 0.435 prob, ρ **0.683**, slope 0.257,
+  sd-ratio **0.392** — the unitig log-odds are ~0.4× as wide, so a shared cut-point would manufacture
+  disagreement. Holdout figures recomputed identically to `model_agreement_holdout.json`.
+- **Denominators.** 677 rows → 673 with a Bacformer score, 671 with a unitig score, 251 labelled,
+  **44** fully held out. Lab-collection AUROC all-251 is 0.903 [0.851, 0.948] and is **inflated**; the
+  quotable figure remains 0.719.
+- **Commonest sublineages in the collection:** SL258 49, SL3010 40, SL307 37 — SL3010 has no cohort
+  per-SL AUROC, so its ranking has no local validation.
+
+**MKP103 / KPNIH1 near-isogenic set (2026-08-14).** Seven ST258/SL258 genomes found by sweeping every
+identity column of `metadata_v2` (an earlier narrower search found only two — quote seven). None is in
+any cohort or in the 677, so all are out-of-sample. Artifact:
+`processed/train_iso_source/lab_collection/mkp103_kpnih1_natural_experiment.csv`.
+
+- **Numbers of record** (pooled P(blood) / all_samples): MKP103 W/t `SAMN22863586` **0.970** / 0.996 ·
+  KPNIH1 parent `SAMN07312724` 0.849 / 0.927 · ramR CHD `SAMN22863596` 0.446 / 0.996 · CHD
+  `SAMN22863587` 0.354 / 0.996 · ramA CHD `SAMN22863595` 0.258 / 0.996 · smvA CHD `SAMN22863597`
+  0.207 / 0.996 · ex-mouse `SAMN17524437` 0.099 / 0.040.
+- **Bears on the §3.2 model choice.** `all_samples` returns **0.9959–0.9960 for all five**
+  chlorhexidine-study genomes — spread 1e-4, i.e. no within-lineage discrimination, which is the job.
+  Pooled spreads the same genomes 0.21–0.97. Independent of AUROC; points the same way as clean
+  interpretation. One series, and the four CHD derivatives are likely sibling clones, not replicates.
+- **KPC-3 deletion test (AMR model).** MKP103 is KPNIH1 with KPC-3 deleted — confirmed from our own
+  Kleborate calls (`Bla_Carb_acquired` KPC-3 vs `-`, SHV-11 and both Omp mutations identical). The AMR
+  model predicts meropenem/imipenem/ertapenem **1.0000 for all seven**, KPC+ and KPC− alike: on this
+  pair it is not reading the carbapenemase. Reading the ST258 background or the shared OmpK35/36
+  defects is a **hypothesis**; porin loss alone can raise ertapenem MICs, and there are no measured
+  MICs for any of the seven.
+- **Do not repeat the tidy colistin story.** W/t → CHD is 0.023 → 0.924, but ramR CHD 0.094 and smvA
+  CHD 0.211 go the other way; the one-pair result does not survive the series.
+- Which physical stock a collaborator holds **cannot** be resolved from databases — only by sequencing
+  the working isolate.
 
 **Owns.** `src/amr_over_time/`.
 
