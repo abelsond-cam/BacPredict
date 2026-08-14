@@ -156,8 +156,9 @@ predate the fixes and need regenerating.
   cannot yet be read in either direction. Full detail: [`visualisations/PROVENANCE.md`](src/bacpredict/visualisations/PROVENANCE.md).
 - The `bacformer/` embedding store is **empty for both organisms** on CSD3.
 - Kp and TB use **different checkpoint directory layouts** (see the paths above).
-- Kp azithromycin **0.799** is the deployed head; **0.816** is the ladder's `ft_mean` re-probe. Both
-  are honest — they are different estimators. Always say which.
+- Kp azithromycin **0.799** is the deployed head (its `results.json`); **0.816066** is the ladder's
+  `ft_mean` re-probe (`…/train_kleb_ast/pangena_predict/amr_ladder/azithromycin/azithromycin_amr_ladder_table.csv`,
+  rung 1). Both are honest — they are different estimators. Always say which.
 
 **Owns.** `src/bacpredict/engine/`, `src/bacpredict/apps/`, `src/bacpredict/visualisations/`.
 
@@ -168,7 +169,8 @@ predate the fixes and need regenerating.
 **Status.** Stage C **done** on all three KPSC-clean cohorts. The pooled, country-controlled cohort
 is the headline. The signal survives country control and holds *within* every major clone.
 
-**Numbers of record** (`src/kleb_iso_source/`, eval-holdout AUROC):
+**Numbers of record** — eval-holdout AUROC, each from its own run's `results.json` under
+`<root>/processed/train_iso_source/<cohort>/models/…`:
 
 | Cohort | n | AUROC | Note |
 |---|--:|--:|---|
@@ -211,16 +213,37 @@ mechanism.
 unitig matrix and lineage clusters are **built and shared**, so the remaining 20 drugs are read-out
 only. TB is not started.
 
-**Numbers of record** — identical holdouts, all genomes shared, paired bootstrap CI:
+**Numbers of record** — identical holdouts (**set membership verified identical**, not merely equal
+counts), paired bootstrap CI. Unitig arm from `…/pyseer_ast/kp/<drug>/lr/results.json`; FT arm from
+the checkpoint's **`eval_scores.npz`** re-score, *not* its `results.json`:
 
 | Drug | FT AUROC/AUPRC | Unitig-LR AUROC/AUPRC | Bal.acc @Youden | Δ (unitig − FT) | Verdict |
 |---|---|---|--:|---|---|
 | ertapenem | 0.9878 / 0.9937 | 0.9775 / 0.9853 | 0.9804 vs 0.9530 | **−0.0103** [−0.0187, −0.0031] | separates from zero |
 | colistin | 0.9100 / 0.8333 | 0.9188 / 0.8077 | 0.8444 vs 0.8477 | **+0.0088** [−0.0171, +0.0347] | **a tie** |
 
+**⚠ Why these FT values differ from §3.1's.** §3.1 quotes the training-time `results.json`
+(ertapenem 0.9882, colistin 0.9094); the table above quotes the `engine.finetune.evaluate` re-score
+of the *same model on the same genomes* (0.9878, 0.9100). Both are honest — the ~5e-4 gap is
+inference-time non-determinism, not a different model or a different holdout. **The re-score is of
+record here** because the paired CI must come from the same `eval_scores.npz` the deltas do. Per §0
+Rule 2, always say which pass a number came from.
+
+**⚠ Threshold convention is not yet uniform across the pilot.** `…/ertapenem/lr/results.json` records
+`operating_point.selected_on: "validation"`, while colistin's records `"holdout"`. The §6 decision is
+Youden-on-holdout for both arms, so **ertapenem's unitig balanced accuracy needs recomputing** before
+the fan-out standardises on it; its AUROC/AUPRC are unaffected.
+
 Cohort: 7,080 of 7,088 genomes resolved; 5,829,181 unitigs → 3,760,582 features (27 GB matrix); af
 filters min 71 / max 7009. ertapenem λ=4.198, 31,856 significant of 3,371,827 tested; colistin
-λ=1.232, 9,277 of 2,486,812. Lineage clusters: **10** at `min_size=100`, covering 6,458/7,080 (91.2%).
+λ=1.232, 9,277 of 2,486,812 (`…/pyseer_ast/kp/<drug>/lr/results.json`).
+
+**⚠ Lineage-cluster coverage — two different numbers, do not conflate.**
+`…/pyseer_ast/kp/structure/lineage_clusters.manifest.json`: **10** named clusters at `min_size=100`
+holding **3,890 of 7,080 genomes (54.9%)**; `n_in_other = 3,190`. The 6,458/7,080 (91.2%) figure is
+*Kleborate-label coverage* — how many genomes carry any Sublineage label at all — most of which fall
+below `min_size` and land in `other`. Since §6's decision is to **drop** `other` from the permutation
+null, that null runs on ~55% of the cohort, **not ~91%**.
 
 **Status — invasion (`src/bac_pyseer/kleb_iso_source/`).** Complete and written up.
 [`PROGRESS_UNITIGS.md`](src/bac_pyseer/docs/PROGRESS_UNITIGS.md) ·
@@ -364,14 +387,22 @@ correct.**
 | `<drug>_split.csv` | `engine/splits` | ladder, `ast_gwas`, ceilings, per-gene LR | **Everything** — it defines the holdout |
 | FT `results.json` | `engine/finetune/finetune_amr` | every quoted FT number | Every FT AUROC in §3.1 |
 | `eval_scores.npz` | `engine/finetune/evaluate` | paired CI in `collect_comparison` | The CI only |
-| `catalogue_ceiling_panel.csv` | `apps/kleb` (CARD) · `apps/tb` (WHO) | ladder, comparison table | The ceiling column |
+| per-drug ceiling CSVs (`card_ceiling/…`, `tbprofiler_gene_lr_…`) | `apps/kleb/card_determinant_lr` (CARD) · the retired TB probe (WHO) | `catalogue_ceiling_panel.csv` | The ceiling column |
+| `catalogue_ceiling_panel.csv` | **⚠ nothing — hand-assembled from the per-drug CSVs above** | ladder, comparison table | The ceiling column |
 | `unitigs.pyseer.gz` | `ast_gwas/build_cohort_once` | every Kp drug | All Kp unitig GWAS |
 | `lineage_clusters.tsv` | `ast_gwas/sublineage_from_metadata` | `--lineage`, permutation null | Calibration only |
 | `mge_hits.parquet/` | `kleb_iso_source/map_unitig_hits_genomad` | the MGE/IS/IGR write-ups | §3.3's invasion mapping |
 
-**Split-table ↔ deployed-holdout equivalence: verified for all 32 drugs, 0 mismatches** (FT
-`n_samples` equals the split-table holdout count). Re-check with exactly that comparison. This is
-what makes the §3.3 comparison arms directly comparable.
+**⚠ `catalogue_ceiling_panel.csv` has no producer module.** It was assembled by hand from the
+per-drug CSVs. Writing one is the right fix, and it is a precondition for rebuilding the TB ceiling —
+because the alternative, hand-copying, is exactly what §3.1's "do not copy the June CSVs into the
+canonical path, that launders them" forbids.
+
+**Split-table ↔ deployed-holdout equivalence: verified for all 32 drugs, 0 mismatches.** The weak
+form is `n_samples` == the split-table holdout row count. For ertapenem and colistin — the two the
+§3.3 comparison rests on — **set membership was verified identical**, which is the form that actually
+licenses a paired test. Count equality is necessary, not sufficient: extend the membership check to
+each drug as its `eval_scores.npz` lands in the fan-out.
 
 ---
 
@@ -404,7 +435,7 @@ tree** — the TB ceiling was built there, which is one of its four defects.
 directory and `raw/assemblies` is GCA-keyed whole-*Klebsiella*. Use
 `raw/assemblies_file_list.tsv` (`Sample<TAB>path`, already the right format) → 7,080 of 7,088.
 
-**Tests.** 572 collected; `pytest tests/` is the gate. `tests/docs/` additionally enforces the
+**Tests.** 624 collected; `pytest tests/` is the gate. `tests/docs/` additionally enforces the
 conventions in §0.
 
 ---
