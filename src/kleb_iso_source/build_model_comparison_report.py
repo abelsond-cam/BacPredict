@@ -70,7 +70,11 @@ BASELINE_LABELS = {
     "virulence_bsc+amr_class": "virulence + AMR one-hot",
     "kleborate_all": "all Kleborate features",
     "country+sublineage": "country + sublineage",
-    "country+sublineage+k_locus+virulence+amr": "richest linear stack",
+    # NOT an annotation comparator, and must never be labelled as one: ~1,192 of its 1,360 features are
+    # country and sublineage one-hots, and country is not in the genome at all. Naming it for its
+    # richness rather than its contents is what made it misread as "the best Kleborate model" in the
+    # first published draft of the report. The Kleborate ceiling is ``kleborate_all`` (0.640).
+    "country+sublineage+k_locus+virulence+amr": "country + sublineage + all Kleborate",
 }
 
 

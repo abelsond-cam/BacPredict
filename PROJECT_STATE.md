@@ -8,6 +8,10 @@
 > write-ups) and the concat-ladder rungs (pending regeneration).
 > Added 2026-08-14 (§3.4 model comparison): both invasion score archives re-scored from their npz on
 > load and matched to the AUROC of record (0.785816 / 0.765471) before any threshold was derived.
+> Added 2026-08-18 (§3.2 `all_samples_2`): metrics read from that run's own `results.json`; its
+> holdout verified **identical genome-for-genome** to the pooled cohort's (2,822/2,822, zero leakage
+> into train/validate) from `split_manifest.json` and both split CSVs, not inferred from matching n.
+> Lab-collection split composition (154/22/31/44) counted from `lab_collection_invasion_predictions.csv`.
 
 ## 0. How to use this file
 
@@ -174,7 +178,9 @@ predate the fixes and need regenerating.
 ### 3.2 Invasion / isolation source
 
 **Status.** Stage C **done** on all three KPSC-clean cohorts. The pooled, country-controlled cohort
-is the headline. The signal survives country control and holds *within* every major clone.
+is the headline **and, as of 2026-08-18, the settled model of record** — the `all_samples_2` retrain
+collapsed against it on a shared holdout (below). The signal survives country control and holds
+*within* every major clone.
 
 **Numbers of record** — eval-holdout AUROC, each from its own run's `results.json` under
 `<root>/processed/train_iso_source/<cohort>/models/…`:
@@ -183,27 +189,49 @@ is the headline. The signal survives country control and holds *within* every ma
 |---|--:|--:|---|
 | `sampled_country_2_1_all` (pooled) | 14,211 | **0.786** | **The headline.** The cohort the GWAS ran on |
 | `sampled_country_2_1_stratified` | 9,866 | 0.762 | |
-| `all_samples` | 21,533 | 0.827 | **Country-confounded — do not quote.** Sits *below* its own linear metadata baseline (0.857) |
+| `all_samples` | 21,533 | 0.827 | **Country-confounded — do not quote.** Sits *below* its own linear metadata baseline (0.857). Pre-dates the frozen test set, so **not** comparable to the row below |
+| `all_samples_2` (bf16) | 21,420 | **0.765** | **The country-confound test, and it collapsed.** Scored on the *identical* frozen 2,822-genome holdout as the pooled row |
 
 Comparators, all on the pooled cohort: strongest linear metadata stack 0.731 (Bacformer +0.055);
 all-Kleborate 0.640; Kleborate virulence+AMR 0.638; virulence one-hot 0.552; **virulence_score alone
 0.489 — chance.** Per-sublineage: SL258 0.858, SL15 0.841, SL307 0.815, SL17 0.806, rare-SL 0.759,
 SL147 0.738. Lineage identity is not what the model reads.
 
+**`all_samples_2` — the country-confound test, resolved 2026-08-18.** Job `33615516` COMPLETED (28h46m
+of a 36h wall, early stopping fired), bf16, read from
+`processed/train_iso_source/blood_faeces/all_samples_2/kpsc_human/models/results.json`: eval AUROC
+**0.7652**, auprc 0.7634, sens 0.772, spec 0.621, bal-acc 0.697, n 2,822, prevalence 0.5198.
+
+The comparison is like-for-like and was verified rather than assumed, from
+`all_samples_2/kpsc_human/split_manifest.json` and both split CSVs: the evaluate sets are **identical
+genome-for-genome** (2,822 of 2,822), **zero** holdout genomes appear in `all_samples_2`'s train or
+validate, and the manifest records the freeze explicitly (`n_frozen_test_requested` 2,822, present
+2,822, missing 0). Cohort 21,420 (train 16,552 / validate 2,046) against the pooled cohort's 14,119
+(train 9,885) — **~67% more training data, 2.1 AUROC points lower.**
+
+Per the §6 model-choice rule this is a **collapse, which is clean evidence**; the near-duplicate audit
+that rule requires applies only to a *win*, so this branch closes without one.
+
 **In flight.** bf16 re-runs of all three cohorts (the originals were fp32; the bf16 cast landed later
-in `a817ac2`), and an `all_samples_2` retrain that keeps all 251 labelled lab genomes out of training.
+in `a817ac2`).
 
 **Next.**
-1. Land the bf16 A/B and the `all_samples_2` retrain, then apply the model-choice rule in §6.
+1. ~~Land the bf16 A/B and the `all_samples_2` retrain, then apply the model-choice rule in §6.~~
+   `all_samples_2` **DONE** and the rule applied — see above. The bf16 A/B on the other cohorts stands.
 2. ~~Unitig honest re-run~~ — **DONE.** The leakage-free re-fit (selection on train+validate only)
    landed; its numbers are in §3.4, and they change the verdict — see §3.3.
-3. Score the lab collection for predicted invasiveness and hand over the ranking.
+3. ~~Score the lab collection for predicted invasiveness and hand over the ranking.~~ **DONE** — the
+   ranking and the three-way model comparison are in §3.4.
 4. bac-LM forward pass → per-gene LR → concat ladder. **Demoted to the last job.**
 
 **Caveats.**
 - Every published iso-source number is **fp32**, not bf16. Absence of `run_config.precision` in a
   pre-`a817ac2` `results.json` means fp32.
-- **A win for `all_samples_2` is not conclusive** — see the asymmetry rule in §6.
+- ~~A win for `all_samples_2` is not conclusive~~ — **moot, it collapsed** (2026-08-18). The asymmetry
+  rule in §6 still governs any future "more data" retrain.
+- **The `all_samples_2` comparison rests on the frozen holdout being genuinely shared.** It was checked
+  (identical evaluate sets, zero leakage). Any future cohort claiming comparability must be checked the
+  same way — a matching `n` and prevalence is *not* proof, it was what first looked suspicious here.
 - Mechanism is an **open hypothesis**. Do not assert it.
 
 **Owns.** `src/kleb_iso_source/`.
@@ -335,14 +363,17 @@ null, that null runs on ~55% of the cohort, **not ~91%**.
 ### 3.4 Downstream applications
 
 **Status.** `amr_over_time` has run; results mixed. The lab-collection ranking has an interim output —
-`lab_collection_invasion_predictions.csv`, 677 genomes ranked with unitig and Kleborate comparators —
-gated on the `all_samples_2` decision in §3.2. The head-to-head model comparison over that table is
-**built** (see below) and is ordered by the pooled model, so it is not itself gated on that decision.
+`lab_collection_invasion_predictions.csv`, 677 genomes ranked with unitig and Kleborate comparators.
+The `all_samples_2` gate in §3.2 is **resolved** (2026-08-18, pooled wins), so the ranking is final on
+the pooled model — which is also the model the comparison below was already ordered by. The head-to-head
+comparison is **built and published**.
 
-**Numbers of record.** Backup AUROC on the 44 fully-held-out lab genomes is **0.719 [0.49, 0.91]**,
-n=44 — **not** 0.90. SL258 predictions span 0.013–0.997.
+**Numbers of record.** ⛔ **No lab-collection AUROC is of record** — withdrawn 2026-08-18 (§6). The
+former 0.719 (n=44, 6 positives) and 0.903 (inflated, 176 of 251 fitted on) are **not** quotable and
+must not be reintroduced; the split composition is 154 train / 22 validate / 31 unseen / 44 evaluate.
+Accuracy figures come from the cohort holdout, n=2,822. SL258 predictions span 0.013–0.997.
 
-**Next.** Resolve pooled vs `all_samples_2` per the §6 rule, then finalise the ranking for *Galleria*.
+**Next.** Finalise the ranking for *Galleria*; then the queued models below.
 
 **Caveats.** The two candidate models agree only ρ=0.68 on the 673 lab genomes, with **top-20 overlap
 2/20** (SL258: ρ=0.53, top-5 overlap 2/5). Different tubes go into the animal model depending on the
@@ -357,10 +388,12 @@ directory suffix and hold an identically named `unitig_cohort_scores.npz`.
 
 - **Numbers of record, pooled cohort holdout** (the only scope where all three are comparable):
   Bacformer **0.7858 [0.7695, 0.8024]** n=2,822 · unitig leakage-free **0.7655 [0.7472, 0.7824]**
-  n=2,715 · richest linear stack 0.7307 · country+sublineage 0.6940 · all-Kleborate 0.6396 ·
-  virulence+AMR 0.6384 · AMR-classes 0.6171 · virulence one-hot 0.5522 · Kleborate `virulence_score`
-  **0.4885** (below chance). Footnote only: selection-advantaged unitig 0.7810, whose hit set saw the
-  holdout genomes.
+  n=2,715. **Genome-only annotation comparators** (the like-for-like set): all-Kleborate **0.6396 —
+  this is the Kleborate ceiling** · virulence+AMR 0.6384 · AMR-classes 0.6171 · virulence one-hot
+  0.5522 · Kleborate `virulence_score` **0.4885** (below chance). **Not comparable — carry non-genomic
+  metadata:** country+sublineage 0.6940 · country+sublineage+k_locus+virulence+amr 0.7307 (labelled
+  "richest linear stack" in `BASELINE_LABELS`, which is what made it misread as an annotation model).
+  Footnote only: selection-advantaged unitig 0.7810, whose hit set saw the holdout genomes.
 - **Paired delta — the framing depends on which unitig model.** vs leakage-free:
   **+0.0210 [+0.0041, +0.0385], separates from zero.** vs selection-advantaged: +0.0055
   [−0.0110, +0.0230], a tie. Quote the first as the honest comparison and name the second as the
@@ -372,11 +405,60 @@ directory suffix and hold an identically named `unitig_cohort_scores.npz`.
 - **Correlation on the lab collection** (n=671): r² 0.430 logit / 0.435 prob, ρ **0.683**, slope 0.257,
   sd-ratio **0.392** — the unitig log-odds are ~0.4× as wide, so a shared cut-point would manufacture
   disagreement. Holdout figures recomputed identically to `model_agreement_holdout.json`.
-- **Denominators.** 677 rows → 673 with a Bacformer score, 671 with a unitig score, 251 labelled,
-  **44** fully held out. Lab-collection AUROC all-251 is 0.903 [0.851, 0.948] and is **inflated**; the
-  quotable figure remains 0.719.
+- **Denominators.** 677 rows → 673 with a Bacformer score, 671 with a unitig score, 251 labelled
+  (154 train / 22 validate / 31 unseen / **44** fully held out, 6 positives). No AUROC is reported on
+  any of these scopes — see the withdrawal above and the §6 decision.
 - **Commonest sublineages in the collection:** SL258 49, SL3010 40, SL307 37 — SL3010 has no cohort
   per-SL AUROC, so its ranking has no local validation.
+- **Published report** (2026-08-18): <https://claude.ai/code/artifact/87cbaae7-d1f0-4e47-be98-910e3fd198b3>
+  — six sections plus the register below, built from the seven `model_comparison_*` files only.
+
+**Open questions from the comparison (2026-08-14/18) — observations and hypotheses, not findings.**
+None blocks anything; they are what the queued models below are pointed at.
+
+- **O1 — the SL3010 contradiction.** Four ST3010 genomes sit in Bacformer's SL3010 bottom ten at
+  0.079–0.144 while the unitig model scores them 0.863–0.922 (`VRES0604` 0.127/0.922, `VRES0606`
+  0.125/0.903, `VRES0611` 0.079/0.889, `VRES0565` 0.144/0.863). Not scale compression — opposite sides
+  of *both* models' Youden points. All four `unseen`, so neither is reciting a label, and SL3010 is the
+  only top-3 sublineage with **no cohort per-SL AUROC** to arbitrate.
+- **O2 — it generalises beyond SL3010, and there the labels favour Bacformer.** Every genome in
+  Bacformer's SL258 bottom ten carries a unitig probability 0.25–0.68, straddling the unitig threshold
+  0.527; 7 of those 10 are outright disagreements and **all 10 are truly faeces** — so within the
+  best-characterised lineage (n=49, cohort per-SL 0.858) the unitig model is close to uninformative.
+  **But SL307 behaves well** (18/20 agree, bottom ten unanimous and all truly faeces), so it is not
+  uniform across lineages — which constrains any explanation.
+- **O3 — the collection sits low in Bacformer's distribution.** Median pooled probability **0.194** vs
+  unitig 0.542 and cohort holdout prevalence 0.520; Bacformer calls 262/671 invasive at its Youden
+  point, unitig 344. Genuine property of a carriage-heavy collection, or cohort→collection
+  distribution shift — open.
+- **O4 — the disagreement is asymmetric ~3:1.** Of 166 disagreements, 124 are unitig-invasive /
+  Bacformer-faeces against 42 the reverse. Consistent with O3 and with the compressed unitig log-odds
+  (sd-ratio 0.392), but consistency is a description, not an explanation.
+
+**Queued models — not started.** Hypothesis under Q1/Q2: *the unitig model's deficit is a
+lineage-representation deficit*, because GWAS significance filtering keeps phenotype-associated unitigs
+and discards the lineage-defining ones. Reference points on the same holdout: sublineage alone 0.6032,
+country alone 0.6326, country+sublineage 0.6940.
+
+1. **Q1 — unitig + one-hot sublineage (±country). Do first.** Reuses the existing 33,039-unitig matrix
+   (`gwas_unitig_lmm/presence_matrix/X.npz`), so hours not days. **`unitig_presence_model.py fit` has no
+   covariate support** — needs `--covariates`. ⛔ **Surface before running:** the L2 penalty would fall
+   on the ~1,130 dense SL columns as well as the sparse unitig ones; penalised-together vs
+   SL-as-unpenalised-fixed-effect are **different estimators**. Re-run the `C` sweep (`C=0.01` was tuned
+   on a 33k-feature space). Bacformer has no explicit country feature, so **unitig+SL without country is
+   the like-for-like comparator**.
+2. **Q1b — Bacformer + country + sublineage.** The symmetric experiment, and what makes the 0.731 row
+   interpretable: nobody has given Bacformer those two variables, so 0.731 is a **floor** for a combined
+   model, not a ceiling Bacformer is straining against. Shares Q1's estimator question.
+3. **Q2 — relaxed unitig inclusion. Blocked on a decision.** The GWAS tested **6,280,612** unitigs and
+   kept 33,039 (0.53%, Bonferroni 8.23e-09). ⚠ **p-value sweep vs a single all-unitigs fit is an open
+   decision for David + pp** — nothing queued until settled. Feasibility established: `sample_nonsig_unitigs.py`
+   already streams the full 603 MB `.assoc` selecting by p-value with af-matching, and presence comes
+   from one streaming pass over the 82 GB `unitigs.pyseer.gz`. At 6.28M features p/n ≈ 460, so a null
+   result would be ambiguous between "no signal" and "wrong regularisation" — and if the solver will not
+   hold the design, that is a **scale problem to solve for the chosen estimator**, not grounds to
+   substitute another. Free by-product: no selection step means **no selection leakage**, so the
+   `trainval_only` / `full_cohort` distinction dissolves for that arm.
 
 **MKP103 / KPNIH1 near-isogenic set (2026-08-14).** Seven ST258/SL258 genomes found by sweeping every
 identity column of `metadata_v2` (an earlier narrower search found only two — quote seven). None is in
@@ -550,6 +632,9 @@ directory was consolidated. Several of these existed nowhere else.
 |---|---|
 | 2026-08-13 | **All 251 labelled lab genomes stay out of training** (207 forced to validate, 44 already in the frozen test set). They were deliberately *not* put in evaluate: the pooled model trained on 154 of them, which would break the pooled-vs-new comparison. Quote the 44 for a fully held-out read. |
 | 2026-08-13 | **Model-choice rule.** If the `all_samples_2` advantage collapses, use the country-controlled pooled model for clean interpretation; if `all_samples_2` is still somewhat better, use that. **Asymmetry that must survive: a collapse is clean evidence, but a win is *not* conclusive** — the bigger training pool may hold near-identical outbreak siblings of the frozen test genomes, so a win still needs a **near-duplicate audit** to separate "more data helps" from clonal leakage. |
+| 2026-08-18 | **RESOLVED — the country-controlled pooled model is the model of record.** `all_samples_2` scored **0.765** against pooled **0.786** on the identical frozen 2,822-genome holdout, with ~67% more training data (§3.2). The rule's collapse branch fired, so no near-duplicate audit was needed. **David's conclusion, and the framing to use: the best learning for genomes from unlabelled countries is generalist.** Deliberately kept simple — do not elaborate it into a mechanism, and do not reopen it without new evidence. |
+| 2026-08-18 | **No AUROC is reported for the lab collection.** Only 44 labelled genomes are fully held out, with 6 positives; the interval runs from near-chance to near-perfect and cannot separate a good model from a mediocre one. The 0.719 and the inflated 0.903 are both **withdrawn from reporting** — quote cohort-holdout figures (n=2,822) instead. The lab collection's role is application, not validation. |
+| 2026-08-18 | **Compare models by what they were allowed to see, not by which number is larger.** The `country+sublineage+k_locus+virulence+amr` baseline is **not** a Kleborate comparator — ~1,192 of its 1,360 features are country and sublineage one-hots, and country is not in the genome at all. Against annotation on equal terms Bacformer is 0.786 vs **0.640**, not vs 0.731. Any linear stack carrying non-genomic metadata must be labelled as such and set apart from genome-only models. |
 
 ### Framing rules
 
