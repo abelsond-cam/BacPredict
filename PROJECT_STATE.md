@@ -450,13 +450,24 @@ lineage-representation deficit*, because GWAS significance filtering keeps pheno
 and discards the lineage-defining ones. Reference points on the same holdout: sublineage alone 0.6032,
 country alone 0.6326, country+sublineage 0.6940.
 
-1. **Q1 — unitig + one-hot sublineage (±country). Do first.** Reuses the existing 33,039-unitig matrix
-   (`gwas_unitig_lmm/presence_matrix/X.npz`), so hours not days. **`unitig_presence_model.py fit` has no
-   covariate support** — needs `--covariates`. ⛔ **Surface before running:** the L2 penalty would fall
-   on the ~1,130 dense SL columns as well as the sparse unitig ones; penalised-together vs
-   SL-as-unpenalised-fixed-effect are **different estimators**. Re-run the `C` sweep (`C=0.01` was tuned
-   on a 33k-feature space). Bacformer has no explicit country feature, so **unitig+SL without country is
-   the like-for-like comparator**.
+1. **Q1 — unitig + one-hot sublineage (±country). DEFERRED 2026-08-18** (David: complex, and mostly
+   supplementary proof of Bacformer's power). **Deferred with a correction attached:** an earlier note
+   here called it complex and said `fit` needs a general `--covariates` framework. **It does not.** The
+   cheap path is a `--with-sublineage` flag, ~20 lines plus a test:
+   `align_to_split` **already returns `Sublineage`** (it appends the column when the split CSV has it,
+   and the split CSV does); the design is sparse CSR so the block goes on with one
+   `sp.hstack([X, sl_onehot]).tocsr()`; both blocks are 0/1 so there is no scaling mismatch; and the
+   `C` sweep, scoring path and npz writer are all column-agnostic — only `save_model` needs the
+   extended name list, which it already takes as an argument. **Do not re-scope this as a project.**
+   - **What the cheap version gives up:** SL columns take the same L2 penalty as the unitig columns.
+     That is the *conservative* direction (the penalty shrinks SL effects), so it answers "does lineage
+     close the gap?" fine. It is the wrong estimator only for a precise **decomposition** claim — "how
+     much do unitigs add *beyond* lineage" — which needs SL as unpenalised fixed effects and a custom
+     solver. That, not the plumbing, is where the complexity lives.
+   - Re-run the `C` sweep if it is ever built (`C=0.01` was tuned on a 33k-feature space). Bacformer has
+     no explicit country feature, so **unitig+SL without country is the like-for-like comparator**.
+   - **If it is revived, the reason will be O2**, not the headline: it is the direct test of whether the
+     unitig model's within-lineage failure in SL258 is a lineage-representation deficit.
 2. **Q1b — Bacformer + country + sublineage.** The symmetric experiment, and what makes the 0.731 row
    interpretable: nobody has given Bacformer those two variables, so 0.731 is a **floor** for a combined
    model, not a ceiling Bacformer is straining against. Shares Q1's estimator question.
