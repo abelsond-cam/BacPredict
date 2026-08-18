@@ -22,8 +22,8 @@ to say so. Small clusters collapse to one ``other`` bucket, matching both the pr
 ``min_sl_size=100`` and :mod:`lineage_from_distances`, so the output is drop-in interchangeable.
 
 **Coverage, and why the shortfall is a join problem rather than a labelling one.** Keying only on
-``Sample`` labels ~91% of the AST cohort. That 9% is **not** Kleborate failing to call a sublineage:
-of the 622 misses, **620 have no ``Sample``-keyed row at all**, and only 2 have an ST without an SL.
+``Sample`` labels ~91% of the AST cohort. That 9% is **not** a failed sublineage call: of the 622
+misses, **620 have no ``Sample``-keyed row at all**.
 
 The reason is read type. ``Sample`` holds a **BioSample** accession, which is how the short-read
 genomes are keyed — but the **long-read** genomes were deposited under a **GCA assembly accession**,
@@ -40,6 +40,24 @@ gone wrong — and note that its failure message is right: a poor join here *is*
 ⚠ **Two different numbers get called "coverage"** and must not be conflated: the fraction of the
 cohort carrying *any* label (~91%), and the fraction landing in a *named cluster* after ``min_size``
 collapses the rare ones (~55%). The permutation null runs on the latter. The manifest reports both.
+
+⛔ **SUBLINEAGE IS NOT DERIVED FROM ST. DO NOT INFER ONE FROM THE OTHER.**
+
+They are similar and they are **definitely different**, and the difference is not a naming detail:
+
+* **ST** is the 7-locus MLST sequence type. Kleborate emits it.
+* **SL (Sublineage)** comes from **Pasteur BIGSdb LIN-typing**, a specific algorithm over LIN codes.
+  **Kleborate v3.2.4 has no LIN-coding module at all** — there is no flag or mode that makes it
+  produce a Sublineage. In this project the SL/``LINcode``/``Clonal group``/``Phylogroup`` columns
+  came from a v1 QC Excel LINcode sheet, *not* from any Kleborate run.
+
+So a genome with an ST and no SL cannot be given one here. Getting SL for the unlabelled genomes
+requires running BIGSdb LIN-typing; re-running Kleborate would return the ST they already have.
+
+**ST may be used as a stand-in clustering** while LIN-typing is pending — that is what
+``--cluster-source st`` is for — but the output is then **ST clusters, labelled as such**, and every
+artifact says so. Never relabel an ST as an SL, never map one to the other by majority vote or any
+other rule, and never describe an ST-clustered run as sublineage-clustered.
 """
 
 from __future__ import annotations
@@ -62,6 +80,25 @@ DEFAULT_SAMPLE_COLUMN = "Sample"
 DEFAULT_SUBLINEAGE_COLUMN = "Sublineage"
 MISSING = {"", "nan", "NA", "None", "unknown", "-"}
 
+#: The two label columns this module can cluster on, and what each one IS. They are **different
+#: types**, not two spellings of one thing — see the ⛔ block in the module docstring. The mapping is
+#: here so that choosing a source also fixes how every downstream artifact describes itself.
+CLUSTER_SOURCES = {
+    "sublineage": {
+        "column": "Sublineage",
+        "cluster_type": "Sublineage (Pasteur BIGSdb LIN-typing)",
+        "note": "The method of record.",
+    },
+    "st": {
+        "column": "ST",
+        "cluster_type": "ST (7-locus MLST) — NOT sublineage",
+        "note": (
+            "STAND-IN while BIGSdb LIN-typing is pending. ST is not a sublineage and was not "
+            "converted into one; these clusters must be reported as ST clusters."
+        ),
+    },
+}
+
 #: Columns that also hold a BioSample accession, searched when ``Sample`` (the primary key) misses.
 #: ``Sample`` carries the BioSample for short-read genomes, but long-read genomes were deposited
 #: under a GCA assembly accession, so their rows are keyed by that and are invisible to the primary
@@ -77,7 +114,11 @@ def load_sublineages(
     sublineage_column: str = DEFAULT_SUBLINEAGE_COLUMN,
     fallback_columns: tuple[str, ...] = FALLBACK_ID_COLUMNS,
 ) -> tuple[dict[str, str], dict[str, int]]:
-    """Read ``id -> Sublineage`` from metadata_v2, keyed by ``Sample`` and by the fallback ids.
+    """Read ``id -> label`` from metadata_v2, keyed by ``Sample`` and by the fallback ids.
+
+    ``sublineage_column`` selects which column is read **verbatim**. Nothing in this function
+    derives, infers or converts one label type into another — an ST read from the ``ST`` column
+    stays an ST string, and is never renamed to look like a sublineage.
 
     Returns ``(sublineage_of, recovered_by_column)``. The second value is a per-column count of ids
     that were **only** reachable through a fallback — reported in the manifest so a silent change in
@@ -138,10 +179,21 @@ def assign_clusters(
 
 def run(
     *, reflist: Path, metadata_tsv: Path, out_tsv: Path, min_size: int = DEFAULT_MIN_SIZE,
-    sample_column: str = DEFAULT_SAMPLE_COLUMN, sublineage_column: str = DEFAULT_SUBLINEAGE_COLUMN,
-    min_coverage: float = 0.5,
+    sample_column: str = DEFAULT_SAMPLE_COLUMN, sublineage_column: str | None = None,
+    min_coverage: float = 0.5, cluster_source: str = "sublineage",
 ) -> dict[str, object]:
-    """Write the headerless ``Sample<TAB>cluster`` file pyseer ``--lineage-clusters`` expects."""
+    """Write the headerless ``Sample<TAB>cluster`` file pyseer ``--lineage-clusters`` expects.
+
+    ``cluster_source`` picks which label type to cluster on — ``sublineage`` (the method of record)
+    or ``st`` (a stand-in while BIGSdb LIN-typing is pending). The choice is recorded in the manifest
+    as ``cluster_type`` and echoed in the log, because an ST-clustered run that gets described as
+    sublineage-clustered is a scientific error, not a labelling one. ``sublineage_column`` overrides
+    the column for either source; it does not change what the labels *are*.
+    """
+    if cluster_source not in CLUSTER_SOURCES:
+        raise SystemExit(f"--cluster-source must be one of {sorted(CLUSTER_SOURCES)}")
+    spec = CLUSTER_SOURCES[cluster_source]
+    label_column = sublineage_column or spec["column"]
     samples = [
         line.split("\t")[0] for line in reflist.read_text().splitlines() if line.strip()
     ]
@@ -149,8 +201,13 @@ def run(
         raise SystemExit(f"{reflist} yielded no samples")
 
     sublineage_of, recovered_by = load_sublineages(
-        metadata_tsv, sample_column=sample_column, sublineage_column=sublineage_column
+        metadata_tsv, sample_column=sample_column, sublineage_column=label_column
     )
+    if cluster_source != "sublineage":
+        logger.warning(
+            "clustering on %s — %s These are NOT sublineages; do not report them as such.",
+            spec["cluster_type"], spec["note"],
+        )
     cohort = set(samples)
     n_covered = sum(1 for s in samples if s in sublineage_of)
     coverage = n_covered / len(samples)
@@ -165,7 +222,7 @@ def run(
     if coverage < min_coverage:
         raise SystemExit(
             f"only {n_covered}/{len(samples)} ({coverage:.1%}) of the cohort has a "
-            f"{sublineage_column!r} in {metadata_tsv} — below --min-coverage {min_coverage:.0%}. "
+            f"{label_column!r} in {metadata_tsv} — below --min-coverage {min_coverage:.0%}. "
             "A join this poor is a wrong id column or a wrong sheet, not a labelling gap."
         )
 
@@ -178,7 +235,11 @@ def run(
         "source": str(metadata_tsv),
         "reflist": str(reflist),
         "output": str(out_tsv),
-        "method": f"curated Kleborate {sublineage_column} (metadata_v2)",
+        "cluster_source": cluster_source,
+        "cluster_type": spec["cluster_type"],
+        "cluster_type_note": spec["note"],
+        "label_column": label_column,
+        "method": f"{spec['cluster_type']} read verbatim from metadata_v2 column {label_column!r}",
         "min_size": min_size,
         "n_samples": len(samples),
         "n_with_label": n_covered,
@@ -215,7 +276,14 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--min-size", type=int, default=DEFAULT_MIN_SIZE,
                    help=f"Collapse sublineages smaller than this into '{OTHER}'. Default {DEFAULT_MIN_SIZE}.")
     p.add_argument("--sample-column", default=DEFAULT_SAMPLE_COLUMN)
-    p.add_argument("--sublineage-column", default=DEFAULT_SUBLINEAGE_COLUMN)
+    p.add_argument("--cluster-source", choices=sorted(CLUSTER_SOURCES), default="sublineage",
+                   help="Which label type to cluster on. 'sublineage' is the method of record. "
+                        "'st' is a STAND-IN while Pasteur BIGSdb LIN-typing is pending — ST is a "
+                        "different type, is not converted into a sublineage, and the output must be "
+                        "reported as ST clusters.")
+    p.add_argument("--sublineage-column", default=None,
+                   help="Override the column for the chosen --cluster-source. Does not change what "
+                        "the labels are.")
     p.add_argument("--min-coverage", type=float, default=0.5,
                    help="Fail if fewer than this fraction of the cohort carries a label. Default 0.5.")
     args = p.parse_args(argv)
@@ -225,6 +293,7 @@ def main(argv: list[str] | None = None) -> None:
         reflist=args.reflist, metadata_tsv=args.metadata_tsv, out_tsv=args.out_tsv,
         min_size=args.min_size, sample_column=args.sample_column,
         sublineage_column=args.sublineage_column, min_coverage=args.min_coverage,
+        cluster_source=args.cluster_source,
     ), indent=2))
 
 

@@ -165,3 +165,79 @@ def test_recovered_genomes_are_counted_in_the_manifest(tmp_path: Path) -> None:
     # Without the recovery SL258 would be n=2 and collapse to `other` at min_size=3.
     assert manifest["n_clusters"] == 1
     assert manifest["n_in_other"] == 0
+
+
+def _write_metadata_st(path: Path, rows: list[tuple[str, str | None, str | None]]) -> None:
+    """metadata_v2 carries ST and Sublineage as SEPARATE columns, from different sources."""
+    pd.DataFrame({
+        "Sample": [r[0] for r in rows],
+        "Sublineage": [r[1] for r in rows],
+        "ST": [r[2] for r in rows],
+    }).to_csv(path, sep="\t", index=False)
+
+
+def test_st_clusters_are_labelled_st_and_never_renamed_to_sublineage(tmp_path: Path) -> None:
+    """ST is NOT a sublineage and must never be presented as one.
+
+    Sublineage comes from Pasteur BIGSdb LIN-typing — a specific algorithm. Kleborate has no
+    LIN-coding module at all, so an ST cannot be converted into an SL by any rule, majority vote
+    included. ST clustering is a stand-in while LIN-typing is pending, and the output has to say so
+    or a downstream reader will quote ST clusters as sublineage clusters.
+    """
+    meta = tmp_path / "metadata_v2.tsv"
+    _write_metadata_st(meta, [(f"s{i}", None, "ST258") for i in range(6)])
+    reflist = tmp_path / "refs.txt"
+    _write_reflist(reflist, [f"s{i}" for i in range(6)])
+
+    manifest = sublineage_run(
+        reflist=reflist, metadata_tsv=meta, out_tsv=tmp_path / "c.tsv",
+        min_size=3, cluster_source="st",
+    )
+    assert manifest["cluster_source"] == "st"
+    assert "NOT sublineage" in manifest["cluster_type"]
+    assert manifest["label_column"] == "ST"
+
+    labels = {line.split("\t")[1] for line in (tmp_path / "c.tsv").read_text().splitlines()}
+    assert labels == {"ST258"}, "the ST string must survive verbatim"
+    assert not any(lbl.upper().startswith("SL") for lbl in labels), (
+        "an ST was emitted under a sublineage-looking label — ST and SL are different types"
+    )
+
+
+def test_sublineage_is_the_default_and_says_so(tmp_path: Path) -> None:
+    """The method of record must stay the default; the stand-in has to be asked for explicitly."""
+    meta = tmp_path / "metadata_v2.tsv"
+    _write_metadata_st(meta, [(f"s{i}", "SL258", "ST258") for i in range(6)])
+    reflist = tmp_path / "refs.txt"
+    _write_reflist(reflist, [f"s{i}" for i in range(6)])
+
+    manifest = sublineage_run(
+        reflist=reflist, metadata_tsv=meta, out_tsv=tmp_path / "c.tsv", min_size=3
+    )
+    assert manifest["cluster_source"] == "sublineage"
+    assert "BIGSdb" in manifest["cluster_type"]
+    labels = {line.split("\t")[1] for line in (tmp_path / "c.tsv").read_text().splitlines()}
+    assert labels == {"SL258"}
+
+
+def test_choosing_st_does_not_silently_read_the_sublineage_column(tmp_path: Path) -> None:
+    """Asking for ST must give ST, even when a Sublineage column is sitting right there."""
+    meta = tmp_path / "metadata_v2.tsv"
+    _write_metadata_st(meta, [(f"s{i}", "SL999", "ST258") for i in range(6)])
+    reflist = tmp_path / "refs.txt"
+    _write_reflist(reflist, [f"s{i}" for i in range(6)])
+
+    sublineage_run(reflist=reflist, metadata_tsv=meta, out_tsv=tmp_path / "c.tsv",
+                   min_size=3, cluster_source="st")
+    labels = {line.split("\t")[1] for line in (tmp_path / "c.tsv").read_text().splitlines()}
+    assert labels == {"ST258"} and "SL999" not in labels
+
+
+def test_an_unknown_cluster_source_is_refused(tmp_path: Path) -> None:
+    meta = tmp_path / "metadata_v2.tsv"
+    _write_metadata_st(meta, [("s0", "SL258", "ST258")])
+    reflist = tmp_path / "refs.txt"
+    _write_reflist(reflist, ["s0"])
+    with pytest.raises(SystemExit, match="cluster-source"):
+        sublineage_run(reflist=reflist, metadata_tsv=meta, out_tsv=tmp_path / "c.tsv",
+                       cluster_source="lincode_guess")
