@@ -163,6 +163,49 @@ def load_sublineages(
     return sublineage_of, recovered
 
 
+def load_extra_labels(
+    paths: list[Path], *, label_column: str, sample_column: str = DEFAULT_SAMPLE_COLUMN,
+    respect_gate: bool = True,
+) -> tuple[dict[str, str], dict[str, str], int]:
+    """Read ``Sample -> label`` from additional labelled tables, e.g. a fresh LIN-typing run.
+
+    These are labels produced by the same algorithm as the metadata column, for genomes metadata_v2
+    has no row for. They are *not* a different label type being blended in — feeding ST values here
+    would silently manufacture the exact conflation the ``--cluster-source`` split exists to prevent.
+
+    When a table carries a ``passes_gate`` column (written by ``genome_prep.lin_typing``), rows that
+    fail it are skipped unless ``respect_gate`` is False: a nearest-profile call on a poorly matched
+    genome is a guess, and a guess in a lineage cluster corrupts the permutation null silently.
+
+    Returns ``(label_of, source_of, n_skipped_by_gate)``.
+    """
+    label_of: dict[str, str] = {}
+    source_of: dict[str, str] = {}
+    n_gated = 0
+    for path in paths:
+        df = pd.read_csv(path, sep="\t", dtype=str, low_memory=False)
+        for required in (sample_column, label_column):
+            if required not in df.columns:
+                raise SystemExit(f"{path} lacks {required!r} (has {list(df.columns)[:12]}…)")
+        if respect_gate and "passes_gate" in df.columns:
+            keep = df["passes_gate"].str.strip().str.lower().isin({"true", "1", "yes"})
+            n_gated += int((~keep).sum())
+            df = df[keep]
+        df = df[df[label_column].notna() & ~df[label_column].str.strip().isin(MISSING)]
+        for sample, label in zip(df[sample_column], df[label_column].str.strip(), strict=True):
+            if sample in label_of and label_of[sample] != label:
+                raise SystemExit(
+                    f"{sample} has two different {label_column} values across --extra tables "
+                    f"({label_of[sample]!r} vs {label!r}). Resolve the sources, do not guess."
+                )
+            label_of[sample] = label
+            source_of[sample] = path.name
+        logger.info("%s: %d labelled rows kept", path, len(df))
+    if n_gated:
+        logger.info("skipped %d extra rows that failed their quality gate", n_gated)
+    return label_of, source_of, n_gated
+
+
 def assign_clusters(
     samples: list[str], sublineage_of: dict[str, str], *, min_size: int = DEFAULT_MIN_SIZE
 ) -> dict[str, str]:
@@ -181,6 +224,8 @@ def run(
     *, reflist: Path, metadata_tsv: Path, out_tsv: Path, min_size: int = DEFAULT_MIN_SIZE,
     sample_column: str = DEFAULT_SAMPLE_COLUMN, sublineage_column: str | None = None,
     min_coverage: float = 0.5, cluster_source: str = "sublineage",
+    extra_sublineage_tsvs: list[Path] | None = None, allow_extra_conflicts: bool = False,
+    extra_ignore_gate: bool = False,
 ) -> dict[str, object]:
     """Write the headerless ``Sample<TAB>cluster`` file pyseer ``--lineage-clusters`` expects.
 
@@ -203,6 +248,45 @@ def run(
     sublineage_of, recovered_by = load_sublineages(
         metadata_tsv, sample_column=sample_column, sublineage_column=label_column
     )
+    n_from_metadata = len(sublineage_of)
+    extra_source_of: dict[str, str] = {}
+    n_extra_new = n_extra_agree = 0
+    conflicts: list[tuple[str, str, str]] = []
+    n_extra_gated = 0
+    if extra_sublineage_tsvs:
+        if cluster_source != "sublineage":
+            raise SystemExit(
+                "--extra-sublineage-tsv supplies LIN-typed sublineages and must not be mixed with "
+                f"--cluster-source {cluster_source}. That would blend two different label types."
+            )
+        extra_of, extra_source_of, n_extra_gated = load_extra_labels(
+            extra_sublineage_tsvs, label_column=label_column, sample_column=sample_column,
+            respect_gate=not extra_ignore_gate,
+        )
+        for sample, label in extra_of.items():
+            existing = sublineage_of.get(sample)
+            if existing is None:
+                sublineage_of[sample] = label
+                n_extra_new += 1
+            elif existing == label:
+                n_extra_agree += 1
+            else:
+                conflicts.append((sample, existing, label))
+        logger.info(
+            "extra sources: %d new labels, %d agreed with metadata_v2, %d conflicted",
+            n_extra_new, n_extra_agree, len(conflicts),
+        )
+        if conflicts:
+            for sample, existing, label in conflicts[:10]:
+                logger.error("conflict %s: metadata_v2=%s extra=%s", sample, existing, label)
+            if not allow_extra_conflicts:
+                raise SystemExit(
+                    f"{len(conflicts)} genomes have a different {label_column} in metadata_v2 than "
+                    "in an --extra table. Both claim to come from the same algorithm, so a "
+                    "disagreement means one source is stale or mis-keyed. Investigate rather than "
+                    "picking a winner; --allow-extra-conflicts keeps the metadata_v2 value."
+                )
+
     if cluster_source != "sublineage":
         logger.warning(
             "clustering on %s — %s These are NOT sublineages; do not report them as such.",
@@ -248,6 +332,13 @@ def run(
         # of the cohort the permutation null actually excludes.
         "n_in_named_cluster": len(samples) - sizes.get(OTHER, 0),
         "named_cluster_coverage": round((len(samples) - sizes.get(OTHER, 0)) / len(samples), 4),
+        "n_labels_from_metadata": n_from_metadata,
+        "extra_sublineage_tsvs": [str(p) for p in (extra_sublineage_tsvs or [])],
+        "n_labels_added_from_extra": n_extra_new,
+        "n_extra_agreed_with_metadata": n_extra_agree,
+        "n_extra_conflicts": len(conflicts),
+        "n_extra_skipped_by_gate": n_extra_gated,
+        "n_cohort_labelled_by_extra": sum(1 for s_ in samples if s_ in extra_source_of),
         "n_recovered_via_fallback_id": sum(recovered_in_cohort.values()),
         "recovered_by_column": recovered_in_cohort,
         "n_clusters": len([c for c in sizes if c != OTHER]),
@@ -255,6 +346,15 @@ def run(
         "largest_clusters": dict(sizes.most_common(12)),
     }
     out_tsv.with_suffix(".manifest.json").write_text(json.dumps(manifest, indent=2))
+    provenance = out_tsv.with_suffix(".provenance.tsv")
+    provenance.write_text(
+        "Sample\tcluster\tlabel\tlabel_source\n"
+        + "".join(
+            f"{s_}\t{clusters[s_]}\t{sublineage_of.get(s_, '')}\t"
+            f"{extra_source_of.get(s_, 'metadata_v2' if s_ in sublineage_of else 'none')}\n"
+            for s_ in samples
+        )
+    )
     logger.info(
         "%d samples -> %d clusters (min_size=%d); %d in '%s'. "
         "Label coverage %.1f%%, but only %.1f%% land in a NAMED cluster — the permutation null runs "
@@ -284,12 +384,21 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--sublineage-column", default=None,
                    help="Override the column for the chosen --cluster-source. Does not change what "
                         "the labels are.")
+    p.add_argument("--extra-sublineage-tsv", type=Path, action="append", default=[],
+                   help="Additional LIN-typed sublineage table (Sample + label column). Repeatable.")
+    p.add_argument("--allow-extra-conflicts", action="store_true",
+                   help="Keep the metadata_v2 value where an --extra table disagrees, instead of stopping.")
+    p.add_argument("--extra-ignore-gate", action="store_true",
+                   help="Use --extra rows even where their passes_gate column is false.")
     p.add_argument("--min-coverage", type=float, default=0.5,
                    help="Fail if fewer than this fraction of the cohort carries a label. Default 0.5.")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     print(json.dumps(run(
+        extra_sublineage_tsvs=args.extra_sublineage_tsv,
+        allow_extra_conflicts=args.allow_extra_conflicts,
+        extra_ignore_gate=args.extra_ignore_gate,
         reflist=args.reflist, metadata_tsv=args.metadata_tsv, out_tsv=args.out_tsv,
         min_size=args.min_size, sample_column=args.sample_column,
         sublineage_column=args.sublineage_column, min_coverage=args.min_coverage,

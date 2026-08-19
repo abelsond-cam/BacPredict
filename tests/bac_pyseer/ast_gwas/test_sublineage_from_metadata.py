@@ -241,3 +241,104 @@ def test_an_unknown_cluster_source_is_refused(tmp_path: Path) -> None:
     with pytest.raises(SystemExit, match="cluster-source"):
         sublineage_run(reflist=reflist, metadata_tsv=meta, out_tsv=tmp_path / "c.tsv",
                        cluster_source="lincode_guess")
+
+
+def _write_extra(path: Path, rows: list[dict[str, str]]) -> None:
+    """Write an --extra-sublineage-tsv table in the shape genome_prep.lin_typing emits."""
+    pd.DataFrame(rows).to_csv(path, sep="\t", index=False)
+
+
+def test_extra_table_labels_genomes_metadata_has_no_row_for(tmp_path: Path) -> None:
+    """The whole point: a genome absent from metadata_v2 gets its sublineage from the extra table."""
+    samples = [f"m{i}" for i in range(3)] + [f"x{i}" for i in range(3)]
+    meta = tmp_path / "metadata_v2.tsv"
+    _write_metadata(meta, {f"m{i}": "SL258" for i in range(3)})
+    reflist = tmp_path / "refs.txt"
+    _write_reflist(reflist, samples)
+    extra = tmp_path / "extra.tsv"
+    _write_extra(extra, [{"Sample": f"x{i}", "Sublineage": "SL258", "passes_gate": "True"} for i in range(3)])
+
+    out = tmp_path / "clusters.tsv"
+    manifest = sublineage_run(
+        reflist=reflist, metadata_tsv=meta, out_tsv=out, min_size=6,
+        extra_sublineage_tsvs=[extra], min_coverage=0.0,
+    )
+
+    assert manifest["n_labels_added_from_extra"] == 3
+    assert manifest["n_in_other"] == 0
+    clusters = dict(line.split("\t") for line in out.read_text().splitlines())
+    assert set(clusters.values()) == {"SL258"}
+
+
+def test_extra_rows_failing_their_quality_gate_are_not_used(tmp_path: Path) -> None:
+    """A nearest-profile call on a badly matched genome is a guess; it must not enter a cluster."""
+    meta = tmp_path / "metadata_v2.tsv"
+    _write_metadata(meta, {"a": "SL258", "b": "SL258"})
+    reflist = tmp_path / "refs.txt"
+    _write_reflist(reflist, ["a", "b", "c"])
+    extra = tmp_path / "extra.tsv"
+    _write_extra(extra, [{"Sample": "c", "Sublineage": "SL258", "passes_gate": "False"}])
+
+    out = tmp_path / "clusters.tsv"
+    manifest = sublineage_run(
+        reflist=reflist, metadata_tsv=meta, out_tsv=out, min_size=2,
+        extra_sublineage_tsvs=[extra], min_coverage=0.0,
+    )
+
+    assert manifest["n_labels_added_from_extra"] == 0
+    assert manifest["n_extra_skipped_by_gate"] == 1
+    assert dict(line.split("\t") for line in out.read_text().splitlines())["c"] == OTHER
+
+
+def test_a_disagreement_between_sources_stops_the_run(tmp_path: Path) -> None:
+    """Both sources claim the same algorithm, so a conflict means one is stale — never pick a winner."""
+    meta = tmp_path / "metadata_v2.tsv"
+    _write_metadata(meta, {"a": "SL258", "b": "SL307"})
+    reflist = tmp_path / "refs.txt"
+    _write_reflist(reflist, ["a", "b"])
+    extra = tmp_path / "extra.tsv"
+    _write_extra(extra, [{"Sample": "a", "Sublineage": "SL11", "passes_gate": "True"}])
+
+    with pytest.raises(SystemExit, match="different"):
+        sublineage_run(
+            reflist=reflist, metadata_tsv=meta, out_tsv=tmp_path / "c.tsv", min_size=1,
+            extra_sublineage_tsvs=[extra], min_coverage=0.0,
+        )
+
+
+def test_extra_sublineages_cannot_be_mixed_into_an_st_clustered_run(tmp_path: Path) -> None:
+    """Blending LIN sublineages into ST clusters is the exact conflation --cluster-source prevents."""
+    meta = tmp_path / "metadata_v2.tsv"
+    pd.DataFrame({"Sample": ["a", "b"], "Sublineage": ["SL258", "SL258"], "ST": ["11", "11"]}).to_csv(
+        meta, sep="\t", index=False
+    )
+    reflist = tmp_path / "refs.txt"
+    _write_reflist(reflist, ["a", "b"])
+    extra = tmp_path / "extra.tsv"
+    _write_extra(extra, [{"Sample": "c", "Sublineage": "SL258", "passes_gate": "True"}])
+
+    with pytest.raises(SystemExit, match="different label types"):
+        sublineage_run(
+            reflist=reflist, metadata_tsv=meta, out_tsv=tmp_path / "c.tsv", min_size=1,
+            cluster_source="st", extra_sublineage_tsvs=[extra], min_coverage=0.0,
+        )
+
+
+def test_provenance_sidecar_names_where_each_label_came_from(tmp_path: Path) -> None:
+    """Per-genome provenance, so a later reader can tell a v1-sheet label from a fresh LIN-typed one."""
+    meta = tmp_path / "metadata_v2.tsv"
+    _write_metadata(meta, {"a": "SL258", "b": "SL258"})
+    reflist = tmp_path / "refs.txt"
+    _write_reflist(reflist, ["a", "b", "c", "d"])
+    extra = tmp_path / "mist_lin.tsv"
+    _write_extra(extra, [{"Sample": "c", "Sublineage": "SL258", "passes_gate": "True"}])
+
+    out = tmp_path / "clusters.tsv"
+    sublineage_run(
+        reflist=reflist, metadata_tsv=meta, out_tsv=out, min_size=1,
+        extra_sublineage_tsvs=[extra], min_coverage=0.0,
+    )
+
+    rows = [line.split("\t") for line in out.with_suffix(".provenance.tsv").read_text().splitlines()[1:]]
+    source = {r[0]: r[3] for r in rows}
+    assert source == {"a": "metadata_v2", "b": "metadata_v2", "c": "mist_lin.tsv", "d": "none"}
