@@ -85,7 +85,11 @@ if [ "$WITH_SUBLINEAGE" = "1" ]; then
     exit 1
   fi
   # Fail here, not 24 minutes into the fit, if the split CSV cannot supply the block.
-  if ! head -1 "$SPLIT_CSV" | tr ',' '\n' | grep -qx "Sublineage"; then
+  # Bash string match, NOT `... | grep -qx`: under `set -o pipefail` grep -q exits on first match,
+  # tr then dies of SIGPIPE (141), and pipefail promotes that to the pipeline status — so the grep
+  # form fires exactly when the column IS present. Same family as the `[ … ] &&` note below.
+  HEADER=",$(head -1 "$SPLIT_CSV" | tr -d '\r'),"
+  if [[ "$HEADER" != *",Sublineage,"* ]]; then
     echo "MISSING: WITH_SUBLINEAGE=1 but $SPLIT_CSV has no 'Sublineage' column" >&2
     exit 1
   fi
