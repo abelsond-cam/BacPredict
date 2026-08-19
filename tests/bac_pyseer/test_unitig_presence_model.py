@@ -13,9 +13,11 @@ import numpy as np
 import pandas as pd
 import pytest
 import scipy.sparse as sp
+from sklearn.linear_model import LogisticRegression
 
 from bac_pyseer.kleb_iso_source.unitig_presence_model import (
     align_to_split,
+    append_sublineage_onehot,
     build_parser,
     build_presence_matrix,
     fit_l2_with_c_sweep,
@@ -321,3 +323,97 @@ def test_predict_parser_supplies_every_attribute_the_handler_reads():
                                       "--out", "o.csv"])
     for attr in ("matrix_dir", "model_dir", "out", "func"):
         assert hasattr(args, attr), f"predict subparser is missing {attr!r}"
+
+
+# --- sublineage one-hot block -----------------------------------------------------------------
+
+
+def _split_frame(sublineages, n=None):
+    n = n if n is not None else len(sublineages)
+    return pd.DataFrame({
+        "Sample": [f"S{i}" for i in range(n)],
+        "blood_vs_faeces_label": [i % 2 for i in range(n)],
+        "train_val_eval": ["train"] * n,
+        "Sublineage": list(sublineages),
+    })
+
+
+def test_sublineage_block_one_hots_every_observed_level():
+    X = sp.csr_matrix(np.ones((4, 3), dtype=np.float32))
+    df = _split_frame(["SL258", "SL307", "SL258", "SL3010"])
+    X2, names, info = append_sublineage_onehot(X, df, ["u1", "u2", "u3"])
+
+    assert X2.shape == (4, 6)
+    assert info["n_sublineage_columns"] == 3
+    # Lexicographic, so SL3010 precedes SL307. Order only has to be deterministic — coefficients are
+    # positional and unitig_order_sha256 is what actually guards a mismatch.
+    assert names[3:] == ["SL=SL258", "SL=SL3010", "SL=SL307"]
+    block = X2.toarray()[:, 3:]
+    assert block.sum(axis=1).tolist() == [1, 1, 1, 1]           # exactly one level per genome
+    assert block[0].tolist() == block[2].tolist()               # same SL → same encoding
+
+
+def test_unitig_columns_are_untouched_by_the_stack():
+    """The block is appended, never interleaved — coefficients are positional."""
+    rng = np.random.default_rng(0)
+    dense = (rng.random((6, 4)) < 0.5).astype(np.float32)
+    X = sp.csr_matrix(dense)
+    X2, _, _ = append_sublineage_onehot(X, _split_frame(["SL1"] * 6), ["a", "b", "c", "d"])
+    np.testing.assert_array_equal(X2.toarray()[:, :4], dense)
+
+
+def test_genomes_with_no_sublineage_call_get_an_all_zero_row():
+    """No invented 'missing' category — with every level kept, all-zero is already distinct."""
+    X = sp.csr_matrix(np.ones((4, 2), dtype=np.float32))
+    df = _split_frame(["SL258", "", "nan", "SL307"])
+    X2, names, info = append_sublineage_onehot(X, df, ["u1", "u2"])
+
+    assert info["n_sublineage_columns"] == 2        # only SL258 and SL307 became columns
+    assert info["n_genomes_no_call"] == 2
+    assert info["n_genomes_with_call"] == 2
+    block = X2.toarray()[:, 2:]
+    assert block[1].sum() == 0 and block[2].sum() == 0
+    assert "SL=" not in "".join(names[2:]).replace("SL=SL258", "").replace("SL=SL307", "")
+
+
+def test_block_matches_matrix_dtype_so_hstack_cannot_promote():
+    """A float64 block would double the memory of a ~10^8-nonzero float32 matrix."""
+    X = sp.csr_matrix(np.ones((3, 2), dtype=np.float32))
+    X2, _, _ = append_sublineage_onehot(X, _split_frame(["SL1", "SL2", "SL1"]), ["u1", "u2"])
+    assert X2.dtype == np.float32
+
+
+def test_sublineage_block_requires_the_column():
+    X = sp.csr_matrix(np.ones((2, 2), dtype=np.float32))
+    df = _split_frame(["SL1", "SL2"]).drop(columns=["Sublineage"])
+    with pytest.raises(ValueError, match="Sublineage"):
+        append_sublineage_onehot(X, df, ["u1", "u2"])
+
+
+def test_sublineage_names_stay_aligned_with_coefficients(tmp_path):
+    """save_model length-checks names against coefficients — the extended list must be passed."""
+    rng = np.random.default_rng(1)
+    n = 120
+    y = (rng.random(n) < 0.5).astype(int)
+    X = sp.csr_matrix(rng.random((n, 5)).astype(np.float32))
+    df = _split_frame([f"SL{i % 3}" for i in range(n)], n=n)
+    X2, names, info = append_sublineage_onehot(X, df, [f"u{i}" for i in range(5)])
+
+    model = LogisticRegression(C=1.0, solver="lbfgs", max_iter=200).fit(X2, y)
+    save_model(tmp_path, model, names, C=1.0, selection_scope="trainval_only",
+               label_column="blood_vs_faeces_label", extra_meta={"sublineage_block": info})
+
+    _, _, meta = load_model(tmp_path)
+    assert meta["n_features"] == X2.shape[1] == 8
+    assert meta["sublineage_block"]["n_sublineage_columns"] == 3
+    assert meta["sublineage_block"]["penalty_applied_to_sublineage"] is True
+
+
+def test_fit_parser_exposes_with_sublineage():
+    args = build_parser().parse_args([
+        "fit", "--matrix-dir", "m", "--split-csv", "s.csv", "--out-dir", "o", "--with-sublineage",
+    ])
+    assert args.with_sublineage is True
+    assert build_parser().parse_args(
+        ["fit", "--matrix-dir", "m", "--split-csv", "s.csv", "--out-dir", "o"]
+    ).with_sublineage is False

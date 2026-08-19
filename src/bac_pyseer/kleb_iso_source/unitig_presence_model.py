@@ -93,7 +93,8 @@ def unitig_order_hash(unitigs: list[str]) -> str:
 
 
 def save_model(out_dir: Path, model: LogisticRegression, unitigs: list[str], *, C: float,
-               selection_scope: str, label_column: str) -> None:
+               selection_scope: str, label_column: str,
+               extra_meta: dict[str, Any] | None = None) -> None:
     """Persist coefficients + intercept so the model can score genomes it was not fitted on."""
     coef = np.asarray(model.coef_).ravel()
     if len(coef) != len(unitigs):
@@ -110,7 +111,7 @@ def save_model(out_dir: Path, model: LogisticRegression, unitigs: list[str], *, 
         "unitig_order_sha256": unitig_order_hash(unitigs),
         "selection_scope": selection_scope,
         "label_column": label_column,
-    }
+    } | (extra_meta or {})
     (out_dir / MODEL_JSON).write_text(json.dumps(meta, indent=2))
     logger.info("saved model: %d coefficients + intercept %.4f -> %s", len(coef), meta["intercept"], out_dir)
 
@@ -301,6 +302,66 @@ def align_to_split(
     if "Sublineage" in matched.columns:
         cols.append("Sublineage")
     return X[row_idx], matched[cols].reset_index(drop=True)
+
+
+#: Values in the split CSV's ``Sublineage`` column that mean "no call".
+MISSING_SUBLINEAGE = frozenset({"", "nan", "NaN", "NA", "N/A", "None", "none", "unknown", "-"})
+
+
+def append_sublineage_onehot(
+    X: sp.csr_matrix,
+    split_df: pd.DataFrame,
+    feature_names: list[str],
+) -> tuple[sp.csr_matrix, list[str], dict[str, Any]]:
+    """Stack a one-hot sublineage block onto the unitig design matrix.
+
+    ⚠ **This measures a FLOOR on what lineage information adds, never a ceiling.** The L2 penalty in
+    :func:`fit_l2_with_c_sweep` falls on these columns exactly as it does on the unitig columns, so
+    their coefficients are shrunk toward zero. Any lift measured this way is therefore a lower bound —
+    which is the point: it answers "does giving the unitig model lineage close the gap to Bacformer?"
+    conservatively. It does **not** answer "how much do unitigs add *beyond* lineage": that
+    decomposition needs sublineage as an **unpenalised fixed effect**, which is a different estimator
+    and deliberately not what this does.
+
+    Both blocks are 0/1 so the shared penalty is meaningful without rescaling, and the block is built
+    at ``X.dtype`` so hstack cannot silently promote a ~10^8-nonzero matrix to float64.
+
+    Genomes with no sublineage call get an all-zero row rather than an invented "missing" category —
+    with every observed level kept (no reference level dropped), all-zero is already a distinct
+    encoding, so no information is fabricated.
+
+    The category vocabulary is taken from the whole aligned cohort, not from train alone. That uses no
+    outcome information, so it is not leakage; a level seen only in evaluate simply gets a coefficient
+    the fit never moved off its penalty-shrunk start, and contributes nothing.
+    """
+    if "Sublineage" not in split_df.columns:
+        raise ValueError(
+            "--with-sublineage needs a 'Sublineage' column in the split CSV. align_to_split passes it "
+            "through whenever it is present, so its absence here means the split CSV does not carry it."
+        )
+    raw = split_df["Sublineage"].astype(str).str.strip().to_numpy()
+    known = ~np.isin(raw, list(MISSING_SUBLINEAGE))
+
+    categories = sorted(set(raw[known]))
+    index = {c: j for j, c in enumerate(categories)}
+    rows = np.flatnonzero(known)
+    cols = np.fromiter((index[raw[i]] for i in rows), dtype=np.int64, count=len(rows))
+
+    block = sp.csr_matrix(
+        (np.ones(len(rows), dtype=X.dtype), (rows, cols)),
+        shape=(X.shape[0], len(categories)),
+        dtype=X.dtype,
+    )
+    stacked = sp.hstack([X, block], format="csr")
+    names = list(feature_names) + [f"SL={c}" for c in categories]
+    info = {
+        "n_sublineage_columns": len(categories),
+        "n_genomes_with_call": int(known.sum()),
+        "n_genomes_no_call": int((~known).sum()),
+        "penalty_applied_to_sublineage": True,
+        "reading": "floor, not ceiling — L2 shrinks these columns, so a measured lift is a lower bound",
+    }
+    return stacked, names, info
 
 
 def fit_l2_with_c_sweep(
@@ -495,10 +556,23 @@ def _cmd_fit(args: argparse.Namespace) -> None:
     X, samples, unitigs = load_matrix(args.matrix_dir)
     X, split_df = align_to_split(X, samples, args.split_csv, args.label_column)
 
+    feature_names = unitigs
+    sublineage_info: dict[str, Any] | None = None
+    if args.with_sublineage:
+        n_unitig_cols = X.shape[1]
+        X, feature_names, sublineage_info = append_sublineage_onehot(X, split_df, feature_names)
+        logger.info(
+            "sublineage block: +%d one-hot columns (%d genomes with a call, %d without) → %d features "
+            "(%d unitig + %d sublineage). L2 penalises both blocks, so any lift is a FLOOR.",
+            sublineage_info["n_sublineage_columns"], sublineage_info["n_genomes_with_call"],
+            sublineage_info["n_genomes_no_call"], X.shape[1], n_unitig_cols,
+            sublineage_info["n_sublineage_columns"],
+        )
+
     y = split_df[args.label_column].to_numpy().astype(int)
     split = split_df["train_val_eval"].to_numpy().astype(str)
     logger.info(
-        "fitting on %d train / %d validate / %d evaluate (%d unitig features)",
+        "fitting on %d train / %d validate / %d evaluate (%d features)",
         (split == "train").sum(), (split == "validate").sum(), (split == "evaluate").sum(), X.shape[1],
     )
 
@@ -513,6 +587,7 @@ def _cmd_fit(args: argparse.Namespace) -> None:
         "split_csv": str(args.split_csv),
         "label_column": args.label_column,
         "n_features": int(X.shape[1]),
+        "sublineage_block": sublineage_info,
         "unitig_l2": {
             k: v for k, v in res.items() if k not in ("y_true", "y_prob", "eval_sample_ids", "model")
         } | {"evaluate_auroc": unitig_auroc},
@@ -549,8 +624,9 @@ def _cmd_fit(args: argparse.Namespace) -> None:
             }
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    save_model(args.out_dir, res["model"], unitigs, C=res["C"],
-               selection_scope=args.selection_scope, label_column=args.label_column)
+    save_model(args.out_dir, res["model"], feature_names, C=res["C"],
+               selection_scope=args.selection_scope, label_column=args.label_column,
+               extra_meta={"sublineage_block": sublineage_info} if sublineage_info else None)
 
     if args.score_all_splits:
         # Score every genome in the matrix, keeping its split label, so this model can be compared
@@ -583,7 +659,7 @@ def _cmd_fit(args: argparse.Namespace) -> None:
 
     print(f"\nselection scope: {args.selection_scope}")
     print(f"unitig L2 (C={res['C']:g}): validate {res['validate_auroc']:.4f} | evaluate {unitig_auroc:.4f} "
-          f"(n_eval={res['n_evaluate']}, {X.shape[1]} unitigs)")
+          f"(n_eval={res['n_evaluate']}, {X.shape[1]} features)")
     if "head_to_head" in payload:
         h = payload["head_to_head"]
         print(f"Bacformer on the SAME {h['n_common_genomes']} genomes: {h['bacformer_auroc']:.4f}")
@@ -633,6 +709,10 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("--max-iter", type=int, default=2000)
     f.add_argument("--seed", type=int, default=1, help="Seed for the paired bootstrap on the head-to-head delta.")
     f.add_argument("--also-l1", action="store_true", help="Also fit L1 for an interpretable locus shortlist.")
+    f.add_argument("--with-sublineage", action="store_true",
+                   help="Stack one-hot Sublineage columns onto the unitig design. Measures a FLOOR on "
+                        "what lineage adds: L2 penalises the sublineage columns too, so the lift is a "
+                        "lower bound. Write to a SEPARATE --out-dir — this is a different model.")
     f.add_argument("--score-all-splits", action="store_true",
                    help="Also score every genome in the matrix (not just the holdout) and write "
                         "unitig_cohort_scores.npz with a per-genome split label, mirroring "
