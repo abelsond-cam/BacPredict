@@ -37,7 +37,9 @@ export UV_CACHE_DIR=/home/dca36/rds/hpc-work/.uv_cache
 unset PYTHONPATH PYTHONHOME
 # Keep BLAS single-threaded per process; sklearn's own threading handles the parallelism.
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-16}
-cd /home/dca36/workspace/BacPredict
+# Overridable so this can run from a detached worktree when the shared checkout is mid-edit by
+# another agent (pulling it would change files under a live job).
+cd "${REPO_DIR:-/home/dca36/workspace/BacPredict}"
 
 DATA=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david
 PAIR=${PAIR:-blood_faeces}
