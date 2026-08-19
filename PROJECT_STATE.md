@@ -12,6 +12,10 @@
 > holdout verified **identical genome-for-genome** to the pooled cohort's (2,822/2,822, zero leakage
 > into train/validate) from `split_manifest.json` and both split CSVs, not inferred from matching n.
 > Lab-collection split composition (154/22/31/44) counted from `lab_collection_invasion_predictions.csv`.
+> Added 2026-08-19 (§3.4 Q1): unitig+sublineage numbers read from that run's own
+> `unitig_model_results.json`; the plain-vs-+SL score agreement and per-sublineage AUROCs
+> recomputed from both `unitig_cohort_scores.npz` archives, which were checked to cover the same
+> genomes, labels and splits before being compared.
 
 ## 0. How to use this file
 
@@ -450,7 +454,34 @@ lineage-representation deficit*, because GWAS significance filtering keeps pheno
 and discards the lineage-defining ones. Reference points on the same holdout: sublineage alone 0.6032,
 country alone 0.6326, country+sublineage 0.6940.
 
-1. **Q1 — unitig + one-hot sublineage (±country). DEFERRED 2026-08-18** (David: complex, and mostly
+1. **Q1 — unitig + one-hot sublineage. RAN 2026-08-19 (job `33943231`, 12 min): NO LIFT.**
+   Evaluate AUROC **0.76570** with 1,345 one-hot sublineage columns stacked onto the 19,622 unitig
+   columns, against **0.76547** plain — **+0.0002**. Same `C`=0.01 chosen by the sweep; paired delta
+   vs Bacformer essentially unmoved (+0.0208 [+0.0039, +0.0384] vs +0.0210 [+0.0041, +0.0385]).
+   *Source:* `…/sampled_country_2_1_all_trainval/gwas_unitig_lmm/presence_model_sublineage/unitig_model_results.json`;
+   split identical to the plain model (9,521 / 1,366 / 2,715).
+   - **The two models are the same model.** On the 2,715-genome holdout their scores correlate at
+     Pearson **r=1.0000** (Spearman 0.9999), mean |difference| **0.0012**, max 0.0148.
+   - **Within lineage, nothing moved either**: SL258 (n=458) 0.8453 → 0.8454; mean delta over the ten
+     sublineages with n≥40 and both classes **+0.0004**, 6/10 nominally up — a coin flip.
+   - ⛔ **This design could not have answered O2, and that is a lesson not a result.** A sublineage
+     **main effect** adds a constant to every logit in that lineage, which cannot reorder genomes
+     *within* it — within-SL AUROC is invariant to it except through the indirect effect of refitting
+     the unitig coefficients. Testing whether within-lineage failure is a representation deficit needs
+     lineage **interactions** (per-lineage unitig weights) or a within-lineage-stratified fit. That is
+     a materially bigger job, and it is the honest cost of answering O1/O2.
+   - **It measured a floor** — L2 penalised the sublineage columns too, so the lift is a lower bound.
+     Against "the penalty simply hid it": the sweep was free to choose a weaker penalty to exploit
+     lineage and did not, picking the same C=0.01, with every higher C strictly worse on validate.
+   - **Reusable:** `--with-sublineage` on `unitig_presence_model fit`, `WITH_SUBLINEAGE=1` on
+     `run_unitig_presence_model.sh` (defaults to a separate out-dir and refuses to overwrite the
+     plain model). ±country was **not** run.
+
+   *(Superseded scoping note, kept because it was wrong in a useful direction: this was DEFERRED
+   2026-08-18 as complex, on a claim that `fit` needed a general `--covariates` framework. It did
+   not — it was ~20 lines, and it ran in 12 minutes.)*
+
+   **Original deferral note —** (David: complex, and mostly
    supplementary proof of Bacformer's power). **Deferred with a correction attached:** an earlier note
    here called it complex and said `fit` needs a general `--covariates` framework. **It does not.** The
    cheap path is a `--with-sublineage` flag, ~20 lines plus a test:
