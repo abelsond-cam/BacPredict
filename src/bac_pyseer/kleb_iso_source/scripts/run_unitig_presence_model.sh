@@ -26,6 +26,8 @@
 #   # submatrix must still cover the WHOLE cohort (the holdout genomes need presence values to be
 #   # scored) — only the unitig SELECTION is restricted, never the rows.
 #   SELECTION_SCOPE=trainval_only SCORE_ALL_SPLITS=1 HITS_SUBMATRIX=<trainval hit submatrix> sbatch ...
+#   # + one-hot sublineage, as a FLOOR on what lineage information adds (separate OUT_DIR, enforced)
+#   WITH_SUBLINEAGE=1 SELECTION_SCOPE=trainval_only SCORE_ALL_SPLITS=1 HITS_SUBMATRIX=<...> sbatch ...
 
 set -euo pipefail
 export PYTHONUNBUFFERED=1
@@ -52,17 +54,41 @@ HITS_SUBMATRIX=${HITS_SUBMATRIX:-$GWAS_DIR/mge_mapping/hits_submatrix.tsv}
 # remove exactly the genomes the model should be calling faecal, and bias the comparison.
 SAMPLE_UNIVERSE=${SAMPLE_UNIVERSE:-$PYSEER_COHORT/phenotype.tsv}
 MATRIX_DIR=${MATRIX_DIR:-$GWAS_DIR/presence_matrix}
-OUT_DIR=${OUT_DIR:-$GWAS_DIR/presence_model}
 SPLIT_CSV=${SPLIT_CSV:-$FT_COHORT/binary_${LABEL_COL%_label}_with_split.csv}
 BAC_SCORES=${BAC_SCORES:-$FT_COHORT/models/eval_scores.npz}
 BAC_CKPT=${BAC_CKPT:-$FT_COHORT/models}
 SELECTION_SCOPE=${SELECTION_SCOPE:-full_cohort}
+WITH_SUBLINEAGE=${WITH_SUBLINEAGE:-0}
+
+# The sublineage block makes this a DIFFERENT model, so it defaults to a different output dir.
+# presence_model/unitig_cohort_scores.npz is the artifact the lab-collection comparison is gated on;
+# writing a sublineage model over it would replace a number of record with a silently different one.
+if [ "$WITH_SUBLINEAGE" = "1" ]; then
+  OUT_DIR=${OUT_DIR:-$GWAS_DIR/presence_model_sublineage}
+else
+  OUT_DIR=${OUT_DIR:-$GWAS_DIR/presence_model}
+fi
 
 echo "=== inputs ==="
 for f in "$HITS_SUBMATRIX" "$SAMPLE_UNIVERSE" "$SPLIT_CSV" "$BAC_SCORES"; do
   [ -f "$f" ] || { echo "MISSING: $f"; exit 1; }
   echo "  ok  $f"
 done
+
+if [ "$WITH_SUBLINEAGE" = "1" ]; then
+  # Refuse to overwrite the plain model even if OUT_DIR was passed explicitly.
+  if [ "$(basename "$OUT_DIR")" = "presence_model" ]; then
+    echo "REFUSING: --with-sublineage writing into $OUT_DIR would overwrite the plain unitig model" >&2
+    echo "  and its gated unitig_cohort_scores.npz. Pick a different OUT_DIR." >&2
+    exit 1
+  fi
+  # Fail here, not 24 minutes into the fit, if the split CSV cannot supply the block.
+  if ! head -1 "$SPLIT_CSV" | tr ',' '\n' | grep -qx "Sublineage"; then
+    echo "MISSING: WITH_SUBLINEAGE=1 but $SPLIT_CSV has no 'Sublineage' column" >&2
+    exit 1
+  fi
+  echo "  ok  Sublineage column present; writing the sublineage model to $OUT_DIR"
+fi
 
 MOD=bac_pyseer.kleb_iso_source.unitig_presence_model
 
@@ -90,6 +116,10 @@ if [ "${ALSO_L1:-0}" = "1" ]; then EXTRA+=(--also-l1); fi
 # label), not just the holdout — the artifact that lets this model be compared genome-for-genome
 # against Bacformer's cohort_scores.npz, and the input to the agreement scatter.
 if [ "${SCORE_ALL_SPLITS:-0}" = "1" ]; then EXTRA+=(--score-all-splits); fi
+# WITH_SUBLINEAGE stacks one-hot Sublineage columns onto the unitig design. It measures a FLOOR on
+# what lineage adds — L2 penalises those columns too, so their coefficients are shrunk and the lift
+# is a lower bound. It does NOT decompose "what unitigs add beyond lineage".
+if [ "$WITH_SUBLINEAGE" = "1" ]; then EXTRA+=(--with-sublineage); fi
 
 uv run python -m $MOD fit \
   --matrix-dir "$MATRIX_DIR" \
