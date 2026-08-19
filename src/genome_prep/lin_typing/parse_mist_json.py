@@ -35,7 +35,8 @@ DEFAULT_MAX_MISMATCHED = 30
 
 COLUMNS = (
     "Sample", "Sublineage", "LINcode", "Clonal group", "Phylogroup", "scgST",
-    "nb_matches", "pct_match", "loci_mismatched", "n_equivalent_profiles", "passes_gate",
+    "nb_matches", "pct_match", "loci_mismatched", "n_equivalent_profiles",
+    "tied_profiles_agree", "passes_gate",
 )
 
 
@@ -46,16 +47,31 @@ def matched_profiles(data: dict) -> list[dict]:
     return list(data.get("profiles") or [])
 
 
-def sample_id(data: dict, path: Path) -> str:
-    """Recover the sample id, preferring what MiST recorded over the filename."""
-    recorded = ((data.get("metadata") or {}).get("input") or {}).get("sample_id")
-    if recorded:
-        return str(recorded)
-    name = path.name
-    for suffix in (".json", ".gz", ".fa", ".fasta", ".fna"):
-        while name.endswith(suffix):
-            name = name[: -len(suffix)]
+#: Stripped from a sample id however it was obtained. MiST records ``sample_id`` from the input
+#: path when ``--sample-id`` is not given, so an archived run yields ``SAMEA4780982.fa.gz`` — which
+#: joins to nothing, silently, because the label table is keyed on the bare accession.
+_ID_SUFFIXES = (".json", ".gz", ".fa", ".fasta", ".fna")
+
+
+def strip_extensions(name: str) -> str:
+    """Strip assembly/result file extensions from a sample id, however many are stacked."""
+    changed = True
+    while changed:
+        changed = False
+        for suffix in _ID_SUFFIXES:
+            if name.endswith(suffix):
+                name = name[: -len(suffix)]
+                changed = True
     return name
+
+
+def sample_id(data: dict, path: Path) -> str:
+    """Recover the sample id, preferring what MiST recorded over the filename.
+
+    Either source is normalised: a recorded id is not automatically a clean accession.
+    """
+    recorded = ((data.get("metadata") or {}).get("input") or {}).get("sample_id")
+    return strip_extensions(str(recorded) if recorded else path.name)
 
 
 def parse_one(path: Path, *, max_mismatched: int) -> dict | None:
@@ -71,6 +87,14 @@ def parse_one(path: Path, *, max_mismatched: int) -> dict | None:
         return None
     profile = profiles[0]
     metadata = dict(profile.get("metadata") or [])
+    # MiST reports every equally good ST. Taking the first is only safe while they agree about the
+    # sublineage — measured 0 disagreements in 125 ties, which is what the LIN hierarchy predicts,
+    # but an assumption that holds today is not a guarantee, so it is checked per genome.
+    tied_agree = len({
+        (dict(p.get("metadata") or []).get("Sublineage"),
+         dict(p.get("metadata") or []).get("Clonal group"))
+        for p in profiles
+    }) == 1
     nb_matches = profile.get("nb_matches")
     n_mismatched = N_LOCI - nb_matches if nb_matches is not None else None
 
@@ -85,7 +109,8 @@ def parse_one(path: Path, *, max_mismatched: int) -> dict | None:
         "pct_match": round(profile["pct_match"], 4) if profile.get("pct_match") is not None else None,
         "loci_mismatched": n_mismatched,
         "n_equivalent_profiles": len(profiles),
-        "passes_gate": bool(n_mismatched is not None and n_mismatched <= max_mismatched),
+        "tied_profiles_agree": tied_agree,
+        "passes_gate": bool(tied_agree and n_mismatched is not None and n_mismatched <= max_mismatched),
     }
 
 
@@ -116,6 +141,7 @@ def run(*, json_dirs: list[Path], out_tsv: Path, max_mismatched: int) -> None:
 
     n_pass = sum(1 for r in rows.values() if r["passes_gate"])
     n_tied = sum(1 for r in rows.values() if r["n_equivalent_profiles"] > 1)
+    n_tie_disagree = sum(1 for r in rows.values() if not r["tied_profiles_agree"])
     manifest = {
         "out_tsv": str(out_tsv),
         "json_dirs": [str(d) for d in json_dirs],
@@ -127,6 +153,7 @@ def run(*, json_dirs: list[Path], out_tsv: Path, max_mismatched: int) -> None:
         "n_passes_gate": n_pass,
         "n_fails_gate": len(rows) - n_pass,
         "n_with_tied_profiles": n_tied,
+        "n_tied_profiles_disagreeing": n_tie_disagree,
         "note": (
             "Sublineage is read verbatim from the matched reference profile's LIN metadata. It is "
             "not derived from ST. Rows failing the gate are retained and flagged, not deleted."
@@ -136,8 +163,9 @@ def run(*, json_dirs: list[Path], out_tsv: Path, max_mismatched: int) -> None:
 
     logger.info("%d JSONs -> %d rows (%d untyped, %d duplicate samples)",
                 n_files, len(rows), n_untyped, n_duplicate)
-    logger.info("gate (<=%d loci mismatched): %d pass, %d fail; %d had tied profiles",
-                max_mismatched, n_pass, len(rows) - n_pass, n_tied)
+    logger.info("gate (<=%d loci mismatched): %d pass, %d fail; %d had tied profiles, "
+                "%d of which disagreed on the sublineage",
+                max_mismatched, n_pass, len(rows) - n_pass, n_tied, n_tie_disagree)
     logger.info("wrote %s", out_tsv)
 
 
