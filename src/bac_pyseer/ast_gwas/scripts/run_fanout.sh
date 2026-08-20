@@ -26,6 +26,14 @@ export PART=${PART:-icelake-himem}
 export QOS=${QOS-}
 export LOGDIR=${LOGDIR:-$DATA_ROOT/logs}
 
+# Mirror run_drug.sh's organism -> task mapping. Deriving it as train_${ORGANISM}_ast is wrong:
+# kp's task dir is train_kleb_ast, so the pre-check silently rejected every drug.
+case "$ORGANISM" in
+    kp) TASK=train_kleb_ast ;;
+    tb) TASK=train_tb_ast ;;
+    *)  echo "ORGANISM must be kp or tb" >&2; exit 1 ;;
+esac
+
 [ "$#" -gt 0 ] || { echo "usage: $0 <drug> [drug...]" >&2; exit 1; }
 mkdir -p "$LOGDIR"
 
@@ -37,7 +45,7 @@ echo
 
 failed=()
 for drug in "$@"; do
-    split_table=$DATA_ROOT/processed/train_${ORGANISM}_ast/splits/${drug}_split.csv
+    split_table=$DATA_ROOT/processed/$TASK/splits/${drug}_split.csv
     if [ ! -s "$split_table" ]; then
         echo "!! $drug: no split table at $split_table — skipping" >&2
         failed+=("$drug")
