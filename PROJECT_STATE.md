@@ -16,6 +16,7 @@
 > `unitig_model_results.json`; the plain-vs-+SL score agreement and per-sublineage AUROCs
 > recomputed from both `unitig_cohort_scores.npz` archives, which were checked to cover the same
 > genomes, labels and splits before being compared.
+> Added 2026-08-20 (§3.2 sublineage): 432 genomes LIN-typed on CSD3 with MiST 1.3.0; every number here read from that run's own manifests, not from a summary. Validated twice — 7,193 archived calls vs metadata_v2 (0 conflicts) and 48 already-labelled genomes re-called from scratch (48/48 agree). The proposed clusters are NOT yet live on Isambard.
 
 ## 0. How to use this file
 
@@ -284,31 +285,39 @@ Cohort: 7,080 of 7,088 genomes resolved; 5,829,181 unitigs → 3,760,582 feature
 filters min 71 / max 7009. ertapenem λ=4.198, 31,856 significant of 3,371,827 tested; colistin
 λ=1.232, 9,277 of 2,486,812. **Ertapenem's λ and hit count are in its `lr/results.json`; colistin's are not — they are in `…/pyseer_ast/kp/colistin/gwas/colistin_gwas_summary.json`.** The two pilot drugs were written by different code versions and do not have the same fields.
 
-**⚠ The unlabelled genomes are a JOIN failure, and SL cannot be recovered by re-running Kleborate.**
-Of the 622 Kp AST genomes with no sublineage, **620 have no `Sample`-keyed row at all**.
+**✅ The sublineage gap is CLOSED — the genomes are LIN-typed. Awaiting the swap on Isambard.**
+Two separate causes, both now fixed: a **join failure** (the `Sample` key is a BioSample accession,
+so long-read genomes deposited under a **GCA** accession were invisible), and genomes with no
+`metadata_v2` row at all, which no join could reach and only LIN-typing could label.
 
 **⛔ Sublineage is NOT derived from ST. They are different types and must never be conflated.**
 `Sublineage`/`LINcode`/`Clonal group`/`Phylogroup` come from **Pasteur BIGSdb LIN-typing** — a
-specific algorithm — and in this project they came from a v1 QC Excel LINcode sheet.
-**Kleborate v3.2.4 has no LIN-coding module**, so no flag or mode makes it emit a Sublineage;
-`METADATA_v2_README.md` §6/§12 states this and records the gap as needing BIGSdb LIN-typing.
-Re-running Kleborate on the unlabelled genomes would return the ST they already have.
+specific algorithm over a 629-locus cgMLST profile. **Kleborate v3.2.4 has no LIN-coding module**, so
+no flag or mode makes it emit a Sublineage; `METADATA_v2_README.md` §6/§12 states this. Re-running
+Kleborate on the unlabelled genomes would return the ST they already have. The stand-in
+`sublineage_from_metadata --cluster-source st` remains available and remains clearly labelled, but is
+**no longer needed for the Kp AST cohort**.
 
-- **349 recoverable by fixing the join.** `Sample` holds a **BioSample** accession (short-read
-  genomes); the **long-read** genomes were deposited under a **GCA assembly accession**, so their
-  rows exist and carry labels but the primary key misses them. 178 already carry a Sublineage.
-  `sublineage_from_metadata` now searches the fallback id columns and reports the recovery in its
-  manifest, but **`lineage_clusters.tsv` has not been regenerated**, so the live file still excludes
-  them. These are the **best-assembled genomes in the cohort** (median 60 contigs vs 122), so
-  excluding them biases the clusters toward draft assemblies.
-- **271 have no row anywhere in `metadata_v2`** — but **267 are in the raw Kleborate table**
-  (`seb/sr_kleborate_v3.2.4.tsv`) and **259 carry an ST**. All 271 have assemblies on disk. They are
-  missing an **SL**, which only LIN-typing can supply. Not an accession-prefix artifact (197 `SAMN`
-  / 74 `SAMEA`, against a roughly even cohort split).
-- **Stand-in available, clearly labelled:** `sublineage_from_metadata --cluster-source st` clusters
-  on ST while LIN-typing is pending. The manifest records `cluster_type: "ST (7-locus MLST) — NOT
-  sublineage"` and the run warns. **ST clusters must be reported as ST clusters.**
-- **Open, with David:** obtaining the BIGSdb LIN-typing program to generate real sublineages.
+- **432 genomes LIN-typed** with MiST 1.3.0 against the Pasteur `scgMLST629_S` scheme (scheme 18),
+  `…/david/lin_typing/{results,mist_lin_new.tsv}`. 432/432 typed, zero failures. **366 pass the
+  quality gate** (`≤30` mismatched loci — the scheme's own `max_missing`), 114 distinct sublineages,
+  led by SL258 (82) and SL307 (28). Produced by `src/genome_prep/lin_typing/`.
+- **The inherited MiST index was repairable, not lost.** A Feb 2026 deletion took only the four
+  top-level files of `seb/LIN_codes/scgMLST629_index`; all 629 locus directories survived. Three
+  rebuild from disk (`rebuild_index_toplevel.py`) — no re-download, no re-clustering.
+- **No BIGSdb credentials were needed.** The colleague's tokens are dead (two independent OAuth1
+  implementations both mint a session token, then get 401 on every route — server-side). The
+  **unauthenticated** `profiles_csv` stops at 2024-12-31 and misses the exact profile for 51% of
+  these genomes, yet nearest-profile sublineage still agreed with the full database on **312/312** at
+  `≤30` mismatched loci and on 100% out to 60. Every disagreement lay beyond that (median **442**
+  loci), so failures are detectable via `pct_match` rather than silent
+  (`…/lin_typing/profile_coverage_public.json`).
+- **Two independent validations, both perfect.** Merging the 8,167 archived MiST calls against
+  metadata_v2: **7,193 agreements, 0 conflicts**. And 48 already-labelled genomes re-called from
+  scratch on real assemblies with the public-only table: **48/48 agree, 0 conflicts, 48/48 pass the
+  gate**. The first tests the parser and merge; the second tests the profile table end to end.
+- **178 recovered by fixing the join** — the long-read GCA-keyed rows, the **best-assembled genomes
+  in the cohort** (median 60 contigs vs 122), so excluding them biased the clusters toward drafts.
 
 **⚠ The no-label set is phenotypically non-random, and so is `other`.** Resistance differs
 significantly on **9 of 16 drugs** between labelled and unlabelled (ertapenem — a pilot drug — 0.820
@@ -318,12 +327,30 @@ retained clusters (ciprofloxacin 0.393 vs 0.887; ceftazidime 0.422 vs 0.888). **
 the less-resistant 45%, not a random 45%.** Mechanism is **open** — recoverable-join artifact,
 assembly quality, and study/provenance structure are all live readings.
 
-**⚠ Lineage-cluster coverage — two different numbers, do not conflate.**
-`…/pyseer_ast/kp/structure/lineage_clusters.manifest.json`: **10** named clusters at `min_size=100`
-holding **3,890 of 7,080 genomes (54.9%)**; `n_in_other = 3,190`. The 6,458/7,080 (91.2%) figure is
-*Kleborate-label coverage* — how many genomes carry any Sublineage label at all — most of which fall
-below `min_size` and land in `other`. Since §6's decision is to **drop** `other` from the permutation
-null, that null runs on ~55% of the cohort, **not ~91%**.
+**⚠ Lineage-cluster coverage — two different numbers, do not conflate.** *Label coverage* is how
+many genomes carry any Sublineage at all; *named-cluster coverage* is how many land in a cluster
+big enough to survive `min_size=100`. Since §6 **drops** `other` from the permutation null, the
+second is the one that says what the null actually runs on. Conflating them once understated the
+exclusion fivefold.
+
+| | live on Isambard | join fix only | **proposed** (+ LIN) |
+|---|--:|--:|--:|
+| label coverage | 91.2% | 93.7% | **99.1%** |
+| named clusters at `min_size=100` | 10 | 11 | **11** |
+| in a named cluster | 3,890 | 4,061 | **4,277** |
+| named-cluster coverage | 54.9% | 57.4% | **60.4%** |
+| `n_in_other` | 3,190 | 3,019 | **2,803** |
+
+Live figures from `…/pyseer_ast/kp/structure/lineage_clusters.manifest.json`; the other two from
+`…/david/lin_typing/{joinfix_only,proposed}/lineage_clusters.manifest.json`.
+
+**387 genomes leave `other`** — **171** from the join fix, **216** from the new LIN labels — and
+**zero** move the other way. The 11th cluster comes from the join fix, so the LIN labels change the
+null's *coverage* but not its *structure*: the named-cluster set is identical with and without them.
+
+**⚠ `lineage_clusters.tsv` on Isambard is still the OLD file.** The proposed replacement is written
+to a separate path and has **not** been swapped in. Swapping it invalidates the two pilot drugs'
+calibration, so it is a decision, not a step.
 
 **Status — invasion (`src/bac_pyseer/kleb_iso_source/`).** Complete and written up.
 [`PROGRESS_UNITIGS.md`](src/bac_pyseer/docs/PROGRESS_UNITIGS.md) ·
