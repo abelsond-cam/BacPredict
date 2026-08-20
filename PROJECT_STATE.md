@@ -333,7 +333,7 @@ big enough to survive `min_size=100`. Since §6 **drops** `other` from the permu
 second is the one that says what the null actually runs on. Conflating them once understated the
 exclusion fivefold.
 
-| | live on Isambard | join fix only | **proposed** (+ LIN) |
+| | live | join fix only | **proposed** (+ LIN) |
 |---|--:|--:|--:|
 | label coverage | 91.2% | 93.7% | **99.1%** |
 | named clusters at `min_size=100` | 10 | 11 | **11** |
@@ -341,16 +341,23 @@ exclusion fivefold.
 | named-cluster coverage | 54.9% | 57.4% | **60.4%** |
 | `n_in_other` | 3,190 | 3,019 | **2,803** |
 
-Live figures from `…/pyseer_ast/kp/structure/lineage_clusters.manifest.json`; the other two from
+Live figures from `…/david/bac_ast_prediction/processed/pyseer_ast/kp/structure/lineage_clusters.manifest.json`
+— **on CSD3, not Isambard**; the deprecated `…/david/processed/` tree has no `pyseer_ast` and looking
+there suggests, wrongly, that the GWAS lives elsewhere. The other two columns are from
 `…/david/lin_typing/{joinfix_only,proposed}/lineage_clusters.manifest.json`.
 
-**387 genomes leave `other`** — **171** from the join fix, **216** from the new LIN labels — and
-**zero** move the other way. The 11th cluster comes from the join fix, so the LIN labels change the
-null's *coverage* but not its *structure*: the named-cluster set is identical with and without them.
+**The diff against the live file is strictly additive.** Same 7,080 samples both sides; **387
+assignments change and every one is `other` → named**. Zero genomes leave a named cluster, and zero
+move between named clusters — so no genome's existing lineage assignment is revised. Attribution:
+**171** from the join fix, **216** from the new LIN labels. The one new cluster is **SL3010** (111
+genomes, just over `min_size`) and it comes from the join fix, so LIN typing changes the null's
+*coverage*, not its *structure*.
 
-**⚠ `lineage_clusters.tsv` on Isambard is still the OLD file.** The proposed replacement is written
-to a separate path and has **not** been swapped in. Swapping it invalidates the two pilot drugs'
-calibration, so it is a decision, not a step.
+**⚠ `lineage_clusters.tsv` is still the OLD file.** The replacement sits at
+`…/david/lin_typing/proposed/` and has **not** been swapped in. Because the change is additive, the
+two pilot drugs' results are not *contradicted* — but their λ and permutation p-values were computed
+against a null over 3,890 genomes and 10 clusters, so they are **not comparable** to anything run
+after the swap. Re-run the pilots alongside the fan-out rather than quoting them across the change.
 
 **Status — invasion (`src/bac_pyseer/kleb_iso_source/`).** Complete and written up.
 [`PROGRESS_UNITIGS.md`](src/bac_pyseer/docs/PROGRESS_UNITIGS.md) ·
