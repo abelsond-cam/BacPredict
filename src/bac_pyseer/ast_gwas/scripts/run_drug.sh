@@ -34,6 +34,7 @@ DRUG_DIR=$OUT_DIR/$DRUG
 GWAS_DIR=$DRUG_DIR/gwas
 SPLIT_TABLE=${SPLIT_TABLE:-$DATA_ROOT/processed/$TASK/splits/${DRUG}_split.csv}
 MATRIX=$UNITIG_DIR/unitigs.pyseer.gz
+REFLIST=$UNITIG_DIR/assembly_refs.txt        # the genomes that actually have an assembly
 TRIANGLE=$STRUCT_DIR/mash_triangle.txt
 CLUSTERS=$STRUCT_DIR/lineage_clusters.tsv
 PHENO=$DRUG_DIR/phenotype.tsv
@@ -50,7 +51,7 @@ QOS=${QOS-normal}
 NSHARDS=${NSHARDS:-64}
 CPU=${CPU:-8}
 
-for required in "$MATRIX" "$TRIANGLE" "$CLUSTERS" "$SPLIT_TABLE"; do
+for required in "$MATRIX" "$TRIANGLE" "$CLUSTERS" "$SPLIT_TABLE" "$REFLIST"; do
     [ -s "$required" ] || { echo "ERROR: missing $required — run build_cohort_once.sh first" >&2; exit 1; }
 done
 mkdir -p "$DRUG_DIR" "$GWAS_DIR" "$LOGDIR"
@@ -58,8 +59,12 @@ cd "$REPO"
 export PYTHONPATH="$REPO/src:${PYTHONPATH:-}"
 
 echo "=== (1) phenotype (${SPLITS}) -> $PHENO ==="
+# --reflist drops phenotyped genomes with no assembly. They are in the split tables (which come
+# from binary_ast_with_split.csv) but not in the unitig matrix or the kinship, so no GWAS can test
+# them; without this they surface as a kinship error, drug by drug.
 uv run python -m bac_pyseer.ast_gwas.build_ast_phenotype \
-    --split-table "$SPLIT_TABLE" --drug "$DRUG" --out-tsv "$PHENO" --splits "$SPLITS"
+    --split-table "$SPLIT_TABLE" --drug "$DRUG" --out-tsv "$PHENO" --splits "$SPLITS" \
+    --reflist "$REFLIST"
 
 echo "=== (2) kinship + distances for exactly this drug's samples ==="
 # Cutting the cohort-wide triangle down per drug is what keeps n^2 tractable: most drugs have far

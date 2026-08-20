@@ -19,7 +19,12 @@ import pandas as pd
 import pytest
 import scipy.sparse as sp
 
-from bac_pyseer.ast_gwas.build_ast_phenotype import build_phenotype, label_column, write_phenotype
+from bac_pyseer.ast_gwas.build_ast_phenotype import (
+    SAMPLE_COL,
+    build_phenotype,
+    label_column,
+    write_phenotype,
+)
 from bac_pyseer.ast_gwas.unitig_design_matrix import load_design, read_hits
 from bac_pyseer.ast_gwas.unitig_design_matrix import run as build_design
 from bac_pyseer.ast_gwas.unitig_lr import run as run_lr
@@ -96,6 +101,35 @@ def test_phenotype_can_opt_into_the_leaky_framing(split_table: Path) -> None:
     assert len(frame) == 20
     assert manifest["holdout_excluded"] is False
     assert "WARNING" in manifest["leakage_note"]
+
+
+def test_phenotype_drops_genomes_with_no_assembly(split_table: Path) -> None:
+    """Split tables cover the labelled cohort; a few of those genomes have no assembly on disk.
+
+    They are absent from the unitig matrix, the mash sketch and the kinship triangle, so no GWAS can
+    test them. Dropping them here — counted, not silently — is what keeps every drug from failing at
+    the kinship step instead.
+    """
+    testable = set(_all_samples()) - {_sample(0), _sample(1)}
+    frame, manifest = build_phenotype(split_table, _DRUG, ("train", "validate"), testable=testable)
+
+    assert manifest["n_dropped_no_assembly"] == 2
+    assert sorted(manifest["dropped_no_assembly"]) == [_sample(0), _sample(1)]
+    assert manifest["n_samples"] == manifest["n_selected_before_assembly_filter"] - 2
+    assert not ({_sample(0), _sample(1)} & set(frame[SAMPLE_COL]))
+
+
+def test_phenotype_without_a_reflist_is_unchanged(split_table: Path) -> None:
+    """The filter is opt-in: omitting the reflist must not quietly alter any existing cohort."""
+    plain, m_plain = build_phenotype(split_table, _DRUG, ("train", "validate"))
+    assert m_plain["n_dropped_no_assembly"] == 0
+    assert m_plain["n_samples"] == m_plain["n_selected_before_assembly_filter"] == len(plain)
+
+
+def test_an_empty_intersection_is_an_error_not_an_empty_phenotype(split_table: Path) -> None:
+    """No overlap means the wrong reflist or the wrong split table — never a coverage gap."""
+    with pytest.raises(SystemExit, match="wrong reflist or a wrong split table"):
+        build_phenotype(split_table, _DRUG, ("train", "validate"), testable={"SOMETHING_ELSE"})
 
 
 def test_phenotype_rejects_unknown_split(split_table: Path) -> None:
