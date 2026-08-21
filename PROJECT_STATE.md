@@ -249,9 +249,34 @@ This is deliberately a **layer, not a package**: the same yardstick serves both 
 that convergence is the point. It answers "how good is the fine-tune, *really*" without assuming any
 mechanism.
 
-**Status — AMR (`src/bac_pyseer/ast_gwas/`).** Pilot complete on 2 of 22 Kp drugs. The Kp cohort,
-unitig matrix and lineage clusters are **built and shared**, so the remaining 20 drugs are read-out
-only. TB is not started.
+**Status — AMR (`src/bac_pyseer/ast_gwas/`).** All 22 Kp drugs have a phenotype and a submitted GWAS
+chain (2026-08-21). 7 have a complete `.assoc`; 4 have `lr/results.json` (colistin, ertapenem,
+gentamicin, trimethoprim-sulfamethoxazole). The Kp cohort, unitig matrix and lineage clusters are
+**built and shared**. TB is not started.
+
+**⚠ Storage bug fixed 2026-08-21 — it had silently killed a whole batch.** `unitig_lmm_sharded_job.sh`
+keyed `CHUNK_DIR` on `$PAIR`, and `run_drug.sh` sets `PAIR=$DRUG`, so all 22 Kp drugs — which share
+ONE `unitigs.pyseer.gz` — each re-split it into a private ~26.5 GB copy. Twelve copies filled
+`/rds/user/dca36` and five batch-2 preps died mid-write with "Disk quota exceeded". `CHUNK_DIR` now
+derives from the matrix path, so sharing is structural; prep dropped from minutes-plus-26.5 GB to
+**9 s and 0 GB** (`unitig_lmm_shard_34159281_*.out`: "reusing 64 existing chunks"). Duplication was
+content-verified before deleting (decompressed `chunk_07.gz` md5 identical across five drugs).
+**162 GB reclaimed** — `/rds-d6/user/dca36` 407.9 → 245.5 GB — via
+`src/bac_pyseer/ast_gwas/scripts/reclaim_unitig_chunks.sh` (dry-run by default); all seven drugs'
+`.assoc` results survived at 64/64. Two hazards fixed in the same pass: concurrent preps now take an
+atomic `mkdir` lock instead of racing to rebuild one shared directory, and the split stages into
+`.building/` and publishes only after verifying all 64 chunks are non-empty — a killed prep used to
+leave a SHORT chunk that the name-only count accepted as present.
+
+**The AUROC ladder now carries the unitig arm** (`engine/plots/plot_amr_ladder.py`, 2026-08-21):
+red catalogue → **purple unitig-LR** → blue Bacformer FT and FT⊕baclm concat heads. The join is at the
+**plot layer**, not in `<drug>_amr_ladder_table.csv` — the two arms come from different pipelines, and
+appending a rung would force a ladder re-run. No threshold reconciliation is involved: `build_amr_ladder`
+writes only AUROC/AUPRC and never picks an operating point, so the unitig arm's Youden-on-holdout
+threshold is irrelevant to this figure. What is guarded is *genome identity* — `--split-table` resolves
+the holdout through `engine.splits.load_splits` and a `results.json` whose `split.n_evaluate` disagrees
+is dropped rather than drawn. `engine/scripts/render_amr_ladders.sh` renders all 22 and reports which
+arms each got, so a partial panel cannot be mistaken for a complete one.
 
 **Numbers of record** — identical holdouts (**set membership verified identical**, not merely equal
 counts), paired bootstrap CI. Unitig arm from `…/pyseer_ast/kp/<drug>/lr/results.json`; FT arm from
