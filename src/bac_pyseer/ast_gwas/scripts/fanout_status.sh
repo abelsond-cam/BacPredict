@@ -40,7 +40,9 @@ fi
 printf "%-32s %-9s %-8s %-8s %-7s %-6s %s\n" DRUG PHENO SHARDS ASSOC HITS LR NOTE
 for drug in "${drugs[@]}"; do
     d=$OUT_DIR/$drug
-    shards=$(ls "$SHARD_ROOT/$drug/$COHORT"/chunk_*.assoc 2>/dev/null | wc -l)
+    # `ls | wc -l` under `set -o pipefail` kills the script on the first drug with no shards yet,
+    # so the whole report came back as a bare header. Swallow the ls failure, not the count.
+    shards=$({ ls "$SHARD_ROOT/$drug/$COHORT"/chunk_*.assoc 2>/dev/null || true; } | wc -l)
     assoc=$([ -s "$d/gwas/$drug.assoc" ] && echo yes || echo -)
     hits=$([ -s "$d/gwas/${drug}_hits_annotated.tsv" ] || [ -s "$d/${drug}_hits_annotated.tsv" ] && echo yes || echo -)
     lr=$([ -s "$d/lr/results.json" ] && echo yes || echo -)
@@ -53,7 +55,7 @@ for drug in "${drugs[@]}"; do
         "$shards/$NSHARDS" "$assoc" "$hits" "$lr" "$note"
 done
 
-held=$(squeue -u "$USER" -h -o "%i %r" 2>/dev/null | grep -c "launch_failed_requeued_held" || true)
+held=$({ squeue -u "$USER" -h -o "%i %r" 2>/dev/null || true; } | grep -c "launch_failed_requeued_held" || true)
 if [ "${held:-0}" -gt 0 ]; then
     echo
     echo "!! $held job(s) are PENDING(launch failed requeued held) and will never start. Release them:"
