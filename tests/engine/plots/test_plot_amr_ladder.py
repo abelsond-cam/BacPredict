@@ -1,6 +1,9 @@
 """Stage-A smoke for the AMR concat-ladder figure (ft_mean + gene / + noncoding / + both, + ceiling)."""
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pandas as pd
 
 from bacpredict.engine.plots import plot_amr_ladder as P
@@ -88,3 +91,79 @@ def test_plot_accepts_conditional_catalogue_hatch(tmp_path):
         P.plot_amr_ladder(_table(), out, species="tb", drug="ethionamide", strongest_single=0.83,
                           ceiling=0.9, catalogue_has_noncoding=has_nc)
         assert out.exists() and out.stat().st_size > 0
+
+
+def _unitig_results(tmp_path, *, name="lr", auroc=0.94, n_evaluate=200, n_unitigs=1837,
+                    model="unitig_lr") -> Path:
+    """A minimal unitig_lr results.json — only the keys the figure actually reads."""
+    out = tmp_path / name
+    out.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": "1.2", "task": "kleb_ast", "drug": "gentamicin",
+        "model": {"name_or_path": model, "checkpoint_dir": str(out)},
+        "split": {"source": "split_table", "n_evaluate": n_evaluate},
+        # metrics.threshold is 0.5 and operating_point is Youden-on-holdout; the figure reads NEITHER,
+        # because AUROC/AUPRC are threshold-free. Both are present here so the test would catch it if
+        # a future change started consulting them.
+        "metrics": {"auroc": auroc, "auprc": 0.91, "threshold": 0.5},
+        "operating_point": {"objective": "youden_j", "selected_on": "holdout", "threshold": 0.71},
+        "extra": {"n_unitigs": n_unitigs, "n_train": 800},
+    }
+    (out / "results.json").write_text(json.dumps(payload))
+    return out / "results.json"
+
+
+def test_unitig_arm_reads_the_threshold_free_metric(tmp_path):
+    arm = P.unitig_arm(_unitig_results(tmp_path), metric="auroc")
+    assert arm == {"value": 0.94, "n_unitigs": 1837, "n_evaluate": 200}
+    assert P.unitig_arm(_unitig_results(tmp_path, name="b"), metric="auprc")["value"] == 0.91
+
+
+def test_absent_unitig_results_is_not_an_error(tmp_path):
+    # The normal state while a fan-out lands: most drugs have no unitig result yet.
+    assert P.unitig_arm(None) is None
+    assert P.unitig_arm(tmp_path / "nope" / "results.json") is None
+
+
+def test_a_different_model_is_refused(tmp_path):
+    # A results.json from some other arm must never be drawn as the unitig bar.
+    assert P.unitig_arm(_unitig_results(tmp_path, model="finetune_amr")) is None
+
+
+def test_holdout_size_mismatch_drops_the_bar(tmp_path):
+    # 200 vs 341 means the two arms scored DIFFERENT genomes — refuse rather than compare across cohorts.
+    res = _unitig_results(tmp_path, n_evaluate=200)
+    assert P.unitig_arm(res, n_holdout=200) is not None
+    assert P.unitig_arm(res, n_holdout=341) is None
+
+
+def test_render_with_the_unitig_bar(tmp_path):
+    out = tmp_path / "with_unitig.png"
+    P.plot_amr_ladder(_table(), out, species="kp", drug="gentamicin", strongest_single=0.88,
+                      strongest_name="aac(6')-Ib", ceiling=0.95,
+                      unitig={"value": 0.94, "n_unitigs": 1837, "n_evaluate": 200})
+    assert out.exists() and out.stat().st_size > 0
+
+
+def test_render_with_both_purple_bars(tmp_path):
+    out = tmp_path / "with_dedup.png"
+    P.plot_amr_ladder(_table(), out, species="kp", drug="gentamicin", ceiling=0.95,
+                      unitig={"value": 0.94, "n_unitigs": 1837, "n_evaluate": 200},
+                      unitig_dedup={"value": 0.92, "n_unitigs": 61, "n_evaluate": 200})
+    assert out.exists() and out.stat().st_size > 0
+
+
+def test_render_without_any_unitig_arm_is_unchanged(tmp_path):
+    # No purple group at all: the figure must still render, since that is every drug pre-fan-out.
+    out = tmp_path / "no_unitig.png"
+    P.plot_amr_ladder(_table(), out, species="kp", drug="gentamicin", ceiling=0.95)
+    assert out.exists() and out.stat().st_size > 0
+
+
+def test_run_threads_the_unitig_results_through(tmp_path):
+    csv = tmp_path / "t.csv"
+    _table().to_csv(csv, index=False)
+    out = tmp_path / "run.png"
+    table = P.run(species="kp", drug="gentamicin", table_csv=csv, out_path=out,
+                  unitig_results=_unitig_results(tmp_path))
+    assert out.exists() and len(table) == 4  # the ladder table itself is untouched — still four rungs
