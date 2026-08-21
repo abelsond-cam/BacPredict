@@ -48,6 +48,8 @@ FT_BLUE = "#4292c6"         # mid blue: Bacformer FT genome-mean
 CONCAT_BLUE = "#08306b"     # deep royal blue: every FT ⊕ baclm concat head (one colour)
 _UNITIG_MODEL = "unitig_lr"  # results.json model.name_or_path — refuse to plot anything else as this arm
 _CHANCE = 0.5
+# Above this, the chance line is not a useful reference and the axis zooms instead.
+_ZOOM_ABOVE_CHANCE = 0.70
 SPECIES_LABEL = {"tb": "TB", "kp": "Kp"}
 # Compact, additive bar labels; the ⊕ (circled plus) reads as "concatenated head".
 _RUNG_LABEL = {1: "FT", 2: "FT ⊕ gene", 3: "FT ⊕ IGR", 4: "FT ⊕ gene ⊕ IGR"}
@@ -98,7 +100,7 @@ def _catalogue_refs(catalogue_csv: Path | None, metric: str) -> tuple[float, str
 _BLOCK_DISPLAY = {"oric": "OriC"}
 
 
-def _short_block(block: str, cap: int = 16) -> str:
+def _short_block(block: str, cap: int = 13) -> str:
     """Compact a rung's chosen-block name for the x-tick via the shared :func:`region_label`.
 
     One label per ``a | b`` part (``upstream:fabg1`` → "inhA promoter", ``rrna:rrs`` → "rrs rRNA") so the
@@ -262,7 +264,9 @@ def plot_amr_ladder(table: pd.DataFrame, out_path: Path, *, species: str, drug: 
         previous_group = b["group"]
     x = np.array(positions)
     # Wider per-bar spacing so long two-line rung labels ("(rpoB | inhA promoter)") don't collide.
-    fig, ax = plt.subplots(figsize=(max(8.0, 1.4 * len(labels) + 3.0), 5.2))
+    # 1.4 was calibrated before the purple group existed; at 7 bars the FT ⊕ IGR and FT ⊕ gene ⊕ IGR
+    # block names ran into each other.
+    fig, ax = plt.subplots(figsize=(max(8.0, 1.75 * len(labels) + 3.0), 5.2))
     bars = ax.bar(x, heights, width=0.66, color=colours, edgecolor="black", linewidth=0.7, zorder=3)
     for b, h in zip(bars, hatched, strict=True):
         if h:
@@ -270,14 +274,23 @@ def plot_amr_ladder(table: pd.DataFrame, out_path: Path, *, species: str, drug: 
     for xi, v in zip(x, heights, strict=True):
         if pd.notna(v):
             ax.text(xi, v + 0.004, f"{v:.3f}", ha="center", va="bottom", fontsize=9.5, fontweight="bold")
-    ax.axhline(_CHANCE, color="0.6", linestyle=":", linewidth=1.0, zorder=1)
+    finite = [v for v in heights if pd.notna(v)]
+    lo = min(finite) if finite else _CHANCE
+
+    # A floor pinned at 0.45 keeps the chance line in frame, but on an AMR panel where every bar sits
+    # above 0.9 it squeezes the whole comparison into the top few percent of the axis: the figure then
+    # says "everything works" and nothing else, which is exactly the question it exists to answer.
+    # Zoom when the weakest bar is comfortably above chance -- and label the axis as truncated, because
+    # a zoomed bar chart exaggerates differences and the reader is owed that.
+    zoomed = lo > _ZOOM_ABOVE_CHANCE
+    ax.set_ylim(max(0.0, lo - 0.03) if zoomed else min(0.45, max(0.0, lo - 0.05)), 1.02)
+    if not zoomed:
+        ax.axhline(_CHANCE, color="0.6", linestyle=":", linewidth=1.0, zorder=1)
 
     ax.set_xticks(x)
     ax.set_xticklabels(labels, fontsize=8.5)
-    ax.set_ylabel(f"{metric.upper()} (out-of-fold, FT eval-holdout)")
-    finite = [v for v in heights if pd.notna(v)]
-    lo = min(finite) if finite else _CHANCE
-    ax.set_ylim(min(0.45, max(0.0, lo - 0.05)), 1.02)
+    ylabel = f"{metric.upper()} (out-of-fold, FT eval-holdout)"
+    ax.set_ylabel(ylabel + "\ntruncated axis — every bar is well above chance" if zoomed else ylabel)
     ax.grid(axis="y", alpha=0.3)
     ax.spines[["top", "right"]].set_visible(False)
     ax.set_title(f"{SPECIES_LABEL.get(species, species.upper())} {display_name(drug)} prediction",
