@@ -92,10 +92,14 @@ run "find '$U' -maxdepth 3 -type d -name 'work_*' -exec rm -rf {} +"
 
 if [ "$SCRATCH_LOG_DAYS" -gt 0 ]; then
     echo
-    echo "--- (6) DELETE job logs older than $SCRATCH_LOG_DAYS days in $SCRATCH_LOGS ---"
-    old=$(find "$SCRATCH_LOGS" -maxdepth 1 -type f -mtime "+$SCRATCH_LOG_DAYS" 2>/dev/null | wc -l)
-    echo "    $old of $(find "$SCRATCH_LOGS" -maxdepth 1 -type f | wc -l) files  $(gb "$SCRATCH_LOGS" -maxdepth 1 -type f -mtime "+$SCRATCH_LOG_DAYS") GB"
-    run "find '$SCRATCH_LOGS' -maxdepth 1 -type f -mtime '+$SCRATCH_LOG_DAYS' -delete"
+    # *.out/*.err ONLY. pyseer_scratch is not a pure log dir: a plain -mtime sweep would also have
+    # taken three calibration scripts and unitig_subset_stride15.gz (5.12 GB, the strided matrix the
+    # lambda-by-allele-frequency work still needs). The dry run is what caught that.
+    echo "--- (6) DELETE *.out/*.err older than $SCRATCH_LOG_DAYS days in $SCRATCH_LOGS ---"
+    old=$(find "$SCRATCH_LOGS" -maxdepth 1 -type f -mtime "+$SCRATCH_LOG_DAYS" \( -name '*.out' -o -name '*.err' \) 2>/dev/null | wc -l)
+    echo "    $old of $(find "$SCRATCH_LOGS" -maxdepth 1 -type f | wc -l) files  $(gb "$SCRATCH_LOGS" -maxdepth 1 -type f -mtime "+$SCRATCH_LOG_DAYS" \( -name '*.out' -o -name '*.err' \)) GB"
+    echo "    NOT touched: $(find "$SCRATCH_LOGS" -maxdepth 1 -type f ! -name '*.out' ! -name '*.err' | wc -l) non-log files"
+    run "find '$SCRATCH_LOGS' -maxdepth 1 -type f -mtime '+$SCRATCH_LOG_DAYS' \( -name '*.out' -o -name '*.err' \) -delete"
 fi
 
 echo
