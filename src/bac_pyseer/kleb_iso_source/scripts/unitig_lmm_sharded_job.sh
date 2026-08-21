@@ -80,15 +80,22 @@ GFF=$DATA/david/raw/related_lr/gff/GCF_000016305.1.gff
 # Chunks vs results are separated deliberately.
 #
 # CHUNK_DIR holds the gzipped slices of the unitig matrix. Those depend only on the matrix and
-# NSHARDS — not on the cohort — so every cohort of a pair shares one copy. At ~77 GB per full set,
-# on a tier with a few hundred GB free, duplicating them per cohort is not affordable and re-splitting
-# is an hour of IO for nothing.
+# NSHARDS — not on the cohort, and not on the drug — so it is keyed on $M, the matrix itself.
+#
+# It used to be keyed on $PAIR. That is correct for iso-source, where $PAIR names the matrix
+# (blood_faeces), and silently wrong for AMR, where run_drug.sh sets PAIR=$DRUG: all 22 Kp drugs
+# share ONE unitigs.pyseer.gz, so each was re-splitting it into a private ~28.5 GB copy. Twelve
+# copies filled the 1 TB tier and killed five prep jobs mid-write with "Disk quota exceeded"
+# (2026-08-21). Deriving the key from $M makes the sharing structural — a caller cannot reintroduce
+# the duplication by forgetting to set a knob.
 #
 # SHARD_DIR holds the per-cohort *results* (chunk_$i.assoc, patterns_$i.txt, work_$i). These MUST be
 # per-cohort: keyed on PAIR alone, a second cohort would overwrite the first's shard results and the
 # combine step would silently emit an .assoc mixing two analyses.
-CHUNK_DIR=${CHUNK_DIR:-/home/dca36/rds/hpc-work/unitig_shards/$PAIR}
-SHARD_DIR=${SHARD_DIR:-/home/dca36/rds/hpc-work/unitig_shards/$PAIR/$COHORT}
+CHUNK_ROOT=${CHUNK_ROOT:-/home/dca36/rds/hpc-work/unitig_shards}
+CHUNK_KEY=$(printf '%s' "${M%/*}" | sed 's#^.*/david/##; s#[^A-Za-z0-9]#_#g')
+CHUNK_DIR=${CHUNK_DIR:-$CHUNK_ROOT/_matrix_$CHUNK_KEY}
+SHARD_DIR=${SHARD_DIR:-$CHUNK_ROOT/$PAIR/$COHORT}
 mkdir -p "$GD" "$SHARD_DIR" "$CHUNK_DIR"
 
 PHASE=${PHASE:?set PHASE=prep|task|combine}
@@ -146,16 +153,50 @@ PY
     echo "=== (3) split matrix -> $NSHARDS gzipped chunks in $CHUNK_DIR (shared across cohorts) ==="
     # `find`, not `ls chunk_*.gz`: a no-match glob makes ls exit non-zero, which under
     # `set -euo pipefail` would kill the job instead of reporting zero chunks.
-    HAVE=$(find "$CHUNK_DIR" -maxdepth 1 -name 'chunk_*.gz' | wc -l)
+    # -size +0, not a bare name test: a prep killed mid-write (quota, walltime) leaves a SHORT but
+    # non-empty chunk that a name-only count accepts as present. amikacin left a 38 MB chunk_16.gz
+    # beside 445 MB siblings exactly that way. Staging below is what stops a partial set publishing.
+    HAVE=$(find "$CHUNK_DIR" -maxdepth 1 -name 'chunk_*.gz' -size +0 | wc -l)
+    LOCK=$CHUNK_DIR.lock
     if [ "$HAVE" -eq "$NSHARDS" ]; then
-        echo "reusing $HAVE existing chunks (cohort-independent; skipping the ~77 GB re-split)"
-    else
-        # `if`, not `[ ] && echo`: a false test makes the && list return non-zero and `set -e` aborts.
-        if [ "$HAVE" -gt 0 ]; then echo "found $HAVE chunks but need $NSHARDS — rebuilding"; fi
-        rm -f "$CHUNK_DIR"/chunk_*.gz
-        zcat "$M" | awk -v n="$NSHARDS" -v d="$CHUNK_DIR" \
+        echo "reusing $HAVE existing chunks in $CHUNK_DIR (matrix-keyed; skipping the re-split)"
+    elif mkdir "$LOCK" 2>/dev/null; then
+        # Chunks are shared now, so a fan-out submitting several drugs at once would otherwise have
+        # every prep wipe and rebuild the same directory under the others' feet. mkdir is atomic on
+        # POSIX, so it elects exactly one builder; the losers wait in the else branch.
+        trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
+        if [ "$HAVE" -gt 0 ]; then echo "found $HAVE usable chunks but need $NSHARDS — rebuilding"; fi
+        BUILD=$CHUNK_DIR.building.${SLURM_JOB_ID:-$$}
+        rm -rf "$BUILD"; mkdir -p "$BUILD"
+        zcat "$M" | awk -v n="$NSHARDS" -v d="$BUILD" \
             '{ f = sprintf("%s/chunk_%02d.gz", d, (NR-1)%n); print | ("gzip > " f) }'
+        # Verify the WHOLE set before publishing any of it. An out-of-quota gzip fails per file, so
+        # the split can finish "successfully" several chunks short; publishing then poisons every
+        # cohort that later reuses this directory, not just this run.
+        for j in $(seq 0 $((NSHARDS - 1))); do
+            if [ ! -s "$BUILD/chunk_$(printf '%02d' "$j").gz" ]; then
+                echo "ERROR: chunk $j missing or empty after the split — publishing nothing, $CHUNK_DIR untouched"
+                rm -rf "$BUILD"; exit 1
+            fi
+        done
+        rm -f "$CHUNK_DIR"/chunk_*.gz
+        mv "$BUILD"/chunk_*.gz "$CHUNK_DIR"/
+        rmdir "$BUILD"
         echo "chunk line counts:"; for c in "$CHUNK_DIR"/chunk_*.gz; do echo "  $(basename "$c"): $(zcat "$c" | wc -l)"; done
+    else
+        # `if ...; then break; fi`, never `[ ] && break`: under `set -e` a false && list aborts the job.
+        echo "another job holds $LOCK and is building the shared chunks — waiting up to 2 h"
+        for _ in $(seq 1 240); do
+            sleep 30
+            if [ "$(find "$CHUNK_DIR" -maxdepth 1 -name 'chunk_*.gz' -size +0 | wc -l)" -eq "$NSHARDS" ]; then break; fi
+        done
+        HAVE=$(find "$CHUNK_DIR" -maxdepth 1 -name 'chunk_*.gz' -size +0 | wc -l)
+        if [ "$HAVE" -ne "$NSHARDS" ]; then
+            echo "ERROR: waited 2 h and $CHUNK_DIR still has $HAVE/$NSHARDS usable chunks — is the builder dead?"
+            echo "       if no job holds it, remove $LOCK and resubmit this prep."
+            exit 1
+        fi
+        echo "shared chunks became available"
     fi
     echo "=== prep done  $(date) ==="
     ;;
