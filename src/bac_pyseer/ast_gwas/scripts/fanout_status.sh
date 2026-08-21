@@ -43,8 +43,15 @@ for drug in "${drugs[@]}"; do
     # Count NON-EMPTY shard results only. A shard that dies mid-pyseer leaves a 0-byte
     # chunk_NN.assoc behind, so counting files reports 64/64 while the combine still refuses with
     # "missing shard assoc". Counting files is exactly how I misread ceftazidime as complete.
-    shards=$(find "$SHARD_ROOT/$drug/$COHORT" -maxdepth 1 -name 'chunk_*.assoc' -size +0 2>/dev/null | wc -l)
-    empty=$(find "$SHARD_ROOT/$drug/$COHORT" -maxdepth 1 -name 'chunk_*.assoc' -size 0 2>/dev/null | wc -l)
+    # Both the `find` and the `wc` must be shielded: find exits non-zero when the shard dir does
+    # not exist yet (every drug not started), and `set -o pipefail` turns that into a script exit.
+    shard_dir=$SHARD_ROOT/$drug/$COHORT
+    if [ -d "$shard_dir" ]; then
+        shards=$({ find "$shard_dir" -maxdepth 1 -name 'chunk_*.assoc' -size +0 2>/dev/null || true; } | wc -l)
+        empty=$({ find "$shard_dir" -maxdepth 1 -name 'chunk_*.assoc' -size 0 2>/dev/null || true; } | wc -l)
+    else
+        shards=0; empty=0
+    fi
     assoc=$([ -s "$d/gwas/$drug.assoc" ] && echo yes || echo -)
     hits=$([ -s "$d/gwas/${drug}_hits_annotated.tsv" ] || [ -s "$d/${drug}_hits_annotated.tsv" ] && echo yes || echo -)
     lr=$([ -s "$d/lr/results.json" ] && echo yes || echo -)
