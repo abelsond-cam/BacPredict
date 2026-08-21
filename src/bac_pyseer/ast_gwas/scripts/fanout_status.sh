@@ -40,14 +40,18 @@ fi
 printf "%-32s %-9s %-8s %-8s %-7s %-6s %s\n" DRUG PHENO SHARDS ASSOC HITS LR NOTE
 for drug in "${drugs[@]}"; do
     d=$OUT_DIR/$drug
-    # `ls | wc -l` under `set -o pipefail` kills the script on the first drug with no shards yet,
-    # so the whole report came back as a bare header. Swallow the ls failure, not the count.
-    shards=$({ ls "$SHARD_ROOT/$drug/$COHORT"/chunk_*.assoc 2>/dev/null || true; } | wc -l)
+    # Count NON-EMPTY shard results only. A shard that dies mid-pyseer leaves a 0-byte
+    # chunk_NN.assoc behind, so counting files reports 64/64 while the combine still refuses with
+    # "missing shard assoc". Counting files is exactly how I misread ceftazidime as complete.
+    shards=$(find "$SHARD_ROOT/$drug/$COHORT" -maxdepth 1 -name 'chunk_*.assoc' -size +0 2>/dev/null | wc -l)
+    empty=$(find "$SHARD_ROOT/$drug/$COHORT" -maxdepth 1 -name 'chunk_*.assoc' -size 0 2>/dev/null | wc -l)
     assoc=$([ -s "$d/gwas/$drug.assoc" ] && echo yes || echo -)
     hits=$([ -s "$d/gwas/${drug}_hits_annotated.tsv" ] || [ -s "$d/${drug}_hits_annotated.tsv" ] && echo yes || echo -)
     lr=$([ -s "$d/lr/results.json" ] && echo yes || echo -)
     note=""
-    if [ "$shards" -eq "$NSHARDS" ] && [ "$assoc" = "-" ]; then
+    if [ "${empty:-0}" -gt 0 ]; then
+        note="$empty EMPTY shard assoc -> rerun those shards, then combine"
+    elif [ "$shards" -eq "$NSHARDS" ] && [ "$assoc" = "-" ]; then
         note="ALL SHARDS DONE BUT NO ASSOC -> resubmit combine"
     fi
     printf "%-32s %-9s %-8s %-8s %-7s %-6s %s\n" "$drug" \
