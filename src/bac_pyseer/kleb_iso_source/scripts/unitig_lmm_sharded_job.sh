@@ -180,13 +180,31 @@ combine)
     ASSOC=$GD/${OUT_STEM}.assoc
     PATTERNS=$GD/patterns.txt
     echo "=== concatenate $NSHARDS shard .assoc (one header) + union patterns ==="
-    H=$(printf "%02d" 0)
-    head -1 "$SHARD_DIR/chunk_$H.assoc" > "$ASSOC"
+    # Check EVERY shard before writing anything. Concatenating as we go left a truncated .assoc
+    # behind when a shard was missing -- ceftazidime stopped at shard 14 and kept 802,409 of its
+    # 3.7M lines on disk, a file that reads as a complete GWAS to everything downstream. A shard
+    # that dies inside pyseer also leaves a 0-byte chunk_NN.assoc, so -s is the test, not -e.
+    missing=()
     for j in $(seq 0 $((NSHARDS-1))); do
-        i=$(printf "%02d" "$j"); f=$SHARD_DIR/chunk_$i.assoc
-        [ -s "$f" ] || { echo "ERROR: missing shard assoc $f"; exit 1; }
-        tail -n +2 "$f" >> "$ASSOC"
+        i=$(printf "%02d" "$j")
+        [ -s "$SHARD_DIR/chunk_$i.assoc" ] || missing+=("$i")
     done
+    if [ "${#missing[@]}" -gt 0 ]; then
+        echo "ERROR: ${#missing[@]} shard assoc missing or empty: ${missing[*]}"
+        echo "       rerun those shards (--array=${missing[0]}...), then this combine."
+        echo "       $ASSOC left untouched."
+        exit 1
+    fi
+    # Build into a temp and move only on success, so a failure never replaces a good .assoc with a
+    # partial one.
+    TMP_ASSOC=$ASSOC.partial.$$
+    H=$(printf "%02d" 0)
+    head -1 "$SHARD_DIR/chunk_$H.assoc" > "$TMP_ASSOC"
+    for j in $(seq 0 $((NSHARDS-1))); do
+        i=$(printf "%02d" "$j")
+        tail -n +2 "$SHARD_DIR/chunk_$i.assoc" >> "$TMP_ASSOC"
+    done
+    mv "$TMP_ASSOC" "$ASSOC"
     cat "$SHARD_DIR"/patterns_*.txt > "$PATTERNS"
     echo "combined assoc lines: $(wc -l < "$ASSOC")   patterns (pre-dedup): $(wc -l < "$PATTERNS")"
 
