@@ -29,6 +29,23 @@ from transformers import AutoModel
 # The refreshed Bacformer complete-genomes model (not the MAG-trained one).
 BACFORMER_MODEL_ID = "macwiatrak/bacformer-large-masked-complete-genomes"
 
+# ⛔ PIN THE REVISION. This repo is loaded with `trust_remote_code=True`, so the *modelling code*
+# (`modeling_bacformer.py`) can change under us on `main` while the weights do not — and it has, twice:
+#   aeb56c93 (2026-04-28) -> ab3a91a2 (2026-05-25) -> 84f85c37 (2026-08-11)
+# All three resolve to the SAME `model.safetensors` (one physical file, sha256 f48fc313…, 1,727,103,188 B);
+# `config.json` is one shared blob too. ONLY `modeling_bacformer.py` differs. So an unpinned load silently
+# changes what an embedding MEANS while every checksum you would think to compare stays equal.
+#   * ab3a91a2 is the fix the model card documents ("a bug … which resulted in a significant drop in the
+#     quality of the output embeddings … re-download and use the latest model revision").
+#   * 84f85c37 is `choijein0410:fix-rope-buffer-reinit` (Bacformer#33), and is NOT in the model card:
+#     RoPE `inv_freq` is registered `persistent=False`, so it is absent from the checkpoint and was never
+#     reinitialised on load — NaN/garbage buffers, inf attention scores. ⚠ It is scoped to transformers >= 5,
+#     so at our 4.57.6 it is LATENT, not dormant: a transformers upgrade would activate it on an unpinned
+#     revision with nothing failing. That is why the revision is pinned even though today's version is safe.
+# Measured consequence of not pinning: the Klebsiella Bacformer store held TWO representations at once —
+# mean row norm 22.22 vs 17.37, cosine 0.037 between them, and not a permutation.
+BACFORMER_REVISION = "84f85c37a05e55559142b842c1569e265183b554"
+
 # ESM-C (protein LM, 960-d) — PIN the revision. `bacformer.pp.load_plm`'s unpinned
 # `esmc` default now resolves to a broken `main` (commit 286a9db NameErrors at import)
 # and is not in our HF cache. `0c0b9c57` is the exact 960-d upload that produced the
@@ -62,8 +79,14 @@ def load_bacformer_model(device: str, dtype="auto") -> torch.nn.Module:
     embedding pipeline and by :mod:`bacpredict.engine.concat.bacformer_genome_vectors`.
     ``dtype="auto"`` lets HF pick the checkpoint dtype (works on CPU for Stage-A
     smoke); pass ``torch.bfloat16`` to force the GPU pipeline's historical dtype.
+
+    **Pinned to** :data:`BACFORMER_REVISION` — see the comment there for why an unpinned load is a silent
+    correctness hazard rather than a reproducibility nicety. Every Bacformer embedding in either project
+    comes through this function, so this is the one place the pin has to hold.
     """
-    model = AutoModel.from_pretrained(BACFORMER_MODEL_ID, trust_remote_code=True, torch_dtype=dtype)
+    model = AutoModel.from_pretrained(
+        BACFORMER_MODEL_ID, revision=BACFORMER_REVISION, trust_remote_code=True, torch_dtype=dtype
+    )
     return model.to(device).eval()
 
 
