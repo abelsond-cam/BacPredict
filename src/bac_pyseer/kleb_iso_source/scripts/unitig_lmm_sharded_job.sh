@@ -236,6 +236,30 @@ combine)
         echo "       $ASSOC left untouched."
         exit 1
     fi
+    # Non-empty is NOT enough. Shards are round-robin by line, so every one tests very nearly the
+    # same number of unitigs -- a shard that dies partway through pyseer still flushes what it had.
+    # ceftazidime's shard 14 died on a transient .so mmap error and left 42 lines beside siblings of
+    # ~57,000: -s accepted it, and the combined .assoc silently lost ~56k unitigs while looking whole.
+    # Flag any shard under a quarter of the largest, which is far outside genuine round-robin spread.
+    biggest=0
+    for j in $(seq 0 $((NSHARDS-1))); do
+        i=$(printf "%02d" "$j")
+        n=$(wc -l < "$SHARD_DIR/chunk_$i.assoc")
+        [ "$n" -gt "$biggest" ] && biggest=$n
+    done
+    floor=$((biggest / 4))
+    runt=()
+    for j in $(seq 0 $((NSHARDS-1))); do
+        i=$(printf "%02d" "$j")
+        n=$(wc -l < "$SHARD_DIR/chunk_$i.assoc")
+        if [ "$n" -lt "$floor" ]; then runt+=("$i:$n"); fi
+    done
+    if [ "${#runt[@]}" -gt 0 ]; then
+        echo "ERROR: ${#runt[@]} shard assoc far short of the ${biggest}-line maximum: ${runt[*]}"
+        echo "       those shards died partway through pyseer. Rerun them, then this combine."
+        echo "       $ASSOC left untouched."
+        exit 1
+    fi
     # Build into a temp and move only on success, so a failure never replaces a good .assoc with a
     # partial one.
     TMP_ASSOC=$ASSOC.partial.$$
