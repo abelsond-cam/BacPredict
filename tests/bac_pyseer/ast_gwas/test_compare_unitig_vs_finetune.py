@@ -89,3 +89,17 @@ def test_nothing_to_compare_is_an_error(tmp_path):
         (tmp_path / d).mkdir()
     with pytest.raises(SystemExit):
         run(tmp_path / "ft", tmp_path / "kp", tmp_path / "vocab", None)
+
+
+def test_unitig_holdout_count_is_read_from_split_not_only_the_top_level(tmp_path):
+    """The count lives under split{}. Reading only the top level yields None, which compares
+    unequal to the FT's real count and flags every drug — a check that looks like it ran."""
+    from bac_pyseer.ast_gwas.compare_unitig_vs_finetune import read_unitig
+    d = tmp_path / "colistin" / "lr"
+    d.mkdir(parents=True)
+    (d / "results.json").write_text(json.dumps({"metrics": {"auroc": 0.9}, "split": {"n_evaluate": 282}}))
+    assert read_unitig(tmp_path, "colistin", nested=False)["n_evaluate"] == 282
+    # top-level still wins when present
+    (d / "results.json").write_text(json.dumps({"metrics": {"auroc": 0.9}, "n_evaluate": 99,
+                                                "split": {"n_evaluate": 282}}))
+    assert read_unitig(tmp_path, "colistin", nested=False)["n_evaluate"] == 99

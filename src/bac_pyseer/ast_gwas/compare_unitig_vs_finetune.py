@@ -89,8 +89,13 @@ def read_unitig(root: Path, drug: str, *, nested: bool) -> dict:
         return {}
     payload = json.loads(results.read_text())
     metrics = payload.get("metrics") or {}
-    return {"auroc": metrics.get("auroc"), "auprc": metrics.get("auprc"),
-            "n_evaluate": payload.get("n_evaluate")}
+    # n_evaluate lives under split{} in this schema. Read only the top level and it comes back None,
+    # which then compares unequal to the FT's real count and flags every drug as a mismatch — a
+    # check that is not failing but vacuous, which is worse, because it looks like it ran.
+    n_eval = payload.get("n_evaluate")
+    if n_eval is None:
+        n_eval = (payload.get("split") or {}).get("n_evaluate")
+    return {"auroc": metrics.get("auroc"), "auprc": metrics.get("auprc"), "n_evaluate": n_eval}
 
 
 def build_rows(ft_root: Path, full_root: Path, vocab_root: Path) -> list[dict]:
