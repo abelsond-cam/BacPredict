@@ -48,6 +48,12 @@ MIN_CLUSTER_SIZE=${MIN_CLUSTER_SIZE:-100}
 # env's bin keeps the uv venv as the interpreter (so `bac_pyseer` stays importable) while making the
 # binary resolvable.
 PIXI_BIN=${PIXI_BIN:-$REPO/src/bac_pyseer/.pixi/envs/default/bin}
+# Which stages to submit. The reflist + its audit always run (they are seconds, and they are the
+# assertion everything else rests on); this selects what gets queued after them. A stage that fails
+# across the fan-out is otherwise 22 hand-written sbatch wraps, which is exactly where a quoting slip
+# writes a wrong cluster file without saying so.  STAGES=mash re-runs just the mash/clusters arm.
+STAGES=${STAGES:-ggcat,mash,vocab}
+has_stage () { case ",$STAGES," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
 
 ACCT=${ACCT:-FLOTO-PROJECT-K-SL2-CPU}
 PART=${PART:-icelake-himem}
@@ -135,6 +141,8 @@ for DRUG in "$@"; do
 
     if [ -n "${DRY_RUN:-}" ]; then echo "  DRY_RUN: submitting nothing"; echo; continue; fi
 
+    GGCAT_JOB=""
+    if has_stage ggcat; then
     GGCAT_JOB=$(REPO="$REPO" OUT_DIR="$UNITIG_DIR" TMP="$TMP" MEMGB="$GGCAT_MEMGB" \
         MAX_FRAC="${MAX_FRAC:-0.99}" \
         sb --cpus-per-task="$GGCAT_CPUS" --mem="$GGCAT_MEM" --time="$GGCAT_TIME" \
@@ -144,10 +152,12 @@ for DRUG in "$@"; do
            --export=ALL,REPO,OUT_DIR,TMP,MEMGB,MAX_FRAC \
            "$REPO/src/bac_pyseer/kleb_iso_source/scripts/run_ggcat_unitigs.sh")
     echo "JOB $GGCAT_JOB ggcat_${DRUG} | CPU | mem=$GGCAT_MEM | cores=$GGCAT_CPUS | wall=$GGCAT_TIME | $PART   (GGCAT -m ${GGCAT_MEMGB}G, below --mem)"
+    fi
 
     # mash + clusters: independent of the graph, so no dependency. The fresh similarity is asserted
     # against the old cohort triangle's subset -- zero difference, which is what turns "subsetting a
     # triangle is the same as re-sketching" from an argument into a line an auditor can read.
+    if has_stage mash; then
     MASH_JOB=$(sb --cpus-per-task="$MASH_CPUS" --mem="$MASH_MEM" --time="$MASH_TIME" \
         --job-name="mash_${DRUG}" \
         --output="$LOGDIR/mash_${COHORT}_${DRUG}_%j.out" \
@@ -165,10 +175,14 @@ for DRUG in "$@"; do
                 uv run python -m bac_pyseer.ast_gwas.leakage_audit --audit-json '$AUDIT' clusters \
                     --clusters-tsv '$STRUCT_DIR/lineage_clusters.tsv' --reflist '$REFLIST'")
     echo "JOB $MASH_JOB mash_${DRUG}  | CPU | mem=$MASH_MEM | cores=$MASH_CPUS | wall=$MASH_TIME | $PART   (3.7 min for all 7,080; this is ~35% of that)"
+    fi
 
     # The vocabulary assertion, against GGCAT's own colour record rather than the reflist we passed.
+    if has_stage vocab; then
+    # Only chain the dependency when this invocation actually queued the build; re-running the audit
+    # alone against a graph that already landed must not wait on a job id from a previous run.
     AUDIT_JOB=$(sb --cpus-per-task="$AUDIT_CPUS" --mem="$AUDIT_MEM" --time="$AUDIT_TIME" \
-        --dependency=afterok:"$GGCAT_JOB" --job-name="vocab_${DRUG}" \
+        ${GGCAT_JOB:+--dependency=afterok:"$GGCAT_JOB"} --job-name="vocab_${DRUG}" \
         --output="$LOGDIR/vocab_${COHORT}_${DRUG}_%j.out" \
         --error="$LOGDIR/vocab_${COHORT}_${DRUG}_%j.err" \
         --wrap "set -euo pipefail
@@ -177,7 +191,8 @@ for DRUG in "$@"; do
                     --color-names '$UNITIG_DIR/color_names.jsonl' --reflist '$REFLIST' \
                     --split-table '$SPLIT_TABLE' --matrix-gz '$UNITIG_DIR/unitigs.pyseer.gz'
                 ls -l '$UNITIG_DIR'")
-    echo "JOB $AUDIT_JOB vocab_${DRUG} | CPU | mem=$AUDIT_MEM | cores=$AUDIT_CPUS | wall=$AUDIT_TIME | $PART   (after $GGCAT_JOB)"
+    echo "JOB $AUDIT_JOB vocab_${DRUG} | CPU | mem=$AUDIT_MEM | cores=$AUDIT_CPUS | wall=$AUDIT_TIME | $PART   (${GGCAT_JOB:+after $GGCAT_JOB}${GGCAT_JOB:-no dependency: graph already present})"
+    fi
     echo
 done
 
