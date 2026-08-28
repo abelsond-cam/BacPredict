@@ -317,6 +317,61 @@ the drop is not a threshold artefact. ⚠️ **Hit count is not AUROC**: a drug 
 and predict identically, so nothing about predictive performance follows from this table. That is
 C5's question. These mechanisms are **hypotheses pending David's comment**, not conclusions.
 
+**✅ C5/C6 COMPLETE 2026-08-28 — the unitig results SURVIVE a leakage-free vocabulary.** All 22
+drugs rebuilt, scored and compared. Read from
+`…/pyseer_ast/kp_trainval_vocab_comparison/` (headline CSVs mirrored at
+`src/bac_pyseer/docs/trainval_vocab_auroc_comparison.csv` and `unitig_vs_finetune_kp.csv`).
+
+| paired Δ = full_cohort − trainval_vocab | value |
+|---|---|
+| median / mean | **+0.0002 / −0.0001** |
+| range | −0.0206 to +0.0095 |
+| CI excludes zero | **3 of 22** — cefotaxime +0.0027, t-sulfamethoxazole +0.0012, ceftazidime +0.0005 |
+| direction | 13 favour full_cohort, 9 favour trainval_vocab |
+| LD control (`lr_dedup`) | median −0.0000, 2 of 20 separating |
+
+**19 of 22 drugs are statistically indistinguishable between arms, and the three that separate do so
+in the third decimal place.** The largest single movement (tetracycline, −0.0206) favours the
+*rebuild* and its CI spans zero. The vocabulary changed substantially — variants tested fell to a
+median 0.69× — and the predictions did not.
+
+**Verification behind that claim, all measured:** `n_holdout_coloured == 0` on all 22 (GGCAT's own
+`color_names.jsonl`); mash `max_abs_diff == 0.0` on all 22 with full reflist overlap; and the
+sequence scanner reproduced GGCAT's colouring across **5,594,790,713 cells with 0 mismatches**,
+8/8 shards per drug. Gate table: `kp_trainval_vocab_comparison/readout_gates.tsv`.
+
+**Unitig vs Bacformer fine-tune, and it does not depend on the leak.** FT AUROCs read from each
+checkpoint's own `results.json`, never a panel:
+
+| | leakage-free unitig | full-cohort unitig |
+|---|--:|--:|
+| mean Δ (unitig − FT) | **+0.0067** | +0.0065 |
+| median Δ | +0.0066 | +0.0075 |
+| unitig wins | **15 / 22** | 15 / 22 |
+| exact binomial p | **0.134** | 0.134 |
+
+**Consistently very slightly ahead; NOT demonstrated.** p = 0.134 does not reach conventional
+significance, and it is **optimistic** besides: the drugs are not independent (overlapping genomes,
+correlated phenotypes, one carbapenemase moving ertapenem/imipenem/meropenem together), so the
+effective number of comparisons is below 22. Two further caveats — these are **point estimates**
+(FT training saves no per-sample scores, so no per-drug CI against the FT exists without re-running
+`engine.finetune.evaluate`; **David declined that run 2026-08-28**), and the holdouts are
+**near-paired, not paired**: FT scores 0–3 more genomes per drug (max 0.444%) because it scores from
+embeddings, which exist for genomes with no assembly that the unitig scanner cannot reach.
+
+*Hypothesis, not established:* the FT wins where both are near ceiling (ceftazidime 0.985, ertapenem
+0.988) and unitigs win biggest where the FT is weakest (azithromycin 0.799→0.845, cefepime +0.024),
+suggesting the arms are complementary rather than interchangeable and that the mean hides an
+interaction with drug difficulty.
+
+**Still outstanding from the plan:** the AMR ladders have **not** been re-rendered against the
+rebuild (one command: `NESTED_DRUG_DIR=1 PYSEER_ROOT=<vocab root>
+bash src/bacpredict/engine/scripts/render_amr_ladders.sh`), and the λ calibration protocol
+(af-stratified λ + within-lineage permutation null) is unrun — λ is high in **both** arms (median
+4.18–4.54, up to ~12 on levofloxacin and ceftazidime), so **no claim about which unitigs matter
+should be made until it is**. AUROC is far less exposed, since the LR is fitted and scored on
+splits rather than on p-values.
+
 **⚠ The `full_cohort` arm scores a few holdout genomes that have no features at all.** Found
 2026-08-28 when the rebuild's holdout id-set guard fired on cefazolin (594 vs 593). `SAMEA3357403`
 is in cefazolin's split table and its `design/samples.txt`, but **not in
