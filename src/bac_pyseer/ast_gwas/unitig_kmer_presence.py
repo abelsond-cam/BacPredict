@@ -47,6 +47,9 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy import sparse
+
+from bacpredict.engine.splits.load_splits import load_splits
 
 try:  # package import when bac_pyseer is on the path (editable install)
     from bac_pyseer.kleb_iso_source.unitig_placement import _load_contigs
@@ -259,6 +262,216 @@ def run_compare(args: argparse.Namespace) -> dict:
     return summary
 
 
+# --------------------------------------------------------------------------------------------------
+# score — the production scan: genomes x hit features, by rule (A)
+# --------------------------------------------------------------------------------------------------
+def score_samples(
+    seqs: list[str], samples: list[str], path_of: dict[str, str], *, k: int = K, progress_every: int = 25,
+) -> sparse.csr_matrix:
+    """Score ``samples`` against ``seqs`` by rule (A) -> a ``(len(samples), len(seqs))`` binary CSR.
+
+    Row order is ``samples`` order and column order is ``seqs`` order, which is ``id_map`` row order —
+    the invariant that lets a fitted coefficient be traced back to its GWAS row. The feature k-mer
+    table is built once and reused; per genome only the assembly index is rebuilt, so the cost is
+    linear in assembly bases and effectively independent of how many features are being scored.
+    """
+    flat, offsets = feature_kmer_table(seqs, k)
+    n_feat = len(seqs)
+    rows: list[np.ndarray] = []
+    indptr = np.zeros(len(samples) + 1, dtype=np.int64)
+    for i, sample in enumerate(samples, 1):
+        contigs = _load_contigs(Path(path_of[sample]))
+        present = np.flatnonzero(contains_all(genome_kmer_index(contigs, k), flat, offsets))
+        rows.append(present.astype(np.int32))
+        indptr[i] = indptr[i - 1] + present.size
+        if progress_every and (i % progress_every == 0 or i == len(samples)):
+            logger.info("[%d/%d] %s: %d contigs, carries %d/%d features",
+                        i, len(samples), sample, len(contigs), present.size, n_feat)
+    indices = np.concatenate(rows) if rows else np.zeros(0, dtype=np.int32)
+    return sparse.csr_matrix(
+        (np.ones(indices.size, dtype=np.int8), indices, indptr), shape=(len(samples), n_feat), dtype=np.int8,
+    )
+
+
+def _read_reflist(path: Path) -> dict[str, str]:
+    """``Sample<TAB>assembly_path`` -> mapping."""
+    refs = pd.read_csv(path, sep="\t", header=None, names=["Sample", "path"], dtype=str)
+    return dict(zip(refs["Sample"], refs["path"], strict=True))
+
+
+def run_score(args: argparse.Namespace) -> dict:
+    """Scan one shard of genomes and persist the rows as a CSR beside its sample list."""
+    id_map = pd.read_csv(args.id_map, sep="\t")
+    seqs = [str(s).upper() for s in id_map["variant"]]
+
+    _, train_ids, validate_ids, holdout_ids = load_splits(args.split_table)
+    by_split = {"train": train_ids, "validate": validate_ids, "holdout": holdout_ids}
+    wanted = [s.strip() for s in args.splits.split(",") if s.strip()]
+    unknown = [s for s in wanted if s not in by_split]
+    if unknown:
+        raise SystemExit(f"unknown split(s) {unknown}; expected a subset of {list(by_split)}")
+    samples = [s for name in ("train", "validate", "holdout") if name in wanted for s in by_split[name]]
+
+    path_of = _read_reflist(args.reflist)
+    # A genome with no assembly cannot be scanned. It is dropped here rather than scored all-zero,
+    # because an all-zero row is indistinguishable from a genuine non-carrier and would quietly
+    # dilute the holdout. The merge reconciles the surviving ids against the split table.
+    unresolved = [s for s in samples if s not in path_of]
+    samples = [s for s in samples if s in path_of]
+    shard = samples[args.shard_index :: args.n_shards]
+    logger.info("shard %d/%d: %d of %d genomes, %d features (%d unresolved, dropped)",
+                args.shard_index, args.n_shards, len(shard), len(samples), len(seqs), len(unresolved))
+
+    matrix = score_samples(seqs, shard, path_of, progress_every=args.progress_every)
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    sparse.save_npz(args.out, matrix)
+    args.out.with_suffix(".samples.txt").write_text("".join(f"{s}\n" for s in shard))
+    summary = {
+        "id_map": str(args.id_map.resolve()), "split_table": str(args.split_table), "splits": wanted,
+        "shard_index": args.shard_index, "n_shards": args.n_shards,
+        "n_features": len(seqs), "n_scored": len(shard), "n_unresolved": len(unresolved),
+        "nnz": int(matrix.nnz), "out": str(args.out),
+    }
+    args.out.with_suffix(".scan.json").write_text(json.dumps(summary, indent=2))
+    return summary
+
+
+# --------------------------------------------------------------------------------------------------
+# merge — GGCAT train+validate rows (+) scanned holdout rows, with the gates that make it trustworthy
+# --------------------------------------------------------------------------------------------------
+def _load_shards(paths: list[Path]) -> tuple[sparse.csr_matrix, list[str]]:
+    """Concatenate scan shards in the order given -> ``(csr, sample ids)``."""
+    mats, ids = [], []
+    for p in paths:
+        mats.append(sparse.load_npz(p).tocsr())
+        ids.extend(p.with_suffix(".samples.txt").read_text().split())
+    if not mats:
+        raise SystemExit("no scan shards found")
+    matrix = sparse.vstack(mats, format="csr")
+    if matrix.shape[0] != len(ids):
+        raise SystemExit(f"shards hold {matrix.shape[0]} rows but {len(ids)} sample ids")
+    if len(set(ids)) != len(ids):
+        raise SystemExit("a sample appears in more than one scan shard — check --shard-index/--n-shards")
+    return matrix, ids
+
+
+def verify_against_ggcat(
+    scan: sparse.csr_matrix, scan_ids: list[str], ggcat: sparse.csr_matrix, ggcat_ids: list[str],
+    *, max_examples: int = 50,
+) -> dict:
+    """Two-sided exact comparison of the scanner against GGCAT's own colouring, on shared genomes.
+
+    This is the assertion that makes a mixed design matrix legitimate. The holdout rows come from
+    this scanner and the train+validate rows come from GGCAT; if the two operators disagree, the
+    holdout is being scored by a different rule from the data the model was fitted on, and any
+    difference in performance is partly an artefact of that. Exact agreement on every shared genome
+    is what rules it out — so the count is reported whether or not it is zero, and a skipped
+    comparison is recorded as ``n_shared: 0`` rather than passing silently.
+    """
+    scan_row = {s: i for i, s in enumerate(scan_ids)}
+    shared = [s for s in ggcat_ids if s in scan_row]
+    if not shared:
+        return {"n_shared": 0, "n_mismatch_cells": None, "n_mismatch_genomes": None, "examples": []}
+    ggcat_row = {s: i for i, s in enumerate(ggcat_ids)}
+    a = scan[[scan_row[s] for s in shared]].astype(bool)
+    b = ggcat[[ggcat_row[s] for s in shared]].astype(bool)
+    diff = (a != b).tocoo()
+    per_genome = np.bincount(diff.row, minlength=len(shared))
+    examples = [
+        {"sample": shared[int(r)], "unitig_idx": int(c),
+         "scanner": bool(a[int(r), int(c)]), "ggcat": bool(b[int(r), int(c)])}
+        for r, c in list(zip(diff.row, diff.col, strict=True))[:max_examples]
+    ]
+    return {
+        "n_shared": len(shared),
+        "cells": len(shared) * scan.shape[1],
+        "n_mismatch_cells": int(diff.nnz),
+        "n_mismatch_genomes": int((per_genome > 0).sum()),
+        "scanner_present": int(a.nnz),
+        "ggcat_present": int(b.nnz),
+        "examples": examples,
+    }
+
+
+def run_merge(args: argparse.Namespace) -> dict:
+    """Assemble the final design: GGCAT train+validate rows, scanned holdout rows, gates on both."""
+    from bac_pyseer.ast_gwas.unitig_design_matrix import check_holdout_coverage, load_design
+
+    ggcat, ggcat_ids, id_map = load_design(args.design_dir)
+    shards = sorted(args.shard_dir.glob(args.shard_glob))
+    scan, scan_ids = _load_shards(shards)
+
+    # Align the scan's columns to the design's by *sequence*, never by position. One scan then serves
+    # both the full design and the ``--dedupe-patterns`` LD control, whose id_map is a subset of the
+    # same features in the same order — re-scanning for it would double the cost of the whole stage
+    # and would be a second chance to get the column order wrong.
+    scan_id_map_path = args.scan_id_map or Path(json.loads(shards[0].with_suffix(".scan.json").read_text())["id_map"])
+    scan_id_map = pd.read_csv(scan_id_map_path, sep="\t")
+    col_of = {str(v).upper(): i for i, v in enumerate(scan_id_map["variant"])}
+    wanted_cols = [col_of.get(str(v).upper()) for v in id_map["variant"]]
+    absent = [i for i, c in enumerate(wanted_cols) if c is None]
+    if absent:
+        raise SystemExit(
+            f"{len(absent)} design feature(s) were never scanned — the scan used {scan_id_map_path}, "
+            f"which does not contain them. Re-run the scan against the design that produced them."
+        )
+    scan = scan[:, wanted_cols]
+    if scan.shape[1] != ggcat.shape[1]:
+        raise SystemExit(f"scan has {scan.shape[1]} features but the design has {ggcat.shape[1]}")
+
+    verification = verify_against_ggcat(scan, scan_ids, ggcat, ggcat_ids)
+    logger.info("verification: %s shared genomes, %s mismatched cells",
+                verification["n_shared"], verification["n_mismatch_cells"])
+    if verification["n_shared"] == 0:
+        logger.warning("the scan covered no train/validate genome, so the scanner was never checked "
+                       "against GGCAT's colouring — re-run the scan with --splits train,validate,holdout")
+    elif verification["n_mismatch_cells"] > args.max_mismatch_cells:
+        raise SystemExit(
+            f"scanner disagrees with GGCAT on {verification['n_mismatch_cells']} cells across "
+            f"{verification['n_mismatch_genomes']} genomes (limit {args.max_mismatch_cells}); "
+            f"examples: {verification['examples'][:5]}"
+        )
+
+    _, train_ids, validate_ids, holdout_ids = load_splits(args.split_table)
+    scan_row = {s: i for i, s in enumerate(scan_ids)}
+    ggcat_row = {s: i for i, s in enumerate(ggcat_ids)}
+    # Train+validate rows are GGCAT's; holdout rows are the scanner's. Both are rule (A), which the
+    # verification above has just established on the genomes where the two overlap.
+    kept_trainval = [s for s in [*train_ids, *validate_ids] if s in ggcat_row]
+    kept_holdout = [s for s in holdout_ids if s in scan_row]
+    if not kept_holdout:
+        raise SystemExit("no holdout genome was scanned — the merged design would have nothing to score")
+    sample_ids = [*kept_trainval, *kept_holdout]
+    matrix = sparse.vstack(
+        [ggcat[[ggcat_row[s] for s in kept_trainval]], scan[[scan_row[s] for s in kept_holdout]]],
+        format="csr",
+    ).astype(np.int8)
+
+    coverage = check_holdout_coverage(
+        matrix, sample_ids, kept_trainval, kept_holdout,
+        min_ratio=args.min_holdout_carrier_ratio, min_holdout_genomes=args.min_holdout_genomes,
+    )
+    if not coverage["checked"]:
+        logger.warning("holdout coverage not asserted: only %d holdout genomes", coverage["n_holdout"])
+
+    out_dir = args.out_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    sparse.save_npz(out_dir / "presence.npz", matrix)
+    id_map.to_csv(out_dir / "id_map.tsv", sep="\t", index=False)
+    (out_dir / "samples.txt").write_text("".join(f"{s}\n" for s in sample_ids))
+    manifest = {
+        "design_dir": str(args.design_dir), "shard_dir": str(args.shard_dir),
+        "scan_id_map": str(scan_id_map_path), "n_scan_features": int(len(scan_id_map)),
+        "split_table": str(args.split_table),
+        "rows_from_ggcat": len(kept_trainval), "rows_from_scanner": len(kept_holdout),
+        "n_dropped_trainval": len([s for s in [*train_ids, *validate_ids] if s not in ggcat_row]),
+        "n_dropped_holdout": len([s for s in holdout_ids if s not in scan_row]),
+        "n_features": int(matrix.shape[1]), "nnz": int(matrix.nnz),
+        "verification": verification, "holdout_coverage": coverage,
+    }
+    (out_dir / "merge_manifest.json").write_text(json.dumps(manifest, indent=2))
+    return manifest
+
 def _main_cli(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="phase", required=True)
@@ -268,9 +481,45 @@ def _main_cli(argv: list[str] | None = None) -> None:
     c.add_argument("--n-genomes", type=int, default=40)
     c.add_argument("--max-examples", type=int, default=200)
     c.add_argument("--out", type=Path, required=True)
-    args = p.parse_args(argv)
 
+    sc = sub.add_parser("score", help="Scan one shard of genomes for the hit features (rule A).")
+    sc.add_argument("--id-map", type=Path, required=True, help="id_map.tsv — defines the features AND their column order.")
+    sc.add_argument("--split-table", type=Path, required=True, help="<drug>_split.csv")
+    sc.add_argument("--reflist", type=Path, required=True, help="Sample<TAB>assembly path — must cover every split")
+    sc.add_argument("--splits", default="train,validate,holdout",
+                    help="Which slices to scan. The default includes train+validate so the merge can "
+                         "check the scanner against GGCAT's own colouring; holdout alone skips that gate.")
+    sc.add_argument("--shard-index", type=int, default=0)
+    sc.add_argument("--n-shards", type=int, default=1)
+    sc.add_argument("--progress-every", type=int, default=25)
+    sc.add_argument("--out", type=Path, required=True, help="Output .npz; .samples.txt and .scan.json sit beside it.")
+
+    m = sub.add_parser("merge", help="GGCAT train+validate rows (+) scanned holdout rows -> one design.")
+    m.add_argument("--design-dir", type=Path, required=True, help="The GGCAT design (train+validate rows).")
+    m.add_argument("--shard-dir", type=Path, required=True, help="Directory holding the scan shards.")
+    m.add_argument("--shard-glob", default="scan_*.npz")
+    m.add_argument("--scan-id-map", type=Path, default=None,
+                   help="id_map the scan was run against (default: read from the first shard's .scan.json). "
+                        "Columns are matched by sequence, so a dedup design reuses the same scan.")
+    m.add_argument("--split-table", type=Path, required=True)
+    m.add_argument("--out-dir", type=Path, required=True, help="New directory — the GGCAT design is left intact.")
+    m.add_argument("--max-mismatch-cells", type=int, default=0,
+                   help="Scanner-vs-GGCAT disagreements tolerated on shared genomes. 0 is the gate.")
+    m.add_argument("--min-holdout-carrier-ratio", type=float, default=0.5)
+    m.add_argument("--min-holdout-genomes", type=int, default=30,
+                   help="Below this many holdout rows the carrier ratio is noise, so it is recorded "
+                        "but not asserted. Every real drug is far above it.")
+
+    args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
+
+    if args.phase == "score":
+        print(json.dumps(run_score(args), indent=2))
+        return
+    if args.phase == "merge":
+        print(json.dumps(run_merge(args), indent=2))
+        return
+
     summary = run_compare(args)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(summary, indent=2))

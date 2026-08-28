@@ -8,10 +8,13 @@ per drug and never again, and re-running this module is cheap.
 
 Two things are deliberate:
 
-* **The matrix spans every genome in the split table — train, validate *and* holdout.** That is not
-  a leak. Unitig *presence* is an unsupervised property of an assembly; withholding it from the
-  holdout would mean having no features to score with. What must never touch the holdout is label
-  information, and that is enforced upstream in :mod:`bac_pyseer.ast_gwas.build_ast_phenotype`.
+* **By default the matrix spans every genome in the split table — train, validate *and* holdout.**
+  That is not a leak. Unitig *presence* is an unsupervised property of an assembly; withholding it
+  from the holdout would mean having no features to score with. What must never touch the holdout is
+  label information, and that is enforced upstream in
+  :mod:`bac_pyseer.ast_gwas.build_ast_phenotype`. ``--splits train,validate`` narrows it for the
+  train+validate-vocabulary arm, where the unitig matrix has no holdout carriers to find and those
+  rows are scanned from sequence instead — see :mod:`bac_pyseer.ast_gwas.unitig_kmer_presence`.
 * **Genomes carrying none of the hit unitigs become all-zero rows, not missing rows.** They are
   genuine negatives for every hit feature, exactly as a non-carrier is in the CARD/WHO catalogue
   one-hot this baseline is compared against. Dropping them would silently change the cohort.
@@ -28,6 +31,7 @@ import argparse
 import json
 import logging
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -42,6 +46,7 @@ logger = logging.getLogger(__name__)
 VARIANT_COL = "variant"  # pyseer's id column; for unitigs the id IS the DNA sequence
 # Per-hit statistics carried into id_map.tsv so a fitted coefficient can be traced back to its GWAS row.
 _CARRY_COLS = ("var_explained_pct", "af", "beta", "lrt-pvalue", "pattern_group", "n_in_pattern", "direction")
+SPLIT_SLICES = ("train", "validate", "holdout")
 
 
 def read_hits(hits_tsv: Path, *, dedupe_patterns: bool = False, max_hits: int | None = None) -> pd.DataFrame:
@@ -144,20 +149,80 @@ def build_presence_matrix(
     return matrix, missing, n_empty_columns
 
 
+def check_holdout_coverage(
+    matrix: sparse.csr_matrix, sample_ids: list[str], reference_ids: list[str], holdout_ids: list[str],
+    *, min_ratio: float = 0.5, min_holdout_genomes: int = 30,
+) -> dict[str, float]:
+    """Assert the holdout rows carry hit unitigs at a rate comparable to the fitted rows'.
+
+    The failure this exists to catch is silent and total. If the holdout rows are empty — a
+    vocabulary built without those genomes, a scan that resolved no assembly, a sample-id join that
+    matched nothing — the logistic regression still fits, still scores, and still reports a perfectly
+    well-formed AUROC of about 0.5. Nothing downstream can tell "this genome carries no resistance
+    unitig" apart from "this genome was never actually scored", because both are a row of zeros.
+
+    A holdout mean far below the fitted mean is the one cheap signal that separates them, so it is
+    checked here rather than left to be noticed as a disappointing result. The ratio is deliberately
+    loose: a genuine out-of-vocabulary penalty *should* depress the holdout mean somewhat, and that
+    penalty is part of what this experiment measures. It is a floor against nothing, not a test of
+    the effect.
+
+    Below ``min_holdout_genomes`` the ratio is not evidence and the assertion is skipped — a mean over
+    a handful of genomes swings on one carrier. The skip is recorded as ``checked: False`` rather than
+    reported as a pass, for the same reason the scanner's verification reports its shared-genome count:
+    a gate that could not run must not look like a gate that ran. Every real drug clears this by an
+    order of magnitude (the smallest Kp holdout is in the hundreds), so it only ever fires on fixtures.
+    """
+    row_of = {s: i for i, s in enumerate(sample_ids)}
+    carriers = np.asarray(matrix.sum(axis=1)).ravel()
+    ref_rows = [row_of[s] for s in reference_ids if s in row_of]
+    hold_rows = [row_of[s] for s in holdout_ids if s in row_of]
+    ref_mean = float(carriers[ref_rows].mean()) if ref_rows else 0.0
+    hold_mean = float(carriers[hold_rows].mean()) if hold_rows else 0.0
+    stats = {
+        "reference_mean_carriers": ref_mean,
+        "holdout_mean_carriers": hold_mean,
+        "ratio": (hold_mean / ref_mean) if ref_mean else 0.0,
+        "min_ratio": min_ratio,
+        "n_holdout_all_zero": int((carriers[hold_rows] == 0).sum()) if hold_rows else 0,
+        "n_holdout": len(hold_rows),
+        "checked": bool(len(hold_rows) >= min_holdout_genomes and ref_mean),
+    }
+    if stats["checked"] and stats["ratio"] < min_ratio:
+        raise SystemExit(
+            f"holdout genomes carry {hold_mean:.1f} hit unitigs on average against {ref_mean:.1f} for the "
+            f"fitted rows (ratio {stats['ratio']:.3f} < {min_ratio}). That is the signature of a holdout "
+            f"that was never really scored; a model fitted on this would report a clean AUROC near 0.5. "
+            f"{stats['n_holdout_all_zero']}/{len(hold_rows)} holdout rows are entirely empty."
+        )
+    return stats
+
 def run(
     *, hits_tsv: Path, matrix_gz: Path, split_table: Path, out_dir: Path,
     dedupe_patterns: bool = False, max_hits: int | None = None, decomp_threads: int = 4,
+    splits: Sequence[str] = SPLIT_SLICES, min_holdout_carrier_ratio: float = 0.5,
+    min_holdout_genomes: int = 30,
 ) -> dict[str, object]:
-    """Extract the hit sub-matrix, build the CSR over every split-table genome, and persist both."""
+    """Extract the hit sub-matrix, build the CSR over the selected split-table genomes, and persist both.
+
+    ``splits`` restricts which slices get rows. It exists for the train+validate-vocabulary arm, where
+    the unitig matrix contains no holdout carriers *by construction* — asking it for holdout rows there
+    would silently yield zeros. Those rows are scanned from sequence instead and merged in by
+    :mod:`bac_pyseer.ast_gwas.unitig_kmer_presence`.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     id_map = read_hits(hits_tsv, dedupe_patterns=dedupe_patterns, max_hits=max_hits)
     if id_map.empty:
         raise SystemExit(f"{hits_tsv} yielded no usable hit unitigs — nothing to build a design matrix from")
 
     label_map, train_ids, validate_ids, holdout_ids = load_splits(split_table)
-    # Deterministic order: train, then validate, then holdout. Every genome in the split table gets
-    # a row — non-carriers are all-zero, not absent.
-    sample_ids = [*train_ids, *validate_ids, *holdout_ids]
+    unknown = [s for s in splits if s not in SPLIT_SLICES]
+    if unknown:
+        raise SystemExit(f"unknown split(s) {unknown}; expected a subset of {list(SPLIT_SLICES)}")
+    by_split = {"train": train_ids, "validate": validate_ids, "holdout": holdout_ids}
+    # Deterministic order: train, then validate, then holdout. Every selected genome gets a row —
+    # non-carriers are all-zero, not absent.
+    sample_ids = [s for name in SPLIT_SLICES if name in splits for s in by_split[name]]
 
     submatrix_path = out_dir / "hits_submatrix.tsv"
     n_rows = extract_hit_submatrix(
@@ -172,6 +237,10 @@ def run(
         (out_dir / "unitig_join_misses.txt").write_text("".join(f"{s}\n" for s in sorted(missing)))
 
     carriers_per_sample = np.asarray(matrix.sum(axis=1)).ravel()
+    coverage = check_holdout_coverage(
+        matrix, sample_ids, [*train_ids, *validate_ids], holdout_ids if "holdout" in splits else [],
+        min_ratio=min_holdout_carrier_ratio, min_holdout_genomes=min_holdout_genomes,
+    )
     manifest = {
         "hits_tsv": str(hits_tsv),
         "matrix_gz": str(matrix_gz),
@@ -190,6 +259,8 @@ def run(
         "n_samples_with_no_hit_unitig": int((carriers_per_sample == 0).sum()),
         "n_unitigs_not_found_in_matrix": len(missing),
         "n_unitigs_absent_from_cohort": n_empty_columns,
+        "splits": list(splits),
+        "holdout_coverage": coverage,
         "outputs": {
             "presence_npz": str(out_dir / "presence.npz"),
             "id_map_tsv": str(out_dir / "id_map.tsv"),
@@ -231,6 +302,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--dedupe-patterns", action="store_true",
                    help="Keep one unitig per pattern_group (perfect-LD block) — the honest feature count.")
     p.add_argument("--max-hits", type=int, default=None, help="Keep at most N hits, in rank order.")
+    p.add_argument("--splits", default=",".join(SPLIT_SLICES),
+                   help="Comma-separated split slices to give rows to. Use 'train,validate' when the "
+                        "unitig matrix was built without holdout genomes; scan those rows separately.")
+    p.add_argument("--min-holdout-carrier-ratio", type=float, default=0.5,
+                   help="Fail if holdout genomes carry fewer than this fraction of the fitted rows' "
+                        "mean hit count — the all-zero-holdout guard.")
     p.add_argument("--decomp-threads", type=int, default=4, help="pigz threads for the one big-matrix pass.")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -239,6 +316,8 @@ def main(argv: list[str] | None = None) -> None:
         hits_tsv=args.hits_tsv, matrix_gz=args.matrix_gz, split_table=args.split_table,
         out_dir=args.out_dir, dedupe_patterns=args.dedupe_patterns, max_hits=args.max_hits,
         decomp_threads=args.decomp_threads,
+        splits=tuple(s.strip() for s in args.splits.split(",") if s.strip()),
+        min_holdout_carrier_ratio=args.min_holdout_carrier_ratio,
     )
     print(json.dumps(manifest, indent=2))
 

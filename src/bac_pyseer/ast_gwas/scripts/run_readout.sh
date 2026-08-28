@@ -114,7 +114,7 @@ cat <<EOF
 from their own eval_scores.npz, so they cannot drift onto different threshold conventions:
 
   .venv/bin/python -m bac_pyseer.ast_gwas.collect_comparison \\
-      --results-json '$DRUG_DIR/lr/results.json' \\
+      --results '$DRUG_DIR/lr/results.json' \\
       --ft-scores ${DRUG}='$FT_RUN/eval_scores.npz' \\
       --out-csv '$OUT_DIR/comparison_${ORGANISM}.csv'
 

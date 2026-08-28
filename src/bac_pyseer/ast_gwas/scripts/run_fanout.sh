@@ -26,6 +26,25 @@ export PART=${PART:-icelake-himem}
 export QOS=${QOS-}
 export LOGDIR=${LOGDIR:-$DATA_ROOT/logs}
 
+# Walltime knobs, passed through to run_unitig_lmm_sharded.sh. They matter because SLURM checks
+# AssocGrpCPUMinutesLimit against cores x walltime REQUESTED, not used: the old hardcoded 24 h meant
+# each drug's 64 x 8-cpu array reserved 12,288 core-h, so 22 drugs reserved 270,336 against ~106,371
+# available and NOTHING would ever have started. Measured shard max is 6.2 min, so 2 h is still ~19x.
+export ARRAY_TIME=${ARRAY_TIME:-02:00:00}
+export PREP_TIME=${PREP_TIME:-06:00:00}
+export COMB_TIME=${COMB_TIME:-03:00:00}
+
+# The sharded driver keys its scratch shard dir on $PAIR/$COHORT. Naming the cohort is what stops a
+# re-run writing chunk_NN.assoc into a completed run's directory, where a shard that never starts
+# leaves the old file behind, both the empty-check and the runt-check pass on it, and the combined
+# .assoc silently mixes two vocabularies. Change it whenever the vocabulary changes.
+export COHORT=${COHORT:-ast_$ORGANISM}
+
+# VOCAB_ROOT switches to the per-drug layout used by the train+validate-vocabulary rebuild: each drug
+# owns its own graph, structure and outputs, so OUT_DIR moves inside the loop. Unset (the default),
+# every drug shares one OUT_DIR and one matrix, which is the full-cohort run.
+VOCAB_ROOT=${VOCAB_ROOT:-}
+
 # Mirror run_drug.sh's organism -> task mapping. Deriving it as train_${ORGANISM}_ast is wrong:
 # kp's task dir is train_kleb_ast, so the pre-check silently rejected every drug.
 case "$ORGANISM" in
@@ -40,6 +59,8 @@ mkdir -p "$LOGDIR"
 echo "repo:      $REPO"
 echo "data root: $DATA_ROOT"
 echo "account:   $ACCT   partition: $PART   qos: ${QOS:-<none>}"
+echo "cohort:    $COHORT   array wall: $ARRAY_TIME"
+echo "layout:    ${VOCAB_ROOT:+per-drug under $VOCAB_ROOT}${VOCAB_ROOT:-shared (full-cohort)}"
 echo "drugs:     $*"
 echo
 
@@ -58,7 +79,9 @@ for drug in "$@"; do
         echo "  DRY_RUN: would run run_drug.sh for $drug"
         continue
     fi
-    if ORGANISM="$ORGANISM" DRUG="$drug" REPO="$REPO" \
+    # Empty OUT_DIR falls through run_drug.sh's ${OUT_DIR:-...} to the shared full-cohort default.
+    drug_out=${VOCAB_ROOT:+$VOCAB_ROOT/$drug}
+    if ORGANISM="$ORGANISM" DRUG="$drug" REPO="$REPO" OUT_DIR="$drug_out" \
             bash "$REPO/src/bac_pyseer/ast_gwas/scripts/run_drug.sh"; then
         echo "  $drug: chain submitted"
     else

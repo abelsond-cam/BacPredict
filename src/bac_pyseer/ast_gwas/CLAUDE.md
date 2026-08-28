@@ -85,12 +85,34 @@ headline.
 | `mash_kinship.py` | `mash sketch`/`triangle` once per organism; per-drug similarity + distance subsets |
 | `lineage_from_distances.py` | mash distances → `Sample<TAB>cluster` — **TB only**; collapsed on Kp |
 | `sublineage_from_metadata.py` | curated Kleborate `Sublineage` → the same file — **Kp, the method of record** |
-| `unitig_design_matrix.py` | hits → sparse genomes × unitigs CSR over **all** split genomes |
+| `unitig_design_matrix.py` | hits → sparse genomes × unitigs CSR; `--splits` narrows it, and the all-zero-holdout guard lives here |
+| `unitig_kmer_presence.py` | scores unitig presence from **sequence** by k-mer containment — `compare` (which rule), `score` (the scan), `merge` (GGCAT train+validate rows ⊕ scanned holdout rows) |
+| `leakage_audit.py` | the per-drug `leakage_audit.json`: reflist, vocabulary (from GGCAT's own `color_names.jsonl`), clusters, mash, design |
 | `unitig_lr.py` | fit train → Youden on the **holdout** (one convention for both arms; sens/spec/bal-acc are therefore optimistically biased and must be reported as "at the optimal operating point") → score holdout → `results.json` (schema v1.2) |
 | `collect_comparison.py` | unitig-LR + FT + catalogue → one table per organism |
 
 Scripts: `probe_toolchain.sh` (step 0 gate) · `build_cohort_once.sh` (per organism) ·
-`run_drug.sh` (per drug).
+`run_drug.sh` (per drug) · `run_fanout.sh` / `run_readout.sh` (the full-cohort arm) ·
+`build_trainval_vocab.sh` / `run_trainval_readout.sh` (the train+validate-vocabulary arm).
+
+## The two vocabulary arms
+
+The **full-cohort** arm built one GGCAT graph over every cohort genome and every drug reused it. No
+label leaked — the phenotype is train+validate and the holdout is scored once — but the *feature
+representation* was shaped by holdout sequence, because a k-mer surviving `-s 2` only through a
+holdout carrier is a graph node, and a node splits a unitig every genome then inherits.
+
+The **train+validate-vocabulary** arm closes that, at the cost of one build per drug (holdout
+membership is per drug, so a genome labelled for *m* drugs escapes every holdout with probability
+≈0.8^m — a union build saves nothing). Its one structural difference: the matrix has no holdout
+carriers at all, so holdout rows are scanned from sequence by `unitig_kmer_presence` and merged in.
+Both arms live side by side — `pyseer_ast/<organism>/` and `pyseer_ast/<organism>_trainval_vocab/` —
+because the first is the comparator for the second.
+
+Rule (A) k-mer containment, not (B) exact substring, is what the scanner implements: it is the rule
+GGCAT colouring already encodes, which makes the scan self-verifying against the matrix it is being
+merged into. The two were measured against each other before one was chosen; the measurement is in
+`PROJECT_STATE.md` §3.3.
 
 ## Reuse, not reimplementation
 

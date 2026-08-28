@@ -33,6 +33,7 @@ import argparse
 import json
 import logging
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 import pandas as pd
@@ -46,6 +47,8 @@ logger = logging.getLogger(__name__)
 # raw/<dir>/assemblies/<Sample><suffix> — the raw dir name does not match the processed task name.
 RAW_SUBDIR = {"kp": "kleb_ast", "tb": "tb"}
 ASSEMBLY_SUFFIXES = (".fa.gz", ".fna.gz", ".fa", ".fna", ".fasta.gz", ".fasta")
+# The slices of a <drug>_split.csv, in the canonical row order every downstream module assumes.
+SPLIT_SLICES = ("train", "validate", "holdout")
 
 
 def assemblies_dir(organism_key: str, data_root: Path | str | None = None) -> Path:
@@ -57,12 +60,32 @@ def assemblies_dir(organism_key: str, data_root: Path | str | None = None) -> Pa
 
 def cohort_samples(
     organism_key: str, *, ast_sheet: Path | None = None, split_table: Path | None = None,
-    data_root: Path | str | None = None,
+    data_root: Path | str | None = None, splits: Sequence[str] = SPLIT_SLICES,
 ) -> list[str]:
-    """The sample universe: one drug's split table if given, else the whole AST sheet."""
+    """The sample universe: one drug's split table if given, else the whole AST sheet.
+
+    ``splits`` selects which slices of that split table to take, in canonical order. The default is
+    all three — the cohort every drug shares. Passing ``("train", "validate")`` yields a reflist that
+    **no holdout genome can enter**, which is what makes a leakage-free unitig vocabulary possible:
+    GGCAT then only ever sees genomes the model is allowed to learn from, so the feature
+    *representation* is shaped by training sequence alone.
+
+    Restricting the splits without a ``--split-table`` is rejected rather than ignored. The AST sheet
+    carries no per-drug split assignment, so honouring the flag is impossible there — and silently
+    returning the whole cohort would build a full-cohort vocabulary under a name asserting it is
+    train+validate only, which is the exact contamination the flag exists to prevent.
+    """
     if split_table is not None:
+        unknown = [s for s in splits if s not in SPLIT_SLICES]
+        if unknown:
+            raise SystemExit(f"unknown split(s) {unknown}; expected a subset of {list(SPLIT_SLICES)}")
+        if not splits:
+            raise SystemExit("--splits selected nothing")
         label_map, train_ids, validate_ids, holdout_ids = load_splits(split_table)
-        return [*train_ids, *validate_ids, *holdout_ids]
+        by_split = {"train": train_ids, "validate": validate_ids, "holdout": holdout_ids}
+        return [sample for name in SPLIT_SLICES if name in splits for sample in by_split[name]]
+    if set(splits) != set(SPLIT_SLICES):
+        raise SystemExit("--splits needs --split-table; the AST sheet has no split assignment to filter on")
     sheet = ast_sheet if ast_sheet is not None else organism_config(organism_key).store_paths().ast_sheet
     df = pd.read_csv(sheet, low_memory=False)
     for col in ("Sample", "phenotype-BioSample_ID"):
@@ -134,10 +157,11 @@ def run(
     *, organism_key: str, out_tsv: Path, ast_sheet: Path | None = None, split_table: Path | None = None,
     asm_dir: Path | None = None, file_list: Path | None = None,
     data_root: Path | str | None = None, check_exists: bool = True,
+    splits: Sequence[str] = SPLIT_SLICES,
 ) -> dict[str, object]:
     """Write the ``Sample<TAB>path`` reflist plus a manifest recording what could not be resolved."""
     samples = cohort_samples(
-        organism_key, ast_sheet=ast_sheet, split_table=split_table, data_root=data_root
+        organism_key, ast_sheet=ast_sheet, split_table=split_table, data_root=data_root, splits=splits
     )
     if file_list is not None:
         source_desc = str(file_list)
@@ -161,6 +185,7 @@ def run(
         "assemblies_dir": source_desc,
         "resolution": "file_list" if file_list is not None else "directory_scan",
         "source": str(split_table or ast_sheet or organism_config(organism_key).store_paths().ast_sheet),
+        "splits": list(splits),
         "n_cohort": len(samples),
         "n_resolved": len(resolved),
         "n_missing": len(missing),
@@ -181,6 +206,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--ast-sheet", type=Path, default=None, help="Override the AST sheet defining the cohort.")
     p.add_argument("--split-table", type=Path, default=None,
                    help="Restrict to one drug's labelled samples instead of the whole cohort.")
+    p.add_argument("--splits", default=",".join(SPLIT_SLICES),
+                   help="Comma-separated split slices to keep (needs --split-table). "
+                        "'train,validate' builds a vocabulary no holdout genome can enter.")
     p.add_argument("--assemblies-dir", type=Path, default=None, help="Override raw/<organism>/assemblies.")
     p.add_argument("--file-list", type=Path, default=None,
                    help="Resolve through a Sample<TAB>path TSV instead of scanning a directory "
@@ -195,6 +223,7 @@ def main(argv: list[str] | None = None) -> None:
         organism_key=args.organism, out_tsv=args.out_tsv, ast_sheet=args.ast_sheet,
         split_table=args.split_table, asm_dir=args.assemblies_dir, file_list=args.file_list,
         data_root=args.data_root, check_exists=not args.no_check_exists,
+        splits=tuple(s.strip() for s in args.splits.split(",") if s.strip()),
     ), indent=2))
 
 
