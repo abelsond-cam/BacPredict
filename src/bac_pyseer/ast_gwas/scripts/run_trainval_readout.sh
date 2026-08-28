@@ -33,6 +33,7 @@ case "$ORGANISM" in
 esac
 
 VOCAB_ROOT=${VOCAB_ROOT:-$DATA_ROOT/processed/pyseer_ast/${ORGANISM}_${COHORT}}
+FULL_ROOT=${FULL_ROOT:-$DATA_ROOT/processed/pyseer_ast/$ORGANISM}   # the comparator; read-only here
 DRUG_ROOT=$VOCAB_ROOT/$DRUG
 UNITIG_DIR=$DRUG_ROOT/unitigs
 DRUG_DIR=$DRUG_ROOT/$DRUG                      # run_drug.sh's DRUG_DIR when OUT_DIR=$DRUG_ROOT
@@ -48,6 +49,9 @@ LOGDIR=${LOGDIR:-$DATA_ROOT/logs}
 # vocabulary reflist. Scoring a holdout genome from its own sequence is not a leak; supplying it to
 # GGCAT would have been.
 SCAN_REFLIST=${SCAN_REFLIST:-$DRUG_DIR/scan_refs.txt}
+# Same source as the vocabulary reflist, for the same reason: identical assemblies to the comparator,
+# and no cold stat per sample. See build_trainval_vocab.sh.
+REF_SOURCE=${REF_SOURCE-$FULL_ROOT/unitigs/assembly_refs.txt}
 
 ACCT=${ACCT:-FLOTO-PROJECT-K-SL2-CPU}
 PART=${PART:-icelake-himem}
@@ -68,10 +72,14 @@ cd "$REPO"
 export PYTHONPATH="$REPO/src:${PYTHONPATH:-}"
 
 # The scan reflist spans all three splits and is resolved inline (seconds, no compute).
+if [ -n "$REF_SOURCE" ] && [ -s "$REF_SOURCE" ]; then
+    RESOLVE_ARGS=(--file-list "$REF_SOURCE" --no-check-exists)
+else
+    RESOLVE_ARGS=(${FILE_LIST:+--file-list "$FILE_LIST"})
+fi
 uv run python -m bac_pyseer.ast_gwas.resolve_ast_assemblies \
     --organism "$ORGANISM" --split-table "$SPLIT_TABLE" --splits train,validate,holdout \
-    --out-tsv "$SCAN_REFLIST" --data-root "$DATA_ROOT" \
-    ${FILE_LIST:+--file-list "$FILE_LIST"} > /dev/null
+    --out-tsv "$SCAN_REFLIST" --data-root "$DATA_ROOT" "${RESOLVE_ARGS[@]}" > /dev/null
 echo "scan reflist: $(wc -l < "$SCAN_REFLIST") genomes (all splits) -> $SCAN_REFLIST"
 
 sb() { sbatch --parsable --account="$ACCT" --partition="$PART" ${QOS:+--qos="$QOS"} \

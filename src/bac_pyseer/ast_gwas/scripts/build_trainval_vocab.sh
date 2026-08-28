@@ -66,6 +66,22 @@ echo "account:     $ACCT   partition: $PART   qos: ${QOS:-<none>}"
 echo "drugs:       $*"
 echo
 
+# Resolve through the full-cohort reflist when it exists. It is already a Sample<TAB>path TSV whose
+# paths were stat-validated when it was built, so the subset is instant AND provably uses the same
+# assemblies as the comparator run -- a genome the full-cohort arm could not resolve is excluded here
+# too, rather than the two arms silently running on slightly different genome sets. Going back to the
+# 95k file list instead costs a cold stat per sample: ~50 s per drug, ~20 min across 22, on a login
+# node. Set REF_SOURCE= (empty) to force resolution against $FILE_LIST.
+REF_SOURCE=${REF_SOURCE-$FULL_ROOT/unitigs/assembly_refs.txt}
+if [ -n "$REF_SOURCE" ] && [ -s "$REF_SOURCE" ]; then
+    RESOLVE_ARGS=(--file-list "$REF_SOURCE" --no-check-exists)
+    echo "reflists resolve through the comparator's reflist: $REF_SOURCE ($(wc -l < "$REF_SOURCE") genomes)"
+else
+    RESOLVE_ARGS=(${FILE_LIST:+--file-list "$FILE_LIST"})
+    echo "reflists resolve against ${FILE_LIST:-the flat assemblies dir} (stat per sample)"
+fi
+echo
+
 sb() { sbatch --parsable --account="$ACCT" --partition="$PART" ${QOS:+--qos="$QOS"} \
               --nodes=1 --ntasks=1 "$@"; }
 
@@ -92,7 +108,7 @@ for DRUG in "$@"; do
     uv run python -m bac_pyseer.ast_gwas.resolve_ast_assemblies \
         --organism "$ORGANISM" --split-table "$SPLIT_TABLE" --splits train,validate \
         --out-tsv "$REFLIST.new" --data-root "$DATA_ROOT" \
-        ${FILE_LIST:+--file-list "$FILE_LIST"} > /dev/null
+        "${RESOLVE_ARGS[@]}" > /dev/null
     if [ -s "$REFLIST" ] && ! cmp -s "$REFLIST" "$REFLIST.new"; then
         echo "!! $REFLIST exists and differs from a fresh resolve — refusing to reuse a foreign" >&2
         echo "   cohort's graph. Delete $UNITIG_DIR to rebuild." >&2
