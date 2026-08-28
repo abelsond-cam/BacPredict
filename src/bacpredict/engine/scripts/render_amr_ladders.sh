@@ -42,12 +42,20 @@ DRUGS=${DRUGS:-$DEFAULT_DRUGS}
 
 LADDER_ROOT=$DATA_ROOT/processed/$TASK/pangena_predict/amr_ladder
 SPLIT_ROOT=$DATA_ROOT/processed/$TASK/splits
-PYSEER_ROOT=$DATA_ROOT/processed/pyseer_ast/$SPECIES
+PYSEER_ROOT=${PYSEER_ROOT:-$DATA_ROOT/processed/pyseer_ast/$SPECIES}
+# The full-cohort GWAS shares one OUT_DIR across drugs, so a drug's read-out is <root>/<drug>/lr.
+# The train+validate-vocabulary rebuild gives every drug its OWN OUT_DIR, which makes run_drug.sh's
+# DRUG_DIR <root>/<drug>/<drug> -- one level deeper. Default 0 keeps the existing layout exactly.
+NESTED_DRUG_DIR=${NESTED_DRUG_DIR:-0}
 
 cd "$REPO"
 echo "species=$SPECIES  metric=$METRIC  dedup=$DEDUP"
 echo "ladders: $LADDER_ROOT"
-echo "unitigs: $PYSEER_ROOT"
+if [ "$NESTED_DRUG_DIR" = "1" ]; then
+    echo "unitigs: $PYSEER_ROOT  (nested per-drug layout: <root>/<drug>/<drug>/lr)"
+else
+    echo "unitigs: $PYSEER_ROOT"
+fi
 echo
 printf '%-32s %-8s %-11s %-8s %s\n' DRUG LADDER CATALOGUE UNITIG FIGURE
 n_drawn=0; n_skipped=0; n_purple=0
@@ -72,10 +80,17 @@ for DRUG in $DRUGS; do
     SPLIT=$SPLIT_ROOT/${DRUG}_split.csv
     [ -s "$SPLIT" ] && ARGS+=(--split-table "$SPLIT")
 
-    UNI=$PYSEER_ROOT/$DRUG/lr/results.json
+    # if/fi, not `[ ... ] && assign`: under `set -e` (line 23) that list returns non-zero whenever
+    # the test is false, which aborts the script on every non-nested run -- i.e. every existing use.
+    if [ "$NESTED_DRUG_DIR" = "1" ]; then
+        UNITIG_DRUG_ROOT=$PYSEER_ROOT/$DRUG/$DRUG
+    else
+        UNITIG_DRUG_ROOT=$PYSEER_ROOT/$DRUG
+    fi
+    UNI=$UNITIG_DRUG_ROOT/lr/results.json
     if [ -s "$UNI" ]; then ARGS+=(--unitig-results "$UNI"); uni_state=yes; n_purple=$((n_purple + 1))
     else uni_state=-; fi
-    UNID=$PYSEER_ROOT/$DRUG/lr_dedup/results.json
+    UNID=$UNITIG_DRUG_ROOT/lr_dedup/results.json
     if [ "$DEDUP" = "1" ] && [ -s "$UNID" ]; then ARGS+=(--unitig-dedup-results "$UNID"); uni_state="$uni_state+LD"; fi
 
     OUT=$(uv run python -m bacpredict.engine.plots.plot_amr_ladder "${ARGS[@]}" | sed -n 's/^Wrote //p')
