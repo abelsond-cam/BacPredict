@@ -85,6 +85,43 @@ def _gwas_facts(results_json: Path, audit_json: Path | None) -> dict[str, object
     return facts
 
 
+GWAS_KEYS = (
+    "n_variants", "n_unique_patterns", "bonferroni_threshold", "n_significant",
+    "genomic_inflation_lambda", "pheno_var",
+)
+
+
+def gwas_row(drug: str, full_summary: Path, trainval_summary: Path) -> dict[str, object]:
+    """Both arms' GWAS-level facts for one drug → one row.
+
+    This is the C4 table, and it is deliberately separate from the read-out comparison: it exists
+    before any LR has run, and it is where the **MAF-floor confound** becomes visible. ``MIN_SAMP``
+    fell from a flat 71 to 1% of each drug's own reflist, so the new run tests unitigs the old one
+    could not — a difference that is not leakage and that pushes the delta the *other* way.
+
+    ``pheno_var`` is carried as a control: the rebuild does not touch the phenotype, so it must be
+    identical across the arms. If it is not, the two runs are not on the same labels and nothing
+    downstream compares.
+    """
+    a = json.loads(full_summary.read_text())
+    b = json.loads(trainval_summary.read_text())
+    row: dict[str, object] = {"drug": drug}
+    for k in GWAS_KEYS:
+        row[f"full_{k}"] = a.get(k)
+        row[f"trainval_{k}"] = b.get(k)
+    pv_a, pv_b = a.get("pheno_var"), b.get("pheno_var")
+    if pv_a is not None and pv_b is not None and abs(pv_a - pv_b) > 1e-9:
+        raise SystemExit(
+            f"{drug}: pheno_var differs between arms ({pv_a} vs {pv_b}). The rebuild changes the "
+            f"vocabulary, never the phenotype — so the two runs are not on the same labels and no "
+            f"comparison between them is meaningful."
+        )
+    for k in ("n_variants", "n_unique_patterns", "n_significant"):
+        if a.get(k) and b.get(k):
+            row[f"ratio_{k}"] = round(b[k] / a[k], 4)
+    return row
+
+
 def compare_drug(
     drug: str,
     full_scores: Path,
@@ -142,6 +179,58 @@ def compare_drug(
         if results is not None:
             row.update({f"{prefix}_{k}": v for k, v in _gwas_facts(results, audit).items()})
     return row
+
+
+def run_gwas(
+    full_root: Path, vocab_root: Path, out_csv: Path | None, drugs: list[str] | None = None
+) -> int:
+    """The C4 table: both arms' pattern counts, thresholds and lambda, per drug."""
+    names = sorted(drugs or [d.name for d in vocab_root.iterdir() if d.is_dir()])
+    rows, skipped = [], []
+    for drug in names:
+        a = full_root / drug / "gwas" / f"{drug}_gwas_summary.json"
+        b = vocab_root / drug / drug / "gwas" / f"{drug}_gwas_summary.json"
+        if not (a.is_file() and b.is_file()):
+            skipped.append(f"{drug} (no summary for {'full_cohort' if not a.is_file() else 'trainval_vocab'})")
+            continue
+        rows.append(gwas_row(drug, a, b))
+    if not rows:
+        raise SystemExit("no drug had both arms' gwas summary — nothing to compare")
+
+    hdr = (f"{'drug':<30} {'variants full':>13} {'trainval':>10} {'ratio':>6} "
+           f"{'patterns full':>13} {'trainval':>10} {'ratio':>6} {'sig full':>9} {'trainval':>9} "
+           f"{'lam full':>8} {'lam tv':>7}")
+    print(hdr)
+    print("-" * len(hdr))
+    for r in rows:
+        print(
+            f"{r['drug']:<30} {r['full_n_variants'] or 0:>13,} {r['trainval_n_variants'] or 0:>10,} "
+            f"{r.get('ratio_n_variants', float('nan')):>6.2f} "
+            f"{r['full_n_unique_patterns'] or 0:>13,} {r['trainval_n_unique_patterns'] or 0:>10,} "
+            f"{r.get('ratio_n_unique_patterns', float('nan')):>6.2f} "
+            f"{r['full_n_significant'] or 0:>9,} {r['trainval_n_significant'] or 0:>9,} "
+            f"{r['full_genomic_inflation_lambda'] or float('nan'):>8.3f} "
+            f"{r['trainval_genomic_inflation_lambda'] or float('nan'):>7.3f}"
+        )
+    for note in skipped:
+        print(f"  skipped: {note}")
+    print(f"\n{len(rows)} drug(s) · pheno_var identical across arms in all of them (asserted)")
+    print(
+        "ratio = trainval / full_cohort. A pattern ratio near 1 with a variant ratio well below it "
+        "means the old vocabulary carried more LD-redundant unitigs collapsing onto the same "
+        "presence pattern — the Bonferroni burden is set by patterns, so it barely moves."
+    )
+    if out_csv:
+        cols: list[str] = []
+        for r in rows:
+            cols += [c for c in r if c not in cols]
+        out_csv.parent.mkdir(parents=True, exist_ok=True)
+        with out_csv.open("w", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=cols)
+            w.writeheader()
+            w.writerows(rows)
+        print(f"wrote {out_csv}")
+    return 0
 
 
 def run(
@@ -225,10 +314,15 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--out-csv", type=Path, default=None)
     p.add_argument("--drug", action="append", dest="drugs", default=None)
     p.add_argument("--arm", default="lr", choices=["lr", "lr_dedup"], help="lr_dedup is the LD control")
+    p.add_argument("--stage", default="readout", choices=["readout", "gwas"],
+                   help="gwas = the C4 table (patterns/threshold/lambda, no LR needed); "
+                        "readout = the C6 paired AUROC comparison")
     p.add_argument("--n-boot", type=int, default=2000)
     p.add_argument("--seed", type=int, default=1)
     args = p.parse_args(argv if argv is not None else sys.argv[1:])
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    if args.stage == "gwas":
+        sys.exit(run_gwas(args.full_root, args.vocab_root, args.out_csv, args.drugs))
     sys.exit(run(args.full_root, args.vocab_root, args.out_csv, args.drugs,
                  arm=args.arm, n_boot=args.n_boot, seed=args.seed))
 

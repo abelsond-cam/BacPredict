@@ -143,3 +143,49 @@ def test_run_with_nothing_to_compare_is_an_error(tmp_path):
     (tmp_path / "kp_trainval_vocab" / "colistin").mkdir(parents=True)
     with pytest.raises(SystemExit):
         run(tmp_path / "kp", tmp_path / "kp_trainval_vocab", None, n_boot=10)
+
+
+def _summary(path, **kw):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    base = {"n_variants": 2_486_812, "n_unique_patterns": 960_320,
+            "bonferroni_threshold": 5.2e-08, "n_significant": 9277,
+            "genomic_inflation_lambda": 1.232, "pheno_var": 0.19397}
+    base.update(kw)
+    path.write_text(json.dumps(base))
+    return path
+
+
+def test_gwas_row_carries_both_arms_and_their_ratios(tmp_path):
+    from bac_pyseer.ast_gwas.compare_vocab_arms import gwas_row
+    a = _summary(tmp_path / "a.json")
+    b = _summary(tmp_path / "b.json", n_variants=1_145_309, n_unique_patterns=967_109,
+                 n_significant=5641, genomic_inflation_lambda=1.254)
+    row = gwas_row("colistin", a, b)
+    assert row["full_n_variants"] == 2_486_812
+    assert row["trainval_n_variants"] == 1_145_309
+    assert row["ratio_n_variants"] == pytest.approx(0.4605, abs=1e-3)
+    # Patterns barely move while variants halve — that contrast is the point of the table.
+    assert row["ratio_n_unique_patterns"] == pytest.approx(1.007, abs=1e-3)
+
+
+def test_gwas_row_refuses_arms_whose_phenotype_differs(tmp_path):
+    """The rebuild changes the vocabulary, never the phenotype. pheno_var is the control."""
+    from bac_pyseer.ast_gwas.compare_vocab_arms import gwas_row
+    a = _summary(tmp_path / "a.json")
+    b = _summary(tmp_path / "b.json", pheno_var=0.2501)
+    with pytest.raises(SystemExit) as e:
+        gwas_row("colistin", a, b)
+    assert "pheno_var differs" in str(e.value)
+
+
+def test_run_gwas_reads_the_rebuild_layout(tmp_path, capsys):
+    from bac_pyseer.ast_gwas.compare_vocab_arms import run_gwas
+    full, vocab = tmp_path / "kp", tmp_path / "kp_trainval_vocab"
+    for drug in ("colistin", "ertapenem"):
+        _summary(full / drug / "gwas" / f"{drug}_gwas_summary.json")
+        _summary(vocab / drug / drug / "gwas" / f"{drug}_gwas_summary.json", n_variants=1_145_309)
+    out = tmp_path / "gwas.csv"
+    assert run_gwas(full, vocab, out, None) == 0
+    text = capsys.readouterr().out
+    assert "2 drug(s)" in text
+    assert out.exists()
