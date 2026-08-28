@@ -42,8 +42,10 @@ export UV_CACHE_DIR=/home/dca36/rds/hpc-work/.uv_cache
 export TMPDIR=${TMPDIR_OVERRIDE:-/home/dca36/rds/hpc-work/tmp}
 mkdir -p "$TMPDIR"
 unset PYTHONPATH PYTHONHOME
-REPO=/home/dca36/workspace/BacPredict
-PIXI_MANIFEST=$REPO/src/bac_pyseer/pixi.toml
+# Overridable with the same default: the orchestrator already takes REPO from the environment, and a
+# hardcoded path here made every branch of this script unreachable from a test.
+REPO=${REPO:-/home/dca36/workspace/BacPredict}
+PIXI_MANIFEST=${PIXI_MANIFEST:-$REPO/src/bac_pyseer/pixi.toml}
 cd "$REPO"
 
 DATA=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw
@@ -58,8 +60,16 @@ POS_LABEL="${POS_LABEL:-blood (invasion)}"
 NEG_LABEL="${NEG_LABEL:-faeces}"   # was hardcoded; AMR needs "susceptible", not an iso-source class
 PAIR_TITLE="${PAIR_TITLE:-blood vs faeces (unitigs)}"
 COHORT_CSV=${COHORT_CSV:-$TRAIN/$PAIR/$COHORT/kpsc_human/binary_blood_vs_faeces_with_split.csv}
-NSHARDS=${NSHARDS:-16}
+# NSHARDS is REQUIRED. It used to default to 16 here while the orchestrator defaulted to 64, which
+# was harmless only because --export=ALL always carried 64 across. A hand-submitted recovery run --
+# exactly what the combine phase tells you to do when a shard fails -- would silently have used 16,
+# and prep would then have re-split the shared matrix into a different, incompatible chunk set.
+NSHARDS=${NSHARDS:?set NSHARDS (the orchestrator exports it; a manual resubmit must pass it too)}
 CPU=${CPU:-${SLURM_CPUS_PER_TASK:-8}}
+# pyseer's worker count, decoupled from the allocation. Buying memory with cores on CSD3 (which sells
+# it by the core) also multiplied whatever pyseer holds per worker; there was no way to ask for a big
+# node and run few workers on it. Defaults to CPU, so nothing changes unless it is set.
+PYSEER_CPU=${PYSEER_CPU:-$CPU}
 MIN_AF=${MIN_AF:-0.01}; MAX_AF=${MAX_AF:-0.99}
 MIN_SL_SIZE=${MIN_SL_SIZE:-100}
 
@@ -99,7 +109,10 @@ SHARD_DIR=${SHARD_DIR:-$CHUNK_ROOT/$PAIR/$COHORT}
 mkdir -p "$GD" "$SHARD_DIR" "$CHUNK_DIR"
 
 PHASE=${PHASE:?set PHASE=prep|task|combine}
-echo "PHASE=$PHASE  PAIR=$PAIR  NSHARDS=$NSHARDS  CPU=$CPU  job=$SLURM_JOB_ID  $(date)"
+# ${SLURM_JOB_ID:-none}, not $SLURM_JOB_ID: under `set -u` the bare form aborts the script with
+# "unbound variable" the moment it runs outside SLURM -- which is every local reproduction and
+# every test. Every other use in this file was already guarded; this one was not.
+echo "PHASE=$PHASE  PAIR=$PAIR  NSHARDS=$NSHARDS  CPU=$CPU  pyseer --cpu=$PYSEER_CPU  job=${SLURM_JOB_ID:-none}  $(date)"
 pyseer_run () { pixi run --manifest-path "$PIXI_MANIFEST" pyseer "$@"; }
 
 # ---------------------------------------------------------------------------------------------------
@@ -124,9 +137,25 @@ PY
     else echo "reusing $CLUST"; fi
 
     echo "=== (2) prime LMM cache (eigendecomp + null h^2) if missing ==="
-    if [ -s "$CACHE" ]; then
-        echo "reusing existing cache $CACHE ($(ls -lh "$CACHE" | awk '{print $5}'))"
+    # The LMM cache is a function of (sample set, kinship) and of nothing else, but the reuse test
+    # was `[ -s "$CACHE" ]` -- so a reused GWAS_DIR would hand a stale cache to a new cohort. pyseer
+    # checks the phenotype LENGTH against the cache and nothing more, so two cohorts of equal size
+    # would sail through. FINGERPRINT records what the cache was actually built from.
+    FINGERPRINT=$CACHE.fingerprint
+    WANT_FP="samples=$(md5sum < "$PHENO" | cut -d' ' -f1) sim=$(stat -c '%s:%Y' "$SIM" 2>/dev/null || echo none)"
+    if [ -s "$CACHE" ] && [ ! -s "$FINGERPRINT" ]; then
+        echo "reusing existing cache $CACHE ($(ls -lh "$CACHE" | awk '{print $5}')) -- no fingerprint"
+        echo "  (predates the fingerprint; recording one now so the NEXT reuse is checked)"
+        printf '%s\n' "$WANT_FP" > "$FINGERPRINT"
+    elif [ -s "$CACHE" ] && [ "$(cat "$FINGERPRINT")" = "$WANT_FP" ]; then
+        echo "reusing existing cache $CACHE ($(ls -lh "$CACHE" | awk '{print $5}')) -- fingerprint matches"
     else
+        if [ -s "$CACHE" ]; then
+            echo "REBUILDING cache: fingerprint changed (phenotype or kinship differs from the cached one)"
+            echo "  cached: $(cat "$FINGERPRINT")"
+            echo "  wanted: $WANT_FP"
+            rm -f "$CACHE"
+        fi
         [ -s "$SIM" ] || { echo "ERROR: kinship $SIM missing — run the variant LMM first"; exit 1; }
         PRIME=$SHARD_DIR/_prime.kmers.gz  # per-cohort: the cache it primes is cohort-specific
         # `zcat | head -N` kills zcat with SIGPIPE once head has its lines. That is the intended
@@ -144,9 +173,10 @@ PY
         # block as the SIGPIPE bug above — both were latent until this first new cohort.
         pyseer_run --kmers "$PRIME" --phenotypes "$PHENO" --phenotype-column "$LABEL_COL" \
             --lmm --similarity "$SIM" --save-lmm "$CACHE" \
-            --min-af "$MIN_AF" --max-af "$MAX_AF" --cpu "$CPU" > /dev/null
+            --min-af "$MIN_AF" --max-af "$MAX_AF" --cpu "$PYSEER_CPU" > /dev/null
         rm -f "$PRIME"
         [ -s "$CACHE" ] || { echo "ERROR: cache not produced"; exit 1; }
+        printf '%s\n' "$WANT_FP" > "$FINGERPRINT"
         echo "wrote cache $CACHE ($(ls -lh "$CACHE" | awk '{print $5}'))"
     fi
 
@@ -164,7 +194,10 @@ PY
         # Chunks are shared now, so a fan-out submitting several drugs at once would otherwise have
         # every prep wipe and rebuild the same directory under the others' feet. mkdir is atomic on
         # POSIX, so it elects exactly one builder; the losers wait in the else branch.
-        trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
+        # trap ... EXIT does NOT fire on SIGKILL, which is how an OOM or a walltime kill ends a
+        # prep -- so record who holds the lock, and let a waiter reclaim it once that job is gone.
+        trap 'rm -f "$LOCK/builder" 2>/dev/null; rmdir "$LOCK" 2>/dev/null || true' EXIT
+        echo "${SLURM_JOB_ID:-$$}" > "$LOCK/builder"
         if [ "$HAVE" -gt 0 ]; then echo "found $HAVE usable chunks but need $NSHARDS — rebuilding"; fi
         BUILD=$CHUNK_DIR.building.${SLURM_JOB_ID:-$$}
         rm -rf "$BUILD"; mkdir -p "$BUILD"
@@ -182,13 +215,34 @@ PY
         rm -f "$CHUNK_DIR"/chunk_*.gz
         mv "$BUILD"/chunk_*.gz "$CHUNK_DIR"/
         rmdir "$BUILD"
-        echo "chunk line counts:"; for c in "$CHUNK_DIR"/chunk_*.gz; do echo "  $(basename "$c"): $(zcat "$c" | wc -l)"; done
+        # Record the counts rather than only printing them: the combine phase can then check each
+        # shard against the chunk it was given instead of against a quarter of the largest sibling.
+        echo "chunk line counts:"
+        : > "$CHUNK_DIR/chunk_lines.tsv"
+        for c in "$CHUNK_DIR"/chunk_*.gz; do
+            _n=$(zcat "$c" | wc -l)
+            echo "  $(basename "$c"): $_n"
+            printf '%s\t%s\n' "$(basename "$c" .gz)" "$_n" >> "$CHUNK_DIR/chunk_lines.tsv"
+        done
     else
         # `if ...; then break; fi`, never `[ ] && break`: under `set -e` a false && list aborts the job.
         echo "another job holds $LOCK and is building the shared chunks — waiting up to 2 h"
+        BUILDER=$(cat "$LOCK/builder" 2>/dev/null || echo "")
+        [ -n "$BUILDER" ] && echo "  builder is job $BUILDER"
         for _ in $(seq 1 240); do
             sleep 30
             if [ "$(find "$CHUNK_DIR" -maxdepth 1 -name 'chunk_*.gz' -size +0 | wc -l)" -eq "$NSHARDS" ]; then break; fi
+            # A prep killed by OOM or walltime never runs its EXIT trap, so the lock outlives it and
+            # every later prep waits the full 2 h and then fails. If the builder is provably gone and
+            # the chunks are still short, take the lock over rather than waiting out the clock.
+            if [ -n "$BUILDER" ] && command -v squeue >/dev/null 2>&1; then
+                if [ -z "$(squeue -h -j "$BUILDER" -o '%i' 2>/dev/null)" ]; then
+                    echo "builder job $BUILDER is gone and chunks are incomplete — reclaiming $LOCK"
+                    rm -rf "$LOCK"
+                    echo "resubmit this prep, or wait for the next one, to rebuild the chunk set" >&2
+                    exit 1
+                fi
+            fi
         done
         HAVE=$(find "$CHUNK_DIR" -maxdepth 1 -name 'chunk_*.gz' -size +0 | wc -l)
         if [ "$HAVE" -ne "$NSHARDS" ]; then
@@ -206,13 +260,31 @@ task)
     CHUNK=$CHUNK_DIR/chunk_$i.gz
     [ -s "$CHUNK" ] || { echo "ERROR: missing $CHUNK"; exit 1; }
     [ -s "$CACHE" ] || { echo "ERROR: missing cache $CACHE (run prep first)"; exit 1; }
+    # Resume: skip a shard that has already completed. The array is the expensive phase, and the
+    # documented recovery for a failed shard is to resubmit -- which, without this, re-ran every
+    # sibling that had already succeeded. At TB scale that is hours per drug thrown away.
+    #
+    # The sentinel is written LAST, after the assoc is checked, so it means "this shard finished",
+    # not "this shard started". A non-empty .assoc alone would not do: the redirect creates the file
+    # before pyseer writes a byte, and a shard killed mid-scan leaves a plausible short one -- which
+    # is exactly the ceftazidime runt (42 lines beside siblings of ~57,000). Skipping on -s would
+    # make that runt permanent by never re-running it.
+    DONE=$SHARD_DIR/chunk_$i.done
+    if [ -z "${FORCE_SHARD:-}" ] && [ -f "$DONE" ] && [ -s "$SHARD_DIR/chunk_$i.assoc" ]; then
+        echo "shard $i already complete ($(wc -l < "$SHARD_DIR/chunk_$i.assoc") assoc lines, $(cat "$DONE"))"
+        echo "  set FORCE_SHARD=1 to re-run it anyway"
+        exit 0
+    fi
+    rm -f "$DONE"   # any previous attempt is now moot; a fresh run must earn the sentinel again
     WD=$SHARD_DIR/work_$i; mkdir -p "$WD"; cd "$WD"   # own cwd so lineage_effects.txt doesn't collide
-    echo "=== shard $i: pyseer --kmers $CHUNK --load-lmm (cpu=$CPU) ==="
+    echo "=== shard $i: pyseer --kmers $CHUNK --load-lmm (pyseer --cpu=$PYSEER_CPU) ==="
     pyseer_run --kmers "$CHUNK" --phenotypes "$PHENO" --phenotype-column "$LABEL_COL" \
         --lmm --load-lmm "$CACHE" --distances "$DIST" --lineage --lineage-clusters "$CLUST" \
         --min-af "$MIN_AF" --max-af "$MAX_AF" --output-patterns "$SHARD_DIR/patterns_$i.txt" \
-        --cpu "$CPU" > "$SHARD_DIR/chunk_$i.assoc"
+        --cpu "$PYSEER_CPU" > "$SHARD_DIR/chunk_$i.assoc"
     [ -s "$SHARD_DIR/chunk_$i.assoc" ] || { echo "ERROR: empty assoc for shard $i"; exit 1; }
+    printf 'job=%s lines=%s at=%s\n' "${SLURM_JOB_ID:-$$}" \
+        "$(wc -l < "$SHARD_DIR/chunk_$i.assoc")" "$(date -Is)" > "$DONE"
     echo "shard $i done: $(wc -l < "$SHARD_DIR/chunk_$i.assoc") assoc lines  $(date)"
     ;;
 
