@@ -29,7 +29,9 @@ COHORT=${COHORT:-trainval_vocab}
 P=$DATA_ROOT/processed/pyseer_ast
 FULL_ROOT=${FULL_ROOT:-$P/$ORGANISM}
 VOCAB_ROOT=${VOCAB_ROOT:-$P/${ORGANISM}_${COHORT}}
-OUT_DIR=${OUT_DIR:-$VOCAB_ROOT/comparison}
+# Deliberately BESIDE the vocab root, not inside it: the drug enumeration reads that tree, and an
+# output directory sitting in it is indistinguishable from a drug that never finished.
+OUT_DIR=${OUT_DIR:-$P/${ORGANISM}_${COHORT}_comparison}
 N_BOOT=${N_BOOT:-2000}
 
 cd "$REPO"

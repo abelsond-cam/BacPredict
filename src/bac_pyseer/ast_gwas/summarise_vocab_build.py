@@ -44,6 +44,23 @@ CHECKS: tuple[tuple[str, str, int], ...] = (
 REQUIRED_SECTIONS = ("reflist", "vocabulary", "clusters")
 
 
+def drug_dirs(vocab_root: Path) -> list[str]:
+    """Drug names under ``vocab_root`` — those with a ``leakage_audit.json``, not every subdirectory.
+
+    Every real drug gets that file from its reflist audit before any compute is spent, so it is the
+    reliable marker. Treating any subdirectory as a drug meant an output directory written beside
+    them (``comparison/``) was reported as a 23rd drug whose read-out had never run, which stopped
+    the comparison driver with all 22 genuine gates passing.
+    """
+    return sorted(
+        d.name for d in vocab_root.iterdir()
+        # Either marker identifies a drug: the audit file it gets before any compute is spent, or
+        # the nested <drug>/<drug>/ directory run_drug.sh creates. An output directory written
+        # beside the drugs has neither.
+        if d.is_dir() and ((d / "leakage_audit.json").is_file() or (d / d.name).is_dir())
+    )
+
+
 def _size(path: Path) -> int:
     """Bytes, or 0 when absent — never raise, so one missing artifact cannot hide the other 21 rows."""
     try:
@@ -178,7 +195,7 @@ def summarise_readout(vocab_root: Path, drug: str) -> dict[str, object]:
 
 def run(vocab_root: Path, out_tsv: Path | None, drugs: list[str] | None = None) -> int:
     """Summarise every drug under ``vocab_root`` → printed table, optional TSV, process exit code."""
-    names = sorted(drugs or [d.name for d in vocab_root.iterdir() if d.is_dir()])
+    names = sorted(drugs or drug_dirs(vocab_root))
     if not names:
         raise SystemExit(f"no drug directories under {vocab_root}")
     rows = [summarise_drug(vocab_root, d) for d in names]
@@ -238,7 +255,7 @@ def run(vocab_root: Path, out_tsv: Path | None, drugs: list[str] | None = None) 
 
 def run_readout(vocab_root: Path, out_tsv: Path | None, drugs: list[str] | None = None) -> int:
     """The C5 table: every drug's read-out gates → printed table, optional TSV, exit code."""
-    names = sorted(drugs or [d.name for d in vocab_root.iterdir() if d.is_dir()])
+    names = sorted(drugs or drug_dirs(vocab_root))
     rows = [summarise_readout(vocab_root, d) for d in names]
     present = [r for r in rows if r["readout_status"] != "absent"]
 

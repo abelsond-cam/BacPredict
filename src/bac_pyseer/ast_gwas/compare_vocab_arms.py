@@ -47,6 +47,7 @@ from pathlib import Path
 import numpy as np
 from sklearn.metrics import roc_auc_score
 
+from bac_pyseer.ast_gwas.summarise_vocab_build import drug_dirs
 from bac_pyseer.kleb_iso_source.unitig_presence_model import paired_delta_ci
 
 logger = logging.getLogger(__name__)
@@ -246,7 +247,7 @@ def run_gwas(
     full_root: Path, vocab_root: Path, out_csv: Path | None, drugs: list[str] | None = None
 ) -> int:
     """The C4 table: both arms' pattern counts, thresholds and lambda, per drug."""
-    names = sorted(drugs or [d.name for d in vocab_root.iterdir() if d.is_dir()])
+    names = sorted(drugs or drug_dirs(vocab_root))
     rows, skipped = [], []
     for drug in names:
         a = resolve_summary(full_root / drug, drug)
@@ -305,7 +306,7 @@ def run(
     seed: int = 1,
 ) -> int:
     """Compare every drug present in both roots → printed table, optional CSV, exit code."""
-    names = sorted(drugs or [d.name for d in vocab_root.iterdir() if d.is_dir()])
+    names = sorted(drugs or drug_dirs(vocab_root))
     rows, skipped = [], []
     for drug in names:
         # The rebuild's per-drug OUT_DIR makes run_drug.sh's DRUG_DIR <vocab>/<drug>/<drug>.

@@ -189,3 +189,26 @@ def test_run_readout_exit_code_and_totals(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "2/2 read-outs clean" in out
     assert "14,709,090 cells compared, 0 mismatched" in out
+
+
+def test_drug_enumeration_ignores_directories_that_are_not_drugs(tmp_path):
+    """An output directory written beside the drugs is not a drug whose read-out never ran.
+
+    Placing the comparison output inside the vocab root made it a 23rd "drug" with no read-out,
+    which stopped the C6 driver while all 22 genuine gates were passing.
+    """
+    from bac_pyseer.ast_gwas.summarise_vocab_build import drug_dirs
+    _drug(tmp_path, "colistin", audit=CLEAN)
+    _drug(tmp_path, "ertapenem", audit=CLEAN)
+    (tmp_path / "comparison").mkdir()          # output dir: no audit, no nested <drug>/<drug>/
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "comparison" / "figures").mkdir()   # ... even with children of its own
+    assert drug_dirs(tmp_path) == ["colistin", "ertapenem"]
+
+
+def test_run_skips_non_drug_directories(tmp_path, capsys):
+    from bac_pyseer.ast_gwas.summarise_vocab_build import run
+    _drug(tmp_path, "colistin", audit=CLEAN)
+    (tmp_path / "comparison").mkdir()
+    assert run(tmp_path, None) == 0
+    assert "1/1 clean" in capsys.readouterr().out

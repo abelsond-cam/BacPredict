@@ -186,7 +186,10 @@ def test_run_reports_a_drug_missing_one_arm_rather_than_dropping_it(tmp_path, ca
     ids, y, a, b = _cohort()
     _scores(full / "colistin" / "lr" / "eval_scores.npz", ids, y, a)
     _scores(vocab / "colistin" / "colistin" / "lr" / "eval_scores.npz", ids, y, b)
-    (vocab / "ertapenem").mkdir(parents=True)          # built, but no read-out yet
+    # Built but not yet read out. A real drug in that state has its leakage_audit.json -- written at
+    # reflist time, before GGCAT runs -- which is what marks the directory as a drug at all.
+    (vocab / "ertapenem").mkdir(parents=True)
+    (vocab / "ertapenem" / "leakage_audit.json").write_text(json.dumps({"reflist": {"n_holdout": 10}}))
     assert run(full, vocab, None, n_boot=100) == 0
     text = capsys.readouterr().out
     assert "skipped: ertapenem" in text
