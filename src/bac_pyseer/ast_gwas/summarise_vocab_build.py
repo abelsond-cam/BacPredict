@@ -154,9 +154,14 @@ def run(vocab_root: Path, out_tsv: Path | None, drugs: list[str] | None = None) 
         f"{sum(1 for r in rows if r['status'] == 'unchecked')} unchecked"
     )
     print(f"matrix + colormap on disk: {total_bytes / gib:.1f} GiB across {len(rows)} drugs")
-    if ok:
-        n = [int(r["n_reflist"]) for r in ok if r.get("n_reflist")]
-        print(f"reflists: {min(n)}–{max(n)} genomes (mean {sum(n) / len(n):.0f}) of the 7,080-genome cohort")
+    # Over every row that HAS a reflist, not just the clean ones: scoped to `ok` this line silently
+    # described whichever drugs happened to have finished, while reading as a statement about all 22.
+    n = [int(r["n_reflist"]) for r in rows if r.get("n_reflist")]
+    if n:
+        print(
+            f"reflists ({len(n)}/{len(rows)} drugs resolved): {min(n)}–{max(n)} genomes "
+            f"(mean {sum(n) / len(n):.0f}, {sum(n) / len(n) / 7080:.1%} of the 7,080-genome cohort)"
+        )
 
     if out_tsv:
         cols = list(rows[0])
