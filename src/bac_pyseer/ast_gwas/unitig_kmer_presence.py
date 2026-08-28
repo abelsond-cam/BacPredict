@@ -393,12 +393,55 @@ def verify_against_ggcat(
     }
 
 
+def assert_shards_complete(shards: list[Path]) -> dict:
+    """Every shard of a sharded scan must be present, or the holdout is scored on a fraction of itself.
+
+    This is not a truncation, which is why it is dangerous. The scan strides the sample list
+    (``samples[shard_index::n_shards]``), so a missing shard **thins the holdout evenly** rather than
+    cutting its tail: the surviving rows look like a representative sample, the scanner-vs-GGCAT
+    verification still passes on them, the carrier-ratio guard still passes, and the read-out reports
+    a perfectly clean AUROC computed on an eighth of the genomes.
+
+    Measured 2026-08-28: the array's ``--out`` filename lost its command substitution inside single
+    quotes, so all eight tasks wrote one file and seven eighths of the scan was overwritten. Nothing
+    downstream noticed — ``kept_holdout`` simply intersected with what happened to be there.
+    """
+    if not shards:
+        raise SystemExit("no scan shards found — check --shard-dir and --shard-glob")
+    by_index: dict[int, Path] = {}
+    declared: set[int] = set()
+    for npz in shards:
+        sidecar = npz.with_suffix(".scan.json")
+        if not sidecar.is_file():
+            raise SystemExit(
+                f"{npz} has no .scan.json sidecar, so the scan cannot be shown to be complete. "
+                f"A merge over an unknown subset of shards is not a merge."
+            )
+        meta = json.loads(sidecar.read_text())
+        by_index[int(meta["shard_index"])] = npz
+        declared.add(int(meta["n_shards"]))
+    if len(declared) != 1:
+        raise SystemExit(f"shards disagree on n_shards ({sorted(declared)}) — they are from different runs")
+    n_shards = declared.pop()
+    missing = sorted(set(range(n_shards)) - set(by_index))
+    if missing:
+        raise SystemExit(
+            f"the scan is incomplete: {len(by_index)}/{n_shards} shards present, missing index(es) "
+            f"{missing}. Because the scan strides the sample list, the shards that ARE present cover "
+            f"an even sample of the holdout rather than a prefix of it — so every downstream gate "
+            f"would pass while the read-out scored ~{len(by_index)}/{n_shards} of the genomes. "
+            f"Re-run the missing array task(s) before merging."
+        )
+    return {"n_shards": n_shards, "shard_files": [str(by_index[i]) for i in sorted(by_index)]}
+
+
 def run_merge(args: argparse.Namespace) -> dict:
     """Assemble the final design: GGCAT train+validate rows, scanned holdout rows, gates on both."""
     from bac_pyseer.ast_gwas.unitig_design_matrix import check_holdout_coverage, load_design
 
     ggcat, ggcat_ids, id_map = load_design(args.design_dir)
     shards = sorted(args.shard_dir.glob(args.shard_glob))
+    shard_completeness = assert_shards_complete(shards)
     scan, scan_ids = _load_shards(shards)
 
     # Align the scan's columns to the design's by *sequence*, never by position. One scan then serves
@@ -441,6 +484,17 @@ def run_merge(args: argparse.Namespace) -> dict:
     kept_holdout = [s for s in holdout_ids if s in scan_row]
     if not kept_holdout:
         raise SystemExit("no holdout genome was scanned — the merged design would have nothing to score")
+    # Intersecting with "whatever the scan happened to contain" is not a coverage check. Some holdout
+    # genomes legitimately have no assembly and can never be scanned, so this tolerates a small
+    # shortfall — but a large one means the scan did not cover the holdout it was asked to.
+    unscanned = [s for s in holdout_ids if s not in scan_row]
+    if len(unscanned) > args.max_unscanned_holdout_frac * len(holdout_ids):
+        raise SystemExit(
+            f"{len(unscanned)}/{len(holdout_ids)} holdout genomes were never scanned "
+            f"({len(unscanned) / len(holdout_ids):.1%} > {args.max_unscanned_holdout_frac:.1%}). "
+            f"Scoring only the {len(kept_holdout)} that were would report a clean AUROC on a subset "
+            f"of the holdout. Examples: {unscanned[:5]}"
+        )
     sample_ids = [*kept_trainval, *kept_holdout]
     matrix = sparse.vstack(
         [ggcat[[ggcat_row[s] for s in kept_trainval]], scan[[scan_row[s] for s in kept_holdout]]],
@@ -463,6 +517,7 @@ def run_merge(args: argparse.Namespace) -> dict:
         "design_dir": str(args.design_dir), "shard_dir": str(args.shard_dir),
         "scan_id_map": str(scan_id_map_path), "n_scan_features": int(len(scan_id_map)),
         "split_table": str(args.split_table),
+        "shard_completeness": shard_completeness,
         "rows_from_ggcat": len(kept_trainval), "rows_from_scanner": len(kept_holdout),
         "n_dropped_trainval": len([s for s in [*train_ids, *validate_ids] if s not in ggcat_row]),
         "n_dropped_holdout": len([s for s in holdout_ids if s not in scan_row]),
@@ -506,6 +561,10 @@ def _main_cli(argv: list[str] | None = None) -> None:
     m.add_argument("--max-mismatch-cells", type=int, default=0,
                    help="Scanner-vs-GGCAT disagreements tolerated on shared genomes. 0 is the gate.")
     m.add_argument("--min-holdout-carrier-ratio", type=float, default=0.5)
+    m.add_argument("--max-unscanned-holdout-frac", type=float, default=0.02,
+                   help="fail if more than this fraction of the holdout was never scanned; some "
+                        "genomes legitimately lack an assembly, a large shortfall means the scan "
+                        "did not cover what it was asked to (default 0.02)")
     m.add_argument("--min-holdout-genomes", type=int, default=30,
                    help="Below this many holdout rows the carrier ratio is noise, so it is recorded "
                         "but not asserted. Every real drug is far above it.")

@@ -115,11 +115,17 @@ SCAN_JOB=$(sb --array=0-$((SCAN_SHARDS - 1)) --cpus-per-task="$SCAN_CPUS" --mem=
     --error="$LOGDIR/uscan_${COHORT}_${DRUG}_%A_%a.err" \
     --wrap "set -euo pipefail
         cd '$REPO'
+        # SHARD is computed on its own line, NOT interpolated into a single-quoted --out. Written
+        # as --out '.../scan_\$(printf %02d \$SLURM_ARRAY_TASK_ID).npz', the single quotes stop the
+        # JOB's shell expanding it too, so all 8 tasks wrote one literally-named file and seven
+        # eighths of the scan was overwritten -- silently, because the scan strides the sample list
+        # and the survivors looked like a representative sample. Measured 2026-08-28.
+        SHARD=\$(printf '%02d' \$SLURM_ARRAY_TASK_ID)
         $P -m bac_pyseer.ast_gwas.unitig_kmer_presence score \
             --id-map '$DRUG_DIR/design/id_map.tsv' --split-table '$SPLIT_TABLE' \
             --reflist '$SCAN_REFLIST' --splits train,validate,holdout \
             --shard-index \$SLURM_ARRAY_TASK_ID --n-shards $SCAN_SHARDS \
-            --out '$SCAN_DIR/scan_\$(printf %02d \$SLURM_ARRAY_TASK_ID).npz'")
+            --out '$SCAN_DIR'/scan_\$SHARD.npz")
 echo "JOB $SCAN_JOB uscan_${DRUG} | CPU | mem=$SCAN_MEM | cores=$SCAN_CPUS | wall=$SCAN_WALL | $PART   --array=0-$((SCAN_SHARDS - 1))  (CPU-bound; ~44 MB/genome index)"
 
 echo "=== (C) merge + LR + LD control ==="

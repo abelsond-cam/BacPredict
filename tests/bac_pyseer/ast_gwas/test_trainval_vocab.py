@@ -329,3 +329,64 @@ def test_merge_refuses_a_scan_that_never_covered_the_design_features(cohort, spl
             "merge", "--design-dir", str(cohort["design"]), "--shard-dir", str(shard_dir),
             "--split-table", str(split_table), "--out-dir", str(tmp_path / "merged"),
         ])
+
+
+def _shard(dirpath, index, n_shards, name="scan"):
+    """One scan shard: the .npz plus the .scan.json sidecar the completeness check reads."""
+    import json as _json
+    dirpath.mkdir(parents=True, exist_ok=True)
+    npz = dirpath / f"{name}_{index:02d}.npz"
+    npz.write_bytes(b"")
+    npz.with_suffix(".scan.json").write_text(
+        _json.dumps({"shard_index": index, "n_shards": n_shards, "id_map": "x"})
+    )
+    return npz
+
+
+def test_assert_shards_complete_accepts_a_full_set(tmp_path):
+    from bac_pyseer.ast_gwas.unitig_kmer_presence import assert_shards_complete
+    shards = [_shard(tmp_path, i, 8) for i in range(8)]
+    info = assert_shards_complete(sorted(shards))
+    assert info["n_shards"] == 8
+    assert len(info["shard_files"]) == 8
+
+
+def test_a_single_surviving_shard_is_refused(tmp_path):
+    """The 2026-08-28 failure: all 8 array tasks wrote one file, so 7/8 of the scan vanished.
+
+    Because the scan strides the sample list, the survivor is an even sample of the holdout rather
+    than a prefix — every downstream gate passes and the read-out reports a clean AUROC on an
+    eighth of the genomes. Only a completeness check catches it.
+    """
+    from bac_pyseer.ast_gwas.unitig_kmer_presence import assert_shards_complete
+    with pytest.raises(SystemExit) as e:
+        assert_shards_complete([_shard(tmp_path, 0, 8)])
+    msg = str(e.value)
+    assert "1/8 shards present" in msg
+    assert "[1, 2, 3, 4, 5, 6, 7]" in msg
+
+
+def test_a_shard_without_its_sidecar_is_refused(tmp_path):
+    from bac_pyseer.ast_gwas.unitig_kmer_presence import assert_shards_complete
+    good = _shard(tmp_path, 0, 2)
+    orphan = tmp_path / "scan_01.npz"
+    orphan.write_bytes(b"")
+    with pytest.raises(SystemExit) as e:
+        assert_shards_complete([good, orphan])
+    assert "no .scan.json sidecar" in str(e.value)
+
+
+def test_shards_from_two_different_runs_are_refused(tmp_path):
+    from bac_pyseer.ast_gwas.unitig_kmer_presence import assert_shards_complete
+    a = _shard(tmp_path, 0, 8)
+    b = _shard(tmp_path, 1, 16)
+    with pytest.raises(SystemExit) as e:
+        assert_shards_complete([a, b])
+    assert "disagree on n_shards" in str(e.value)
+
+
+def test_no_shards_at_all_is_refused(tmp_path):
+    from bac_pyseer.ast_gwas.unitig_kmer_presence import assert_shards_complete
+    with pytest.raises(SystemExit) as e:
+        assert_shards_complete([])
+    assert "no scan shards" in str(e.value)
