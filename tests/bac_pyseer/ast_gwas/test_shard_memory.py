@@ -196,3 +196,19 @@ def test_recording_without_a_calibration_path_is_refused() -> None:
 def test_nonsense_inputs_raise(n: int, cpu: int, unitigs: int) -> None:
     with pytest.raises(ValueError):
         estimate_shard_peak(n, cpu, unitigs)
+
+
+def test_the_bracket_stays_a_bracket_below_the_anchor() -> None:
+    """Below the anchor the quadratic model predicts LESS than the linear one, so ordering the pair
+    by model rather than by value would return it back to front — and clamping both ends with max()
+    reported a collapsed bracket that hid how little is known."""
+    low, high = estimate_shard_peak(7_172, ANCHOR_CPU, 100_000)
+    assert low < high, "a cohort half the anchor's size is not a measured one"
+    assert high == pytest.approx(anchor_peak_gb(100_000) * 7_172 / ANCHOR_N)   # linear is the larger
+    assert low == pytest.approx(anchor_peak_gb(100_000) * (7_172 / ANCHOR_N) ** 2)
+
+
+def test_the_gate_still_sizes_on_the_upper_end_below_the_anchor() -> None:
+    low, high = estimate_shard_peak(7_172, ANCHOR_CPU, 100_000)
+    assert check_allocation(high * 1.3, 7_172, ANCHOR_CPU, 100_000)[0] is True
+    assert check_allocation(low * 1.3, 7_172, ANCHOR_CPU, 100_000)[0] is False

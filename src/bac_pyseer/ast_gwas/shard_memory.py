@@ -140,9 +140,13 @@ def estimate_shard_peak(
         centre = base * ratio**fitted
         return centre * 0.85, centre * 1.15
 
-    low = base * ratio  # rotation shared across workers; cpu does not enter
-    high = base * ratio**2 * (cpu / ANCHOR_CPU)  # a private copy per worker
-    return low, max(low, high)
+    linear = base * ratio  # rotation shared across workers; cpu does not enter
+    quadratic = base * ratio**2 * (cpu / ANCHOR_CPU)  # a private copy per worker
+    # Order by value, not by model. BELOW the anchor the quadratic model predicts the SMALLER number
+    # (ratio**2 < ratio when ratio < 1), so returning them as (linear, quadratic) would put the
+    # bracket back to front, and clamping with max() on both ends would report a collapsed bracket
+    # that hides how little is actually known. The gate sizes on the upper end either way.
+    return min(linear, quadratic), max(linear, quadratic)
 
 
 def cores_for_mem(mem_gb: float) -> int:
