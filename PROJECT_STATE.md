@@ -1,7 +1,18 @@
 # BacPredict — project state
 
-> **Last verified: 2026-08-14 @ `23bf069`** (branch `refactor/consolidate-engine`).
-> **Verification scope:** repo tree read directly; all 32 fine-tune numbers read from each
+> **Last verified: 2026-08-28 @ `782d53f`** (branch `refactor/consolidate-engine`).
+> **Verification scope, this pass (2026-08-28): §3.3 TB only.** Every TB figure was listed or read on
+> CSD3 in this session — the ten split tables and their per-split counts, assembly resolution
+> (36,389/36,390), the 36,684 TB-Profiler `results.json` and the lineage fields inside one of them,
+> `MaxMemPerCPU`, and the storage/compute headroom. The Phase 0 code claims are backed by the test
+> suite (317 in `tests/bac_pyseer/`) and by a benchmark run locally.
+> **NOT re-verified this pass** — carried forward from the stamps below, and each still carrying
+> whatever caveat it carried then: all 32 fine-tune numbers, both catalogue ceilings, the invasion
+> GWAS results, §3.4 and §3.5. The Kp §3.3 numbers were verified on 2026-08-28 in the preceding
+> session (see that stamp).
+>
+> **Earlier verification scopes, retained as the audit trail:**
+> **2026-08-14 @ `23bf069`:** repo tree read directly; all 32 fine-tune numbers read from each
 > checkpoint's own `results.json` on CSD3; both catalogue ceilings re-extracted from their source
 > CSVs; split-table ↔ deployed-holdout equivalence checked for all 32 drugs (0 mismatches).
 > Not re-verified this pass: the invasion GWAS numbers (taken from the sibling agent's committed
@@ -21,6 +32,11 @@
 > GGCAT's own colouring in `hits_submatrix.tsv`, read from that run's `rule_discordance.json`. The
 > 22/22 `.assoc` and 21/22 `lr/results.json` counts were listed on disk. Not re-verified this pass:
 > every fine-tune number, both catalogue ceilings, and the invasion GWAS results.
+> Added 2026-08-28 (§3.3 TB): every TB figure below was listed or read on CSD3 this pass — the ten
+> split tables and their holdout counts, the assembly resolution (36,389/36,390), and the 36,684
+> TB-Profiler `results.json` (one of which was opened to confirm it carries `main_lineage`/
+> `sub_lineage`). The memory bracket is an *extrapolation*, explicitly labelled as such, and is
+> the thing wave 3a exists to replace. No TB compute has been spent.
 > Added 2026-08-20 (§3.2 sublineage): 432 genomes LIN-typed on CSD3 with MiST 1.3.0; every number here read from that run's own manifests, not from a summary. Validated twice — 7,193 archived calls vs metadata_v2 (0 conflicts) and 48 already-labelled genomes re-called from scratch (48/48 agree). The proposed clusters are NOT yet live on Isambard.
 
 ## 0. How to use this file
@@ -257,7 +273,8 @@ mechanism.
 **Status — AMR (`src/bac_pyseer/ast_gwas/`).** **All 22 Kp drugs have a complete `.assoc`**; 21 have
 `lr/results.json`, with ceftazidime's read-out the last outstanding (its `.assoc`, `patterns.txt` and
 450,950-row hit table are already written). The Kp cohort, unitig matrix and lineage clusters are
-**built and shared**. TB is not started.
+**built and shared**. **TB's Phase 0 has landed (code only, no compute — see *TB* below);
+no TB GWAS has run.**
 
 **⚠ This 22-drug set is the `full_cohort` arm, and its vocabulary saw the holdout.** No *label* ever
 leaked — the GWAS phenotype carries `train,validate` only and its intersection with the holdout is 0 —
@@ -640,6 +657,80 @@ k-mer survives but no contiguous occurrence does. Pinned as a fixture in
 - Mechanism readings in both write-ups are **hypotheses**, explicitly flagged as such.
 
 **Owns.** `src/bac_pyseer/`.
+
+---
+
+**Status — TB (`src/bac_pyseer/ast_gwas/`, organism `tb`).** **Phase 0 complete, 2026-08-28; nothing
+has run on the cluster.** Plan: `~/.claude/plans/tb-uses-the-tb-shimmering-fountain.md`. Approach
+agreed with David: **one shared full-cohort vocabulary, subset per drug** (licensed by the C6 result
+above — the leakage-free rebuild moved Kp by a median +0.0002), with the leakage-free arm deferred.
+TB has an option Kp did not: **12,225 of 36,390 genomes (33.6%) sit in no drug's holdout**, so a
+*single* leakage-free shared build is possible later, against Kp's 22 per-drug builds.
+
+**Cohort facts, listed on CSD3 2026-08-28 — not carried over from any plan.**
+
+| | value |
+|---|---|
+| GWAS cohort (union of the 10 split tables) | **36,390**; **36,389 resolve** to `raw/tb/assemblies/{Sample}.fa.gz`, flat and BioSample-keyed, **no `--file-list`** |
+| per-drug train+validate (the LMM's n) | **7,172 (streptomycin) → 28,508 (rifampin)**; 2.1× the largest cohort this pipeline has run |
+| holdout n | matches each drug's fine-tune `n` **exactly, all 10** — so unitig-vs-FT pairs on identical holdouts, unlike Kp |
+| TB-Profiler | **already run, June 2026**: 36,684 `results.json` covering **36,321 of 36,390** (69 missing) |
+
+**The TB-Profiler finding supersedes `PLAN.md` Decision 3** and matching claims in
+`lineage_from_distances.py`, `sublineage_from_metadata.py` and `ast_gwas/CLAUDE.md`, all of which
+said TB lineage labels could not exist "until TB-Profiler is run over ~39k assemblies". All four are
+corrected. **Mash stays primary for TB** (David, 2026-08-28) on a resolution argument — a discrete
+`sub_lineage` is constant *within* a large sublineage and so cannot correct the divergence inside
+one — with TB-Profiler's calls written alongside as the comparator partition and as the permutation
+null's strata. Note this changes no β or p either way: the LMM cache is built from `--similarity`
+alone, so clusters reach pyseer only at the post-hoc attribution step.
+
+**Phase 0 — what landed (7 commits, `33dd4f9` → `782d53f`).** All shared-engine edits are
+behaviour-preserving with defaults unchanged, pinned by tests that run the real scripts with
+`sbatch` stubbed.
+
+- **`parse_triangle` vectorised, and parsed once per drug instead of two or three times.** Measured
+  **3.6× faster and exactly 2× lower peak, output identical** (n=4,000: 14.18 s / 0.39 GB → 3.90 s /
+  0.19 GB). Extrapolated to TB's 36,389-genome triangle: peak ~32 GB → ~16 GB.
+- **A memory gate.** `estimate_shard_peak` reproduces the invasion calibration (n=13,602, cpu=8:
+  10k/50k/100k unitigs/shard → 9/21/26 GB) with `peak ≈ 7.383·ln(u) − 59.0`, fitted on the outer two
+  points and predicting the **held-out** middle one at 20.9 vs 21 measured.
+- **⚠ The "peak ≈ cpu × n²" model is refuted by its own calibration.** One n×n rotation matrix at the
+  anchor is 1.48 GB, so eight private worker copies would be 11.8 GB — *more than the 9 GB measured
+  in total* at u=10k. pyseer does not hold a copy per worker. Cohort-size scaling is therefore
+  **unknown**, and the estimator returns a bracket (linear → quadratic in n) rather than a number.
+- **TB rifampin brackets at 54–114 GB against the `--mem=128G` default.** The default clears the
+  upper bound by 1.12×, where the invasion run had ~5×, on a bound extrapolated from one cohort. The
+  honest verdict is "nobody can currently say"; the gate returns that, and refuses to submit.
+- `PYSEER_CPU` decouples pyseer's workers from the allocation (they were one variable, so buying
+  memory with cores also multiplied per-worker memory). `CANARY=1` runs one shard first.
+- **Resume:** a shard writes a completion sentinel *after* its `.assoc` is checked, so a blind array
+  requeue is free for shards already done. Skipping on "non-empty `.assoc`" instead would have made
+  the ceftazidime runt permanent.
+- Cache fingerprinting on (phenotype, kinship); a dead-builder chunk-lock reclaim; `NSHARDS`
+  required rather than defaulting to 16 in one file and 64 in the other; `QOS`/`LOGDIR` actually
+  consumed; a `SLURM_JOB_ID` unbound-variable abort outside SLURM.
+- **`--mem=128G` allocates 20 cores, not 8** (`MaxMemPerCPU=6,760 MB`), so the reservation line was
+  understating itself 2.5× — the same class of error that held every Kp array in
+  `AssocGrpCPUMinutesLimit`. Now computed from billed cores.
+- **`chunk_%02d` was NOT changed.** The claim that it caps `NSHARDS` at 100 is wrong — `printf`
+  treats it as a minimum width, and the combine iterates by index, not by glob. Verified before
+  touching it; renaming would have invalidated every existing chunk set for nothing.
+
+**Next (TB).** Phase 1 parse TB-Profiler → lineage + `tbprofiler_variants.parquet` · Phase 2 build
+the cohort once, **measuring** matrix/colormap/triangle bytes and setting `NSHARDS` from them ·
+Phase 3 the drug ladder, **streptomycin alone first** (it is also the job that builds the shared
+chunk set every later drug reuses in ~9 s) · Phases 4–6 read-out, WHO ceiling, λ calibration.
+
+**Caveats (TB).**
+- **Every memory figure above is an extrapolation, not a measurement.** No `sacct MaxRSS` for a
+  unitig shard exists anywhere in the repo. Wave 3a's canary is what replaces it.
+- **The WHO ceiling is still the provisional June one.** The layout now mirrors CARD and
+  `discover_who` reads both shapes, but the rebuild itself (Phase 5) has not run — so a TB
+  ceiling-vs-unitig gap still cannot be read in either direction.
+- **λ will be worse than Kp's 4.18–4.54 median**, TB being far more clonal. `permute_unitig_lambda.sh`
+  has never been wired into `ast_gwas` despite `run_drug.sh` saying it is not optional. **No claim
+  about *which* unitigs matter until Phase 6 runs.** AUROC comparisons are unaffected.
 
 ---
 
