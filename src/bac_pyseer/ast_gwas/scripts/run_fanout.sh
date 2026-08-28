@@ -7,7 +7,16 @@
 #
 # Steps 1-2 of each drug run inline here (phenotype, then kinship subset from the cohort triangle),
 # so this takes a couple of minutes per drug on the login node before its SLURM chain is submitted.
-# That is within the login-node budget; step 3 onwards is all sbatch.
+# Step 3 onwards is all sbatch.
+#
+# ⚠ That per-drug cost is fine for a handful of drugs and NOT fine for a fan-out. The kinship step
+# parses the whole triangle -- ~7.7M lines for a 3,932-genome drug -- so eight drugs is ~20-25 min of
+# real CPU on a login node shared with other agents. Measured 2026-08-28. Past ~4 drugs, submit this
+# script as a job and let it submit the chains from there (submitting from inside a job is fine on
+# CSD3):
+#
+#   sbatch --account=... --partition=icelake-himem --cpus-per-task=2 --mem=16G --time=01:00:00 \
+#          --wrap "cd $REPO && ORGANISM=kp ... bash .../run_fanout.sh <drugs...>"
 #
 # Usage:
 #   bash src/bac_pyseer/ast_gwas/scripts/run_fanout.sh gentamicin ceftazidime meropenem
