@@ -270,6 +270,36 @@ train+validate, a delta that separates from zero). A `trainval_vocab` rebuild ac
 progress; until it lands these numbers are of record but carry that qualifier. Plan:
 `~/.claude/plans/tb-uses-the-tb-shimmering-fountain.md`.
 
+**✅ Rebuild stage C3 complete 2026-08-28 — all 22 vocabularies are built and asserted clean.** Read
+from `…/processed/pyseer_ast/kp_trainval_vocab/build_summary.tsv` (mirrored at
+`src/bac_pyseer/docs/trainval_vocab_build_summary.tsv`), produced by
+`bac_pyseer.ast_gwas.summarise_vocab_build`, which reports **22/22 ok · 0 FAIL · 0 unchecked**. Per
+drug, from GGCAT's own `color_names.jsonl` rather than the reflist we passed it:
+`n_colors == n_reflist` and **`n_holdout_coloured == 0`**, plus `n_missing_from_graph == 0` and
+`n_extra_in_graph == 0`. A missing audit section counts as *unchecked*, never as passed.
+
+| | value |
+|---|---|
+| reflists (train+validate) | **1,128–3,932 genomes, mean 2,454 = 34.7%** of the 7,080 cohort |
+| `MIN_SAMP` (1% floor) | **12–40, per drug** — was a flat 71; confirmed in each build log, not just the audit |
+| lineage clusters at `min_size=100` | **3–7 per drug**, vs 11 at cohort scale; `other` rises accordingly |
+| GGCAT build time | 3:41 (colistin) → 27:45 (gentamicin) on 32 cores, `-m 90G` |
+| unitig matrices | **117.6 GiB** total (0.40–12.65 GiB); colormaps a further 60.7 GiB |
+| GGCAT scratch spill | **~1 GiB per build** — 20 concurrent builds moved hpc-work 267 → 272 GB |
+
+**Two of the plan's estimates were wrong and are corrected here.** Matrix size does *not* scale as
+`27 GB × N/7,080`: that linear model over-predicts by ~43% overall (206 GB predicted vs 117.6 GiB
+actual) and badly for small drugs (colistin 4.3 GB predicted, 0.40 GB actual), because a smaller
+cohort shortens every carrier list *and* thins the feature set. And `uprep` was budgeted at 6 h on
+the assumption that per-drug matrices force a real split — they do, and colistin's took **2 min 44 s**.
+
+**The mash re-sketch is now a measurement, not an argument.** `leakage_audit mash` asserts each
+drug's freshly-sketched `similarity.tsv` against the comparator's, and returns **`max_abs_diff = 0.0`
+exactly**, with `n_shared` equal to the drug's full reflist. Subsetting the cohort triangle and
+re-sketching per drug are bit-identical, so mash kinship is closed as a leakage path by number.
+(That assertion existed since C2 but was called by nothing until 2026-08-28 — an implemented,
+unrun check that made the verification table read as passed.)
+
 **⚠ Storage bug fixed 2026-08-21 — it had silently killed a whole batch.** `unitig_lmm_sharded_job.sh`
 keyed `CHUNK_DIR` on `$PAIR`, and `run_drug.sh` sets `PAIR=$DRUG`, so all 22 Kp drugs — which share
 ONE `unitigs.pyseer.gz` — each re-split it into a private ~26.5 GB copy. Twelve copies filled
