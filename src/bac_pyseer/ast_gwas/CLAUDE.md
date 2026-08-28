@@ -90,10 +90,21 @@ headline.
 | `leakage_audit.py` | the per-drug `leakage_audit.json`: reflist, vocabulary (from GGCAT's own `color_names.jsonl`), clusters, mash, design |
 | `unitig_lr.py` | fit train → Youden on the **holdout** (one convention for both arms; sens/spec/bal-acc are therefore optimistically biased and must be reported as "at the optimal operating point") → score holdout → `results.json` (schema v1.2) |
 | `collect_comparison.py` | unitig-LR + FT + catalogue → one table per organism |
+| `summarise_vocab_build.py` | the 22 `leakage_audit.json` → one row per drug; **a missing section is `unchecked`, never a pass**, and it re-checks rather than reformats |
+| `compare_vocab_arms.py` | full-cohort vs trainval-vocabulary: `--stage gwas` (patterns/threshold/λ) and `--stage readout` (paired AUROC delta + bootstrap CI). Refuses arms whose holdout **id sets** differ |
+| `plot_vocab_comparison.py` | the two rebuild figures — paired scatter against y=x, and a caterpillar of Δ with CIs |
 
 Scripts: `probe_toolchain.sh` (step 0 gate) · `build_cohort_once.sh` (per organism) ·
 `run_drug.sh` (per drug) · `run_fanout.sh` / `run_readout.sh` (the full-cohort arm) ·
-`build_trainval_vocab.sh` / `run_trainval_readout.sh` (the train+validate-vocabulary arm).
+`build_trainval_vocab.sh` / `run_trainval_readout.sh` / `fanout_trainval_readout.sh` (the
+train+validate-vocabulary arm; the last is idempotent — it works out which drugs' GWAS have landed
+and submits only those, so re-running it as results trickle in cannot double-submit or skip one).
+
+**Two gotchas the scripts encode, both learned the hard way.** `mash` lives in the `bac_pyseer` pixi
+env and is *not* on a compute node's PATH — `build_cohort_once.sh`'s mash step had therefore never
+actually run, and the full-cohort triangle predates it. And past ~4 drugs a fan-out belongs in a
+job, not on a login node: the inline kinship step parses the whole triangle (~7.7M lines for a
+3,932-genome drug), so eight drugs is ~20–25 min of CPU on a shared node.
 
 ## The two vocabulary arms
 
