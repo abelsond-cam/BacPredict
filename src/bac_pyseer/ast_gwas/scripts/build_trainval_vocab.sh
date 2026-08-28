@@ -143,13 +143,16 @@ for DRUG in "$@"; do
 
     GGCAT_JOB=""
     if has_stage ggcat; then
+    # OUT_NAME is only a label once OUT_DIR is set explicitly -- but it is the label run_ggcat_unitigs.sh
+    # prints, and its default is the iso-source cohort, so every build log announced
+    # "OUT_NAME=blood_faeces" while building an AMR drug's vocabulary. Name it for what it is.
     GGCAT_JOB=$(REPO="$REPO" OUT_DIR="$UNITIG_DIR" TMP="$TMP" MEMGB="$GGCAT_MEMGB" \
-        MAX_FRAC="${MAX_FRAC:-0.99}" \
+        OUT_NAME="${COHORT}_${DRUG}" MAX_FRAC="${MAX_FRAC:-0.99}" \
         sb --cpus-per-task="$GGCAT_CPUS" --mem="$GGCAT_MEM" --time="$GGCAT_TIME" \
            --job-name="ggcat_${DRUG}" \
            --output="$LOGDIR/ggcat_${COHORT}_${DRUG}_%j.out" \
            --error="$LOGDIR/ggcat_${COHORT}_${DRUG}_%j.err" \
-           --export=ALL,REPO,OUT_DIR,TMP,MEMGB,MAX_FRAC \
+           --export=ALL,REPO,OUT_DIR,TMP,MEMGB,MAX_FRAC,OUT_NAME \
            "$REPO/src/bac_pyseer/kleb_iso_source/scripts/run_ggcat_unitigs.sh")
     echo "JOB $GGCAT_JOB ggcat_${DRUG} | CPU | mem=$GGCAT_MEM | cores=$GGCAT_CPUS | wall=$GGCAT_TIME | $PART   (GGCAT -m ${GGCAT_MEMGB}G, below --mem)"
     fi
