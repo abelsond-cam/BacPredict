@@ -113,7 +113,13 @@ def run(variants_parquet: Path, splits_dir: Path, esm_rank_dir: Path, out_dir: P
                          "embeddable": False, "is_rrna": False, "is_noncoding": False})
 
         df = pd.DataFrame(rows).sort_values("mut_auroc", ascending=False)
-        df.to_csv(out_dir / f"tbprofiler_gene_lr_{drug}.csv", index=False)
+        # One subdirectory per drug, mirroring the Kp CARD ceiling
+        # (card_ceiling/<drug>/card_determinant_lr_<drug>_<grain>.csv). The two catalogues were
+        # writing into differently shaped trees for no reason, which meant every consumer needed to
+        # know which organism it was looking at.
+        drug_dir = out_dir / drug
+        drug_dir.mkdir(parents=True, exist_ok=True)
+        df.to_csv(drug_dir / f"tbprofiler_gene_lr_{drug}.csv", index=False)
         top = df[df.gene_name != "__ALL_WHO_one_hot__"].head(3)
         logger.info("%s: %d sites scored | top: %s | full one-hot %.3f", drug, len(df) - 1,
                     ", ".join(f"{r.site}{'*' if (r.is_rrna or r.is_noncoding) else ''}={r.mut_auroc:.3f}"
@@ -121,7 +127,7 @@ def run(variants_parquet: Path, splits_dir: Path, esm_rank_dir: Path, out_dir: P
                     full["auroc"]["mean"] if full else float("nan"))
 
     # tiny manifest so the plot step knows what's there
-    done = sorted(p.name for p in out_dir.glob("tbprofiler_gene_lr_*.csv"))
+    done = sorted(p.name for p in out_dir.glob("*/tbprofiler_gene_lr_*.csv"))
     (out_dir / "tbprofiler_gene_lr_manifest.json").write_text(json.dumps({"files": done}, indent=2))
 
 

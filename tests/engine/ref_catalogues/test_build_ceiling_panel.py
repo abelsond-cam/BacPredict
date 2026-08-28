@@ -112,3 +112,42 @@ def test_an_unknown_estimator_is_refused(tmp_path):
             B.discover_card(root, "allele"), schema_key="card", grain="allele",
             estimator="whatever_makes_it_pass", status="current",
         )
+
+
+def test_who_discovery_prefers_the_nested_layout(tmp_path):
+    """The rebuilt TB ceiling mirrors CARD: <dir>/<drug>/tbprofiler_gene_lr_<drug>.csv."""
+    root = tmp_path / "who_ceiling"
+    for drug in ("rifampin", "rifabutin"):
+        _who_csv(root / drug / f"tbprofiler_gene_lr_{drug}.csv", drug)
+    assert sorted(B.discover_who(root)) == ["rifabutin", "rifampin"]
+
+
+def test_who_discovery_still_reads_the_flat_june_layout(tmp_path):
+    """The retired probe wrote flat, its files are still on disk, and archived plot code reads them."""
+    root = tmp_path / "tbprofiler_gene_lr"
+    _who_csv(root / "tbprofiler_gene_lr_rifampin.csv", "rifampin")
+    assert sorted(B.discover_who(root)) == ["rifampin"]
+
+
+def test_a_nested_ceiling_still_cannot_be_mislabelled_as_the_deployment_holdout(tmp_path):
+    """Finding a file is not endorsing it — the estimator check is on the data, not the layout.
+
+    Otherwise moving the June CSVs into the new tree would launder them into looking current, which
+    is the exact edit PROVENANCE.md warns against.
+    """
+    root = tmp_path / "who_ceiling"
+    _who_csv(root / "rifampin" / "tbprofiler_gene_lr_rifampin.csv", "rifampin")  # non-zero sd
+    with pytest.raises(ValueError, match="cannot have a spread"):
+        B.build_panel(
+            B.discover_who(root), schema_key="who", grain="one_hot",
+            estimator="deployment_holdout", status="current",
+        )
+
+
+def test_a_stray_subdirectory_does_not_become_a_drug(tmp_path):
+    """Nested discovery keys on <drug>/tbprofiler_gene_lr_<drug>.csv, so a logs/ dir is not a drug."""
+    root = tmp_path / "who_ceiling"
+    _who_csv(root / "rifampin" / "tbprofiler_gene_lr_rifampin.csv", "rifampin")
+    (root / "logs").mkdir()
+    (root / "logs" / "tbprofiler_gene_lr_isoniazid.csv").write_text("junk")
+    assert sorted(B.discover_who(root)) == ["rifampin"]

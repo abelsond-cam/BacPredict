@@ -160,7 +160,22 @@ def discover_card(ceiling_dir: Path, grain: str) -> dict[str, Path]:
 
 
 def discover_who(ceiling_dir: Path) -> dict[str, Path]:
-    """Map drug -> CSV for the TB layout (``<dir>/tbprofiler_gene_lr_<drug>.csv``)."""
+    """Map drug -> CSV for the TB layout, per-drug subdirectory or flat.
+
+    The rebuilt ceiling writes ``<dir>/<drug>/tbprofiler_gene_lr_<drug>.csv``, mirroring CARD. The
+    retired June probe wrote them flat, and its files are still on disk and still referenced by the
+    archived plot code — so both shapes resolve, with the nested one preferred. Discovering a file is
+    not endorsing it: ``--estimator`` is still checked against the data, so a k-fold-vintage CSV
+    cannot be relabelled ``deployment_holdout`` whichever tree it came from.
+    """
+    found = {
+        csv.stem.removeprefix("tbprofiler_gene_lr_"): csv
+        for sub in sorted(p for p in ceiling_dir.iterdir() if p.is_dir())
+        for csv in [sub / f"tbprofiler_gene_lr_{sub.name}.csv"]
+        if csv.is_file()
+    }
+    if found:
+        return found
     return {
         p.stem.removeprefix("tbprofiler_gene_lr_"): p
         for p in sorted(ceiling_dir.glob("tbprofiler_gene_lr_*.csv"))
