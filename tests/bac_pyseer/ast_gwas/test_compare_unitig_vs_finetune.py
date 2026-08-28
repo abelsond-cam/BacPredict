@@ -85,6 +85,7 @@ def test_a_holdout_size_mismatch_is_flagged_not_hidden(tmp_path, capsys):
 
 
 def test_nothing_to_compare_is_an_error(tmp_path):
-    (tmp_path / "ft").mkdir(); (tmp_path / "kp").mkdir(); (tmp_path / "vocab").mkdir()
+    for d in ("ft", "kp", "vocab"):
+        (tmp_path / d).mkdir()
     with pytest.raises(SystemExit):
         run(tmp_path / "ft", tmp_path / "kp", tmp_path / "vocab", None)
