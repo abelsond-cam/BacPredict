@@ -189,8 +189,16 @@ def audit_design(merge_manifest: Path) -> dict:
     """
     merged = json.loads(merge_manifest.read_text())
     keep = ("rows_from_ggcat", "rows_from_scanner", "n_features", "nnz",
-            "verification", "holdout_coverage")
+            "verification", "holdout_coverage", "shard_completeness")
     payload = {"merge_manifest": str(merge_manifest), **{k: merged[k] for k in keep if k in merged}}
+    # A merge manifest written before the shard-completeness gate existed cannot show that its scan
+    # was whole, and an incomplete strided scan thins the holdout evenly rather than truncating it —
+    # so the resulting design looks entirely healthy. Absence of the record is not evidence it passed.
+    if "shard_completeness" not in merged:
+        raise SystemExit(
+            f"{merge_manifest}: no shard_completeness record, so the scan cannot be shown to have "
+            f"been complete. Re-merge with a version that asserts it."
+        )
     verification = payload.get("verification", {})
     if not verification.get("n_shared"):
         raise SystemExit(

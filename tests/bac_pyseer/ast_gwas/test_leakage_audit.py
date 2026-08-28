@@ -167,6 +167,7 @@ def test_the_design_stage_refuses_a_merge_whose_scanner_was_never_checked(tmp_pa
         "rows_from_ggcat": 100, "rows_from_scanner": 40, "n_features": 500, "nnz": 9000,
         "verification": {"n_shared": 0, "n_mismatch_cells": None},
         "holdout_coverage": {"checked": True, "ratio": 0.8},
+        "shard_completeness": {"n_shards": 8, "shard_files": ["a"] * 8},
     }))
     with pytest.raises(SystemExit, match="never checked"):
         audit_design(manifest)
@@ -179,8 +180,28 @@ def test_the_design_stage_carries_the_merge_gates_into_the_audit_file(tmp_path):
         "rows_from_ggcat": 100, "rows_from_scanner": 40, "n_features": 500, "nnz": 9000,
         "verification": {"n_shared": 100, "n_mismatch_cells": 0},
         "holdout_coverage": {"checked": True, "ratio": 0.81},
+        "shard_completeness": {"n_shards": 8, "shard_files": ["a"] * 8},
     }))
     payload = audit_design(manifest)
     assert payload["verification"]["n_mismatch_cells"] == 0
     assert payload["holdout_coverage"]["ratio"] == 0.81
     assert payload["rows_from_scanner"] == 40
+    assert payload["shard_completeness"]["n_shards"] == 8
+
+
+def test_the_design_stage_refuses_a_merge_that_cannot_show_its_scan_was_complete(tmp_path):
+    """A manifest predating the shard gate cannot prove the scan was whole.
+
+    An incomplete strided scan thins the holdout evenly instead of truncating it, so the design that
+    results looks entirely healthy — the scanner check passes, the carrier ratio passes, and the
+    read-out reports a clean AUROC on a fraction of the genomes. Absence of the record is therefore
+    not evidence the scan passed, and must not be filed as though it were.
+    """
+    manifest = tmp_path / "merge_manifest.json"
+    manifest.write_text(json.dumps({
+        "rows_from_ggcat": 100, "rows_from_scanner": 40, "n_features": 500, "nnz": 9000,
+        "verification": {"n_shared": 100, "n_mismatch_cells": 0},
+        "holdout_coverage": {"checked": True, "ratio": 0.81},
+    }))
+    with pytest.raises(SystemExit, match="shard_completeness"):
+        audit_design(manifest)
