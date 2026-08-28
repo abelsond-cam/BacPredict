@@ -225,3 +225,48 @@ def test_a_degenerate_bootstrap_does_not_crash_the_whole_comparison(tmp_path, ca
     _scores(vocab / "colistin" / "colistin" / "lr" / "eval_scores.npz", ids, y, b)
     assert mod.run(full, vocab, None, n_boot=10) == 0
     assert "0 separate from zero" in capsys.readouterr().out
+
+
+def test_regenerated_summary_wins_over_the_combine_phases_own(tmp_path):
+    """<drug>/<drug>_gwas_summary.json beats <drug>/gwas/<drug>_gwas_summary.json.
+
+    Kp ertapenem has both and they disagree: the gwas/ copy predates the combine-phase fix and left
+    pheno_var at the 0.249 default, while the regenerated copy computed it. The write-ups quote the
+    regenerated one, so reading gwas/ would put stale numbers in the table of record.
+    """
+    from bac_pyseer.ast_gwas.compare_vocab_arms import resolve_summary
+    d = tmp_path / "ertapenem"
+    (d / "gwas").mkdir(parents=True)
+    _summary(d / "gwas" / "ertapenem_gwas_summary.json", pheno_var=0.249, n_variants=1)
+    _summary(d / "ertapenem_gwas_summary.json", pheno_var=0.2247794905842714, n_variants=3_371_827)
+    got = resolve_summary(d, "ertapenem")
+    assert got.parent == d
+    assert json.loads(got.read_text())["n_variants"] == 3_371_827
+
+
+def test_resolve_summary_falls_back_to_the_gwas_copy(tmp_path):
+    from bac_pyseer.ast_gwas.compare_vocab_arms import resolve_summary
+    d = tmp_path / "colistin"
+    (d / "gwas").mkdir(parents=True)
+    _summary(d / "gwas" / "colistin_gwas_summary.json")
+    assert resolve_summary(d, "colistin").parent.name == "gwas"
+    assert resolve_summary(tmp_path / "absent", "x") is None
+
+
+def test_an_uncomputed_pheno_var_warns_rather_than_failing(tmp_path):
+    """pheno_var_source=default means "never measured", not "the labels differ"."""
+    from bac_pyseer.ast_gwas.compare_vocab_arms import gwas_row
+    a = _summary(tmp_path / "a.json", pheno_var=0.249, pheno_var_source="default")
+    b = _summary(tmp_path / "b.json", pheno_var=0.2247794905842714, pheno_var_source="computed:/x")
+    row = gwas_row("ertapenem", a, b)          # must not raise
+    assert row["pheno_var_uncomputed"] == "full_cohort"
+
+
+def test_two_computed_but_differing_pheno_vars_still_fail(tmp_path):
+    """The real label-mismatch case must stay fatal."""
+    from bac_pyseer.ast_gwas.compare_vocab_arms import gwas_row
+    a = _summary(tmp_path / "a.json", pheno_var=0.19, pheno_var_source="computed:/x")
+    b = _summary(tmp_path / "b.json", pheno_var=0.25, pheno_var_source="computed:/y")
+    with pytest.raises(SystemExit) as e:
+        gwas_row("colistin", a, b)
+    assert "both were computed" in str(e.value)

@@ -104,6 +104,22 @@ def _gwas_facts(
     return facts
 
 
+def resolve_summary(drug_dir: Path, drug: str) -> Path | None:
+    """The drug's GWAS summary, preferring the regenerated copy over the combine phase's own.
+
+    Same precedence ``run_readout.sh`` uses for the hit table, and for the same reason: the combine
+    phase writes a summary under ``gwas/``, but on any run predating the combine-phase fix it left
+    ``pheno_var`` at the 0.249 default. The regenerated copy one level up was written with
+    ``--phenotype-tsv`` and carries the real value. For Kp ertapenem — the pilot drug, and the only
+    one with both — the two disagree on pheno_var, n_variants, n_patterns, n_significant and lambda,
+    and it is the regenerated one the write-ups quote.
+    """
+    for candidate in (drug_dir / f"{drug}_gwas_summary.json", drug_dir / "gwas" / f"{drug}_gwas_summary.json"):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def gwas_row(drug: str, full_summary: Path, trainval_summary: Path) -> dict[str, object]:
     """Both arms' GWAS-level facts for one drug → one row.
 
@@ -123,11 +139,25 @@ def gwas_row(drug: str, full_summary: Path, trainval_summary: Path) -> dict[str,
         row[f"full_{k}"] = a.get(k)
         row[f"trainval_{k}"] = b.get(k)
     pv_a, pv_b = a.get("pheno_var"), b.get("pheno_var")
-    if pv_a is not None and pv_b is not None and abs(pv_a - pv_b) > 1e-9:
+    # A summary that never computed pheno_var says so in pheno_var_source. Treat that as "not
+    # measured", not as "the labels differ" — keying on the value alone would both misdiagnose it
+    # and miss the case where a stale default happens to coincide with a real value (tetracycline's
+    # computed pheno_var is 0.2496, a whisker from the 0.249 default).
+    uncomputed = [
+        arm for arm, d in (("full_cohort", a), ("trainval_vocab", b))
+        if str(d.get("pheno_var_source", "")).startswith("default")
+    ]
+    row["pheno_var_uncomputed"] = ",".join(uncomputed)
+    if uncomputed:
+        logger.warning(
+            "%s: %s never computed pheno_var (source=default), so the arms cannot be compared on it. "
+            "This does NOT indicate different labels; it is a stale summary field.", drug, uncomputed,
+        )
+    elif pv_a is not None and pv_b is not None and abs(pv_a - pv_b) > 1e-9:
         raise SystemExit(
-            f"{drug}: pheno_var differs between arms ({pv_a} vs {pv_b}). The rebuild changes the "
-            f"vocabulary, never the phenotype — so the two runs are not on the same labels and no "
-            f"comparison between them is meaningful."
+            f"{drug}: pheno_var differs between arms ({pv_a} vs {pv_b}), and both were computed. "
+            f"The rebuild changes the vocabulary, never the phenotype — so the two runs are not on "
+            f"the same labels and no comparison between them is meaningful."
         )
     for k in ("n_variants", "n_unique_patterns", "n_significant"):
         if a.get(k) and b.get(k):
@@ -204,10 +234,10 @@ def run_gwas(
     names = sorted(drugs or [d.name for d in vocab_root.iterdir() if d.is_dir()])
     rows, skipped = [], []
     for drug in names:
-        a = full_root / drug / "gwas" / f"{drug}_gwas_summary.json"
-        b = vocab_root / drug / drug / "gwas" / f"{drug}_gwas_summary.json"
-        if not (a.is_file() and b.is_file()):
-            skipped.append(f"{drug} (no summary for {'full_cohort' if not a.is_file() else 'trainval_vocab'})")
+        a = resolve_summary(full_root / drug, drug)
+        b = resolve_summary(vocab_root / drug / drug, drug)
+        if a is None or b is None:
+            skipped.append(f"{drug} (no summary for {'full_cohort' if a is None else 'trainval_vocab'})")
             continue
         rows.append(gwas_row(drug, a, b))
     if not rows:
