@@ -90,7 +90,11 @@ uv run python -m bac_pyseer.ast_gwas.mash_kinship kinship \
 # read. Set MASH_REF to the comparator's similarity.tsv for this drug and the assertion runs here,
 # which is the first moment a fresh similarity.tsv exists. Unset (the comparator's own runs) it is a
 # no-op, so this script stays usable by both arms.
-if [ -n "${MASH_REF:-}" ] && [ -s "$MASH_REF" ]; then
+if [ -n "${MASH_REF:-}" ]; then
+    # Setting MASH_REF states an intent to assert. If the file is missing, that intent went
+    # unsatisfied -- and skipping quietly is how a verification-table row comes to read as passed
+    # when it never ran. Unset MASH_REF to genuinely opt out; an unreadable one is an error.
+    [ -s "$MASH_REF" ] || { echo "ERROR: MASH_REF=$MASH_REF is missing or empty" >&2; exit 1; }
     echo "=== (2b) mash zero-diff assertion against $MASH_REF ==="
     uv run python -m bac_pyseer.ast_gwas.leakage_audit \
         --audit-json "${AUDIT_JSON:-$DRUG_DIR/leakage_audit.json}" mash \
