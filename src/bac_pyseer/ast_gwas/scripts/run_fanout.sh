@@ -44,6 +44,10 @@ export COHORT=${COHORT:-ast_$ORGANISM}
 # owns its own graph, structure and outputs, so OUT_DIR moves inside the loop. Unset (the default),
 # every drug shares one OUT_DIR and one matrix, which is the full-cohort run.
 VOCAB_ROOT=${VOCAB_ROOT:-}
+# The full-cohort run, for the rebuild's mash zero-diff assertion (run_drug.sh step 2b). Only passed
+# when VOCAB_ROOT is set: for the comparator's own runs the "fresh" similarity IS this file, and
+# asserting a file equals itself checks nothing while looking like a passed gate.
+COMPARATOR_ROOT=${COMPARATOR_ROOT:-$DATA_ROOT/processed/pyseer_ast/$ORGANISM}
 
 # Mirror run_drug.sh's organism -> task mapping. Deriving it as train_${ORGANISM}_ast is wrong:
 # kp's task dir is train_kleb_ast, so the pre-check silently rejected every drug.
@@ -81,7 +85,14 @@ for drug in "$@"; do
     fi
     # Empty OUT_DIR falls through run_drug.sh's ${OUT_DIR:-...} to the shared full-cohort default.
     drug_out=${VOCAB_ROOT:+$VOCAB_ROOT/$drug}
+    mash_ref=${VOCAB_ROOT:+$COMPARATOR_ROOT/$drug/similarity.tsv}
+    # run_drug.sh derives DRUG_DIR=$OUT_DIR/$DRUG, so its default audit path would be
+    # <vocab>/<drug>/<drug>/leakage_audit.json -- a SECOND file, beside the one build_trainval_vocab.sh
+    # already wrote at <vocab>/<drug>/. Splitting a drug's audit across two files is how a reader
+    # concludes a stage never ran. Point it at the builder's file.
+    audit_json=${VOCAB_ROOT:+$VOCAB_ROOT/$drug/leakage_audit.json}
     if ORGANISM="$ORGANISM" DRUG="$drug" REPO="$REPO" OUT_DIR="$drug_out" \
+            MASH_REF="$mash_ref" AUDIT_JSON="$audit_json" \
             bash "$REPO/src/bac_pyseer/ast_gwas/scripts/run_drug.sh"; then
         echo "  $drug: chain submitted"
     else
