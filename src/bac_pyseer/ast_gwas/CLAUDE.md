@@ -90,8 +90,8 @@ headline.
 | `leakage_audit.py` | the per-drug `leakage_audit.json`: reflist, vocabulary (from GGCAT's own `color_names.jsonl`), clusters, mash, design |
 | `unitig_lr.py` | fit train → Youden on the **holdout** (one convention for both arms; sens/spec/bal-acc are therefore optimistically biased and must be reported as "at the optimal operating point") → score holdout → `results.json` (schema v1.2) |
 | `collect_comparison.py` | unitig-LR + FT + catalogue → one table per organism |
-| `summarise_vocab_build.py` | the 22 `leakage_audit.json` → one row per drug; **a missing section is `unchecked`, never a pass**, and it re-checks rather than reformats |
-| `compare_vocab_arms.py` | full-cohort vs trainval-vocabulary: `--stage gwas` (patterns/threshold/λ) and `--stage readout` (paired AUROC delta + bootstrap CI). Refuses arms whose holdout **id sets** differ |
+| `summarise_vocab_build.py` | `--stage build`: the 22 `leakage_audit.json` → one row per drug, where **a missing section is `unchecked`, never a pass**. `--stage readout`: the merge gates — shard completeness, scanner-vs-GGCAT, holdout coverage — read from `merge_manifest.json` itself, not from the audit's copy of it |
+| `compare_vocab_arms.py` | full-cohort vs trainval-vocabulary: `--stage gwas` (patterns/threshold/λ, with `pheno_var` as the untouched-labels control) and `--stage readout` (paired AUROC delta + bootstrap CI). Pairs on the holdout **intersection** and counts what falls out — ~0.16% of comparator rows are genomes with no assembly the rebuild cannot score — but a divergence above 2% is fatal |
 | `plot_vocab_comparison.py` | the two rebuild figures — paired scatter against y=x, and a caterpillar of Δ with CIs |
 
 Scripts: `probe_toolchain.sh` (step 0 gate) · `build_cohort_once.sh` (per organism) ·
