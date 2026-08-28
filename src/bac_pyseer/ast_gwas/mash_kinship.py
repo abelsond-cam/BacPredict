@@ -79,7 +79,8 @@ def triangle(msh: Path, out_txt: Path, *, threads: int = 8, mash_bin: str = "mas
 
 
 def similarity_for_samples(
-    triangle_path: Path, samples: list[str], *, double_center: bool = False
+    triangle_path: Path, samples: list[str], *, double_center: bool = False,
+    parsed: tuple[list[str], np.ndarray] | None = None,
 ) -> pd.DataFrame:
     """Cut a cohort-wide mash triangle down to ``samples`` → the square TSV pyseer ``--similarity`` takes.
 
@@ -89,7 +90,7 @@ def similarity_for_samples(
         If any requested sample is absent from the triangle — pyseer would otherwise silently drop
         those genomes from the GWAS, changing the cohort without saying so.
     """
-    names, d = parse_triangle(triangle_path)
+    names, d = parsed if parsed is not None else parse_triangle(triangle_path)
     index_of = {n: i for i, n in enumerate(names)}
     missing = [s for s in samples if s not in index_of]
     if missing:
@@ -102,14 +103,16 @@ def similarity_for_samples(
     return pd.DataFrame(sub, index=samples, columns=samples)
 
 
-def distances_for_samples(triangle_path: Path, samples: list[str]) -> pd.DataFrame:
+def distances_for_samples(
+    triangle_path: Path, samples: list[str], *, parsed: tuple[list[str], np.ndarray] | None = None
+) -> pd.DataFrame:
     """The same subset as :func:`similarity_for_samples`, but as raw distances.
 
     ``pyseer --lineage`` also wants ``--distances`` (it reports per-hit lineage effects off it). The
     iso-source runs passed the Jaccard matrix from the variant pipeline; the AMR cohorts have no
     such matrix, and the mash distances we already computed serve the same purpose.
     """
-    names, d = parse_triangle(triangle_path)
+    names, d = parsed if parsed is not None else parse_triangle(triangle_path)
     index_of = {n: i for i, n in enumerate(names)}
     missing = [s for s in samples if s not in index_of]
     if missing:
@@ -123,15 +126,20 @@ def run(
     double_center: bool = False, distances_tsv: Path | None = None,
 ) -> dict[str, object]:
     """Write the similarity matrix for a phenotype's samples (or the whole triangle if none given)."""
+    # ONE parse, reused by both writers. Each is a full pass over a lower-triangular file that is
+    # quadratic in the cohort -- 251 MB for Kp's 7,080 genomes but ~6.6 GB for TB's 36,389 -- so
+    # parsing per writer cost two to three passes and two to three copies of a 10.6 GB matrix at TB
+    # scale, for a result that cannot differ between them.
+    parsed = parse_triangle(triangle_path)
     if phenotype_tsv is not None:
         samples = pd.read_csv(phenotype_tsv, sep="\t")[SAMPLE_COL].astype(str).tolist()
     else:
-        samples, _ = parse_triangle(triangle_path)
-    frame = similarity_for_samples(triangle_path, samples, double_center=double_center)
+        samples = list(parsed[0])
+    frame = similarity_for_samples(triangle_path, samples, double_center=double_center, parsed=parsed)
     out_tsv.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(out_tsv, sep="\t")
     if distances_tsv is not None:
-        distances_for_samples(triangle_path, samples).to_csv(distances_tsv, sep="\t")
+        distances_for_samples(triangle_path, samples, parsed=parsed).to_csv(distances_tsv, sep="\t")
 
     manifest = {
         "triangle": str(triangle_path),

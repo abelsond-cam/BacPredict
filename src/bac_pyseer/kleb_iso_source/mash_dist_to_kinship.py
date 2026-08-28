@@ -35,9 +35,25 @@ def _sample_id(name: str) -> str:
 
 
 def parse_triangle(path: Path) -> tuple[list[str], np.ndarray]:
-    """Parse a ``mash triangle`` lower-triangular matrix → (sample_ids, square symmetric D)."""
+    """Parse a ``mash triangle`` lower-triangular matrix → (sample_ids, square symmetric D).
+
+    Each row is converted to a compact ``float64`` array as it is read, and the square matrix is
+    filled one **row** at a time by slice assignment.
+
+    The obvious implementation — accumulate a list-of-lists of Python floats, then assign ``d[i, j]``
+    and ``d[j, i]`` cell by cell — is quadratic in the cohort twice over, and both costs are
+    interpreter-level. A boxed float plus its list slot is ~32 B, and each cell takes two scalar
+    stores. At *Klebsiella* scale (7,080 genomes, 25 M cells) that is ~0.8 GB and survivable; at TB
+    scale (36,389 genomes, **662 M cells**) it is **~21 GB of boxed floats held all at once**, on top
+    of the 10.6 GB matrix, and 1.3 billion scalar stores. Holding rows as arrays instead costs 8 B a
+    cell with no per-cell Python object, and the fill becomes one vectorised store per row.
+
+    Behaviour is unchanged, including the header-count warning. One difference is an improvement: a
+    row whose length disagrees with its position now raises ``ValueError`` from the slice assignment
+    instead of silently writing to the wrong cell or raising ``IndexError`` further along.
+    """
     names: list[str] = []
-    dists: list[list[float]] = []
+    rows: list[np.ndarray] = []
     with open(path) as fh:
         first = fh.readline().split()
         n = int(first[0])
@@ -46,15 +62,14 @@ def parse_triangle(path: Path) -> tuple[list[str], np.ndarray]:
             if not parts or parts[0] == "":
                 continue
             names.append(_sample_id(parts[0]))
-            dists.append([float(x) for x in parts[1:]])
+            rows.append(np.asarray(parts[1:], dtype=np.float64))
     if len(names) != n:
         print(f"WARNING: header said {n} genomes, parsed {len(names)}", file=sys.stderr)
     m = len(names)
     d = np.zeros((m, m), dtype=np.float64)
-    for i, row in enumerate(dists):
-        for j, v in enumerate(row):  # row i holds distances to genomes 0..i-1 (lower triangle)
-            d[i, j] = v
-            d[j, i] = v
+    for i, row in enumerate(rows):  # row i holds distances to genomes 0..i-1 (lower triangle)
+        d[i, :i] = row
+        d[:i, i] = row
     return names, d
 
 

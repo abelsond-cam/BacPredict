@@ -259,3 +259,48 @@ def test_collect_rejects_an_empty_input() -> None:
     """An empty run is a mistake, not an empty table."""
     with pytest.raises(SystemExit, match="no results.json"):
         collect([], None)
+
+
+@pytest.mark.parametrize("with_phenotype", [False, True])
+def test_kinship_run_parses_the_triangle_exactly_once(
+    triangle: Path, tmp_path: Path, monkeypatch, with_phenotype: bool
+) -> None:
+    """One parse per run, whether or not a phenotype list is supplied.
+
+    Both writers used to parse independently, and the no-phenotype branch parsed a third time just to
+    recover the sample list. Each parse is a full pass over a file quadratic in the cohort — 251 MB
+    for Kp's 7,080 genomes, ~6.6 GB for TB's 36,389 — materialising a 10.6 GB matrix at TB scale for
+    a result that cannot differ between callers.
+    """
+    import bac_pyseer.ast_gwas.mash_kinship as mk
+
+    real, calls = mk.parse_triangle, []
+
+    def counting(path):
+        calls.append(path)
+        return real(path)
+
+    monkeypatch.setattr(mk, "parse_triangle", counting)
+
+    pheno = None
+    if with_phenotype:
+        pheno = tmp_path / "pheno.tsv"
+        pd.DataFrame({"samples": ["A", "C"], "phenotype": [1, 0]}).to_csv(pheno, sep="\t", index=False)
+
+    mk.run(
+        triangle_path=triangle, out_tsv=tmp_path / "similarity.tsv",
+        phenotype_tsv=pheno, distances_tsv=tmp_path / "distances.tsv",
+    )
+    assert len(calls) == 1, f"parsed the triangle {len(calls)} times"
+
+
+def test_prepared_triangle_gives_the_same_matrices_as_parsing_afresh(triangle: Path) -> None:
+    """The `parsed=` fast path must not be a second, divergent code path."""
+    from bac_pyseer.kleb_iso_source.mash_dist_to_kinship import parse_triangle
+
+    parsed = parse_triangle(triangle)
+    for fn in (similarity_for_samples, distances_for_samples):
+        assert np.array_equal(
+            fn(triangle, ["D", "A", "C"]).to_numpy(),
+            fn(triangle, ["D", "A", "C"], parsed=parsed).to_numpy(),
+        )
