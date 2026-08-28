@@ -118,6 +118,64 @@ def summarise_drug(vocab_root: Path, drug: str) -> dict[str, object]:
     return row
 
 
+
+READOUT_KEYS = ("rows_from_ggcat", "rows_from_scanner", "n_features", "nnz")
+
+
+def summarise_readout(vocab_root: Path, drug: str) -> dict[str, object]:
+    """Reduce one drug's read-out gates to a row, read from the merge manifest itself.
+
+    Deliberately reads ``design_merged/merge_manifest.json`` rather than the ``design`` section of
+    ``leakage_audit.json``: the manifest is written by the merge that enforced the gates, whereas the
+    audit section is a copy made afterwards and can lag a change to what is recorded. For a check
+    whose whole job is to catch a stage that did not run, the primary artifact is the right source.
+
+    ``expected_holdout`` comes from the drug's own reflist audit. A shortfall of one or two genomes is
+    normal — those have no assembly and can never be scanned — so the comparison is fractional, not
+    exact. A large shortfall is the truncated-scan signature.
+    """
+    drug_dir = vocab_root / drug / drug
+    manifest = drug_dir / "design_merged" / "merge_manifest.json"
+    row: dict[str, object] = {"drug": drug, "readout_status": "absent", "readout_notes": ""}
+    if not manifest.is_file():
+        return row
+    m = json.loads(manifest.read_text())
+    sc = m.get("shard_completeness") or {}
+    ver = m.get("verification") or {}
+    cov = m.get("holdout_coverage") or {}
+    audit = vocab_root / drug / "leakage_audit.json"
+    expected = None
+    if audit.is_file():
+        expected = (json.loads(audit.read_text()).get("reflist") or {}).get("n_holdout")
+
+    row.update(
+        {k: m.get(k) for k in READOUT_KEYS},
+        n_shards=sc.get("n_shards"),
+        n_shard_files=len(sc.get("shard_files") or []) or None,
+        expected_holdout=expected,
+        n_shared=ver.get("n_shared"),
+        cells=ver.get("cells"),
+        n_mismatch_cells=ver.get("n_mismatch_cells"),
+        holdout_carrier_ratio=cov.get("ratio"),
+    )
+
+    problems = []
+    if not sc:
+        problems.append("no shard_completeness record — the scan cannot be shown to have been whole")
+    elif row["n_shard_files"] != row["n_shards"]:
+        problems.append(f"only {row['n_shard_files']}/{row['n_shards']} scan shards")
+    if not ver.get("n_shared"):
+        problems.append("scanner never checked against GGCAT (n_shared=0)")
+    elif ver.get("n_mismatch_cells"):
+        problems.append(f"{ver['n_mismatch_cells']} mismatched cells vs GGCAT")
+    got = m.get("rows_from_scanner")
+    if expected and got is not None and got < 0.95 * expected:
+        problems.append(f"only {got}/{expected} holdout genomes scanned")
+    row["readout_status"] = "FAIL" if problems else "ok"
+    row["readout_notes"] = "; ".join(problems)
+    return row
+
+
 def run(vocab_root: Path, out_tsv: Path | None, drugs: list[str] | None = None) -> int:
     """Summarise every drug under ``vocab_root`` → printed table, optional TSV, process exit code."""
     names = sorted(drugs or [d.name for d in vocab_root.iterdir() if d.is_dir()])
@@ -177,13 +235,66 @@ def run(vocab_root: Path, out_tsv: Path | None, drugs: list[str] | None = None) 
     return 0 if len(ok) == len(rows) else 1
 
 
+
+def run_readout(vocab_root: Path, out_tsv: Path | None, drugs: list[str] | None = None) -> int:
+    """The C5 table: every drug's read-out gates → printed table, optional TSV, exit code."""
+    names = sorted(drugs or [d.name for d in vocab_root.iterdir() if d.is_dir()])
+    rows = [summarise_readout(vocab_root, d) for d in names]
+    present = [r for r in rows if r["readout_status"] != "absent"]
+
+    hdr = (f"{'drug':<30} {'status':<7} {'shards':>7} {'scanned':>8} {'expect':>7} "
+           f"{'mismatch':>9} {'cells':>14} {'ratio':>6}")
+    print(hdr)
+    print("-" * len(hdr))
+    for r in rows:
+        cells = f"{r['cells']:,}" if r.get("cells") else "-"
+        shards = f"{r['n_shard_files']}/{r['n_shards']}" if r.get("n_shards") else "-"
+        print(
+            f"{r['drug']:<30} {r['readout_status']:<7} {shards:>7} "
+            f"{r.get('rows_from_scanner') or '-':>8} {r.get('expected_holdout') or '-':>7} "
+            # 0 is the passing value, so `or '-'` would print the pass as a blank.
+            f"{r['n_mismatch_cells'] if r.get('n_mismatch_cells') is not None else '-':>9} "
+            f"{cells:>14} {r.get('holdout_carrier_ratio') or float('nan'):>6.3f}"
+        )
+        if r["readout_notes"]:
+            print(f"{'':<30} └─ {r['readout_notes']}")
+
+    ok = [r for r in present if r["readout_status"] == "ok"]
+    total_cells = sum(int(r.get("cells") or 0) for r in present)
+    total_mismatch = sum(int(r.get("n_mismatch_cells") or 0) for r in present)
+    print(
+        f"\n{len(ok)}/{len(rows)} read-outs clean · {len(present) - len(ok)} FAIL · "
+        f"{len(rows) - len(present)} not yet run"
+    )
+    print(
+        f"scanner vs GGCAT across the completed drugs: {total_cells:,} cells compared, "
+        f"{total_mismatch} mismatched"
+    )
+    if out_tsv:
+        cols: list[str] = []
+        for r in rows:
+            cols += [c for c in r if c not in cols]
+        out_tsv.parent.mkdir(parents=True, exist_ok=True)
+        with out_tsv.open("w") as fh:
+            fh.write("\t".join(cols) + "\n")
+            for r in rows:
+                fh.write("\t".join("" if r.get(c) is None else str(r.get(c)) for c in cols) + "\n")
+        print(f"wrote {out_tsv}")
+    return 0 if present and len(ok) == len(rows) else 1
+
+
 def main(argv: list[str] | None = None) -> None:
     """CLI entry point."""
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--vocab-root", type=Path, required=True, help="<organism>_trainval_vocab directory")
     p.add_argument("--out-tsv", type=Path, default=None, help="also write the table here")
     p.add_argument("--drug", action="append", dest="drugs", default=None, help="restrict to these drugs")
+    p.add_argument("--stage", default="build", choices=["build", "readout"],
+                   help="build = vocabulary/reflist/cluster audits; readout = the merge gates "
+                        "(shard completeness, scanner-vs-GGCAT, holdout coverage)")
     args = p.parse_args(argv if argv is not None else sys.argv[1:])
+    if args.stage == "readout":
+        sys.exit(run_readout(args.vocab_root, args.out_tsv, args.drugs))
     sys.exit(run(args.vocab_root, args.out_tsv, args.drugs))
 
 
