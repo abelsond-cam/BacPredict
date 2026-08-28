@@ -41,8 +41,19 @@ PHENO=$DRUG_DIR/phenotype.tsv
 SIMILARITY=$DRUG_DIR/similarity.tsv
 DISTANCES=$DRUG_DIR/distances.tsv              # pyseer --lineage needs a --distances file too
 SPLITS=${SPLITS:-train,validate}
+# The sharded driver keys its scratch shard dir on $PAIR/$COHORT, and $PAIR is the drug. Leaving
+# COHORT unset makes it fall back to the driver's iso-source default, so a *re-run* of a drug writes
+# chunk_NN.assoc straight into the completed run's shard dir. A shard that never starts then leaves
+# the old file behind and both the empty-check and the runt-check pass, so the combined .assoc
+# silently mixes two vocabularies. Name the cohort whenever the vocabulary changes.
+COHORT=${COHORT:-sampled_country_2_1_all}
 LOGDIR=${LOGDIR:-$DATA_ROOT/logs}
 
+# ⚠ These default to ISAMBARD. run_unitig_lmm_sharded.sh used to ignore what it was handed and
+# hardcode the CSD3 pair, so a bare run_drug.sh on CSD3 worked by accident while the same call on
+# Isambard would have been submitted to the wrong cluster's account. It now honours them, so on CSD3
+# go through run_fanout.sh (which sets the FLOTO account and icelake-himem) or export them yourself;
+# a bare call there is now rejected by SLURM instead of quietly rescued.
 ACCT=${ACCT:-brics.u6fp}
 PART=${PART:-workq}
 # ${QOS-normal}, not ${QOS:-normal}: QOS= (explicitly empty) must omit --qos entirely, as CSD3
@@ -82,7 +93,7 @@ GWAS_JOB=$(PAIR="$DRUG" LABEL_COL="${DRUG}_label" OUT_STEM="$DRUG" \
     POS_LABEL="resistant" NEG_LABEL="susceptible" PAIR_TITLE="$DRUG ($ORGANISM, unitigs)" \
     PHENO="$PHENO" SIM="$SIMILARITY" DIST="$DISTANCES" CLUSTERS_TSV="$CLUSTERS" \
     MATRIX="$MATRIX" GWAS_DIR="$GWAS_DIR" NSHARDS="$NSHARDS" CPU="$CPU" \
-    ACCT="$ACCT" PART="$PART" QOS="$QOS" LOGDIR="$LOGDIR" \
+    ACCT="$ACCT" PART="$PART" QOS="$QOS" LOGDIR="$LOGDIR" COHORT="$COHORT" \
     bash "$REPO/src/bac_pyseer/kleb_iso_source/scripts/run_unitig_lmm_sharded.sh" | tail -1)
 echo "  gwas chain submitted ($GWAS_JOB)"
 

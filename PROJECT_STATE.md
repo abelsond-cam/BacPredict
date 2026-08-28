@@ -16,6 +16,11 @@
 > `unitig_model_results.json`; the plain-vs-+SL score agreement and per-sublineage AUROCs
 > recomputed from both `unitig_cohort_scores.npz` archives, which were checked to cover the same
 > genomes, labels and splits before being compared.
+> Added 2026-08-28 (§3.3 holdout scoring rule): the rule (A)-vs-(B) discordance numbers were measured
+> on CSD3 this pass, not carried over — 40 ertapenem genomes scored by both rules and diffed against
+> GGCAT's own colouring in `hits_submatrix.tsv`, read from that run's `rule_discordance.json`. The
+> 22/22 `.assoc` and 21/22 `lr/results.json` counts were listed on disk. Not re-verified this pass:
+> every fine-tune number, both catalogue ceilings, and the invasion GWAS results.
 > Added 2026-08-20 (§3.2 sublineage): 432 genomes LIN-typed on CSD3 with MiST 1.3.0; every number here read from that run's own manifests, not from a summary. Validated twice — 7,193 archived calls vs metadata_v2 (0 conflicts) and 48 already-labelled genomes re-called from scratch (48/48 agree). The proposed clusters are NOT yet live on Isambard.
 
 ## 0. How to use this file
@@ -249,10 +254,21 @@ This is deliberately a **layer, not a package**: the same yardstick serves both 
 that convergence is the point. It answers "how good is the fine-tune, *really*" without assuming any
 mechanism.
 
-**Status — AMR (`src/bac_pyseer/ast_gwas/`).** All 22 Kp drugs have a phenotype and a submitted GWAS
-chain (2026-08-21). 7 have a complete `.assoc`; 4 have `lr/results.json` (colistin, ertapenem,
-gentamicin, trimethoprim-sulfamethoxazole). The Kp cohort, unitig matrix and lineage clusters are
+**Status — AMR (`src/bac_pyseer/ast_gwas/`).** **All 22 Kp drugs have a complete `.assoc`**; 21 have
+`lr/results.json`, with ceftazidime's read-out the last outstanding (its `.assoc`, `patterns.txt` and
+450,950-row hit table are already written). The Kp cohort, unitig matrix and lineage clusters are
 **built and shared**. TB is not started.
+
+**⚠ This 22-drug set is the `full_cohort` arm, and its vocabulary saw the holdout.** No *label* ever
+leaked — the GWAS phenotype carries `train,validate` only and its intersection with the holdout is 0 —
+but the GGCAT unitig vocabulary and the lineage clusters were built over all 7,080 cohort genomes, so
+the *feature representation* was shaped by holdout sequence. That was agreed as acceptable at the time
+(`ast_gwas/docs/PLAN.md`'s leakage table) and is not in dispute; it is being closed now because the
+results are strong enough that the claim is only worth making if it survives the check — and because
+**the invasion arm already shows the cost is real** (0.7810 → 0.7655 once selection was re-fitted on
+train+validate, a delta that separates from zero). A `trainval_vocab` rebuild across all 22 drugs is in
+progress; until it lands these numbers are of record but carry that qualifier. Plan:
+`~/.claude/plans/tb-uses-the-tb-shimmering-fountain.md`.
 
 **⚠ Storage bug fixed 2026-08-21 — it had silently killed a whole batch.** `unitig_lmm_sharded_job.sh`
 keyed `CHUNK_DIR` on `$PAIR`, and `run_drug.sh` sets `PAIR=$DRUG`, so all 22 Kp drugs — which share
@@ -408,14 +424,57 @@ after the swap. Re-run the pilots alongside the fan-out rather than quoting them
   (`"hit set selected on train+validate only"`). Full comparison in §3.4.
   **Quote the leakage-free number.** The selection-advantaged 0.7810 is a footnote, not the result.
 
+**Decision of record — the holdout is scored by k-mer containment, not exact substring (2026-08-28).**
+A train+validate-only vocabulary has no holdout rows, so the holdout must be scored from sequence, and
+two rules were available: **(A)** every canonical 31-mer of the feature occurs in the genome, or
+**(B)** the feature occurs as a contiguous substring (the Aho-Corasick scan in `unitig_placement`).
+(B) implies (A), never the reverse, so mixing rule-(A) training rows with rule-(B) holdout rows would
+have injected an assembly-fragmentation confound into the test set alone.
+
+**(A) is what GGCAT colouring already means** — `ggcat_to_pyseer` emits each feature as
+`seq[kmer_off : kmer_off + n_kmers + k - 1]` carrying one colour subset, i.e. exactly the samples
+holding *every* k-mer of that span. Measured rather than assumed: on ertapenem, 40 genomes × 31,856
+features = **1,274,240 cells, 0 mismatches in all three directions** (A vs GGCAT, B vs GGCAT, A vs B),
+including **297,838 positive calls** reproduced exactly — agreement on presence, not just on absence.
+Sampled genomes spanned 45–333 contigs (median 119); features 31–1,484 bp (mean 39.7). Read from
+`…/pyseer_ast/kp/ertapenem/design/rule_discordance.json`.
+
+Rule (A) is adopted on three grounds: it reproduces the operator that produced the existing train and
+validate rows, so the scan is **self-verifying** — it must reproduce `hits_submatrix.tsv` exactly, and
+does; the two rules are empirically indistinguishable here, so the choice costs nothing in fidelity;
+and it is far cheaper — a sorted `uint64` k-mer array is ~44 MB per genome and ~36 MB for
+ceftazidime's 450,950 features, against a multi-GB trie over 901,900 words. That collapses the planned
+holdout-scan job from `mem=192G --array=0-15` to a small single job.
+
+**Where the rules *would* diverge, for the record**: not at a contig break as such — a clean break
+destroys the spanning k-mers, so both rules call the feature absent. They separate only when the break
+is **overlap-repeated** (contig 1 ends with `feat[:35]`, contig 2 starts with `feat[5:]`), where every
+k-mer survives but no contiguous occurrence does. Pinned as a fixture in
+`tests/bac_pyseer/ast_gwas/test_unitig_kmer_presence.py`.
+
 **Next.**
-1. **Kp AMR fan-out** — the remaining 20 drugs, in batches of ~5. Per drug ~57 min wall, ~55 core-h,
-   ~12 min GPU, 1.6 GB; 20 drugs ≈ 1,100 core-h and ~5 GPU-h. LD-deduped control on all 20; FT
-   re-score on all 20 (without `eval_scores.npz` there is no paired CI, and a gap cannot be told from
-   a tie). Permutation null on the pilot plus any surprise only.
-2. Invasion: DefenseFinder mapping; the faeces↔respiratory run and blood↔resp concordance;
+1. **The `trainval_vocab` rebuild, all 22 Kp drugs** — one GGCAT build per drug over train+validate
+   only, then the identical GWAS → hits → design → LR chain, scored on the unchanged holdout by rule
+   (A). Measured cost of the completed `full_cohort` fan-out was **1,269.3 core-h = £12.69**
+   (`sacct CPUTimeRAW`); the rebuild adds per-drug builds, real prep splits and the holdout scan for
+   **≈ 2,350 core-h ≈ £23**. Blocker cleared 2026-08-28: `run_unitig_lmm_sharded.sh` hardcoded
+   `--time=24:00:00`, which *reserves* 12,288 core-h per drug — 270,336 across 22, against ~106,371
+   available — so every chain would have sat on `AssocGrpCPUMinutesLimit` and none would have started.
+   `PREP_TIME`/`ARRAY_TIME`/`COMB_TIME` are now knobs; at `ARRAY_TIME=2:00:00` (measured shard max
+   6.2 min) the fan-out reserves ~22,500 core-h. `COHORT` is passed explicitly now too, because it keys
+   the scratch shard dir and its old fallback would have written the rebuild's shards into the
+   completed run's directory, where the empty- and runt-checks would both have passed on stale files.
+2. Report the paired old-vs-new delta with bootstrap CIs, and attribute it three ways — representation
+   advantage removed, out-of-vocabulary penalty, and the MAF-floor change, which points the *other*
+   way: `MIN_SAMP` is 1% of the reflist, so the old build's 71 was an effective 4.2% floor on
+   ertapenem's ~1,697 phenotyped genomes while pyseer was simultaneously told `--min-af 0.01`.
+   Rebasing on a train+validate reflist gives 17, which finally matches. Control for it by refitting on
+   columns with ≥71 train+validate carriers.
+3. FT re-score on every drug (without `eval_scores.npz` there is no paired CI, and a gap cannot be told
+   from a tie). Permutation null on the pilot plus any surprise only.
+4. Invasion: DefenseFinder mapping; the faeces↔respiratory run and blood↔resp concordance;
    locus-level annotation.
-3. **Blocked externally** — hotspot rates by isolation source (per-source rates against the
+5. **Blocked externally** — hotspot rates by isolation source (per-source rates against the
    whole-population background mutation rate at each locus, χ² for hotspots associated with invasive
    disease). Waiting on Aaron uploading the hotspots to HPC. Also blocked: the faeces vs
    liver/abscess contrast, pending recuration of the mixed `isolation_source_category` in BacHGT.

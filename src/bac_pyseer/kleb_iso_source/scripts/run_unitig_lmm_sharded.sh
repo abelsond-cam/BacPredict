@@ -28,7 +28,18 @@
 set -euo pipefail
 REPO=/home/dca36/workspace/BacPredict
 JOB=$REPO/src/bac_pyseer/kleb_iso_source/scripts/unitig_lmm_sharded_job.sh
-ACCT=FLOTO-PROJECT-K-SL2-CPU
+# Submission knobs. run_drug.sh already hands these down; before the AMR fan-out this script
+# hardcoded them and silently dropped what it was given, which worked only because the values
+# happened to agree. Defaults are the previous hardcoded values, so existing callers are unchanged.
+ACCT=${ACCT:-FLOTO-PROJECT-K-SL2-CPU}
+PART=${PART:-icelake-himem}
+# Walltime per phase. The array's 24 h was the blocker for a 22-drug fan-out: 22 x 64 shards x 8 cpu
+# x 24 h *reserves* 270,336 core-h against ~106,371 available, so every chain sits on
+# AssocGrpCPUMinutesLimit and none of them start. Reservation is what gates scheduling; billing is on
+# elapsed. Measured shard max is 6.2 min, so 2 h is ~19x headroom and reserves ~22,500 core-h.
+PREP_TIME=${PREP_TIME:-6:00:00}
+ARRAY_TIME=${ARRAY_TIME:-24:00:00}
+COMB_TIME=${COMB_TIME:-3:00:00}
 TRAIN=/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david/processed/train_iso_source
 
 # Cohort knobs (defaults = blood/faeces) — exported so --export=ALL carries them to every phase.
@@ -43,21 +54,25 @@ export COHORT_CSV=${COHORT_CSV:-$TRAIN/$PAIR/$COHORT/kpsc_human/binary_blood_vs_
 export NSHARDS=${NSHARDS:-64}   # ~100k unitigs/shard for the ~6.3M-unitig matrix (calibrated: ~26 GB peak)
 export CPU=${CPU:-8}
 
-echo "PAIR=$PAIR  NSHARDS=$NSHARDS  CPU/shard=$CPU  out_stem=$OUT_STEM"
+echo "PAIR=$PAIR  COHORT=$COHORT  NSHARDS=$NSHARDS  CPU/shard=$CPU  out_stem=$OUT_STEM"
+echo "acct=$ACCT  part=$PART  prep=$PREP_TIME  array=$ARRAY_TIME  combine=$COMB_TIME"
+# Reservation, not spend — but it is what SLURM checks against AssocGrpCPUMinutesLimit, so print it.
+IFS=: read -r _h _m _s <<<"$ARRAY_TIME"
+echo "array reserves ~$(( NSHARDS * CPU * (10#$_h * 3600 + 10#$_m * 60 + 10#$_s) / 3600 )) core-h"
 
-PREP=$(sbatch --parsable --account=$ACCT --partition=icelake-himem --nodes=1 --ntasks=1 \
-    --cpus-per-task=16 --mem=96G --time=6:00:00 --job-name="uprep_$PAIR" \
+PREP=$(sbatch --parsable --account=$ACCT --partition=$PART --nodes=1 --ntasks=1 \
+    --cpus-per-task=16 --mem=96G --time=$PREP_TIME --job-name="uprep_$PAIR" \
     --export=ALL,PHASE=prep "$JOB")
 echo "prep    : $PREP"
 
-ARRAY=$(sbatch --parsable --account=$ACCT --partition=icelake-himem --nodes=1 --ntasks=1 \
-    --cpus-per-task="$CPU" --mem=128G --time=24:00:00 --array=0-$((NSHARDS-1)) \
+ARRAY=$(sbatch --parsable --account=$ACCT --partition=$PART --nodes=1 --ntasks=1 \
+    --cpus-per-task="$CPU" --mem=128G --time=$ARRAY_TIME --array=0-$((NSHARDS-1)) \
     --dependency=afterok:"$PREP" --job-name="utask_$PAIR" \
     --export=ALL,PHASE=task "$JOB")
 echo "array   : $ARRAY  (0-$((NSHARDS-1)))"
 
-COMBINE=$(sbatch --parsable --account=$ACCT --partition=icelake-himem --nodes=1 --ntasks=1 \
-    --cpus-per-task=8 --mem=96G --time=3:00:00 --dependency=afterok:"$ARRAY" \
+COMBINE=$(sbatch --parsable --account=$ACCT --partition=$PART --nodes=1 --ntasks=1 \
+    --cpus-per-task=8 --mem=96G --time=$COMB_TIME --dependency=afterok:"$ARRAY" \
     --job-name="ucomb_$PAIR" --export=ALL,PHASE=combine "$JOB")
 echo "combine : $COMBINE"
 echo "chain submitted: prep $PREP -> array $ARRAY -> combine $COMBINE"
