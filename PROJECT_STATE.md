@@ -293,6 +293,36 @@ actual) and badly for small drugs (colistin 4.3 GB predicted, 0.40 GB actual), b
 cohort shortens every carrier list *and* thins the feature set. And `uprep` was budgeted at 6 h on
 the assumption that per-drug matrices force a real split — they do, and colistin's took **2 min 44 s**.
 
+**✅ Rebuild stage C4 complete 2026-08-28 — all 22 GWAS run on the new vocabularies.** Read from
+`…/kp_trainval_vocab/gwas_arm_comparison.csv` (mirrored at
+`src/bac_pyseer/docs/trainval_vocab_gwas_comparison.csv`), produced by
+`compare_vocab_arms --stage gwas`. **`pheno_var` is identical across the two arms on all 22 drugs**,
+which is the control that says the rebuild changed the vocabulary and not the labels.
+
+| trainval / full_cohort | range | median |
+|---|---|---|
+| variants tested | 0.46 – 0.87 | **0.69** |
+| unique patterns | 1.01 – 1.09 | 1.03 — **above 1 on 22/22** |
+| significant hits | 0.52 – 0.83 | **0.67** |
+| λ | — | 4.54 → **4.18** (lower on 17/22) |
+| **variants per pattern** | — | **1.73 → 1.15** |
+
+**The redundancy number is the informative one.** The full-cohort vocabulary carried 1.73 variants
+per distinct presence pattern against 1.15 now: it was substantially more LD-redundant, consistent
+with more genomes creating more branch points, hence more and shorter unitigs whose carrier sets
+coincide. Unique patterns rise on *every* drug despite ~30% fewer variants, which the `MIN_SAMP`
+rebase (rare unitigs have distinct patterns) plausibly compounds. **Bonferroni is set by pattern
+count, so the rebuild is tested slightly more stringently and still returns ~a third fewer hits** —
+the drop is not a threshold artefact. ⚠️ **Hit count is not AUROC**: a drug can shed redundant hits
+and predict identically, so nothing about predictive performance follows from this table. That is
+C5's question. These mechanisms are **hypotheses pending David's comment**, not conclusions.
+
+**⚠ ertapenem's `gwas/` summary is stale and must not be quoted.** It predates the combine-phase fix
+and left `pheno_var` at the 0.249 default (`pheno_var_source: "default"`); its regenerated sibling one
+level up — `kp/ertapenem/ertapenem_gwas_summary.json`, written with `--phenotype-tsv` — is the
+authority, and the two also disagree on `n_variants`, `n_patterns`, `n_significant` and λ.
+`compare_vocab_arms.resolve_summary` encodes that precedence. ertapenem is the only drug with both.
+
 **The mash re-sketch is now a measurement, not an argument.** `leakage_audit mash` asserts each
 drug's freshly-sketched `similarity.tsv` against the comparator's, and returns **`max_abs_diff = 0.0`
 exactly**, with `n_shared` equal to the drug's full reflist. Subsetting the cohort triangle and
