@@ -16,10 +16,13 @@ Kleborate labels recover real structure on the same cohort — 611 distinct subl
 at or above the production ``min_sl_size=100`` (SL258 1,302 · SL307 766 · SL17 443 · SL15 440 ·
 SL147 236 · SL37 188 · SL101 142 · SL45 134 · SL14 126 · SL405 113).
 
-**TB still needs the mash route.** There are no TB lineage labels anywhere until TB-Profiler is run
-over ~39k assemblies, so the two organisms derive clusters differently and the methods section has
-to say so. Small clusters collapse to one ``other`` bucket, matching both the production
-``min_sl_size=100`` and :mod:`lineage_from_distances`, so the output is drop-in interchangeable.
+**TB uses mash, for a different reason than this module's absence.** It is not that TB lacks labels:
+TB-Profiler was run over the cohort in June 2026 and :mod:`tb_lineage_from_tbprofiler` reads its
+`main_lineage`/`sub_lineage` calls. Mash is primary for TB because a discrete sublineage label is
+constant within a large sublineage and so cannot correct the divergence inside it, while mash
+distances vary continuously. The two organisms still derive clusters differently and the methods
+section still has to say so. Small clusters collapse to one ``other`` bucket in all three modules,
+matching the production ``min_sl_size=100``, so the outputs are drop-in interchangeable.
 
 **Coverage, and why the shortfall is a join problem rather than a labelling one.** Keying only on
 ``Sample`` labels ~91% of the AST cohort. That 9% is **not** a failed sublineage call: of the 622

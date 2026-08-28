@@ -5,10 +5,21 @@ lineage) and for the within-lineage permutation null, which is the test that dec
 inflated λ is genuine within-lineage signal or uncorrected structure. The isolation-source GWAS took
 those clusters from curated Kleborate ``Sublineage`` labels in ``metadata_v2``.
 
-Neither AMR cohort can do that today: ``metadata_v2`` is CSD3-only, and TB has no lineage labels
-anywhere until TB-Profiler is run over ~39k assemblies. So this module cuts the mash distance matrix
-we already build for the kinship into clusters instead — average-linkage hierarchical clustering,
-one artifact serving both organisms with no extra dependency.
+So this module cuts the mash distance matrix we already build for the kinship into clusters instead
+— average-linkage hierarchical clustering, one artifact serving both organisms with no extra
+dependency.
+
+⚠ **The reason originally given for that is no longer true for TB, and the conclusion changed with
+it.** This docstring used to say TB "has no lineage labels anywhere until TB-Profiler is run over
+~39k assemblies". That run happened in June 2026, for the concat comparator — 36,684
+``<Sample>.results.json``, each carrying ``main_lineage`` and ``sub_lineage`` — and
+:mod:`tb_lineage_from_tbprofiler` reads them.
+
+**Mash remains primary for TB anyway, on a different argument** (David, 2026-08-28): a discrete
+`sub_lineage` label is *constant within* a large sublineage, so it cannot correct the divergence
+that exists inside one. Mash distances vary continuously and do. TB-Profiler's calls are produced
+alongside as the comparator partition and as the permutation null's strata, where a named
+biological lineage is the right thing to shuffle within.
 
 **This is a documented stand-in, not the publishable method.** Mash clusters approximate a lineage
 partition; they are not Kleborate sublineages or TB-Profiler lineages, and the methods section

@@ -85,6 +85,7 @@ headline.
 | `mash_kinship.py` | `mash sketch`/`triangle` once per organism; per-drug similarity + distance subsets |
 | `lineage_from_distances.py` | mash distances → `Sample<TAB>cluster` — **TB only**; collapsed on Kp |
 | `sublineage_from_metadata.py` | curated Kleborate `Sublineage` → the same file — **Kp, the method of record** |
+| `tb_lineage_from_tbprofiler.py` | TB-Profiler `main_lineage`/`sub_lineage` → the same file — **TB comparator + permutation strata**; mash stays primary |
 | `unitig_design_matrix.py` | hits → sparse genomes × unitigs CSR; `--splits` narrows it, and the all-zero-holdout guard lives here |
 | `unitig_kmer_presence.py` | scores unitig presence from **sequence** by k-mer containment — `compare` (which rule), `score` (the scan), `merge` (GGCAT train+validate rows ⊕ scanned holdout rows) |
 | `leakage_audit.py` | the per-drug `leakage_audit.json`: reflist, vocabulary (from GGCAT's own `color_names.jsonl`), clusters, mash, design |
@@ -212,8 +213,15 @@ see `PROJECT_STATE.md` §3.3.** Two coverage figures live there and are easy to 
 The numbers move whenever LIN-typing is refreshed, so a figure pasted into prose goes stale
 silently — this passage previously carried four such figures, all wrong after the 2026-08-20 update.
 The collapsed mash file is kept beside it as `mash_lineage_clusters.tsv` for the methods comparison.
-**TB still needs the mash route** — no TB lineage labels exist until TB-Profiler runs over ~39k
-assemblies — so the two organisms derive clusters differently and methods must say so.
+**TB uses mash as primary, with TB-Profiler alongside as the comparator.** Not because TB lacks
+labels — **TB-Profiler was already run over the cohort in June 2026** (36,684 `<Sample>.results.json`
+under the deprecated tree's `snp_embeddings/tbprofiler_calls/results`, covering 36,321 of the 36,390
+GWAS genomes, each carrying `main_lineage` and `sub_lineage`), and `tb_lineage_from_tbprofiler.py`
+reads them. Mash is primary on a resolution argument (David, 2026-08-28): a discrete `sub_lineage`
+label is **constant within** a large sublineage, so it cannot correct the divergence inside one,
+while mash distances vary continuously. TB-Profiler's calls are written beside the mash file as the
+comparator partition, and are the right strata for the within-lineage permutation null. The two
+organisms still derive clusters differently and the methods section must say so.
 
 `other` holds every genome that is either unlabelled or in a sublineage below the cut (see the
 manifest's `n_in_other` and `largest_clusters` for the split). It is not
@@ -259,7 +267,9 @@ Input volume by count × one-file: Kp ≈ 10.6 GB (7,080 × ~1.5 MB), TB ≈ 51 
 ## Known technical debt (clean up before publishing)
 
 1. **Mash-derived lineage clusters stand in for curated labels.** Kp `Sublineage` lives only in
-   `metadata_v2` on CSD3; TB lineages do not exist until TB-Profiler is run over ~39k assemblies.
+   `metadata_v2` on CSD3. **TB is no longer blocked** — TB-Profiler's June 2026 run over the cohort
+   supplies `main_lineage`/`sub_lineage`, and mash stays primary there by choice rather than by
+   default (see *Lineage clusters*).
    The publishable version uses Kleborate sublineages (Kp) and TB-Profiler lineage (TB). This is a
    methods-section item, not just tidiness.
 2. **`src/bac_pyseer/pixi.toml` needs tidying** — only if Isambard is used again, plus one item
