@@ -103,3 +103,63 @@ def test_unitig_holdout_count_is_read_from_split_not_only_the_top_level(tmp_path
     (d / "results.json").write_text(json.dumps({"metrics": {"auroc": 0.9}, "n_evaluate": 99,
                                                 "split": {"n_evaluate": 282}}))
     assert read_unitig(tmp_path, "colistin", nested=False)["n_evaluate"] == 99
+
+
+def _ft(root, species, drug, auroc, n_eval):
+    d = root / f"{species}_{drug}_lr_0.00015_finetuned_fold00_seed1"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "results.json").write_text(json.dumps({"metrics": {"auroc": auroc}, "n_evaluate": n_eval}))
+
+
+def _unitig(root, drug, auroc, n_eval, *, nested=False):
+    d = (root / drug / drug if nested else root / drug) / "lr"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "results.json").write_text(
+        json.dumps({"metrics": {"auroc": auroc}, "split": {"n_evaluate": n_eval}})
+    )
+
+
+def test_tb_checkpoints_are_read_under_their_own_species(tmp_path):
+    """Kp and TB name checkpoints identically apart from the prefix; only the species differs."""
+    _ft(tmp_path, "mycobacterium_tuberculosis", "rifampin", 0.9642, 7127)
+    _ft(tmp_path, "mycobacterium_tuberculosis", "rifabutin", 0.8381, 2427)
+    got = read_finetune(tmp_path, species="mycobacterium_tuberculosis")
+    assert set(got) == {"rifampin", "rifabutin"}
+    assert got["rifampin"]["ft_auroc"] == pytest.approx(0.9642)
+    # The Kp species must not pick these up.
+    assert read_finetune(tmp_path) == {}
+
+
+def test_an_unparseable_checkpoint_name_raises_rather_than_keying_on_the_directory(tmp_path):
+    """re.sub returns its input unchanged on no match, which would key every row by a directory
+    name — and then every drug fails to join, reading as 'no fine-tune exists'."""
+    d = tmp_path / "klebsiella_pneumoniae_colistin_SOMETHING_ELSE"
+    d.mkdir(parents=True)
+    (d / "results.json").write_text(json.dumps({"metrics": {"auroc": 0.9}}))
+    with pytest.raises(SystemExit) as e:
+        read_finetune(tmp_path)
+    assert "cannot read a drug name" in str(e.value)
+
+
+def test_a_single_arm_organism_needs_no_trainval_vocabulary(tmp_path, capsys):
+    """TB has only the full-cohort build. Requiring a second arm would mean inventing one."""
+    ft, full = tmp_path / "ft", tmp_path / "full"
+    for drug, a in (("rifampin", 0.9642), ("ethionamide", 0.8097)):
+        _ft(ft, "mycobacterium_tuberculosis", drug, a, 100)
+    _unitig(full, "rifampin", 0.9700, 100)
+    _unitig(full, "ethionamide", 0.8000, 100)
+    assert run(ft, full, None, None, species="mycobacterium_tuberculosis") == 0
+    out = capsys.readouterr().out
+    assert "unitig (full-cohort vocab) vs BacFormer FT" in out
+    # The absent arm must be omitted, not summarised as a result of zero.
+    assert "unitig (leakage-free) vs BacFormer FT" not in out
+    assert "unitig wins  1/2" in out
+
+
+def test_the_species_is_reported_when_nothing_joins(tmp_path):
+    """The likeliest cause of an empty join is the wrong species or the wrong ft-root."""
+    _ft(tmp_path / "ft", "klebsiella_pneumoniae", "colistin", 0.9, 100)
+    _unitig(tmp_path / "full", "colistin", 0.9, 100)
+    with pytest.raises(SystemExit) as e:
+        run(tmp_path / "ft", tmp_path / "full", None, None, species="mycobacterium_tuberculosis")
+    assert "mycobacterium_tuberculosis" in str(e.value)

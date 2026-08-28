@@ -62,6 +62,13 @@ def exact_binomial_two_sided(k: int, n: int, p: float = 0.5) -> float:
     return min(1.0, sum(q for q in probs if q <= observed * (1 + 1e-12)))
 
 
+# Both organisms name checkpoints identically apart from the prefix:
+#   <species>_<drug>_lr_0.00015_finetuned_fold00_seed1
+# They differ only in where that directory lives -- Kp under models/finetune, TB under checkpoints --
+# which is the caller's --ft-root, not this module's problem.
+SPECIES_BY_ORGANISM = {"kp": "klebsiella_pneumoniae", "tb": "mycobacterium_tuberculosis"}
+
+
 def read_finetune(ft_root: Path, species: str = "klebsiella_pneumoniae") -> dict[str, dict]:
     """Every fine-tune checkpoint's own ``results.json`` → ``{drug: {...}}``."""
     out: dict[str, dict] = {}
@@ -70,7 +77,17 @@ def read_finetune(ft_root: Path, species: str = "klebsiella_pneumoniae") -> dict
         if not results.is_file():
             continue
         payload = json.loads(results.read_text())
-        drug = re.sub(rf"^{species}_(.+?)_lr_.*$", r"\1", d.name)
+        # re.sub returns the input unchanged when the pattern does not match, so a naming convention
+        # this does not expect would key every row by a full directory name -- and then every drug
+        # would silently fail to join, reading as "no fine-tune exists" rather than "the parse broke".
+        match = re.match(rf"^{species}_(.+?)_lr_.*$", d.name)
+        if match is None:
+            raise SystemExit(
+                f"cannot read a drug name from {d.name!r} — expected "
+                f"<{species}>_<drug>_lr_...; if the checkpoint naming has changed, fix it here "
+                "rather than letting the join fall through to zero matches"
+            )
+        drug = match.group(1)
         metrics = payload.get("metrics") or {}
         out[drug] = {
             "ft_auroc": metrics.get("auroc"),
@@ -98,22 +115,30 @@ def read_unitig(root: Path, drug: str, *, nested: bool) -> dict:
     return {"auroc": metrics.get("auroc"), "auprc": metrics.get("auprc"), "n_evaluate": n_eval}
 
 
-def build_rows(ft_root: Path, full_root: Path, vocab_root: Path) -> list[dict]:
-    """One row per drug carrying the fine-tune and both unitig arms."""
-    ft = read_finetune(ft_root)
+def build_rows(
+    ft_root: Path, full_root: Path, vocab_root: Path | None, *, species: str = "klebsiella_pneumoniae"
+) -> list[dict]:
+    """One row per drug carrying the fine-tune and whichever unitig arms exist.
+
+    ``vocab_root`` is optional. Kp has two arms and the rebuild is the headline; TB has only the
+    full-cohort build, and requiring a second arm there would mean inventing one.
+    """
+    ft = read_finetune(ft_root, species=species)
+    primary = vocab_root if vocab_root is not None else full_root
     rows = []
-    for drug in drug_dirs(vocab_root):
+    for drug in drug_dirs(primary):
         f = read_unitig(full_root, drug, nested=False)
-        t = read_unitig(vocab_root, drug, nested=True)
-        if drug not in ft or not t.get("auroc"):
+        t = read_unitig(vocab_root, drug, nested=True) if vocab_root is not None else {}
+        headline = t if vocab_root is not None else f
+        if drug not in ft or not headline.get("auroc"):
             continue
         row = {"drug": drug, **ft[drug],
                "unitig_full_cohort_auroc": f.get("auroc"),
                "unitig_trainval_vocab_auroc": t.get("auroc"),
-               "unitig_n_evaluate": t.get("n_evaluate")}
+               "unitig_n_evaluate": headline.get("n_evaluate")}
         # Both arms must have scored the same holdout or the delta is not a comparison. This is a
         # convention across pipelines rather than an enforced join, so it is checked, not assumed.
-        row["same_holdout_n"] = (row["ft_n_evaluate"] == t.get("n_evaluate"))
+        row["same_holdout_n"] = (row["ft_n_evaluate"] == headline.get("n_evaluate"))
         for key, val in (("full_cohort", f.get("auroc")), ("trainval_vocab", t.get("auroc"))):
             row[f"delta_{key}_minus_ft"] = (val - ft[drug]["ft_auroc"]) if val is not None else None
         rows.append(row)
@@ -137,28 +162,44 @@ def summarise(rows: list[dict], key: str, label: str) -> dict:
     }
 
 
-def run(ft_root: Path, full_root: Path, vocab_root: Path, out_csv: Path | None) -> int:
-    """Print the per-drug table and both aggregate summaries."""
-    rows = build_rows(ft_root, full_root, vocab_root)
+def run(
+    ft_root: Path, full_root: Path, vocab_root: Path | None, out_csv: Path | None,
+    *, species: str = "klebsiella_pneumoniae",
+) -> int:
+    """Print the per-drug table and an aggregate summary for each arm that exists."""
+    rows = build_rows(ft_root, full_root, vocab_root, species=species)
     if not rows:
-        raise SystemExit("no drug had both a fine-tune results.json and a trainval unitig read-out")
+        raise SystemExit(
+            f"no drug had both a fine-tune results.json under {ft_root} (species {species}) and a "
+            "unitig read-out"
+        )
+    sort_key = "delta_trainval_vocab_minus_ft" if vocab_root is not None else "delta_full_cohort_minus_ft"
+
+    # nan for any absent arm. `x or nan` would also swallow a genuine 0.0 -- no AUROC is exactly
+    # zero, but a delta certainly can be, and an exact tie printed as nan would be a lie.
+    def _f(x):
+        return float("nan") if x is None else x
 
     hdr = f"{'drug':<30} {'BacF FT':>8} {'uni full':>9} {'uni tv':>8} {'tv−FT':>8} {'full−FT':>8}  n"
     print(hdr)
     print("-" * (len(hdr) + 4))
-    for r in sorted(rows, key=lambda x: x["delta_trainval_vocab_minus_ft"] or 0):
+    for r in sorted(rows, key=lambda x: x[sort_key] or 0):
         flag = "" if r["same_holdout_n"] else "  ⚠ holdout n differs"
         print(
             f"{r['drug']:<30} {r['ft_auroc']:>8.4f} "
-            f"{r['unitig_full_cohort_auroc'] or float('nan'):>9.4f} "
-            f"{r['unitig_trainval_vocab_auroc']:>8.4f} "
-            f"{r['delta_trainval_vocab_minus_ft']:>+8.4f} "
-            f"{r['delta_full_cohort_minus_ft'] or float('nan'):>+8.4f}  {r['unitig_n_evaluate']}{flag}"
+            f"{_f(r['unitig_full_cohort_auroc']):>9.4f} "
+            f"{_f(r['unitig_trainval_vocab_auroc']):>8.4f} "
+            f"{_f(r['delta_trainval_vocab_minus_ft']):>+8.4f} "
+            f"{_f(r['delta_full_cohort_minus_ft']):>+8.4f}  {r['unitig_n_evaluate']}{flag}"
         )
 
     print()
     for key, label in (("trainval_vocab", "unitig (leakage-free) vs BacFormer FT"),
                        ("full_cohort", "unitig (full-cohort vocab) vs BacFormer FT")):
+        # Skip an arm with no data rather than dividing by zero in summarise(). TB has only the
+        # full-cohort build, and an empty summary block would read as a result of zero.
+        if not any(r.get(f"delta_{key}_minus_ft") is not None for r in rows):
+            continue
         s = summarise(rows, key, label)
         print(f"{s['arm']}")
         print(f"   mean delta   {s['mean_delta']:+.4f}   median {s['median_delta']:+.4f}   "
@@ -192,12 +233,16 @@ def run(ft_root: Path, full_root: Path, vocab_root: Path, out_csv: Path | None) 
 def main(argv: list[str] | None = None) -> None:
     """CLI entry point."""
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--ft-root", type=Path, required=True, help="processed/train_<org>_ast/models/finetune")
+    p.add_argument("--ft-root", type=Path, required=True,
+                   help="Kp: processed/train_kleb_ast/models/finetune · TB: processed/train_tb_ast/checkpoints")
     p.add_argument("--full-root", type=Path, required=True)
-    p.add_argument("--vocab-root", type=Path, required=True)
+    p.add_argument("--vocab-root", type=Path, default=None,
+                   help="the trainval-vocabulary arm, if one exists (Kp). Omit for a single-arm organism.")
+    p.add_argument("--organism", choices=sorted(SPECIES_BY_ORGANISM), default="kp")
     p.add_argument("--out-csv", type=Path, default=None)
     args = p.parse_args(argv if argv is not None else sys.argv[1:])
-    sys.exit(run(args.ft_root, args.full_root, args.vocab_root, args.out_csv))
+    sys.exit(run(args.ft_root, args.full_root, args.vocab_root, args.out_csv,
+                 species=SPECIES_BY_ORGANISM[args.organism]))
 
 
 if __name__ == "__main__":

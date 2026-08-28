@@ -54,10 +54,14 @@ def drug_dirs(vocab_root: Path) -> list[str]:
     """
     return sorted(
         d.name for d in vocab_root.iterdir()
-        # Either marker identifies a drug: the audit file it gets before any compute is spent, or
-        # the nested <drug>/<drug>/ directory run_drug.sh creates. An output directory written
-        # beside the drugs has neither.
-        if d.is_dir() and ((d / "leakage_audit.json").is_file() or (d / d.name).is_dir())
+        # Any of three markers identifies a drug: the audit file it gets before any compute is
+        # spent, the nested <drug>/<drug>/ directory the rebuild arm creates, or an `lr/` read-out
+        # directory. The third is what makes this work on the FULL-COHORT tree too, whose drug
+        # directories are flat and have no audit -- there, the siblings to exclude are `cohort/`,
+        # `structure/` and `unitigs/`, and none of them has any of the three.
+        if d.is_dir() and (
+            (d / "leakage_audit.json").is_file() or (d / d.name).is_dir() or (d / "lr").is_dir()
+        )
     )
 
 
