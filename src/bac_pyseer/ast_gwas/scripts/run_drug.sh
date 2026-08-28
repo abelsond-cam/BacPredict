@@ -84,6 +84,19 @@ uv run python -m bac_pyseer.ast_gwas.mash_kinship kinship \
     --triangle "$TRIANGLE" --out-tsv "$SIMILARITY" --phenotype-tsv "$PHENO" \
     --distances-tsv "$DISTANCES"
 
+# The trainval_vocab arm re-sketches mash per drug rather than subsetting the cohort triangle. That
+# is provably the same operation -- each cell is a distance between ONE pair, so no cohort statistic
+# enters -- but the whole point of the rebuild is to replace "provably" with a number an auditor can
+# read. Set MASH_REF to the comparator's similarity.tsv for this drug and the assertion runs here,
+# which is the first moment a fresh similarity.tsv exists. Unset (the comparator's own runs) it is a
+# no-op, so this script stays usable by both arms.
+if [ -n "${MASH_REF:-}" ] && [ -s "$MASH_REF" ]; then
+    echo "=== (2b) mash zero-diff assertion against $MASH_REF ==="
+    uv run python -m bac_pyseer.ast_gwas.leakage_audit \
+        --audit-json "${AUDIT_JSON:-$DRUG_DIR/leakage_audit.json}" mash \
+        --fresh "$SIMILARITY" --reference "$MASH_REF"
+fi
+
 echo "=== (3) sharded pyseer LMM ==="
 # Reuses the calibrated three-phase prep -> array -> combine chain. Peak RAM is ~cpu x n^2, so for a
 # large phenotype (TB rifampin, n~29k) either drop CPU and raise NSHARDS or ask for a whole node.
