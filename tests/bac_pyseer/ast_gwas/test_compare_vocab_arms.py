@@ -19,6 +19,16 @@ def _scores(path, ids, y, p):
     return path
 
 
+def _summary(path, **kw):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    base = {"n_variants": 2_486_812, "n_unique_patterns": 960_320,
+            "bonferroni_threshold": 5.2e-08, "n_significant": 9277,
+            "genomic_inflation_lambda": 1.232, "pheno_var": 0.19397}
+    base.update(kw)
+    path.write_text(json.dumps(base))
+    return path
+
+
 def _cohort(n=120, seed=0):
     """A holdout with real signal, so AUROC is well away from 0.5 and the CI is meaningful."""
     rng = np.random.default_rng(seed)
@@ -90,24 +100,44 @@ def test_confound_columns_are_carried_from_both_arms(tmp_path):
     ids, y, a, b = _cohort()
     _scores(tmp_path / "a.npz", ids, y, a)
     _scores(tmp_path / "b.npz", ids, y, b)
-    (tmp_path / "fr.json").write_text(json.dumps(
-        {"extra": {"n_unitigs": 40000, "C": 0.01, "gwas_summary": {"n_patterns": 900, "threshold": 5.5e-8}}}))
-    (tmp_path / "tr.json").write_text(json.dumps(
-        {"extra": {"n_unitigs": 51000, "C": 0.1, "gwas_summary": {"n_patterns": 1200, "threshold": 4.1e-8}}}))
+    (tmp_path / "fr.json").write_text(json.dumps({"extra": {"n_unitigs": 40000, "C": 0.01}}))
+    (tmp_path / "tr.json").write_text(json.dumps({"extra": {"n_unitigs": 51000, "C": 0.1}}))
     (tmp_path / "audit.json").write_text(json.dumps({"reflist": {"min_samples_floor": 12, "n_reflist": 1128}}))
+    _summary(tmp_path / "fs.json", n_unique_patterns=960_320)
+    _summary(tmp_path / "ts.json", n_unique_patterns=967_109)
 
     row = compare_drug(
         "colistin", tmp_path / "a.npz", tmp_path / "b.npz",
         full_results=tmp_path / "fr.json", trainval_results=tmp_path / "tr.json",
-        trainval_audit=tmp_path / "audit.json", n_boot=100,
+        trainval_audit=tmp_path / "audit.json",
+        full_summary=tmp_path / "fs.json", trainval_summary=tmp_path / "ts.json", n_boot=100,
     )
     assert row["full_n_unitigs"] == 40000
     assert row["trainval_n_unitigs"] == 51000
-    assert row["full_n_patterns"] == 900
-    assert row["trainval_n_patterns"] == 1200
+    # Read from the summary FILE, under the key names the file really uses.
+    assert row["full_n_unique_patterns"] == 960_320
+    assert row["trainval_n_unique_patterns"] == 967_109
     # The MAF-floor confound must be visible in the row, not only in the docstring.
     assert row["trainval_min_samples"] == 12
     assert row["trainval_n_reflist"] == 1128
+
+
+def test_summary_file_wins_over_the_unreliable_embedded_copy(tmp_path):
+    """results.json's embedded gwas_summary is dropped silently when the path is wrong."""
+    ids, y, a, b = _cohort()
+    _scores(tmp_path / "a.npz", ids, y, a)
+    _scores(tmp_path / "b.npz", ids, y, b)
+    (tmp_path / "r.json").write_text(json.dumps(
+        {"extra": {"n_unitigs": 1, "gwas_summary": {"n_unique_patterns": 111}}}))
+    _summary(tmp_path / "s.json", n_unique_patterns=960_320)
+    row = compare_drug("colistin", tmp_path / "a.npz", tmp_path / "b.npz",
+                       full_results=tmp_path / "r.json", full_summary=tmp_path / "s.json", n_boot=50)
+    assert row["full_n_unique_patterns"] == 960_320
+
+    # ... and with no summary file it still falls back rather than reporting nothing.
+    row2 = compare_drug("colistin", tmp_path / "a.npz", tmp_path / "b.npz",
+                        full_results=tmp_path / "r.json", n_boot=50)
+    assert row2["full_n_unique_patterns"] == 111
 
 
 def test_run_lays_out_the_rebuild_directory_shape(tmp_path, capsys):
@@ -143,16 +173,6 @@ def test_run_with_nothing_to_compare_is_an_error(tmp_path):
     (tmp_path / "kp_trainval_vocab" / "colistin").mkdir(parents=True)
     with pytest.raises(SystemExit):
         run(tmp_path / "kp", tmp_path / "kp_trainval_vocab", None, n_boot=10)
-
-
-def _summary(path, **kw):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    base = {"n_variants": 2_486_812, "n_unique_patterns": 960_320,
-            "bonferroni_threshold": 5.2e-08, "n_significant": 9277,
-            "genomic_inflation_lambda": 1.232, "pheno_var": 0.19397}
-    base.update(kw)
-    path.write_text(json.dumps(base))
-    return path
 
 
 def test_gwas_row_carries_both_arms_and_their_ratios(tmp_path):

@@ -49,6 +49,12 @@ CPUS=${CPUS:-16}; MEM=${MEM:-100G}; WALL=${WALL:-04:00:00}
 # 0.249 default on any run predating the combine-phase fix. Prefer $DRUG_DIR's, which is regenerated
 # with --phenotype-tsv; fall back only if it is genuinely absent.
 [ -s "$HITS" ] || HITS=$DRUG_DIR/gwas/${DRUG}_hits_annotated.tsv
+# Same story for the summary: the combine phase writes it under gwas/. unitig_lr treats
+# --gwas-summary as OPTIONAL, so a wrong path does not fail -- it silently drops the GWAS
+# provenance from results.json's extra{}. That is why the full-cohort arm has it for ertapenem
+# and not for ceftazidime or colistin. Resolve it the same way as HITS.
+GWAS_SUMMARY=$DRUG_DIR/${DRUG}_gwas_summary.json
+[ -s "$GWAS_SUMMARY" ] || GWAS_SUMMARY=$DRUG_DIR/gwas/${DRUG}_gwas_summary.json
 for required in "$MATRIX" "$SPLIT_TABLE" "$HITS"; do
     [ -s "$required" ] || { echo "ERROR: missing $required — has the GWAS chain finished?" >&2; exit 1; }
 done
@@ -67,14 +73,14 @@ READOUT=$(sbatch --parsable --account="$ACCT" --partition="$PART" --nodes=1 --nt
         \$P -m bac_pyseer.ast_gwas.unitig_lr \
             --design-dir '$DRUG_DIR/design' --split-table '$SPLIT_TABLE' \
             --drug '$DRUG' --organism '$ORGANISM' --out-dir '$DRUG_DIR/lr' \
-            --gwas-summary '$DRUG_DIR/${DRUG}_gwas_summary.json'
+            --gwas-summary '$GWAS_SUMMARY'
         \$P -m bac_pyseer.ast_gwas.unitig_design_matrix \
             --hits-tsv '$HITS' --matrix-gz '$MATRIX' --split-table '$SPLIT_TABLE' \
             --out-dir '$DRUG_DIR/design_dedup' --dedupe-patterns --decomp-threads $CPUS
         \$P -m bac_pyseer.ast_gwas.unitig_lr \
             --design-dir '$DRUG_DIR/design_dedup' --split-table '$SPLIT_TABLE' \
             --drug '$DRUG' --organism '$ORGANISM' --out-dir '$DRUG_DIR/lr_dedup' \
-            --gwas-summary '$DRUG_DIR/${DRUG}_gwas_summary.json'")
+            --gwas-summary '$GWAS_SUMMARY'")
 echo "JOB $READOUT uread_${DRUG} | CPU | mem=$MEM | cores=$CPUS | wall=$WALL | $PART"
 
 if [ "${SKIP_FT:-0}" = "1" ]; then

@@ -64,6 +64,12 @@ SCAN_WALL=${SCAN_WALL:-04:00:00}
 LR_CPUS=${LR_CPUS:-16}; LR_MEM=${LR_MEM:-100G}; LR_WALL=${LR_WALL:-04:00:00}
 
 [ -s "$HITS" ] || HITS=$DRUG_DIR/gwas/${DRUG}_hits_annotated.tsv
+# Same story for the summary: the combine phase writes it under gwas/. unitig_lr treats
+# --gwas-summary as OPTIONAL, so a wrong path does not fail -- it silently drops the GWAS
+# provenance from results.json's extra{}. That is why the full-cohort arm has it for ertapenem
+# and not for ceftazidime or colistin. Resolve it the same way as HITS.
+GWAS_SUMMARY=$DRUG_DIR/${DRUG}_gwas_summary.json
+[ -s "$GWAS_SUMMARY" ] || GWAS_SUMMARY=$DRUG_DIR/gwas/${DRUG}_gwas_summary.json
 for required in "$MATRIX" "$SPLIT_TABLE" "$HITS" "$REFLIST"; do
     [ -s "$required" ] || { echo "ERROR: missing $required — has the GWAS chain finished?" >&2; exit 1; }
 done
@@ -131,11 +137,11 @@ LR_JOB=$(sb --cpus-per-task="$LR_CPUS" --mem="$LR_MEM" --time="$LR_WALL" \
         $P -m bac_pyseer.ast_gwas.unitig_lr \
             --design-dir '$DRUG_DIR/design_merged' --split-table '$SPLIT_TABLE' \
             --drug '$DRUG' --organism '$ORGANISM' --out-dir '$DRUG_DIR/lr' \
-            --gwas-summary '$DRUG_DIR/${DRUG}_gwas_summary.json'
+            --gwas-summary '$GWAS_SUMMARY'
         $P -m bac_pyseer.ast_gwas.unitig_lr \
             --design-dir '$DRUG_DIR/design_dedup_merged' --split-table '$SPLIT_TABLE' \
             --drug '$DRUG' --organism '$ORGANISM' --out-dir '$DRUG_DIR/lr_dedup' \
-            --gwas-summary '$DRUG_DIR/${DRUG}_gwas_summary.json'
+            --gwas-summary '$GWAS_SUMMARY'
         $P -m bac_pyseer.ast_gwas.leakage_audit --audit-json '$AUDIT' design \
             --merge-manifest '$DRUG_DIR/design_merged/merge_manifest.json'")
 echo "JOB $LR_JOB ulr_${DRUG} | CPU | mem=$LR_MEM | cores=$LR_CPUS | wall=$LR_WALL | $PART   (after $SCAN_JOB)"

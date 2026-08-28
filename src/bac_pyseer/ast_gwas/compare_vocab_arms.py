@@ -66,29 +66,42 @@ def load_arm(scores_npz: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return ids[order], y_true[order], y_prob[order]
 
 
-def _gwas_facts(results_json: Path, audit_json: Path | None) -> dict[str, object]:
-    """Pull the confound columns for one arm — the floor, the feature count, the threshold."""
+GWAS_KEYS = (
+    "n_variants", "n_unique_patterns", "bonferroni_threshold", "n_significant",
+    "genomic_inflation_lambda", "pheno_var",
+)
+
+
+def _gwas_facts(
+    results_json: Path, audit_json: Path | None, summary_json: Path | None = None
+) -> dict[str, object]:
+    """Pull the confound columns for one arm — the floor, the feature count, the threshold.
+
+    The GWAS summary is read from its own file when given, and only falls back to the copy embedded
+    in ``results.json``. That embedded copy is unreliable: ``unitig_lr`` treats ``--gwas-summary`` as
+    optional, so the read-out scripts' wrong path dropped it silently, and the full-cohort arm has it
+    for ertapenem but not for ceftazidime or colistin. The summary file itself is always written.
+    """
     facts: dict[str, object] = {}
+    summary: dict = {}
+    if summary_json is not None and summary_json.is_file():
+        summary = json.loads(summary_json.read_text())
     if results_json.is_file():
         payload = json.loads(results_json.read_text())
         extra = payload.get("extra") or {}
         facts["n_unitigs"] = extra.get("n_unitigs")
         facts["C"] = extra.get("C")
-        summary = extra.get("gwas_summary") or {}
-        for key in ("n_patterns", "n_tested", "threshold", "lambda", "genomic_inflation"):
-            if key in summary:
-                facts[key] = summary[key]
+        summary = summary or (extra.get("gwas_summary") or {})
+    # These are the keys the summary actually uses. Guessing shorter names (n_patterns, threshold,
+    # lambda) silently yields empty columns that read as a missing measurement rather than a bug.
+    for key in GWAS_KEYS:
+        if key in summary:
+            facts[key] = summary[key]
     if audit_json and audit_json.is_file():
         audit = json.loads(audit_json.read_text())
         facts["min_samples"] = (audit.get("reflist") or {}).get("min_samples_floor")
         facts["n_reflist"] = (audit.get("reflist") or {}).get("n_reflist")
     return facts
-
-
-GWAS_KEYS = (
-    "n_variants", "n_unique_patterns", "bonferroni_threshold", "n_significant",
-    "genomic_inflation_lambda", "pheno_var",
-)
 
 
 def gwas_row(drug: str, full_summary: Path, trainval_summary: Path) -> dict[str, object]:
@@ -130,6 +143,8 @@ def compare_drug(
     full_results: Path | None = None,
     trainval_results: Path | None = None,
     trainval_audit: Path | None = None,
+    full_summary: Path | None = None,
+    trainval_summary: Path | None = None,
     n_boot: int = 2000,
     seed: int = 1,
 ) -> dict[str, object]:
@@ -172,12 +187,13 @@ def compare_drug(
     }
     # a = full_cohort, b = trainval_vocab, so delta > 0 means the old arm scored higher.
     row.update(paired_delta_ci(y_a, p_a, p_b, n_boot=n_boot, seed=seed))
-    for prefix, results, audit in (
-        ("full", full_results, None),
-        ("trainval", trainval_results, trainval_audit),
+    for prefix, results, audit, summary in (
+        ("full", full_results, None, full_summary),
+        ("trainval", trainval_results, trainval_audit, trainval_summary),
     ):
-        if results is not None:
-            row.update({f"{prefix}_{k}": v for k, v in _gwas_facts(results, audit).items()})
+        if results is not None or summary is not None:
+            facts = _gwas_facts(results or Path("/nonexistent"), audit, summary)
+            row.update({f"{prefix}_{k}": v for k, v in facts.items()})
     return row
 
 
@@ -260,6 +276,8 @@ def run(
                 full_results=full_root / drug / arm / "results.json",
                 trainval_results=vocab_root / drug / drug / arm / "results.json",
                 trainval_audit=vocab_root / drug / "leakage_audit.json",
+                full_summary=full_root / drug / "gwas" / f"{drug}_gwas_summary.json",
+                trainval_summary=vocab_root / drug / drug / "gwas" / f"{drug}_gwas_summary.json",
                 n_boot=n_boot, seed=seed,
             )
         )
