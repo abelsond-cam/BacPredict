@@ -64,7 +64,7 @@ def test_load_arm_sorts_by_sample_id(tmp_path):
     assert list(p) == [0.1, 0.8, 0.9]
 
 
-def test_different_holdout_sets_of_equal_size_are_refused(tmp_path):
+def test_wholly_different_holdout_sets_of_equal_size_are_refused(tmp_path):
     """The failure counts alone cannot see: same n, different genomes."""
     ids, y, a, b = _cohort(n=100)
     other = [f"T{i:04d}" for i in range(100)]
@@ -72,8 +72,33 @@ def test_different_holdout_sets_of_equal_size_are_refused(tmp_path):
     _scores(tmp_path / "b.npz", other, y, b)
     with pytest.raises(SystemExit) as e:
         compare_drug("colistin", tmp_path / "a.npz", tmp_path / "b.npz", n_boot=50)
-    assert "different holdout genomes" in str(e.value)
+    assert "substantially different holdout genomes" in str(e.value)
     assert "100 vs 100" in str(e.value)
+
+
+def test_a_genome_the_rebuild_could_not_score_is_paired_out_and_counted(tmp_path):
+    """~0.16% of the comparator's rows are genomes with no assembly and an all-zero feature row.
+
+    The full-cohort arm scores them from the intercept; the rebuild's scanner cannot score them at
+    all. Pairing on the intersection is right — but it must be counted, not done in silence.
+    """
+    ids, y, a, b = _cohort(n=200)
+    _scores(tmp_path / "a.npz", ids, y, a)                       # comparator: all 200
+    _scores(tmp_path / "b.npz", ids[:-1], y[:-1], b[:-1])        # rebuild: 199, one unscannable
+    row = compare_drug("cefazolin", tmp_path / "a.npz", tmp_path / "b.npz", n_boot=200)
+    assert row["n_holdout"] == 199                # paired on the intersection
+    assert row["n_only_full_cohort"] == 1
+    assert row["n_only_trainval_vocab"] == 0
+    assert ids[-1] in row["unpaired_examples"]
+
+
+def test_the_tolerance_is_a_fraction_not_a_free_pass(tmp_path):
+    """Two genomes out of 200 is fine at 2%; twenty is not."""
+    ids, y, a, b = _cohort(n=200)
+    _scores(tmp_path / "a.npz", ids, y, a)
+    _scores(tmp_path / "b.npz", ids[:-20], y[:-20], b[:-20])
+    with pytest.raises(SystemExit, match="substantially different"):
+        compare_drug("cefazolin", tmp_path / "a.npz", tmp_path / "b.npz", n_boot=50)
 
 
 def test_disagreeing_labels_are_refused(tmp_path):

@@ -177,6 +177,7 @@ def compare_drug(
     trainval_summary: Path | None = None,
     n_boot: int = 2000,
     seed: int = 1,
+    max_holdout_mismatch_frac: float = 0.02,
 ) -> dict[str, object]:
     """Compare one drug's two arms → a row with both AUROCs, the paired delta and its CI.
 
@@ -191,16 +192,27 @@ def compare_drug(
     ids_b, y_b, p_b = load_arm(trainval_scores)
 
     set_a, set_b = set(ids_a.tolist()), set(ids_b.tolist())
-    if set_a != set_b:
-        only_a, only_b = sorted(set_a - set_b), sorted(set_b - set_a)
+    only_a, only_b = sorted(set_a - set_b), sorted(set_b - set_a)
+    shared = sorted(set_a & set_b)
+    # A small, one-sided difference is expected and benign: ~0.16% of the comparator's design rows
+    # are genomes present in the split table but absent from assembly_refs.txt, so they never became
+    # a GGCAT colour and carry an ENTIRELY ZERO feature row — the full-cohort arm scores them from
+    # the intercept alone, while the rebuild's scanner cannot score them at all (it needs an
+    # assembly). Pairing on the intersection is the honest response; silently intersecting is not,
+    # so the counts are recorded and a large divergence is still fatal.
+    worst = max(len(only_a), len(only_b)) / max(len(set_a | set_b), 1)
+    if worst > max_holdout_mismatch_frac:
         raise SystemExit(
-            f"{drug}: the two arms scored different holdout genomes — {len(only_a)} only in "
-            f"full_cohort (e.g. {only_a[:3]}), {len(only_b)} only in trainval_vocab "
-            f"(e.g. {only_b[:3]}). Both arms must resolve the holdout through the same "
-            f"<drug>_split.csv via engine.splits.load_splits; a paired delta across different "
-            f"genome sets is meaningless. Counts alone would not have caught this "
-            f"({len(ids_a)} vs {len(ids_b)})."
+            f"{drug}: the two arms scored substantially different holdout genomes — {len(only_a)} "
+            f"only in full_cohort (e.g. {only_a[:3]}), {len(only_b)} only in trainval_vocab "
+            f"(e.g. {only_b[:3]}); {worst:.1%} > {max_holdout_mismatch_frac:.1%}. Both arms must "
+            f"resolve the holdout through the same <drug>_split.csv via engine.splits.load_splits. "
+            f"Counts alone would not have caught this ({len(ids_a)} vs {len(ids_b)})."
         )
+    keep_a = np.isin(ids_a, shared)
+    keep_b = np.isin(ids_b, shared)
+    ids_a, y_a, p_a = ids_a[keep_a], y_a[keep_a], p_a[keep_a]
+    ids_b, y_b, p_b = ids_b[keep_b], y_b[keep_b], p_b[keep_b]
     if not np.array_equal(y_a, y_b):
         n_diff = int((y_a != y_b).sum())
         raise SystemExit(
@@ -211,6 +223,9 @@ def compare_drug(
     row: dict[str, object] = {
         "drug": drug,
         "n_holdout": int(len(ids_a)),
+        "n_only_full_cohort": len(only_a),
+        "n_only_trainval_vocab": len(only_b),
+        "unpaired_examples": ";".join((only_a + only_b)[:5]),
         "n_resistant": int(y_a.sum()),
         "full_cohort_auroc": float(roc_auc_score(y_a, p_a)),
         "trainval_vocab_auroc": float(roc_auc_score(y_b, p_b)),
