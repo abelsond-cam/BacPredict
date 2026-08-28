@@ -394,11 +394,32 @@ move between named clusters — so no genome's existing lineage assignment is re
 genomes, just over `min_size`) and it comes from the join fix, so LIN typing changes the null's
 *coverage*, not its *structure*.
 
-**⚠ `lineage_clusters.tsv` is still the OLD file.** The replacement sits at
-`…/david/lin_typing/proposed/` and has **not** been swapped in. Because the change is additive, the
-two pilot drugs' results are not *contradicted* — but their λ and permutation p-values were computed
-against a null over 3,890 genomes and 10 clusters, so they are **not comparable** to anything run
-after the swap. Re-run the pilots alongside the fan-out rather than quoting them across the change.
+**⚠ CORRECTED 2026-08-28 — the swap HAS happened on CSD3, and it landed between the pilots and the
+fan-out.** This entry previously said `lineage_clusters.tsv` was "still the OLD file"; that is no
+longer true. The live
+`…/bac_ast_prediction/processed/pyseer_ast/kp/structure/lineage_clusters.tsv` was replaced
+**2026-08-20 18:34** (mtime) and is the proposed 11-cluster file — read from the TSV itself, not the
+manifest beside it: 7,080 rows, 12 distinct labels (11 named + `other`), `other` = 2,803, which
+matches `lineage_clusters.manifest.json`'s `n_clusters: 11` / `n_in_named_cluster: 4277` /
+`named_cluster_coverage: 0.6041` exactly. So the **live** column of the coverage table above is now
+the *proposed* column. (Isambard is still unswapped and unverified.)
+
+**Which drugs used which file — from the 22 `.assoc` mtimes.** Exactly the two pilots predate the
+swap: **ertapenem** (2026-08-13 12:21) and **colistin** (2026-08-13 14:04) ran against the old
+10-cluster / 3,890-named file; **the other 20** ran 2026-08-20 23:02 → 2026-08-24 12:28 against the
+new one. The existing conclusion therefore stands and is now grounded: **re-run the two pilots
+rather than quoting their λ or permutation p-values across the change.**
+
+**This does not touch any AUROC, and here is why.** The clusters reach pyseer only at the per-shard
+association step (`--lineage --lineage-clusters`); the LMM cache the shards load is built in a
+separate prep step from `--similarity` alone, with neither `--lineage` nor `--distances`
+(`unitig_lmm_sharded_job.sh:145`). β and p therefore come from a clusters-free LMM, so the hit set,
+the design matrix and every read-out AUROC are identical either way. What differs for the two pilots
+is the post-hoc `lineage` attribution column and any null computed against those clusters.
+
+**The `trainval_vocab` rebuild is internally consistent on this axis**, unlike the comparator: all 22
+of its cluster files are built in one pass by `build_trainval_vocab.sh`, with the same method and the
+same two extra LIN-typing tables (`archived_lin.tsv`, `mist_lin_new.tsv`) that produced the live file.
 
 **Status — invasion (`src/bac_pyseer/kleb_iso_source/`).** Complete and written up.
 [`PROGRESS_UNITIGS.md`](src/bac_pyseer/docs/PROGRESS_UNITIGS.md) ·

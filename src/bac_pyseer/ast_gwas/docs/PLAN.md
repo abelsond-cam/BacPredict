@@ -340,16 +340,20 @@ per-drug ladder CSVs, so `engine/plots/plot_amr_ladder.py` renders it next to `B
 
 This is what makes the comparison honest. Every stage, and what it sees:
 
+**Two arms exist.** `full_cohort` is the original run and remains the comparator; `trainval_vocab`
+is the rebuild that closes the last two rows. The columns below say what each arm's stage sees.
+
 | Stage | Sees holdout **genomes**? | Sees holdout **labels**? | Note |
 |---|---|---|---|
-| GGCAT unitig build | Yes | **No** | Unsupervised. Building features over the whole cohort is standard and is exactly what the embedding arm does. |
-| mash kinship / lineage clusters | Yes | **No** | Unsupervised. |
+| GGCAT unitig build | `full_cohort`: **Yes** · `trainval_vocab`: **No** | **No** | ⚠️ **Superseded judgement.** Unsupervised full-cohort feature construction was accepted here at the time. It is not a label leak, but the *feature representation* is shaped by holdout sequence: a k-mer surviving `-s 2` only via a holdout carrier is a graph node, nodes are branch points, and a branch point splits a unitig every genome then inherits. `trainval_vocab` rebuilds the vocabulary per drug over train+validate only. |
+| mash kinship / lineage clusters | `full_cohort`: **Yes** · `trainval_vocab`: **No** | **No** | Unsupervised, and the kinship is provably inert either way — `similarity_for_samples` subsets with `np.ix_` *then* applies `1.0 - d` elementwise, so no cohort statistic enters a cell. Clusters are cohort-dependent but `fit_lineage_effect` runs *after* p-values exist, so they cannot move β or p. Rebuilt per drug regardless, and asserted equal to the old triangle's subset at max abs diff 0.0. |
 | pyseer phenotype file | **No** | **No** | Restricted to `train + validate`; asserted. |
 | af / MAF filter | **No** | — | pyseer computes af over the phenotyped samples only, so the filter is train-only. |
 | Bonferroni pattern count | **No** | **No** | Patterns come from the train+validate run, so the threshold is train-derived. |
 | Hit selection | **No** | **No** | The whole point. |
 | LR fit | train only | train only | |
-| Operating threshold | validate only | validate only | Youden on validate, as `fit_score_step` does. |
+| `C` selection | validate only | validate only | Swept on validate; see `unitig_lr`'s module docstring for why the repo's pinned `C=1.0` is wrong for LD-redundant unitig features. |
+| Operating threshold | **holdout** | **holdout** | ⚠️ **Not validate — this row used to say otherwise and was wrong.** `unitig_lr` picks Youden's J on the holdout *deliberately*, so sens/spec/balanced accuracy are the best achievable operating point, not an unbiased estimate; `operating_point.selected_on` records `"holdout"`. The engine's `fit_score_step` uses validate, so the two disagree — but **the ladder plots only AUROC/AUPRC, which are threshold-free**, and `collect_comparison` recomputes the operating point for *both* arms from their own `eval_scores.npz`, so no reported number mixes conventions. |
 | Final scoring | holdout | holdout | Once, at the end. |
 
 No standardisation is applied (binary features), so there is no scaler to fit on the wrong split.

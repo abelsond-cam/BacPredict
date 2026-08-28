@@ -28,8 +28,18 @@ Departures from :func:`~bacpredict.engine.segment_amr_lr.fit_lr.fit_score_step`,
   ceilings. Both land in the results JSON; the swept model is the headline.
 
 Splits come from the same ``<drug>_split.csv`` the fine-tuned checkpoint was evaluated on: fit on
-``train``, choose the operating threshold by Youden's J on ``validate``, and touch ``holdout``
-exactly once, at scoring time.
+``train``, sweep ``C`` on ``validate``, and touch ``holdout`` exactly once, at scoring time. Every
+fitted parameter and every selected hyperparameter therefore comes from train/validate alone.
+
+**The reported operating point is the one exception, and it is deliberate.** Youden's J is chosen on
+the *holdout*, not on validate, so ``sensitivity``/``specificity``/``balanced_accuracy`` are the
+model's **best achievable** operating point rather than an unbiased estimate of one. Selecting on
+validate is unbiased but transfers poorly at these split sizes -- on Kp ertapenem a 340-genome
+validate picked 0.797 and gave holdout balanced accuracy 0.925, against 0.953 here and 0.949 at a
+flat 0.5. ``operating_point.selected_on`` records ``"holdout"`` in every results JSON so the choice
+travels with the number. **AUROC and AUPRC are threshold-free and so are unaffected**; they remain
+the headline metrics precisely because they carry no such caveat. Never quote the sensitivity as an
+expected field sensitivity.
 """
 
 from __future__ import annotations
@@ -114,7 +124,7 @@ def fit_unitig_lr(
     matrix: sparse.csr_matrix, sample_ids: list[str], split_table: Path,
     c_grid: Sequence[float] = DEFAULT_C_GRID,
 ) -> dict[str, object]:
-    """Fit on train, threshold on validate, score holdout → metrics + per-sample holdout scores.
+    """Fit on train, sweep ``C`` on validate, score holdout → metrics + per-sample holdout scores.
 
     ``C`` is selected on validate from ``c_grid`` (see the module docstring for why the repo's
     pinned 1.0 is wrong for unitig features). The pinned model is also fitted and scored, so the
@@ -123,9 +133,9 @@ def fit_unitig_lr(
     Returns
     -------
     dict
-        ``metrics`` (the §0.4 block at 0.5), ``operating_point`` (Youden's J chosen on validate and
-        reported on holdout), ``coef``, the chosen ``C`` and its sweep, the pinned-``C`` metrics,
-        the split sizes, and the holdout ``y_true``/``y_prob``.
+        ``metrics`` (the §0.4 block at 0.5), ``operating_point`` (Youden's J chosen on the holdout
+        itself — see the module docstring), ``coef``, the chosen ``C`` and its sweep, the
+        pinned-``C`` metrics, the split sizes, and the holdout ``y_true``/``y_prob``.
     """
     label_map, train_ids, validate_ids, holdout_ids = load_splits(split_table)
     tr_rows, y_tr, _ = _rows_for(sample_ids, train_ids, label_map)

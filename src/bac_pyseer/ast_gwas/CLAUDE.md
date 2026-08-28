@@ -191,13 +191,21 @@ Kp (`--min-samples` 71, `--max-samples` 7009).
 merely coarse — `--lineage` carries no information and the permutation null degenerates into a
 global shuffle.
 
-So Kp now uses `sublineage_from_metadata.py` (curated Kleborate `Sublineage` from `metadata_v2`,
-which *is* present on CSD3): **10 clusters** at `min_size=100` holding **3,890/7,080 (54.9%)** — the 6,458/7,080 (91.2%) figure is *Kleborate label* coverage, a different quantity; the rest fall below `min_size` into `other`. The
-collapsed mash file is kept beside it as `mash_lineage_clusters.tsv` for the methods comparison.
+So Kp now uses `sublineage_from_metadata.py` (curated `Sublineage` — Pasteur BIGSdb LIN-typing —
+from `metadata_v2`, which *is* present on CSD3), cut at `min_size=100` with everything smaller
+collapsed into `other`. **Cluster counts and coverage are state, not convention: read them from
+`structure/lineage_clusters.manifest.json`, which the builder writes beside every clusters TSV, and
+see `PROJECT_STATE.md` §3.3.** Two coverage figures live there and are easy to conflate —
+`label_coverage` (genomes carrying *any* sublineage label) is much higher than
+`named_cluster_coverage` (genomes in a cluster that survived `min_size`); quote the one you mean.
+The numbers move whenever LIN-typing is refreshed, so a figure pasted into prose goes stale
+silently — this passage previously carried four such figures, all wrong after the 2026-08-20 update.
+The collapsed mash file is kept beside it as `mash_lineage_clusters.tsv` for the methods comparison.
 **TB still needs the mash route** — no TB lineage labels exist until TB-Profiler runs over ~39k
 assemblies — so the two organisms derive clusters differently and methods must say so.
 
-`other` holds 3,190 genomes (45%): 622 unlabelled plus 2,568 in sublineages under the cut. It is not
+`other` holds every genome that is either unlabelled or in a sublineage below the cut (see the
+manifest's `n_in_other` and `largest_clusters` for the split). It is not
 a lineage, so `permute_phenotype_within_lineage.py --exclude-cluster other` drops those from the
 null; **the paired real run must be scored on the same subset** or λ_perm and λ_real describe
 different cohorts. `min_size=50` was measured (17 clusters, `other` 45%→38%) and **rejected as not

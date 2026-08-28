@@ -42,6 +42,12 @@ METADATA_TSV=${METADATA_TSV:-$DATA_ROOT/../final/metadata_v2_all_samples_and_col
 LIN_DIR=${LIN_DIR:-$DATA_ROOT/../lin_typing}
 EXTRA_LIN=${EXTRA_LIN:-"$LIN_DIR/archived_lin.tsv $LIN_DIR/mist_lin_new.tsv"}
 MIN_CLUSTER_SIZE=${MIN_CLUSTER_SIZE:-100}
+# mash_kinship.py shells out to `mash`, which lives in the bac_pyseer pixi env beside `ggcat` and is
+# NOT on a login/compute node's PATH. run_ggcat_unitigs.sh gets this right by calling `pixi run`;
+# build_cohort_once.sh does not, which is why its mash step has never actually run. Prepending the
+# env's bin keeps the uv venv as the interpreter (so `bac_pyseer` stays importable) while making the
+# binary resolvable.
+PIXI_BIN=${PIXI_BIN:-$REPO/src/bac_pyseer/.pixi/envs/default/bin}
 
 ACCT=${ACCT:-FLOTO-PROJECT-K-SL2-CPU}
 PART=${PART:-icelake-himem}
@@ -55,6 +61,11 @@ MASH_CPUS=${MASH_CPUS:-16};   MASH_MEM=${MASH_MEM:-48G};   MASH_TIME=${MASH_TIME
 AUDIT_CPUS=${AUDIT_CPUS:-2};  AUDIT_MEM=${AUDIT_MEM:-16G}; AUDIT_TIME=${AUDIT_TIME:-00:30:00}
 
 [ "$#" -gt 0 ] || { echo "usage: $0 <drug> [drug...]" >&2; exit 1; }
+if [ ! -x "$PIXI_BIN/mash" ]; then
+    echo "ERROR: no mash at $PIXI_BIN/mash — run 'pixi install --manifest-path $REPO/src/bac_pyseer/pixi.toml'" >&2
+    echo "       (set PIXI_BIN=... to override). Failing now rather than letting every mash job die on PATH." >&2
+    exit 1
+fi
 mkdir -p "$LOGDIR"
 cd "$REPO"
 export PYTHONPATH="$REPO/src:${PYTHONPATH:-}"
@@ -143,6 +154,7 @@ for DRUG in "$@"; do
         --error="$LOGDIR/mash_${COHORT}_${DRUG}_%j.err" \
         --wrap "set -euo pipefail
                 cd '$REPO'; unset PYTHONPATH PYTHONHOME; export PYTHONPATH='$REPO/src'
+                export PATH='$PIXI_BIN':\$PATH
                 uv run python -m bac_pyseer.ast_gwas.mash_kinship sketch \
                     --reflist '$REFLIST' --out-dir '$STRUCT_DIR' --threads $MASH_CPUS
                 uv run python -m bac_pyseer.ast_gwas.sublineage_from_metadata \

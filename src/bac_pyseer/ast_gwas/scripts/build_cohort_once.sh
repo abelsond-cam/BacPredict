@@ -79,6 +79,9 @@ MASH_JOB=$(sb --cpus-per-task="$MASH_CPUS" --mem="$MASH_MEM" --time="$MASH_TIME"
             cd '$REPO'
             unset PYTHONPATH PYTHONHOME
             export PYTHONPATH='$REPO/src'
+            # mash_kinship shells out to \`mash\`, which is in the bac_pyseer pixi env, not on PATH.
+            # Without this the job dies in ~9 s with \"'mash' not on PATH\" — measured 2026-08-28.
+            export PATH='${PIXI_BIN:-$REPO/src/bac_pyseer/.pixi/envs/default/bin}':\$PATH
             uv run python -m bac_pyseer.ast_gwas.mash_kinship sketch \
                 --reflist '$REFLIST' --out-dir '$STRUCT_DIR' --threads $MASH_CPUS
             uv run python -m bac_pyseer.ast_gwas.lineage_from_distances \
