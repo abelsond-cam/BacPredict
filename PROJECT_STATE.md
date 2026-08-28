@@ -317,6 +317,21 @@ the drop is not a threshold artefact. ⚠️ **Hit count is not AUROC**: a drug 
 and predict identically, so nothing about predictive performance follows from this table. That is
 C5's question. These mechanisms are **hypotheses pending David's comment**, not conclusions.
 
+**⚠ The `full_cohort` arm scores a few holdout genomes that have no features at all.** Found
+2026-08-28 when the rebuild's holdout id-set guard fired on cefazolin (594 vs 593). `SAMEA3357403`
+is in cefazolin's split table and its `design/samples.txt`, but **not in
+`kp/unitigs/assembly_refs.txt`** — the reflist saying which genomes became GGCAT colours — so it has
+an **entirely zero feature row** (nnz 0 against a median of 16,103 carriers) and was scored from the
+model intercept alone. Surveyed across all 22 comparator designs by loading each `presence.npz`:
+**105 all-zero rows of 67,584 (0.16%)**, in every drug except colistin, 1–8 per drug (worst:
+tobramycin 8/2,852 = 0.28%). These are genomes present in the split tables with no assembly to
+resolve. **The rebuild does not have them** — its scanner needs an assembly — which is why the two
+arms' holdout sets differ slightly and why `compare_vocab_arms` pairs on the intersection, counting
+and naming the exclusions rather than intersecting silently. Effect on the published `full_cohort`
+AUROCs is small (~1–2 holdout genomes per drug) but real, and belongs in any write-up.
+`engine`-side, `unitig_design_matrix.check_holdout_coverage` counts `n_holdout_all_zero` and would
+have caught this when those designs were built, had it existed then.
+
 **⚠ ertapenem's `gwas/` summary is stale and must not be quoted.** It predates the combine-phase fix
 and left `pheno_var` at the 0.249 default (`pheno_var_source: "default"`); its regenerated sibling one
 level up — `kp/ertapenem/ertapenem_gwas_summary.json`, written with `--phenotype-tsv` — is the
