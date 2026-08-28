@@ -181,8 +181,11 @@ Sizes:  ls -lh $VOCAB_ROOT/<drug>/unitigs/unitigs.pyseer.gz
 [look] Before running any GWAS, check per drug:
   - leakage_audit.json has BOTH a 'reflist' and a 'vocabulary' section (a missing one is unchecked,
     not passed), and n_holdout_coloured == 0
-  - MIN_SAMP in the ggcat log: it auto-rebases to 1% of the SMALLER reflist, so it is now ~17 rather
-    than 71. That finally matches pyseer's --min-af 0.01 and is more correct -- but it is a second,
-    non-leakage difference that will tend to RAISE the new AUROC. Record it; the read-out controls
-    for it by refitting on columns with >=71 train+validate carriers.
+  - MIN_SAMP: it auto-rebases to 1% of the SMALLER reflist, so it is now per-drug (12 for colistin's
+    1,128 genomes, 40 for gentamicin's 3,932) rather than a flat 71. Expressed over one drug's
+    phenotyped genomes, 71 was an effective ~4% MAF floor while pyseer was told --min-af 0.01, so
+    the old run was silently under-powered for rare unitigs on every drug. The rebase is more
+    correct -- and it is a second, NON-LEAKAGE difference that will tend to RAISE the new AUROC,
+    partially masking the leakage cost. leakage_audit.json records min_samples_floor per drug; the
+    read-out controls for it by refitting on columns with >=71 train+validate carriers.
 EOF
