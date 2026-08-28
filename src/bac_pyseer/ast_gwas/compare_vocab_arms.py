@@ -293,13 +293,16 @@ def run(
         print(
             f"{r['drug']:<30} {r['full_cohort_auroc']:>7.4f} {r['trainval_vocab_auroc']:>8.4f} "
             f"{r['delta']:>+8.4f} [{r['ci_lo']:>+7.4f},{r['ci_hi']:>+7.4f}] "
-            f"{'yes' if r['separates_from_zero'] else 'no':>4} {floor:>11}"
+            f"{'yes' if r.get('separates_from_zero') else 'no':>4} {floor:>11}"
         )
     for note in skipped:
         print(f"  skipped: {note}")
 
     deltas = np.array([r["delta"] for r in rows])
-    sep = [r for r in rows if r["separates_from_zero"]]
+    # .get: paired_delta_ci omits the key entirely when every resample was
+    # single-class, which a small imbalanced holdout can produce. A bare KeyError
+    # there would lose the other 21 drugs' comparison along with it.
+    sep = [r for r in rows if r.get("separates_from_zero")]
     print(
         f"\n{len(rows)} drug(s) compared · median delta {np.median(deltas):+.4f} · "
         f"mean {deltas.mean():+.4f} · {len(sep)} separate from zero · "

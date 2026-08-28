@@ -209,3 +209,19 @@ def test_run_gwas_reads_the_rebuild_layout(tmp_path, capsys):
     text = capsys.readouterr().out
     assert "2 drug(s)" in text
     assert out.exists()
+
+
+def test_a_degenerate_bootstrap_does_not_crash_the_whole_comparison(tmp_path, capsys, monkeypatch):
+    """paired_delta_ci drops separates_from_zero when every resample was single-class."""
+    import bac_pyseer.ast_gwas.compare_vocab_arms as mod
+
+    def degenerate(y_true, a, b, **kw):
+        return {"delta": 0.0, "ci_lo": float("nan"), "ci_hi": float("nan"), "n_boot_valid": 0}
+
+    monkeypatch.setattr(mod, "paired_delta_ci", degenerate)
+    full, vocab = tmp_path / "kp", tmp_path / "kp_trainval_vocab"
+    ids, y, a, b = _cohort()
+    _scores(full / "colistin" / "lr" / "eval_scores.npz", ids, y, a)
+    _scores(vocab / "colistin" / "colistin" / "lr" / "eval_scores.npz", ids, y, b)
+    assert mod.run(full, vocab, None, n_boot=10) == 0
+    assert "0 separate from zero" in capsys.readouterr().out
