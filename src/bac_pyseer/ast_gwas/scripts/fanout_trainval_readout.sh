@@ -29,15 +29,19 @@ else
 fi
 [ "${#DRUGS[@]}" -gt 0 ] || { echo "no drug directories under $VOCAB_ROOT" >&2; exit 1; }
 
+# ONE squeue call, not one per drug. Queried inside the loop this made 22 calls against a SLURM
+# controller already carrying ~1,400 array tasks, and took minutes to produce its first line.
+IN_FLIGHT=$(squeue -u "$USER" -h -o '%j' 2>/dev/null || true)
+
 ready=(); waiting=(); done_=(); queued=()
 for DRUG in "${DRUGS[@]}"; do
     DRUG_DIR=$VOCAB_ROOT/$DRUG/$DRUG
     hits=$DRUG_DIR/${DRUG}_hits_annotated.tsv
     [ -s "$hits" ] || hits=$DRUG_DIR/gwas/${DRUG}_hits_annotated.tsv
     if [ -s "$DRUG_DIR/lr/results.json" ]; then done_+=("$DRUG"); continue; fi
-    # squeue is the only way to see a chain that is submitted but has produced nothing yet;
+    # The queue is the only way to see a chain that is submitted but has produced nothing yet;
     # without this check a second run resubmits every in-flight drug.
-    if squeue -u "$USER" -h -o '%j' 2>/dev/null | grep -qE "^(udesign|uscan|ulr)_${DRUG}$"; then
+    if printf '%s\n' "$IN_FLIGHT" | grep -qE "^(udesign|uscan|ulr)_${DRUG}$"; then
         queued+=("$DRUG"); continue
     fi
     if [ -s "$hits" ]; then ready+=("$DRUG"); else waiting+=("$DRUG"); fi
