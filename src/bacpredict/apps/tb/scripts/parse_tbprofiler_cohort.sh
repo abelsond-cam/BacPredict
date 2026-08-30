@@ -33,8 +33,13 @@ ACCT=${ACCT:-FLOTO-PROJECT-K-SL2-CPU}
 PART=${PART:-icelake-himem}
 QOS=${QOS-}                      # CSD3 FLOTO associations allow only cpu1/intr; empty omits --qos
 CPUS=${CPUS:-1}
-MEM=${MEM:-4G}                   # measured working set is well under 1 GB; 4G is the short-job cushion
-TIME=${TIME:-00:40:00}           # ~4 GB of JSON over 36,684 cold RDS reads; ~1.5x the 20 min estimate
+MEM=${MEM:-8G}                   # MEASURED 4.0 GB peak (sacct MaxRSS, job 34597335) against a 4G request
+                                 # -- it completed, but at the cap. The cost is the TRANSIENT per-file
+                                 # object graph (gene_name2locus_tag, other_variants, the lineage support
+                                 # arrays: 108 KB of JSON -> multi-MB of Python objects), which CPython
+                                 # does not return to the OS, so RSS tracks the high-water mark. The
+                                 # accumulators are ~85 MB and were never the cost.
+TIME=${TIME:-00:40:00}           # MEASURED 17:51 wall for 36,684 files (job 34597335); ~2.2x cushion
 
 [ -d "$CALLS_DIR" ] || { echo "ERROR: no calls dir at $CALLS_DIR" >&2; exit 1; }
 [ -s "$COHORT_CSV" ] || { echo "ERROR: no cohort csv at $COHORT_CSV" >&2; exit 1; }
@@ -48,8 +53,8 @@ JOB=$(sbatch --parsable --account="$ACCT" --partition="$PART" ${QOS:+--qos="$QOS
             --results-dir '$CALLS_DIR' --out-dir '$OUT_DIR' --cohort-csv '$COHORT_CSV'")
 
 echo "JOB $JOB tb-tbprofiler-parse | CPU    | mem=$MEM  | cores=$CPUS  | wall=$TIME | $PART"
-echo "  mem=$MEM: peak working set <1 GB (77.6k variant rows + 36.7k meta rows, one JSON at a time);"
-echo "            short job, so the cushion is generous rather than tuned."
+echo "  mem=\$MEM: measured 4.0 GB peak at 36,684 files (job 34597335); 2x that, since the driver is"
+echo "            per-file transient objects and CPython's arena high-water mark, not the accumulators."
 echo "  wall=$TIME: 36,684 x ~108 KB JSON = ~4 GB, cold-RDS metadata bound (~28 ms/file worst case)."
 echo "  logs: $LOGDIR/parse_$JOB.{out,err}"
 echo "  out:  $OUT_DIR"
