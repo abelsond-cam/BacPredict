@@ -1,11 +1,15 @@
 # BacPredict — project state
 
-> **Last verified: 2026-08-28 @ `782d53f`** (branch `refactor/consolidate-engine`).
-> **Verification scope, this pass (2026-08-28): §3.3 TB only.** Every TB figure was listed or read on
-> CSD3 in this session — the ten split tables and their per-split counts, assembly resolution
-> (36,389/36,390), the 36,684 TB-Profiler `results.json` and the lineage fields inside one of them,
-> `MaxMemPerCPU`, and the storage/compute headroom. The Phase 0 code claims are backed by the test
-> suite (317 in `tests/bac_pyseer/`) and by a benchmark run locally.
+> **Last verified: 2026-08-30 @ `034edb5`** (branch `refactor/consolidate-engine`).
+> **Verification scope, this pass (2026-08-30): §3.3 TB only, Phase 1.** Every TB figure below was read
+> on CSD3 this session from the artifact named beside it — `tbprofiler_parse_manifest.json`, the two
+> cluster manifests, `assembly_refs.txt`'s resolution manifest, the ten `<drug>_split.csv` re-counted,
+> the `drugs` column of `tbprofiler_variants.parquet`, `sacct` for job `34597335`, and md5 against the
+> June parse. **This pass corrected two figures the previous stamp asserted** — the cohort is 36,692 and
+> nothing fails to resolve; "36,389/36,390" was read off the deprecated tree. Treat that as the standing
+> hazard here: there are two `train_tb_ast` trees with different cohort sizes. Phase 0's code claims are
+> backed by the test suite (900 passing; 14 pre-existing `tests/docs/` failures belong to another agent's
+> in-flight package deletions).
 > **NOT re-verified this pass** — carried forward from the stamps below, and each still carrying
 > whatever caveat it carried then: all 32 fine-tune numbers, both catalogue ceilings, the invasion
 > GWAS results, §3.4 and §3.5. The Kp §3.3 numbers were verified on 2026-08-28 in the preceding
@@ -660,21 +664,33 @@ k-mer survives but no contiguous occurrence does. Pinned as a fixture in
 
 ---
 
-**Status — TB (`src/bac_pyseer/ast_gwas/`, organism `tb`).** **Phase 0 complete, 2026-08-28; nothing
-has run on the cluster.** Plan: `~/.claude/plans/tb-uses-the-tb-shimmering-fountain.md`. Approach
+**Status — TB (`src/bac_pyseer/ast_gwas/`, organism `tb`).** **Phases 0–1 complete, 2026-08-30.**
+The TB-Profiler call set is parsed into the canonical tree and both comparator cluster files are
+written; the cohort reflist is resolved. **No GWAS has run** — Phase 2 (the cohort build) is next. Plan: `~/.claude/plans/tb-uses-the-tb-shimmering-fountain.md`. Approach
 agreed with David: **one shared full-cohort vocabulary, subset per drug** (licensed by the C6 result
 above — the leakage-free rebuild moved Kp by a median +0.0002), with the leakage-free arm deferred.
-TB has an option Kp did not: **12,225 of 36,390 genomes (33.6%) sit in no drug's holdout**, so a
-*single* leakage-free shared build is possible later, against Kp's 22 per-drug builds.
+TB has an option Kp did not: a large minority of genomes sit in **no** drug's holdout, so a *single*
+leakage-free shared build is possible later, against Kp's 22 per-drug builds. ⚠ The figure previously
+recorded here (12,225 of 36,390, 33.6%) was computed against the **superseded 36,390 cohort** — see the
+table below. **Recompute it against 36,692 before relying on it**; the qualitative point stands, the
+number does not.
 
 **Cohort facts, listed on CSD3 2026-08-28 — not carried over from any plan.**
 
 | | value |
 |---|---|
-| GWAS cohort (union of the 10 split tables) | **36,390**; **36,389 resolve** to `raw/tb/assemblies/{Sample}.fa.gz`, flat and BioSample-keyed, **no `--file-list`** |
-| per-drug train+validate (the LMM's n) | **7,172 (streptomycin) → 28,508 (rifampin)**; 2.1× the largest cohort this pipeline has run |
-| holdout n | matches each drug's fine-tune `n` **exactly, all 10** — so unitig-vs-FT pairs on identical holdouts, unlike Kp |
-| TB-Profiler | **already run, June 2026**: 36,684 `results.json` covering **36,321 of 36,390** (69 missing) |
+| GWAS cohort | **36,692**, and **36,692 resolve — 0 missing** (`pyseer_ast/tb/unitigs/assembly_refs.txt` + its manifest, 2026-08-30). Flat, BioSample-keyed, **no `--file-list`** |
+| per-drug train+validate (the LMM's n) | **7,167 (streptomycin) → 28,507 (rifampin)**, read from the 10 `<drug>_split.csv` — 2.1× the largest cohort this pipeline has run |
+| holdout n | **1,792 (streptomycin) → 7,127 (rifampin)**; matches each drug's fine-tune `n`, all 10 — so unitig-vs-FT pairs on identical holdouts, unlike Kp |
+| TB-Profiler coverage | **36,624 of 36,692 (99.81%)**; **68 uncovered, named** in `tbprofiler_uncovered_samples.txt`; 60 called genomes sit outside the cohort |
+
+> ⚠ **Two numbers previously in this table were wrong, and both came from the *deprecated* tree.** The
+> cohort is **36,692, not 36,390**, and **nothing fails to resolve** (the "36,389 of 36,390, 1 missing"
+> never existed). There really are two trees — `david/processed/train_tb_ast/` (deprecated, 36,684) and
+> `david/bac_ast_prediction/processed/train_tb_ast/` (canonical, 36,692) — and `resolve_data_root()`
+> returns the canonical one. `ast_gwas/CLAUDE.md` §layout records the distinction; the TB plan did not,
+> which is how the wrong denominator propagated into the "69 missing" figure (the measured count against
+> the right denominator is **68**, a near-coincidence that would have hidden the error).
 
 **The TB-Profiler finding supersedes `PLAN.md` Decision 3** and matching claims in
 `lineage_from_distances.py`, `sublineage_from_metadata.py` and `ast_gwas/CLAUDE.md`, all of which
@@ -717,17 +733,55 @@ behaviour-preserving with defaults unchanged, pinned by tests that run the real 
   treats it as a minimum width, and the combine iterates by index, not by glob. Verified before
   touching it; renaming would have invalidated every existing chunk set for nothing.
 
-**Next (TB).** Phase 1 parse TB-Profiler → lineage + `tbprofiler_variants.parquet` · Phase 2 build
-the cohort once, **measuring** matrix/colormap/triangle bytes and setting `NSHARDS` from them ·
-Phase 3 the drug ladder, **streptomycin alone first** (it is also the job that builds the shared
-chunk set every later drug reuses in ~9 s) · Phases 4–6 read-out, WHO ceiling, λ calibration.
+**Phase 1 — the TB-Profiler parse (job `34597335`, 17:51 wall, 2026-08-30).** Artifacts in
+`bac_ast_prediction/processed/train_tb_ast/tbprofiler/`; numbers from
+`tbprofiler_parse_manifest.json` unless stated.
+
+| | value |
+|---|---|
+| result JSONs parsed | **36,684 of 36,684; 0 unparseable** |
+| catalogue | **one commit for all 36,684 genomes** — `who_v2+` `7fe4364e`, db-schema 2.1.0, TB-Profiler **6.7.0** |
+| variant rows / distinct variants | **77,585** / **4,647** |
+| genomes with a lineage call | **36,604** (46 `sub_lineage` clusters, or 5 `main_lineage`, at `min_size=100`) |
+| cluster files | `structure/tbprofiler_{sub,main}_lineage_clusters.tsv` — named-cluster coverage **94.7%** / **99.2%**, `other` = 1,954 / 308 |
+
+**The re-parse reproduced the June output byte-for-byte** — all three artifacts md5-identical to
+`snp_embeddings/tbprofiler_calls/parsed/`. That is the empirical form of the argument that licensed
+re-parsing rather than re-calling 36k assemblies: a `results.json` is a deterministic function of one
+assembly and one catalogue version. It is now checked rather than asserted — the parser reads
+`pipeline.db_version` from **every** file and refuses a mixed catalogue, because a call set spanning two
+commits is two one-hot vocabularies and nothing downstream could have detected it.
+
+> **⚠ Rifabutin cannot have a WHO ceiling.** The `who_v2+` catalogue annotates **20 drugs and rifabutin
+> is not one of them** (it annotates *rifapentine*, a different rifamycin) — read from the `drugs` column
+> of `tbprofiler_variants.parquet`. That, not a parser bug, is why it scores **0 of 36,684**;
+> `_norm_drug` passes the name through untouched. `tbprofiler_gene_lr` already skips a drug with no
+> variants, so **Phase 5 yields 9 of 10 and does not error**. Rifabutin's *GWAS* is unaffected — it has a
+> real phenotype (9,711 train+val, 2,427 holdout). Whether to give it rifampin's `rpoB` one-hot as a
+> proxy feature set is **open, and David's call** (see the plan's Phase 5).
+
+> **⚠ The parse peaked at 4.0 GB against a 4 GB request** (`sacct MaxRSS=4194536K`, job `34597335`). It
+> completed cleanly, but my estimate was "<1 GB" and the driver was the one thing that estimate ignored:
+> the **transient** per-file object graph. Each JSON carries `gene_name2locus_tag`, `other_variants` and
+> the `lineage` support arrays, so a 108 KB file becomes multi-MB of Python objects, and CPython does not
+> return freed arenas to the OS — so RSS tracks the high-water mark, not the live set. **Accumulators
+> were never the cost.** Re-running this needs ≥8 G.
+
+**Next (TB).** **Phase 2** — `build_cohort_once.sh ORGANISM=tb` (the reflist is already resolved and
+will be reused), **measuring** matrix/colormap/triangle bytes and setting `NSHARDS` from them, then
+comparing the mash partition against the two TB-Profiler ones · **Phase 3** the drug ladder,
+**streptomycin alone first** (it is also the job that builds the shared chunk set every later drug
+reuses in ~9 s) · Phases 4–6 read-out, WHO ceiling, λ calibration.
 
 **Caveats (TB).**
 - **Every memory figure above is an extrapolation, not a measurement.** No `sacct MaxRSS` for a
   unitig shard exists anywhere in the repo. Wave 3a's canary is what replaces it.
 - **The WHO ceiling is still the provisional June one.** The layout now mirrors CARD and
   `discover_who` reads both shapes, but the rebuild itself (Phase 5) has not run — so a TB
-  ceiling-vs-unitig gap still cannot be read in either direction.
+  ceiling-vs-unitig gap still cannot be read in either direction. When it does run it will cover
+  **9 drugs, not 10**, unless the rifabutin proxy above is agreed.
+- **The mash-vs-TB-Profiler partition comparison has not happened.** Both TB-Profiler cluster files
+  exist; the mash one is built by Phase 2, so "both written and compared" is only half done.
 - **λ will be worse than Kp's 4.18–4.54 median**, TB being far more clonal. `permute_unitig_lambda.sh`
   has never been wired into `ast_gwas` despite `run_drug.sh` saying it is not optional. **No claim
   about *which* unitigs matter until Phase 6 runs.** AUROC comparisons are unaffected.
