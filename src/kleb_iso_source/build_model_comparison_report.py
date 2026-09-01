@@ -389,6 +389,14 @@ def cmd_compare(args: argparse.Namespace) -> None:
 SHORTLIST_COLS = ["LabID", "strain", SL_COL, "ST", POOLED_COL, ALL_SAMPLES_COL, UNITIG_COL,
                   TRUE_COL, SPLIT_COL]
 
+#: Section 6 is a hand-off to a collaborator choosing strains, not an audit of the models, so it
+#: carries the accession they order by and drops everything internal (``strain``, the provisional
+#: ``all_samples`` column, the split, and the agree/disagree flags — every listed row agrees).
+PICK_COLS = [ID_COL, "LabID", "ST", POOLED_COL, UNITIG_COL, TRUE_COL]
+
+#: A genome in no cohort split at all: never fitted on, so its score is a genuine prediction.
+UNSEEN_SPLIT = "unseen"
+
 
 def _present(df: pd.DataFrame, cols: list[str]) -> list[str]:
     """Subset of ``cols`` actually present, so a missing optional column is not fatal."""
@@ -410,6 +418,54 @@ def top_bottom(df: pd.DataFrame, k: int, by: str = POOLED_COL) -> pd.DataFrame:
     return pd.concat([top, bottom], ignore_index=True)
 
 
+def confident_picks(agreed: pd.DataFrame, k: int) -> tuple[pd.DataFrame, dict[str, int]]:
+    """Up to ``k`` invasive and ``k`` faeces picks from genomes both models already agree on.
+
+    ``agreed`` must already be restricted to one sublineage *and* to rows where the two models fall
+    on the same side of their own thresholds — this function does not re-derive agreement, it only
+    chooses which of the agreeing genomes to hand over.
+
+    Three rules, each answering a way the previous top/bottom-by-probability version misled:
+
+    1. **Split by the agreed call, not by rank.** ``top_bottom`` took the ``k`` lowest-probability
+       rows whatever side of the threshold they sat on, so in a lineage the models call invasive
+       throughout, the "faeces" half was invasive genomes with smaller numbers.
+    2. **Drop rows a known label contradicts.** A pick we can already show is wrong is not a
+       high-confidence pick under any reading; the count is returned so it can be footnoted rather
+       than silently vanishing.
+    3. **Prefer genomes never in a cohort split.** A fitted-on genome's confident score is partly
+       recall of a memorised label, so ``unseen`` rows sort first and fitted-on ones only fill the
+       remainder. Within each of those two bands the ordering is by confidence.
+
+    Nothing is ever padded: a class with fewer than ``k`` survivors returns what it has.
+
+    Returns
+    -------
+    tuple of (pandas.DataFrame, dict)
+        The chosen rows with a ``pick`` column (``"invasive"`` / ``"faeces"``), and the counts
+        behind the caption: agreeing per class, dropped per class, shown per class.
+    """
+    frames, stats = [], {}
+    for label, want_invasive in (("invasive", True), ("faeces", False)):
+        side = agreed[agreed["bacformer_call"] == ("invasive" if want_invasive else "faeces")]
+        truth = 1.0 if want_invasive else 0.0
+        contradicts = side[TRUE_COL].notna() & (side[TRUE_COL] != truth) if TRUE_COL in side else False
+        kept = side[~contradicts] if TRUE_COL in side else side
+
+        # unseen first, then by confidence — descending for invasive, ascending for faeces, so in
+        # both cases the strongest call for that class leads.
+        seen_rank = (kept[SPLIT_COL].astype(str) != UNSEEN_SPLIT).astype(int) if SPLIT_COL in kept \
+            else pd.Series(0, index=kept.index)
+        chosen = (kept.assign(_seen=seen_rank)
+                      .sort_values(["_seen", POOLED_COL], ascending=[True, not want_invasive])
+                      .head(k).drop(columns="_seen").assign(pick=label))
+        frames.append(chosen)
+        stats[f"n_agree_{label}"] = int(len(side))
+        stats[f"n_dropped_conflict_{label}"] = int(len(side) - len(kept))
+        stats[f"n_shown_{label}"] = int(len(chosen))
+    return pd.concat(frames, ignore_index=True), stats
+
+
 def cmd_shortlists(args: argparse.Namespace) -> None:
     """Sections 5-6: the concordant top/bottom picks overall, then within the commonest sublineages."""
     thresholds = json.loads(args.thresholds.read_text())
@@ -428,23 +484,26 @@ def cmd_shortlists(args: argparse.Namespace) -> None:
     overall = top_bottom(agreed, args.top_k)[_present(comp, [*SHORTLIST_COLS, "bacformer_call",
                                                              "unitig_call", "models_agree", "shortlist"])]
 
-    # Section 6 — within lineage, where the two models are compared row by row rather than filtered.
+    # Section 6 — within lineage. Agreement-only, like section 5: the earlier version ranked the
+    # whole sublineage and forced 10+10, which had to pull in disagreements and known-wrong rows to
+    # fill the quota. This is a collaborator's pick list, so it shows only what both models back.
     counts = comp[SL_COL].fillna("").astype(str).str.strip()
     counts = counts[~counts.isin(MISSING_SL)].value_counts()
     sls = args.sublineages or counts.head(args.n_sublineages).index.tolist()
-    per_sl_frames = []
+    per_sl_frames, per_sl_stats = [], {}
     for sl in sls:
         g = comp[comp[SL_COL].astype(str).str.strip() == sl]
-        sl_rows = top_bottom(g, args.top_k)
+        g_agree = g[g["models_agree"]]
+        sl_rows, stats = confident_picks(g_agree, args.top_k)
+        per_sl_stats[sl] = {"n": int(len(g)), "n_agree": int(len(g_agree)),
+                            "n_disagree": int(len(g) - len(g_agree)), **stats}
         if sl_rows.empty:
-            logger.warning("sublineage %s has %d genomes — too few for a top/bottom split", sl, len(g))
+            logger.warning("sublineage %s: %d genomes, %d agreeing — no picks", sl, len(g), len(g_agree))
             continue
-        sl_rows = sl_rows.assign(sublineage_n=int(len(g)))
-        per_sl_frames.append(sl_rows)
+        per_sl_frames.append(sl_rows.assign(Sublineage_group=sl, sublineage_n=int(len(g))))
     per_sl = pd.concat(per_sl_frames, ignore_index=True) if per_sl_frames else comp.iloc[:0]
     if len(per_sl):
-        per_sl = per_sl[_present(comp, [*SHORTLIST_COLS, "bacformer_call", "unitig_call",
-                                        "models_agree", "shortlist"]) + ["sublineage_n"]]
+        per_sl = per_sl[_present(comp, PICK_COLS) + ["pick", "Sublineage_group", "sublineage_n"]]
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     overall.to_csv(args.out_dir / "model_comparison_shortlist_overall.csv", index=False)
@@ -455,6 +514,8 @@ def cmd_shortlists(args: argparse.Namespace) -> None:
         "comparison_set": int(len(comp)),
         "n_models_agree": int(comp["models_agree"].sum()),
         "top_k": args.top_k,
+        # Every number the per-sublineage captions quote, so none of them is a quotation.
+        "per_sublineage": per_sl_stats,
         "sublineages": {sl: int(counts.get(sl, 0)) for sl in sls},
         "sublineage_counts_all": counts.head(10).to_dict(),
         "source": str(args.predictions),

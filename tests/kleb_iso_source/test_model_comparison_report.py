@@ -18,10 +18,13 @@ import pytest
 from kleb_iso_source.build_model_comparison_report import (
     ID_COL,
     POOLED_COL,
+    SPLIT_COL,
+    TRUE_COL,
     UNITIG_COL,
     agreement_2x2,
     assert_gate,
     comparison_set,
+    confident_picks,
     load_cohort_scores,
     split_auroc,
     top_bottom,
@@ -206,3 +209,82 @@ def test_thresholds_json_round_trips(tmp_path):
     back = json.loads(p.read_text())
     assert back["models"]["bacformer_pooled"]["threshold"] == pytest.approx(0.51)
     assert back["models"]["unitig"]["threshold"] == pytest.approx(0.49)
+
+
+# --- section 6: confident picks ---------------------------------------------------------------------
+
+
+def _agreed(rows):
+    """rows: (id, pooled, call, true_label, split) -> a frame shaped like the agreeing subset."""
+    return pd.DataFrame({
+        ID_COL: [r[0] for r in rows],
+        "LabID": [f"L{r[0]}" for r in rows],
+        "ST": ["ST258"] * len(rows),
+        POOLED_COL: [r[1] for r in rows],
+        UNITIG_COL: [0.6 if r[2] == "invasive" else 0.3 for r in rows],
+        "bacformer_call": [r[2] for r in rows],
+        TRUE_COL: [r[3] for r in rows],
+        SPLIT_COL: [r[4] for r in rows],
+    })
+
+
+def test_picks_split_by_agreed_call_not_by_rank():
+    """The old top/bottom took the k lowest whatever side of the cut they sat on."""
+    df = _agreed([("a", 0.95, "invasive", np.nan, "unseen"), ("b", 0.80, "invasive", np.nan, "unseen"),
+                  ("c", 0.60, "invasive", np.nan, "unseen"), ("d", 0.10, "faeces", np.nan, "unseen")])
+    picks, stats = confident_picks(df, k=10)
+    assert picks[picks.pick == "invasive"][ID_COL].tolist() == ["a", "b", "c"]
+    assert picks[picks.pick == "faeces"][ID_COL].tolist() == ["d"]
+    assert stats["n_shown_invasive"] == 3 and stats["n_shown_faeces"] == 1
+
+
+def test_a_known_label_contradicting_the_call_is_dropped_and_counted():
+    df = _agreed([("ok", 0.90, "invasive", 1.0, "unseen"), ("bad", 0.85, "invasive", 0.0, "unseen"),
+                  ("unl", 0.80, "invasive", np.nan, "unseen")])
+    picks, stats = confident_picks(df, k=10)
+    assert set(picks[ID_COL]) == {"ok", "unl"}
+    assert stats["n_agree_invasive"] == 3
+    assert stats["n_dropped_conflict_invasive"] == 1
+    assert stats["n_shown_invasive"] == 2
+
+
+def test_unseen_outranks_a_more_confident_fitted_on_genome():
+    """A confident score on a trained-on genome is partly recall, so it must not lead the list."""
+    df = _agreed([("trained", 0.99, "invasive", 1.0, "train"),
+                  ("unseen", 0.55, "invasive", np.nan, "unseen")])
+    picks, _ = confident_picks(df, k=10)
+    assert picks[ID_COL].tolist() == ["unseen", "trained"]
+
+
+def test_faeces_picks_lead_with_the_lowest_probability():
+    df = _agreed([("x", 0.30, "faeces", 0.0, "unseen"), ("y", 0.05, "faeces", 0.0, "unseen"),
+                  ("z", 0.18, "faeces", 0.0, "unseen")])
+    picks, _ = confident_picks(df, k=10)
+    assert picks[ID_COL].tolist() == ["y", "z", "x"]
+
+
+def test_classes_are_capped_but_never_padded():
+    rows = [(f"i{j}", 0.9 - j / 100, "invasive", np.nan, "unseen") for j in range(14)]
+    rows += [("f0", 0.1, "faeces", 0.0, "unseen"), ("f1", 0.2, "faeces", 0.0, "unseen")]
+    picks, stats = confident_picks(_agreed(rows), k=10)
+    assert stats["n_shown_invasive"] == 10          # capped
+    assert stats["n_shown_faeces"] == 2             # not padded to 10
+    assert len(picks) == 12
+
+
+def test_a_class_with_no_agreeing_genomes_is_empty_not_an_error():
+    df = _agreed([("a", 0.9, "invasive", np.nan, "unseen")])
+    picks, stats = confident_picks(df, k=10)
+    assert stats["n_shown_faeces"] == 0
+    assert stats["n_agree_faeces"] == 0
+    assert (picks.pick == "faeces").sum() == 0
+
+
+def test_every_listed_row_is_consistent_with_its_own_truth():
+    """The whole point of the rebuild: no row may contradict the band it is printed in."""
+    rows = [("a", 0.9, "invasive", 1.0, "unseen"), ("b", 0.8, "invasive", 0.0, "unseen"),
+            ("c", 0.1, "faeces", 0.0, "train"), ("d", 0.2, "faeces", 1.0, "evaluate")]
+    picks, _ = confident_picks(_agreed(rows), k=10)
+    want = picks.pick.map({"invasive": 1.0, "faeces": 0.0})
+    labelled = picks[TRUE_COL].notna()
+    assert (picks.loc[labelled, TRUE_COL] == want[labelled]).all()
