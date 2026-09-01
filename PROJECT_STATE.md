@@ -27,6 +27,10 @@
 > holdout verified **identical genome-for-genome** to the pooled cohort's (2,822/2,822, zero leakage
 > into train/validate) from `split_manifest.json` and both split CSVs, not inferred from matching n.
 > Lab-collection split composition (154/22/31/44) counted from `lab_collection_invasion_predictions.csv`.
+> Added 2026-09-01 (§3.4 pick list): per-sublineage counts read from the regenerated
+> `model_comparison_shortlist_meta.json`; `model_comparison_thresholds.json` re-checked unchanged
+> (md5 d4542259…), so the Youden points and the reproduce-before-use gate still stand; Section 5's
+> `model_comparison_shortlist_overall.csv` diffed byte-identical against the published version.
 > Added 2026-08-19 (§3.4 Q1): unitig+sublineage numbers read from that run's own
 > `unitig_model_results.json`; the plain-vs-+SL score agreement and per-sublineage AUROCs
 > recomputed from both `unitig_cohort_scores.npz` archives, which were checked to cover the same
@@ -838,6 +842,22 @@ directory suffix and hold an identically named `unitig_cohort_scores.npz`.
   any of these scopes — see the withdrawal above and the §6 decision.
 - **Commonest sublineages in the collection:** SL258 49, SL3010 40, SL307 37 — SL3010 has no cohort
   per-SL AUROC, so its ranking has no local validation.
+- **Per-sublineage pick list rebuilt 2026-09-01 (`ee7e6b2`)** — it is a collaborator hand-off, so it
+  now lists **only genomes both models call the same way**, never a forced quota. Counts from
+  `model_comparison_shortlist_meta.json` → `per_sublineage`: SL258 32 of 49 agree (9 invasive / 23
+  faeces), SL3010 16 of 40 (10 / 6), SL307 30 of 37 (11 / 19). Rows a known label contradicts are
+  **withheld and counted** — 3 in SL258 (2 invasive, 1 faeces), 0 elsewhere. Listed: SL258 7 + 10,
+  SL3010 10 + 6, SL307 10 + 10 = **53 rows, none contradicting its own band**. `unseen` genomes lead
+  each block, because a confident score on a fitted-on genome is partly recall.
+  - **The old 10 + 10 quota was unachievable**, not merely undesirable: SL258 has 9 agreed-invasive
+    and SL3010 only 6 agreed-faeces. Filling it required disagreements and known-wrong rows.
+  - **SL258's invasive picks are the weak ones.** All 9 agreed-invasive are `unseen`, but the only 2
+    carrying a label are both wrong (`ME140270`, `ME140311` — called invasive, actually faeces).
+  - **The faeces side is largely recall, the invasive side is prediction.** SL307 agreed-faeces is
+    11/19 fitted on and SL3010's is 6/6 labelled, while the invasive lists are 9/9, 10/10 and 10/11
+    `unseen`. Read the invasive picks as the novel ones.
+  - Section 5's two global tables are **unchanged** (verified byte-identical) and still use the
+    original top/bottom-by-probability rule over the agreeing set.
 - **Published report** (2026-08-18): <https://claude.ai/code/artifact/87cbaae7-d1f0-4e47-be98-910e3fd198b3>
   — six sections plus the register below, built from the seven `model_comparison_*` files only.
 
