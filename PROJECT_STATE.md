@@ -876,9 +876,23 @@ y_true`, and identical split assignment for all 14,119 genomes.
 - **Numbers of record.** `all` n=14,119: **53.2% blood observed / 44.8% predicted**. `heldout`
   (validate+evaluate) n=4,234: **53.5% / 43.4%**. Top 15 sublineages by size, remainder pooled.
 - ⛔ **The predicted-minus-observed gap is a threshold property, not biology.** Youden maximises
-  sens+spec and does not preserve prevalence; here sens 0.633 < spec 0.790, so the model under-calls
-  blood by **−8.4 pp** (`all`) / **−10.2 pp** (`heldout`) *globally*. Only a per-lineage gap that
-  departs from that offset says anything. `compose()` returns the offset so it cannot be forgotten.
+  sens+spec and does not preserve prevalence; here sens 0.633 < spec 0.790, so at the deployed cut the
+  model under-calls blood by **−8.4 pp** (`all`) / **−10.2 pp** (`heldout`) *globally*. `compose()`
+  returns the offset so it cannot be forgotten.
+- **The charts therefore use a prevalence-matched cut, not the deployed one (2026-09-04).**
+  `prevalence_matched_threshold()` picks the cut at which the model calls blood as often as it occurs:
+  **probability 0.2606 (logit −1.04)** against the deployed Youden **0.4349 (logit −0.26)**. Residual
+  offset falls to **−1.5 pp** (`all`) / **−1.4 pp** (`heldout`), so a per-lineage deviation now means
+  something — e.g. SL15 −10.8 pp stands out, which was invisible when every lineage sat at −10.
+  - **Cost: balanced accuracy 0.711 → 0.706** (sens 0.633→0.718, spec 0.790→0.694). **AUROC is
+    unchanged** — it does not depend on a threshold. Plain 0.5 would be *worse* (39.8% predicted).
+  - ⛔ **Only the charts.** Matching prevalence requires knowing the prevalence, so it is legitimate
+    for describing a labelled cohort and **circular for the lab collection**, where the label is what
+    is being predicted. **The strain picks keep the Youden cut** for both models.
+  - Artifacts: `prevalence_matched_sublineage_composition_{all,heldout}.csv` + `.json` beside the
+    Youden-cut originals; the JSON records both thresholds and which was used.
+- **The charts are Bacformer alone.** The unitig model contributes nothing to this section; it enters
+  only at the agreement 2×2 and the pick lists.
 - **"other" is the largest single bar** — 1,363 sublineages, **6,313 genomes = 45% of the cohort**,
   2.6× SL258. Pinned last rather than sorted first.
 - **Scope matters and both are published.** At `all` scope 70% of rows are memorised training data

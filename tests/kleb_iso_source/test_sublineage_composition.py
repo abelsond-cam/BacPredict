@@ -148,3 +148,23 @@ def test_no_other_row_when_every_group_fits_in_top_n():
 def test_unknown_scope_is_refused():
     with pytest.raises(ValueError, match="unknown scope"):
         _composed(["SL1"], scope="nonsense")
+
+
+def test_prevalence_matched_threshold_makes_the_predicted_rate_match_the_truth():
+    """The whole point: Youden maximises sens+spec and says nothing about the rate it calls positive."""
+    from kleb_iso_source.sublineage_composition import prevalence_matched_threshold
+    n = 200
+    y = [1] * 120 + [0] * 80                                   # 60% blood
+    probs = [0.5 + i / 1000 for i in range(120)] + [0.1 + i / 1000 for i in range(80)]
+    c = _cohort(["SL1"] * n, y, ["evaluate"] * n, probs)
+    t = prevalence_matched_threshold(c, "evaluate")
+    _rows, totals = compose(c, t, scope="evaluate", top_n=5)
+    assert totals["pct_pred_blood"] == pytest.approx(totals["pct_blood"], abs=1.0)
+    assert abs(totals["global_offset_pp"]) < 1.0
+
+
+def test_prevalence_matched_threshold_needs_a_populated_scope():
+    from kleb_iso_source.sublineage_composition import prevalence_matched_threshold
+    c = _cohort(["SL1"] * 3, [1, 0, 1], ["train"] * 3, [0.9, 0.1, 0.8])
+    with pytest.raises(ValueError, match="selected no genomes"):
+        prevalence_matched_threshold(c, "evaluate")

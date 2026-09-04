@@ -102,6 +102,28 @@ def load_cohort(split_csv: Path, scores_npz: Path) -> pd.DataFrame:
     return merged.drop(columns=["y_true", "split_npz"])
 
 
+def prevalence_matched_threshold(cohort: pd.DataFrame, scope: str = "evaluate") -> float:
+    """The cut-point at which the model calls blood as often as blood actually occurs.
+
+    The deployed Youden point maximises ``sensitivity + specificity``, which says nothing about the
+    *rate* it calls positive — and for this model it under-calls blood by 8–10 points. That is
+    harmless for ranking genomes and actively misleading on a chart whose whole purpose is to set a
+    predicted rate beside an observed one, so the composition charts offer this alternative.
+
+    It is derived on one scope (the holdout, as Youden was) and then applied everywhere, so the
+    charts do not silently move their operating point between panels.
+
+    ⚠ **This is only definable where the truth is already known.** Matching prevalence requires the
+    prevalence, so it is legitimate for describing a labelled cohort and *circular* for the lab
+    collection, where the label is the thing being predicted. The strain picks therefore stay on the
+    Youden point; see the report's pick sections.
+    """
+    sub = cohort[cohort[SPLIT_COL].astype(str).isin(SCOPES[scope])]
+    if sub.empty:
+        raise ValueError(f"scope {scope!r} selected no genomes")
+    return float(np.quantile(sub["prob"], 1.0 - sub[LABEL_COL].astype(int).mean()))
+
+
 def compose(
     cohort: pd.DataFrame,
     threshold: float,
@@ -172,18 +194,28 @@ def _main(argv: list[str] | None = None) -> None:
                    help="model_comparison_thresholds.json — the deployed Youden operating point")
     p.add_argument("--out-dir", type=Path, required=True)
     p.add_argument("--top-n", type=int, default=15)
+    p.add_argument("--threshold-mode", choices=("youden", "prevalence"), default="youden",
+                   help="youden = the deployed operating point; prevalence = the cut at which the "
+                        "model calls blood as often as it occurs (rate-calibrated, for the charts)")
     p.add_argument("--scopes", nargs="+", default=["all", "heldout"], choices=sorted(SCOPES))
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    threshold = float(json.loads(args.thresholds.read_text())["models"]["bacformer_pooled"]["threshold"])
+    youden = float(json.loads(args.thresholds.read_text())["models"]["bacformer_pooled"]["threshold"])
     cohort = load_cohort(args.split_csv, args.scores_npz)
-    logger.info("cohort joined: %d genomes, threshold %.4f", len(cohort), threshold)
+    matched = prevalence_matched_threshold(cohort, "evaluate")
+    threshold = youden if args.threshold_mode == "youden" else matched
+    logger.info("cohort joined: %d genomes | youden %.4f | prevalence-matched %.4f | using %s (%.4f)",
+                len(cohort), youden, matched, args.threshold_mode, threshold)
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     payload: dict[str, Any] = {"schema_version": "1.0", "source": {
         "split_csv": str(args.split_csv), "scores_npz": str(args.scores_npz),
-        "thresholds": str(args.thresholds)}, "scopes": {}}
+        "thresholds": str(args.thresholds)},
+        "threshold_mode": args.threshold_mode,
+        "thresholds": {"youden": youden, "prevalence_matched": matched, "used": threshold},
+        "model": "Bacformer pooled (country-controlled) — the unitig model is not used here",
+        "scopes": {}}
     for scope in args.scopes:
         rows, totals = compose(cohort, threshold, scope=scope, top_n=args.top_n)
         rows.to_csv(args.out_dir / f"sublineage_composition_{scope}.csv", index=False)
