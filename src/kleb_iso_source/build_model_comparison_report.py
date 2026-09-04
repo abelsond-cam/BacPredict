@@ -159,6 +159,33 @@ def youden_threshold(y_true: np.ndarray, y_prob: np.ndarray) -> dict[str, float]
     }
 
 
+def prevalence_matched_threshold(y_true: np.ndarray, y_prob: np.ndarray) -> dict[str, float]:
+    """Cut-point at which the model calls positive as often as the label is positive.
+
+    Youden maximises sensitivity + specificity and says nothing about the *rate* it calls positive.
+    Bacformer's probabilities are compressed low, so its Youden cut under-calls blood by ~9 points —
+    which made a genome at 0.449 read as a hair above the line when it was in fact a confident call,
+    and inflated the apparent disagreement between the two models to 3:1 when the models themselves
+    are far closer than that.
+
+    ⚠ **This transfers a base rate, not just an operating point.** It bakes in the holdout's
+    prevalence; applying it to a population with a genuinely different one will mis-call in
+    proportion to the difference.
+    """
+    y_true = np.asarray(y_true).astype(int)
+    y_prob = np.asarray(y_prob, dtype=float)
+    t = float(np.quantile(y_prob, 1.0 - y_true.mean()))
+    pred = y_prob >= t
+    tp = int((pred & (y_true == 1)).sum())
+    tn = int((~pred & (y_true == 0)).sum())
+    fp = int((pred & (y_true == 0)).sum())
+    fn = int((~pred & (y_true == 1)).sum())
+    sens = tp / (tp + fn) if tp + fn else 0.0
+    spec = tn / (tn + fp) if tn + fp else 0.0
+    return {"threshold": t, "sensitivity": sens, "specificity": spec,
+            "youden_j": sens + spec - 1.0, "predicted_positive_rate": float(pred.mean())}
+
+
 def cmd_thresholds(args: argparse.Namespace) -> None:
     """Derive and persist each model's Youden operating point from the holdout it was measured on."""
     pooled = load_cohort_scores(args.pooled_scores, "pooled")
@@ -181,16 +208,22 @@ def cmd_thresholds(args: argparse.Namespace) -> None:
     for name, tag, frame, path in (("bacformer_pooled", "pooled", pooled, args.pooled_scores),
                                    ("unitig", "unitig", unitig, args.unitig_scores)):
         ev = frame[frame[f"split_{tag}"] == "evaluate"]
-        t = youden_threshold(ev[f"y_true_{tag}"].to_numpy(), ev[f"prob_{tag}"].to_numpy())
+        y, pr = ev[f"y_true_{tag}"].to_numpy(), ev[f"prob_{tag}"].to_numpy()
+        you, mat = youden_threshold(y, pr), prevalence_matched_threshold(y, pr)
+        t = dict(you if args.mode == "youden" else mat)
         t.update({
+            "mode": args.mode,
+            "youden_threshold": you["threshold"],
+            "prevalence_matched_threshold": mat["threshold"],
             "n_holdout": int(len(ev)),
             "prevalence_holdout": float(ev[f"y_true_{tag}"].mean()),
             "source": str(path),
             "split_used": "evaluate",
         })
         out["models"][name] = t
-        logger.info("%s Youden threshold %.4f (sens %.3f, spec %.3f, n=%d)",
-                    name, t["threshold"], t["sensitivity"], t["specificity"], t["n_holdout"])
+        logger.info("%s %s threshold %.4f (youden %.4f / matched %.4f; sens %.3f, spec %.3f, n=%d)",
+                    name, args.mode, t["threshold"], you["threshold"], mat["threshold"],
+                    t["sensitivity"], t["specificity"], t["n_holdout"])
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(out, indent=2))
@@ -544,8 +577,11 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--expect-pooled-auroc", type=float, default=GATE_POOLED_AUROC)
         sp.add_argument("--expect-unitig-auroc", type=float, default=GATE_UNITIG_AUROC)
 
-    t = sub.add_parser("thresholds", help="derive each model's Youden operating point")
+    t = sub.add_parser("thresholds", help="derive each model's operating point")
     add_gate_args(t)
+    t.add_argument("--mode", choices=("youden", "prevalence"), default="youden",
+                   help="youden = max sens+spec; prevalence = the cut at which the model calls "
+                        "positive as often as the label is positive. Both are always recorded.")
     t.add_argument("--out", type=Path, required=True)
     t.set_defaults(func=cmd_thresholds)
 

@@ -848,6 +848,20 @@ directory suffix and hold an identically named `unitig_cohort_scores.npz`.
   any of these scopes — see the withdrawal above and the §6 decision.
 - **Commonest sublineages in the collection:** SL258 49, SL3010 40, SL307 37 — SL3010 has no cohort
   per-SL AUROC, so its ranking has no local validation.
+- ⚠ **The picks moved to the prevalence-matched cut, 2026-09-04.** Both models are now cut where
+  they call blood as often as blood occurs — **Bacformer 0.2606, unitig 0.5558** (Youden was 0.4349 /
+  0.5272). Rationale: at the Youden cut a genome like `SAMN18874767` (Bacformer 0.449) sat +0.014
+  above the line and read as marginal when its true margin is +0.188, and the disagreement skew was
+  3:1 rather than its true 1.3:1. **Agreement 505 → 522 of 671; concordance 0.753 → 0.778, κ 0.508 →
+  0.555.** Per-sublineage agreeing counts: SL258 32→27, SL3010 16→**25**, SL307 30→31.
+  - The gate is unaffected — it checks AUROC, which is threshold-free, and still passes at
+    0.785816 / 0.765471.
+  - `thresholds --mode prevalence` on `build_model_comparison_report`; both cut-points are always
+    recorded in the JSON. Artifacts: `model_comparison_thresholds_matched.json` and
+    `matched_model_comparison_shortlist_*` beside the Youden originals.
+  - ⚠ **Base-rate caveat stands.** A matched cut carries the cohort's 52% blood rate onto a
+    carriage-heavy collection whose true rate is likely lower, so it will over-call blood there. This
+    was David's call, made knowing that.
 - **Per-sublineage pick list rebuilt 2026-09-01 (`ee7e6b2`)** — it is a collaborator hand-off, so it
   now lists **only genomes both models call the same way**, never a forced quota. Counts from
   `model_comparison_shortlist_meta.json` → `per_sublineage`: SL258 32 of 49 agree (9 invasive / 23

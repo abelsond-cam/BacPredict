@@ -288,3 +288,24 @@ def test_every_listed_row_is_consistent_with_its_own_truth():
     want = picks.pick.map({"invasive": 1.0, "faeces": 0.0})
     labelled = picks[TRUE_COL].notna()
     assert (picks.loc[labelled, TRUE_COL] == want[labelled]).all()
+
+
+def test_prevalence_matched_threshold_reproduces_the_positive_rate():
+    """Youden says nothing about how often the model calls positive; this is the cut that does."""
+    from kleb_iso_source.build_model_comparison_report import prevalence_matched_threshold
+    y = np.array([1] * 60 + [0] * 40)
+    p = np.concatenate([np.linspace(0.30, 0.95, 60), np.linspace(0.05, 0.55, 40)])
+    t = prevalence_matched_threshold(y, p)
+    assert t["predicted_positive_rate"] == pytest.approx(0.60, abs=0.02)
+    assert 0.0 < t["threshold"] < 1.0
+
+
+def test_matched_and_youden_differ_when_scores_are_compressed_low():
+    """The real case: probabilities shifted low, so Youden under-calls the positive class."""
+    from kleb_iso_source.build_model_comparison_report import prevalence_matched_threshold
+    y = np.array([1] * 50 + [0] * 50)
+    p = np.concatenate([np.linspace(0.15, 0.55, 50), np.linspace(0.01, 0.30, 50)])
+    mat = prevalence_matched_threshold(y, p)
+    you = youden_threshold(y, p)
+    assert mat["predicted_positive_rate"] == pytest.approx(0.50, abs=0.02)
+    assert (p >= you["threshold"]).mean() <= mat["predicted_positive_rate"] + 1e-9
