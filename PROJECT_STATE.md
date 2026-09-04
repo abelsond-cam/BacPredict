@@ -703,6 +703,17 @@ k-mer survives but no contiguous occurrence does. Pinned as a fixture in
   "at the optimal operating point". AUROC and AUPRC are unaffected.
 - Hits are **LD-redundant, not independent**. Report at the pattern/locus level, never per-unitig.
 - Mechanism readings in both write-ups are **hypotheses**, explicitly flagged as such.
+- **⚠ The shard memory gate's *unmeasured* bracket is not conservative — measured 2026-09-04.** Its
+  first real observation, the invasion k-fold canary (`sacct -j 34911480_0`, MaxRSS 39,559,612 K =
+  **37.7 GB** at n=10,869, cpu=8, 98,134 unitigs/shard, 23m22s), came in at **1.8× the top of the
+  16.5–20.7 GB bracket the gate had printed for it**. The gate would therefore have passed a
+  `--mem=32G` request (its stated floor was 25.8 GB at margin 1.25×) that would then have OOM'd the
+  whole array. **`CANARY=1` is what stands between the estimate and that outcome — run it on any
+  cohort size nobody has measured, and do not raise the estimate's authority above the canary's.**
+  Recorded to `src/bac_pyseer/ast_gwas/shard_memory_observations.json`; note it is the *only*
+  observation there, and `_fit_exponent` correctly declines to fit a scaling from one point, so the
+  bracket stays "UNMEASURED" until a second cohort size is measured. That is honest behaviour, not a
+  bug — but it means **nothing has yet narrowed the bracket for the AMR fan-out either.**
 
 **Owns.** `src/bac_pyseer/`.
 
