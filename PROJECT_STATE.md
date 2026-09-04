@@ -294,10 +294,18 @@ from the plan.**
   §3.1's caveat, where the same defect still sits unfixed in `finetune_amr`). The failure is invisible
   to a fresh start — it exists only in the second link — so the plan's prescribed "smoke one job first"
   would have passed and released all 75 jobs to die one link in.
-- **A HELD job freezes an `afterany` chain forever.** 52 of the 64 unitig shards hit
-  `user_env_retrieval_failed_requeued_held` and sat held until released by hand; a held job never
-  *ends*, so the dependency never fires. The chains now submit `--no-requeue` (`75a6d57`), which turns
-  the same fault into a plain FAILED that the next link recovers from.
+- **A HELD job freezes an `afterany` chain forever, and it RECURS.** 52 of the 64 unitig shards hit
+  `user_env_retrieval_failed_requeued_held`, and after a hand release **29 of the survivors did it
+  again** — so it is a standing condition, not a one-off. The mechanism is CSD3's
+  `PrologFlags=…,ForceRequeueOnFail,…`: a prolog-side env-retrieval failure requeues the job and then
+  holds it, and because the requeue is *forced*, **`--no-requeue` (`75a6d57`) does not reliably prevent
+  it** — keep the flag, but do not trust it alone. A held job never *ends*, so the dependency never
+  fires. Recovery is `scontrol release <jobid>`; `scontrol update JobId=<id> ArrayTaskThrottle=N`
+  reduces the recurrence by cutting simultaneous starts (set to 10 on the unitig array).
+  **⚠ Consequence for the unattended sweep: a GPU chain that lands held will sit still until someone
+  releases it.** Nothing is lost — the next link resumes from the last checkpoint — but the run does
+  not progress. **Whoever picks this up should check `squeue -u dca36 -o '%i %j %R' | grep held` and
+  release anything found**, rather than assuming a quiet queue means the sweep is running.
 
 **Split table of record for the sweep** —
 `…/sampled_country_2_1_all/kpsc_human/kfold_sweep/{kfold_selection_split.csv, kfold_fold_assignments.csv,
