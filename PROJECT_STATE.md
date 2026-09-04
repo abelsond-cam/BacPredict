@@ -886,9 +886,12 @@ y_true`, and identical split assignment for all 14,119 genomes.
   something — e.g. SL15 −10.8 pp stands out, which was invisible when every lineage sat at −10.
   - **Cost: balanced accuracy 0.711 → 0.706** (sens 0.633→0.718, spec 0.790→0.694). **AUROC is
     unchanged** — it does not depend on a threshold. Plain 0.5 would be *worse* (39.8% predicted).
-  - ⛔ **Only the charts.** Matching prevalence requires knowing the prevalence, so it is legitimate
-    for describing a labelled cohort and **circular for the lab collection**, where the label is what
-    is being predicted. **The strain picks keep the Youden cut** for both models.
+  - ⛔ **Only the charts** — but note the reason, because the first one given was wrong. It is *not*
+    circular to use this on the lab collection: the cut is derived on the labelled cohort and applied,
+    exactly as the Youden cut is. The real caveat is **base-rate transfer** — a prevalence-matched cut
+    bakes in the cohort's 52% blood rate, and the lab collection is carriage-heavy so its true rate is
+    likely lower, which would make the matched cut over-call blood there. **The strain picks keep the
+    Youden cut** for both models, the conservative choice for a candidate list.
   - Artifacts: `prevalence_matched_sublineage_composition_{all,heldout}.csv` + `.json` beside the
     Youden-cut originals; the JSON records both thresholds and which was used.
 - **The charts are Bacformer alone.** The unitig model contributes nothing to this section; it enters
@@ -924,9 +927,20 @@ None blocks anything; they are what the queued models below are pointed at.
   unitig 0.542 and cohort holdout prevalence 0.520; Bacformer calls 262/671 invasive at its Youden
   point, unitig 344. Genuine property of a carriage-heavy collection, or cohort→collection
   distribution shift — open.
-- **O4 — the disagreement is asymmetric ~3:1.** Of 166 disagreements, 124 are unitig-invasive /
-  Bacformer-faeces against 42 the reverse. Consistent with O3 and with the compressed unitig log-odds
-  (sd-ratio 0.392), but consistency is a description, not an explanation.
+- **O4 — ~~the disagreement is asymmetric ~3:1~~ — LARGELY A THRESHOLD ARTIFACT (corrected
+  2026-09-04).** As written: of 166 disagreements, 124 unitig-invasive / Bacformer-faeces against 42
+  the reverse. **Re-cutting both models at their prevalence-matched points collapses the skew to
+  1.3:1** (85 vs 64) and lifts agreement 75.3% → 77.8%. The asymmetry was mostly Bacformer's Youden
+  cut under-calling blood, not a property of the models.
+  - Prompted by David spotting `SAMN18874767` in the SL258 picks — Bacformer 0.449, unitig 0.742,
+    which reads as Bacformer hesitating over a genome the unitig model is sure of. At the matched
+    cuts the margins are **+0.188 and +0.186**: equally confident, and the hesitancy was the cut.
+  - ⚠ **Raw probabilities are not comparable between the two columns.** Bacformer's are compressed
+    low (matched cut 0.261 against Youden 0.435); the unitig model's barely move (0.556 vs 0.527).
+  - **What survives:** O3's "the collection sits low" is *not* an artifact. Even at the matched cut
+    Bacformer calls only 46% of lab genomes blood against the cohort's 52% (39% at Youden).
+  *Source:* re-cut counts from `lab_collection_invasion_predictions.csv` with prevalence-matched
+  thresholds derived on each model's own evaluate split.
 
 **Queued models — not started.** Hypothesis under Q1/Q2: *the unitig model's deficit is a
 lineage-representation deficit*, because GWAS significance filtering keeps phenotype-associated unitigs
