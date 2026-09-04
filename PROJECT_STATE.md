@@ -306,13 +306,27 @@ fitting **11,296** (prevalence 0.5348), holdout **2,823** (prevalence 0.5204), h
 `5515932873d063d3`. Task 0's training log independently derived train 9,036 / validate 2,260 /
 holdout 2,823 — two code paths, checked to agree rather than assumed to.
 
-**Compute.** `FLOTO-SL2-GPU` had **288 h** left (18,812 of 19,100 used) against the ~570 h the sweep
-needs — each run costs its full wall at a **measured 3.1 s/step** and ~40,000 steps to peak + patience.
-David's call: run all 15 on the free **`FLOTO-SL3-GPU`**, whose QOS caps walltime at **12 h**, as
-5-link chains (`submit_kfold_sweep.sh`, `--dependency=afterany` because every link but the last is
-*expected* to TIMEOUT). Unitig arm: one GWAS on the carved cohort
+**Compute, and what is actually queued.** `FLOTO-SL2-GPU` had **288 h** left (18,812 of 19,100 used)
+against the ~570 h the sweep needs — each run costs its full wall at a **measured 3.1 s/step** and
+~40,000 steps to peak + patience. David's call: run all 15 on the free **`FLOTO-SL3-GPU`**, whose QOS
+caps walltime at **12 h**, as chains (`submit_kfold_sweep.sh`, `--dependency=afterany` because every
+link but the last is *expected* to TIMEOUT, and `--no-requeue` so a node fault cannot freeze one).
+
+**All 15 released 2026-09-04**, ~73 chain links, one independent chain per run so no failure can stop
+another: tasks **1-4, 6-14** as 5 SL3 links each; **task 0** part-trained on SL2 (36 h) + 3 SL3 links;
+**task 5** part-trained on SL2 + 5 SL3 links. Expect ~10 days on a low-priority queue — David is away
+and accepted that. Unitig arm: one GWAS on the carved cohort
 `pyseer_iso_source/blood_faeces/sampled_country_2_1_all_kfold_trainval` (**n=10,869**, 5,759 blood /
-5,110 faeces, `subset_manifest.json`), ~560-610 core-h on `FLOTO-PROJECT-K-SL2-CPU`.
+5,110 faeces, `subset_manifest.json`), **~516 core-h** on `FLOTO-PROJECT-K-SL2-CPU` — below the plan's
+560-610 because prep reused the matrix chunks (they are matrix-keyed, not cohort-keyed) and took 14 min
+rather than the 2h54m budgeted; only the 902 MB LMM cache had to be rebuilt.
+
+**Reading the sweep when it lands** — `kleb_iso_source.compare_kfold_sweep` writes
+`kfold_sweep_per_run.csv` + `kfold_sweep_comparison.json` into the sweep dir. It pairs each fit with
+the unitig model on the genomes they both cover, so the verdict is the sign of 15 deltas, not a contest
+between two averages, and it **refuses to score a run whose `eval_scores.npz` carries no `sample_ids`**
+— without them neither the holdout check nor the paired bootstrap is possible, and a matching row count
+proves nothing.
 
 **Also in flight.** bf16 re-runs of all three cohorts (the originals were fp32; the bf16 cast landed
 later in `a817ac2`).
