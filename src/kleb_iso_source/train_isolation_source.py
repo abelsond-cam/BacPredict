@@ -23,8 +23,8 @@ from transformers import (
     EvalPrediction,
     TrainingArguments,
 )
-from transformers.trainer_utils import get_last_checkpoint
 
+from bacpredict.engine.finetune.checkpoints import pick_resume_checkpoint
 from bacpredict.engine.finetune.datasets import LabelInjectingFileDataset
 from bacpredict.engine.finetune.metrics import build_results_payload, compute_full_metrics, write_results_json
 from bacpredict.engine.finetune.split_utils import generate_kfold_splits
@@ -409,13 +409,15 @@ def run(
         callbacks=[EarlyStoppingCallback(early_stopping_patience=early_stopping_patience)],
     )
     # `auto` on a fresh output dir must mean "start from scratch", not crash: link 1 of a chained run
-    # has no checkpoint, and every later link does. get_last_checkpoint returns the NEWEST, which is
-    # the one to resume from — not the best, which save_total_limit=1 also keeps.
+    # has no checkpoint, and every later link does. The newest checkpoint is the one to resume from —
+    # not the best, which save_total_limit=1 also keeps. pick_resume_checkpoint rather than HF's
+    # get_last_checkpoint because a link killed mid-save leaves a partial directory, and every later
+    # link would otherwise pick that same corpse and take the chain down with it.
     resume: str | bool | None = None
     if resume_from_checkpoint == "auto":
-        found = get_last_checkpoint(output_dir) if os.path.isdir(output_dir) else None
-        resume = found
-        print(f"Resume: auto -> {found or 'no checkpoint found, starting fresh'}")
+        found = pick_resume_checkpoint(output_dir)
+        resume = str(found) if found else None
+        print(f"Resume: auto -> {found or 'no complete checkpoint found, starting fresh'}")
     elif resume_from_checkpoint != "none":
         resume = resume_from_checkpoint
         print(f"Resume: {resume}")
