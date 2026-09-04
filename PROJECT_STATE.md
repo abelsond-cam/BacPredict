@@ -252,8 +252,42 @@ validate, and the manifest records the freeze explicitly (`n_frozen_test_request
 Per the §6 model-choice rule this is a **collapse, which is clean evidence**; the near-duplicate audit
 that rule requires applies only to a *win*, so this branch closes without one.
 
-**In flight.** bf16 re-runs of all three cohorts (the originals were fp32; the bf16 cast landed later
-in `a817ac2`).
+**In flight — the publication k-fold x seed sweep (started 2026-09-04).** Every headline above and in
+§3.4 rests on **one** fine-tune and **one** unitig refit. The Bacformer-minus-unitig delta is
++0.0210 [+0.0041, +0.0385], but a bootstrap CI measures sampling noise on a *fixed pair of models* and
+says nothing about how far either number moves when you refit. David's question: is the edge bigger
+than refit noise? Root §0.2 reserves folds x seeds for exactly this.
+
+- **Bacformer arm — 15 runs**, `FOLD = task % 5`, `SEED = task // 5 + 1`, `evaluate_seed=1`, on the
+  pooled cohort, bf16, patience 12, `max_steps=100000` untouched. Output
+  `…/sampled_country_2_1_all/kpsc_human/models_kfold_fold{NN}_seed{S}/`.
+- **Unitig arm — exactly ONE model, not fifteen.** `evaluate_seed` alone fixes the holdout, so
+  `train ∪ validate` is one invariant set of **11,296** genomes across all 15 runs. Selecting hits and
+  fitting on that set therefore has **no fold-to-fold variance by construction** — its SD is zero
+  because it never uses folds. Stage 2c is a distribution of 15 Bacformer fits against a fixed point.
+- **⛔ No sweep number will be comparable to 0.7858 / 0.7655.** At `evaluate_seed=1` the k-fold holdout
+  (n=2,823) overlaps the deployed single-split holdout by only **21.5%** (608 of 2,822). David chose the
+  standard k-fold holdout knowingly — the sweep is a fresh estimate, not one conditioned on the original
+  arbitrary partition. What *is* comparable is Bacformer vs unitig *within* the sweep, since both arms
+  share this holdout.
+
+**Split table of record for the sweep** —
+`…/sampled_country_2_1_all/kpsc_human/kfold_sweep/{kfold_selection_split.csv, kfold_fold_assignments.csv,
+kfold_splits_manifest.json}`, from `kleb_iso_source.materialise_kfold_splits`: universe **14,119**,
+fitting **11,296** (prevalence 0.5348), holdout **2,823** (prevalence 0.5204), holdout digest
+`5515932873d063d3`. Task 0's training log independently derived train 9,036 / validate 2,260 /
+holdout 2,823 — two code paths, checked to agree rather than assumed to.
+
+**Compute.** `FLOTO-SL2-GPU` had **288 h** left (18,812 of 19,100 used) against the ~570 h the sweep
+needs — each run costs its full wall at a **measured 3.1 s/step** and ~40,000 steps to peak + patience.
+David's call: run all 15 on the free **`FLOTO-SL3-GPU`**, whose QOS caps walltime at **12 h**, as
+5-link chains (`submit_kfold_sweep.sh`, `--dependency=afterany` because every link but the last is
+*expected* to TIMEOUT). Unitig arm: one GWAS on the carved cohort
+`pyseer_iso_source/blood_faeces/sampled_country_2_1_all_kfold_trainval` (**n=10,869**, 5,759 blood /
+5,110 faeces, `subset_manifest.json`), ~560-610 core-h on `FLOTO-PROJECT-K-SL2-CPU`.
+
+**Also in flight.** bf16 re-runs of all three cohorts (the originals were fp32; the bf16 cast landed
+later in `a817ac2`).
 
 **Next.**
 1. ~~Land the bf16 A/B and the `all_samples_2` retrain, then apply the model-choice rule in §6.~~
