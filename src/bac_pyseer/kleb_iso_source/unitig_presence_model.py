@@ -62,6 +62,7 @@ import pandas as pd
 import scipy.sparse as sp
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
+from sklearn.model_selection import StratifiedKFold
 
 logger = logging.getLogger(__name__)
 
@@ -398,6 +399,7 @@ def fit_l2_with_c_sweep(
     y_prob = model.predict_proba(X[ev])[:, 1]
     return {
         "penalty": "l2",
+        "c_selection": "validate",
         "C": float(c_best),
         "validate_auroc": float(val_best),
         "c_sweep": sweep,
@@ -411,6 +413,93 @@ def fit_l2_with_c_sweep(
         # The fitted estimator itself. Returning it is what makes the model reusable: without it the
         # only way to score a new genome is to refit the whole thing, and the coefficients that took
         # a 64-shard GWAS to select would be thrown away at the end of the function.
+        "model": model,
+    }
+
+def fit_l2_inner_cv(
+    X: sp.csr_matrix,
+    y: np.ndarray,
+    split: np.ndarray,
+    c_grid: tuple[float, ...] = DEFAULT_C_GRID,
+    max_iter: int = 2000,
+    n_inner_folds: int = 5,
+    seed: int = 1,
+) -> dict[str, Any]:
+    """Fit L2 on **train + validate**, choosing ``C`` by cross-validation *inside* that block.
+
+    Same estimator as :func:`fit_l2_with_c_sweep` — L2-penalised logistic regression — and a
+    deliberately different **selection protocol**, needed by the k-fold sweep and by nothing else.
+
+    The sweep's design puts both the GWAS hit selection and the regression fit on the invariant
+    train+validate 80%. That leaves validate no longer idle, so it cannot also serve as the ``C``
+    tuning set: tuning on rows that helped choose the features is the small-scale version of the leak
+    the whole exercise exists to remove. And ``C`` is not a formality — validate AUROC ran 0.775 at
+    C=0.01 down to 0.728 at C=10, so pinning it would cost ~5 pp of comparator.
+
+    Cross-validating within the fitting block keeps every genome outside it untouched: the holdout is
+    never scored until the single final refit. Folds are stratified because the inner folds are ~2,200
+    genomes at ~53% prevalence and an unstratified split can hand one fold a skewed base rate.
+
+    ⚠ This is **not** the path that reproduces the deployed 0.7655 — that number was tuned on validate
+    and :func:`fit_l2_with_c_sweep` still produces it, unchanged. The two are different protocols on
+    different fitting sets and their AUROCs are not interchangeable.
+
+    Returns
+    -------
+    dict
+        The same shape :func:`fit_l2_with_c_sweep` returns, with ``c_selection`` set to ``inner_cv``
+        and each ``c_sweep`` entry carrying the mean inner-CV AUROC and its per-fold values.
+    """
+    fit_mask = (split == "train") | (split == "validate")
+    ev = split == "evaluate"
+    if not fit_mask.any():
+        raise ValueError("no train/validate rows to fit on")
+    if not ev.any():
+        raise ValueError("no evaluate rows — nothing to score")
+
+    X_fit, y_fit = X[fit_mask], y[fit_mask]
+    if len(np.unique(y_fit)) < 2:
+        raise ValueError("the fitting block is single-class")
+    n_splits = min(n_inner_folds, int(np.bincount(y_fit).min()))
+    if n_splits < 2:
+        raise ValueError(f"minority class has {int(np.bincount(y_fit).min())} rows — cannot cross-validate")
+    cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+    folds = list(cv.split(np.zeros(X_fit.shape[0]), y_fit))
+
+    sweep, best = [], None
+    for c in c_grid:
+        aurocs = []
+        for inner_tr, inner_va in folds:
+            # penalty left at its default (L2) — see fit_l2_with_c_sweep for why it is not passed.
+            m = LogisticRegression(C=c, solver="lbfgs", max_iter=max_iter)
+            m.fit(X_fit[inner_tr], y_fit[inner_tr])
+            aurocs.append(float(roc_auc_score(y_fit[inner_va], m.predict_proba(X_fit[inner_va])[:, 1])))
+        mean = float(np.mean(aurocs))
+        sweep.append({"C": c, "cv_auroc": mean, "cv_auroc_sd": float(np.std(aurocs)), "fold_aurocs": aurocs})
+        logger.info("  C=%-8g inner-CV AUROC %.4f ± %.4f (%d folds)", c, mean, np.std(aurocs), len(aurocs))
+        if best is None or mean > best[1]:
+            best = (c, mean)
+
+    c_best, cv_best = best
+    model = LogisticRegression(C=c_best, solver="lbfgs", max_iter=max_iter)
+    model.fit(X_fit, y_fit)
+    logger.info("chose C=%g (inner-CV %.4f); refit on all %d train+validate rows", c_best, cv_best, fit_mask.sum())
+    return {
+        "penalty": "l2",
+        "c_selection": "inner_cv",
+        "n_inner_folds": n_splits,
+        "inner_cv_seed": seed,
+        "C": float(c_best),
+        "cv_auroc": cv_best,
+        "c_sweep": sweep,
+        "n_fit": int(fit_mask.sum()),
+        "n_train": int((split == "train").sum()),
+        "n_validate": int((split == "validate").sum()),
+        "n_evaluate": int(ev.sum()),
+        "eval_sample_ids": None,  # filled by the caller
+        "y_true": y[ev],
+        "y_prob": model.predict_proba(X[ev])[:, 1],
+        "n_nonzero_coef": int((model.coef_ != 0).sum()),
         "model": model,
     }
 
@@ -576,13 +665,18 @@ def _cmd_fit(args: argparse.Namespace) -> None:
         (split == "train").sum(), (split == "validate").sum(), (split == "evaluate").sum(), X.shape[1],
     )
 
-    res = fit_l2_with_c_sweep(X, y, split, c_grid=tuple(args.c_grid), max_iter=args.max_iter)
+    if args.c_selection == "inner-cv":
+        res = fit_l2_inner_cv(X, y, split, c_grid=tuple(args.c_grid), max_iter=args.max_iter,
+                              n_inner_folds=args.n_inner_folds, seed=args.seed)
+    else:
+        res = fit_l2_with_c_sweep(X, y, split, c_grid=tuple(args.c_grid), max_iter=args.max_iter)
     eval_ids = split_df.loc[split == "evaluate", "Sample"].tolist()
     res["eval_sample_ids"] = eval_ids
     unitig_auroc = float(roc_auc_score(res["y_true"], res["y_prob"]))
 
     payload: dict[str, Any] = {
         "selection_scope": args.selection_scope,
+        "c_selection": args.c_selection,
         "matrix_dir": str(args.matrix_dir),
         "split_csv": str(args.split_csv),
         "label_column": args.label_column,
@@ -624,9 +718,16 @@ def _cmd_fit(args: argparse.Namespace) -> None:
             }
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
+    # c_selection travels with the coefficients: a saved model tuned on validate and one tuned by
+    # inner CV were fitted on different row sets, so a later reader must be able to tell them apart.
+    extra_meta: dict[str, Any] = {"c_selection": args.c_selection}
+    if args.c_selection == "inner-cv":
+        extra_meta |= {"n_inner_folds": res["n_inner_folds"], "n_fit": res["n_fit"]}
+    if sublineage_info:
+        extra_meta["sublineage_block"] = sublineage_info
     save_model(args.out_dir, res["model"], feature_names, C=res["C"],
                selection_scope=args.selection_scope, label_column=args.label_column,
-               extra_meta={"sublineage_block": sublineage_info} if sublineage_info else None)
+               extra_meta=extra_meta)
 
     if args.score_all_splits:
         # Score every genome in the matrix, keeping its split label, so this model can be compared
@@ -707,7 +808,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Needed only if that npz predates the sample_ids field.")
     f.add_argument("--c-grid", type=float, nargs="+", default=list(DEFAULT_C_GRID))
     f.add_argument("--max-iter", type=int, default=2000)
-    f.add_argument("--seed", type=int, default=1, help="Seed for the paired bootstrap on the head-to-head delta.")
+    f.add_argument("--seed", type=int, default=1,
+                   help="Seed for the paired bootstrap on the head-to-head delta, and for the inner "
+                        "CV fold shuffle under --c-selection inner-cv.")
     f.add_argument("--also-l1", action="store_true", help="Also fit L1 for an interpretable locus shortlist.")
     f.add_argument("--with-sublineage", action="store_true",
                    help="Stack one-hot Sublineage columns onto the unitig design. Measures a FLOOR on "
@@ -717,6 +820,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Also score every genome in the matrix (not just the holdout) and write "
                         "unitig_cohort_scores.npz with a per-genome split label, mirroring "
                         "score_cohort.py's cohort_scores.npz so the two models align by Sample.")
+    f.add_argument("--c-selection", type=str, default="validate", choices=("validate", "inner-cv"),
+                   help="validate = tune C on the validate split, fit on train (reproduces the "
+                        "deployed 0.7655). inner-cv = fit on train+validate and tune C by CV inside "
+                        "it — required when selection ALSO used train+validate, as in the k-fold sweep.")
+    f.add_argument("--n-inner-folds", type=int, default=5, help="Inner CV folds for --c-selection inner-cv.")
     f.add_argument("--selection-scope", type=str, default="full_cohort",
                    choices=["full_cohort", "trainval_only"],
                    help="Provenance of the hit-unitig selection. 'full_cohort' saw the holdout labels "

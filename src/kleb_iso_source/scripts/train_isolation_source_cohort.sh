@@ -28,6 +28,8 @@
 #   COHORT=all_samples PRECISION=bf16 sbatch -J bf16_all .../train_isolation_source_cohort.sh
 #   # reproduce the fp32 condition (what produced the 2026-05 numbers):
 #   COHORT=... PRECISION=fp32 OUTPUT_SUBDIR=models_fp32_repro sbatch ...
+#   # the publication k-fold x seed sweep (FOLD = task % N_FOLDS, SEED = task / N_FOLDS + 1):
+#   N_FOLDS=5 OUTPUT_SUBDIR=models_kfold sbatch --array=0-14 -J kfold_pooled .../train_isolation_source_cohort.sh
 
 set -uo pipefail
 cd /home/dca36/workspace/BacPredict
@@ -57,7 +59,28 @@ case "$COHORT" in
 esac
 eval_steps=${EVAL_STEPS:-$default_eval_steps}
 
+# K-fold sweep. Off unless N_FOLDS is set AND this is an array task, so every existing single-run
+# caller is byte-for-byte unchanged. The grid is the repo convention (root CLAUDE.md, "K-fold CV and
+# split semantics"): FOLD = task % N_FOLDS, SEED = task / N_FOLDS + 1.
+#
+# EVALUATE_SEED is pinned and must stay pinned: it alone fixes the holdout, so every (fold, seed) run
+# is scored on the same genomes and the 15 AUROCs are a distribution rather than 15 different
+# questions. Changing it mid-sweep silently makes the runs incomparable.
+N_FOLDS=${N_FOLDS:-}
+EVALUATE_SEED=${EVALUATE_SEED:-1}
+# Expanded below as ${kfold_args[@]+"..."} — `set -u` treats an empty array as unset on bash < 4.4,
+# so the bare "${kfold_args[@]}" would abort every non-k-fold run on an older login image.
+kfold_args=()
 seed=${SEED:-1}
+if [ -n "$N_FOLDS" ] && [ -n "${SLURM_ARRAY_TASK_ID:-}" ]; then
+  fold=$(( SLURM_ARRAY_TASK_ID % N_FOLDS ))
+  seed=$(( SLURM_ARRAY_TASK_ID / N_FOLDS + 1 ))
+  kfold_args=(--n-folds "$N_FOLDS" --fold "$fold" --evaluate-seed "$EVALUATE_SEED")
+  # The trainer appends _fold{NN}_seed{S} itself, so all 15 runs can share one OUTPUT_SUBDIR without
+  # any of them overwriting another -- or the deployed checkpoint in models/.
+elif [ -n "$N_FOLDS" ]; then
+  echo "N_FOLDS=$N_FOLDS set but this is not an array task -- submit with --array=0-\$((N_FOLDS*3-1))"; exit 1
+fi
 lr=${LR:-0.00015}
 warmup_proportion=0.1
 # ⚠ max_steps is NOT just a cap — it defines the LR SCHEDULE. warmup_steps = max_steps *
@@ -94,6 +117,10 @@ echo "Precision:         ${PRECISION}   (recorded in results.json run_config)"
 echo "Sheet:             $sheet_path"
 echo "Output:            $output_dir"
 echo "eval_steps:        $eval_steps   seed: $seed   lr: $lr"
+if [ ${#kfold_args[@]} -gt 0 ]; then
+  echo "K-fold:            task ${SLURM_ARRAY_TASK_ID} -> n_folds=$N_FOLDS fold=$fold seed=$seed evaluate_seed=$EVALUATE_SEED"
+  echo "                   holdout is fixed by evaluate_seed alone -- identical genomes in all runs"
+fi
 echo "Job ID:            $SLURM_JOB_ID  Node: $SLURMD_NODENAME  GPU: $CUDA_VISIBLE_DEVICES"
 echo "========================================================================"
 
@@ -113,7 +140,8 @@ uv run python src/kleb_iso_source/train_isolation_source.py \
   --eval-steps "$eval_steps" \
   --max-steps "$max_steps" \
   --early-stopping-patience "$early_stopping_patience" \
-  --seed "$seed"
+  --seed "$seed" \
+  ${kfold_args[@]+"${kfold_args[@]}"}
 status=$?
 
 if [ "$status" -ne 0 ]; then

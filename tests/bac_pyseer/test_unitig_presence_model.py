@@ -20,6 +20,7 @@ from bac_pyseer.kleb_iso_source.unitig_presence_model import (
     append_sublineage_onehot,
     build_parser,
     build_presence_matrix,
+    fit_l2_inner_cv,
     fit_l2_with_c_sweep,
     load_matrix,
     load_model,
@@ -218,7 +219,7 @@ def test_fit_parser_supplies_every_attribute_the_handler_reads():
     ])
     for attr in ("matrix_dir", "split_csv", "label_column", "out_dir", "bacformer_scores",
                  "bacformer_checkpoint_dir", "c_grid", "max_iter", "also_l1", "selection_scope",
-                 "seed", "func"):
+                 "seed", "c_selection", "n_inner_folds", "func"):
         assert hasattr(args, attr), f"fit subparser is missing {attr!r}"
 
 
@@ -417,3 +418,106 @@ def test_fit_parser_exposes_with_sublineage():
     assert build_parser().parse_args(
         ["fit", "--matrix-dir", "m", "--split-csv", "s.csv", "--out-dir", "o"]
     ).with_sublineage is False
+
+
+# ---------------------------------------------------------------------------
+# Inner-CV C selection — the k-fold sweep's protocol
+# ---------------------------------------------------------------------------
+
+
+def test_inner_cv_fits_on_train_plus_validate_not_train_alone():
+    """The whole point: with selection already on the 80%, validate is fitting data, not a tuning set."""
+    X, y, split = _planted_signal()
+    res = fit_l2_inner_cv(X, y, split, c_grid=(0.1,))
+    assert res["n_fit"] == 480 == res["n_train"] + res["n_validate"]
+    assert res["n_evaluate"] == 120 and len(res["y_prob"]) == 120
+
+
+def test_inner_cv_never_touches_the_holdout():
+    """Corrupting the evaluate rows must not move the chosen C or the fitted coefficients."""
+    X, y, split = _planted_signal()
+    a = fit_l2_inner_cv(X, y, split, c_grid=(0.01, 0.1, 1.0))
+
+    ev = split == "evaluate"
+    y_corrupt = y.copy()
+    y_corrupt[ev] = 1 - y_corrupt[ev]
+    b = fit_l2_inner_cv(X, y_corrupt, split, c_grid=(0.01, 0.1, 1.0))
+
+    assert a["C"] == b["C"]
+    np.testing.assert_allclose(a["model"].coef_, b["model"].coef_)
+
+
+def test_inner_cv_picks_the_grid_maximum_and_reports_every_fold():
+    X, y, split = _planted_signal()
+    res = fit_l2_inner_cv(X, y, split, c_grid=(0.001, 0.1, 10.0), n_inner_folds=4)
+    assert res["cv_auroc"] == max(s["cv_auroc"] for s in res["c_sweep"])
+    assert res["C"] == next(s["C"] for s in res["c_sweep"] if s["cv_auroc"] == res["cv_auroc"])
+    for entry in res["c_sweep"]:
+        assert len(entry["fold_aurocs"]) == 4
+        assert entry["cv_auroc"] == pytest.approx(float(np.mean(entry["fold_aurocs"])))
+
+
+def test_inner_cv_is_deterministic_for_a_fixed_seed_and_moves_with_it():
+    X, y, split = _planted_signal()
+    a = fit_l2_inner_cv(X, y, split, c_grid=(0.1,), seed=1)
+    b = fit_l2_inner_cv(X, y, split, c_grid=(0.1,), seed=1)
+    c = fit_l2_inner_cv(X, y, split, c_grid=(0.1,), seed=7)
+    assert a["c_sweep"][0]["fold_aurocs"] == b["c_sweep"][0]["fold_aurocs"]
+    assert a["c_sweep"][0]["fold_aurocs"] != c["c_sweep"][0]["fold_aurocs"]
+
+
+def test_inner_cv_recovers_the_planted_signal():
+    from sklearn.metrics import roc_auc_score
+
+    X, y, split = _planted_signal()
+    res = fit_l2_inner_cv(X, y, split, c_grid=(0.01, 0.1, 1.0))
+    assert roc_auc_score(res["y_true"], res["y_prob"]) > 0.75
+
+
+def test_inner_cv_works_with_no_validate_rows_at_all():
+    """The sweep's own selection table labels the whole 80% ``train`` — there is no validate slice."""
+    X, y, split = _planted_signal()
+    split = np.where(split == "validate", "train", split)
+    res = fit_l2_inner_cv(X, y, split, c_grid=(0.1,))
+    assert res["n_validate"] == 0 and res["n_fit"] == 480
+
+
+def test_inner_cv_refuses_an_empty_or_single_class_fitting_block():
+    X, y, split = _planted_signal()
+    with pytest.raises(ValueError, match="no train/validate rows"):
+        fit_l2_inner_cv(X, y, np.full(len(y), "evaluate"), c_grid=(0.1,))
+    with pytest.raises(ValueError, match="nothing to score"):
+        fit_l2_inner_cv(X, y, np.where(split == "evaluate", "train", split), c_grid=(0.1,))
+    y_one = y.copy()
+    y_one[split != "evaluate"] = 1
+    with pytest.raises(ValueError, match="single-class"):
+        fit_l2_inner_cv(X, y_one, split, c_grid=(0.1,))
+
+
+def test_inner_cv_shrinks_the_fold_count_rather_than_crashing_on_a_tiny_minority():
+    X, y, split = _planted_signal()
+    y = y.copy()
+    fitting = np.flatnonzero(split != "evaluate")
+    positives = fitting[y[fitting] == 1]
+    y[positives[3:]] = 0  # leave 3 positives in the fitting block — 5 folds cannot be stratified
+    res = fit_l2_inner_cv(X, y, split, c_grid=(0.1,), n_inner_folds=5)
+    assert res["n_inner_folds"] == 3
+
+    y[positives[1:]] = 0  # down to one positive — no split is possible at all
+    with pytest.raises(ValueError, match="cannot cross-validate"):
+        fit_l2_inner_cv(X, y, split, c_grid=(0.1,), n_inner_folds=5)
+
+
+def test_the_two_protocols_are_labelled_so_a_json_can_never_confuse_them():
+    X, y, split = _planted_signal()
+    assert fit_l2_with_c_sweep(X, y, split, c_grid=(0.1,))["c_selection"] == "validate"
+    assert fit_l2_inner_cv(X, y, split, c_grid=(0.1,))["c_selection"] == "inner_cv"
+
+
+def test_fit_parser_defaults_to_the_reproducible_protocol():
+    """Default must stay ``validate`` — that is the path that reproduces the deployed 0.7655."""
+    args = build_parser().parse_args(["fit", "--matrix-dir", "m", "--split-csv", "s.csv", "--out-dir", "o"])
+    assert args.c_selection == "validate" and args.n_inner_folds == 5
+    assert build_parser().parse_args(
+        ["fit", "--matrix-dir", "m", "--split-csv", "s.csv", "--out-dir", "o", "--c-selection", "inner-cv"]
+    ).c_selection == "inner-cv"
