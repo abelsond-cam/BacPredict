@@ -30,6 +30,9 @@
 > Added 2026-09-04 (§3.4 cohort composition): computed by `sublineage_composition` from the
 > cohort split CSV joined to `models/cohort_scores.npz`, join asserted total with label==y_true and
 > identical splits across all 14,119 genomes; threshold read from `model_comparison_thresholds.json`.
+> Added 2026-09-04 (§3.4 O1 correction): per-sublineage evaluate AUROCs recomputed from
+> `cohort_scores.npz` + the cohort split CSV, with the recipe validated by reproducing the two
+> figures already of record (SL258 0.858, SL307 0.815) before the SL3010 figure was believed.
 > Added 2026-09-01 (§3.4 pick list): per-sublineage counts read from the regenerated
 > `model_comparison_shortlist_meta.json`; `model_comparison_thresholds.json` re-checked unchanged
 > (md5 d4542259…), so the Youden points and the reproduce-before-use gate still stand; Section 5's
@@ -888,8 +891,15 @@ None blocks anything; they are what the queued models below are pointed at.
 - **O1 — the SL3010 contradiction.** Four ST3010 genomes sit in Bacformer's SL3010 bottom ten at
   0.079–0.144 while the unitig model scores them 0.863–0.922 (`VRES0604` 0.127/0.922, `VRES0606`
   0.125/0.903, `VRES0611` 0.079/0.889, `VRES0565` 0.144/0.863). Not scale compression — opposite sides
-  of *both* models' Youden points. All four `unseen`, so neither is reciting a label, and SL3010 is the
-  only top-3 sublineage with **no cohort per-SL AUROC** to arbitrate.
+  of *both* models' Youden points. All four `unseen`, so neither is reciting a label.
+  - ⚠ **CORRECTED 2026-09-04: SL3010 does have a within-lineage AUROC.** O1 originally said it had
+    "no cohort per-SL AUROC to arbitrate", and the published reports repeated it. It is computable
+    from the same `cohort_scores.npz` + split CSV that yield the other two, and reproduces them
+    exactly (SL258 0.8577 vs 0.858 of record, SL307 0.8148 vs 0.815). **SL3010 evaluate n=36,
+    16 positive, AUROC 0.650 [0.438, 0.837]** — the interval includes chance, so it is *weak and
+    imprecise* validation rather than none. That is the more informative statement and also the
+    worse one: SL3010 is the least-validated of the three lineages *and* carries the most model
+    disagreement (24 of 40). Found by an adversarial verification pass over the artifacts.
 - **O2 — it generalises beyond SL3010, and there the labels favour Bacformer.** Every genome in
   Bacformer's SL258 bottom ten carries a unitig probability 0.25–0.68, straddling the unitig threshold
   0.527; 7 of those 10 are outright disagreements and **all 10 are truly faeces** — so within the
