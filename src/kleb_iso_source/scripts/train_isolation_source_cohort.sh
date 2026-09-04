@@ -30,6 +30,8 @@
 #   COHORT=... PRECISION=fp32 OUTPUT_SUBDIR=models_fp32_repro sbatch ...
 #   # the publication k-fold x seed sweep (FOLD = task % N_FOLDS, SEED = task / N_FOLDS + 1):
 #   N_FOLDS=5 OUTPUT_SUBDIR=models_kfold sbatch --array=0-14 -J kfold_pooled .../train_isolation_source_cohort.sh
+#   # ...on the free SL3 GPU queue, whose QOS caps walltime at 12 h: chain it (see submit_kfold_sweep.sh)
+#   bash src/kleb_iso_source/scripts/submit_kfold_sweep.sh
 
 set -uo pipefail
 cd /home/dca36/workspace/BacPredict
@@ -68,19 +70,43 @@ eval_steps=${EVAL_STEPS:-$default_eval_steps}
 # questions. Changing it mid-sweep silently makes the runs incomparable.
 N_FOLDS=${N_FOLDS:-}
 EVALUATE_SEED=${EVALUATE_SEED:-1}
+# RESUME=auto continues from the newest checkpoint in this run's directory, so a 36 h fine-tune can
+# be chained across the 12 h wall that comes with the free SL3 GPU QOS. HF restores optimiser, LR
+# schedule, RNG and the early-stopping counter, so the trajectory is the uninterrupted one.
+RESUME=${RESUME:-none}
+run_dir=""
 # Expanded below as ${kfold_args[@]+"..."} — `set -u` treats an empty array as unset on bash < 4.4,
 # so the bare "${kfold_args[@]}" would abort every non-k-fold run on an older login image.
 kfold_args=()
 seed=${SEED:-1}
-if [ -n "$N_FOLDS" ] && [ -n "${SLURM_ARRAY_TASK_ID:-}" ]; then
-  fold=$(( SLURM_ARRAY_TASK_ID % N_FOLDS ))
-  seed=$(( SLURM_ARRAY_TASK_ID / N_FOLDS + 1 ))
+# TASK_ID lets a chained (non-array) submission name its cell of the grid; SLURM_ARRAY_TASK_ID is the
+# array form. The chain is what the free SL3 queue needs -- its 12 h QOS cap cannot hold a ~38 h run,
+# and SLURM's aftercorr, the array-aware dependency, demands the previous task exit 0, which a job
+# ended by the wall never does.
+TASK_ID=${TASK_ID:-${SLURM_ARRAY_TASK_ID:-}}
+if [ -n "$N_FOLDS" ] && [ -n "$TASK_ID" ]; then
+  fold=$(( TASK_ID % N_FOLDS ))
+  seed=$(( TASK_ID / N_FOLDS + 1 ))
   kfold_args=(--n-folds "$N_FOLDS" --fold "$fold" --evaluate-seed "$EVALUATE_SEED")
   # The trainer appends _fold{NN}_seed{S} itself, so all 15 runs can share one OUTPUT_SUBDIR without
-  # any of them overwriting another -- or the deployed checkpoint in models/.
+  # any of them overwriting another -- or the deployed checkpoint in models/. Mirrored here so the
+  # already-finished guard below can find this run's directory.
+  run_dir=$(printf "%s_fold%02d_seed%d" "$output_dir" "$fold" "$seed")
 elif [ -n "$N_FOLDS" ]; then
-  echo "N_FOLDS=$N_FOLDS set but this is not an array task -- submit with --array=0-\$((N_FOLDS*3-1))"; exit 1
+  echo "N_FOLDS=$N_FOLDS set but no TASK_ID/SLURM_ARRAY_TASK_ID -- submit via submit_kfold_sweep.sh"; exit 1
 fi
+[ -n "$run_dir" ] || run_dir="$output_dir"
+
+# A chain is submitted with --dependency=afterany, because the link before this one is EXPECTED to end
+# in TIMEOUT -- afterok would cancel the rest of the chain the moment the wall did its job. That means
+# the links after the run finishes would otherwise resume a completed run and train past its own early
+# stop. results.json is written only on a successful finish, so it is the signal that there is nothing
+# left to do. Exit 0, not 1: a non-zero exit here reads as a failure in sacct.
+if [ -f "$run_dir/results.json" ]; then
+  echo "Already finished: $run_dir/results.json exists. Nothing to do."
+  exit 0
+fi
+
 lr=${LR:-0.00015}
 warmup_proportion=0.1
 # ⚠ max_steps is NOT just a cap — it defines the LR SCHEDULE. warmup_steps = max_steps *
@@ -117,8 +143,9 @@ echo "Precision:         ${PRECISION}   (recorded in results.json run_config)"
 echo "Sheet:             $sheet_path"
 echo "Output:            $output_dir"
 echo "eval_steps:        $eval_steps   seed: $seed   lr: $lr"
+echo "Run dir:           $run_dir   resume: $RESUME"
 if [ ${#kfold_args[@]} -gt 0 ]; then
-  echo "K-fold:            task ${SLURM_ARRAY_TASK_ID} -> n_folds=$N_FOLDS fold=$fold seed=$seed evaluate_seed=$EVALUATE_SEED"
+  echo "K-fold:            task ${TASK_ID} -> n_folds=$N_FOLDS fold=$fold seed=$seed evaluate_seed=$EVALUATE_SEED"
   echo "                   holdout is fixed by evaluate_seed alone -- identical genomes in all runs"
 fi
 echo "Job ID:            $SLURM_JOB_ID  Node: $SLURMD_NODENAME  GPU: $CUDA_VISIBLE_DEVICES"
@@ -141,6 +168,7 @@ uv run python src/kleb_iso_source/train_isolation_source.py \
   --max-steps "$max_steps" \
   --early-stopping-patience "$early_stopping_patience" \
   --seed "$seed" \
+  --resume-from-checkpoint "$RESUME" \
   ${kfold_args[@]+"${kfold_args[@]}"}
 status=$?
 

@@ -11,6 +11,7 @@ import warnings
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import torch
 import transformers
@@ -22,6 +23,7 @@ from transformers import (
     EvalPrediction,
     TrainingArguments,
 )
+from transformers.trainer_utils import get_last_checkpoint
 
 from bacpredict.engine.finetune.datasets import LabelInjectingFileDataset
 from bacpredict.engine.finetune.metrics import build_results_payload, compute_full_metrics, write_results_json
@@ -164,6 +166,7 @@ def run(
     fold: int = 0,
     evaluate_seed: int = 1,
     precision: str = "bf16",
+    resume_from_checkpoint: str = "none",
     # deprecated — ignored; kept for call-site backward compat
     train_data_dir: str | None = None,
     val_data_dir: str | None = None,
@@ -176,6 +179,12 @@ def run(
     ``precision`` sets the master-weight dtype: ``"bf16"`` (default, the deployed AST setting) or
     ``"fp32"`` (the pre-``a817ac2`` condition that produced the 2026-05 results). It is recorded in
     ``results.json`` under ``run_config.precision``.
+
+    ``resume_from_checkpoint`` continues an interrupted run: ``"auto"`` picks the newest checkpoint in
+    ``output_dir`` and starts fresh if there is none, ``"none"`` always starts fresh, or pass an
+    explicit checkpoint path. HF restores optimiser, LR schedule, RNG and the early-stopping counter,
+    so a chained run follows the same trajectory as an uninterrupted one — which is what lets a 36 h
+    fine-tune fit a 12 h queue.
     """
     if precision not in ("bf16", "fp32"):
         raise ValueError(f"--precision must be 'bf16' or 'fp32', got {precision!r}")
@@ -399,7 +408,18 @@ def run(
         compute_metrics=compute_metrics_binary_genome_pred,
         callbacks=[EarlyStoppingCallback(early_stopping_patience=early_stopping_patience)],
     )
-    trainer.train()
+    # `auto` on a fresh output dir must mean "start from scratch", not crash: link 1 of a chained run
+    # has no checkpoint, and every later link does. get_last_checkpoint returns the NEWEST, which is
+    # the one to resume from — not the best, which save_total_limit=1 also keeps.
+    resume: str | bool | None = None
+    if resume_from_checkpoint == "auto":
+        found = get_last_checkpoint(output_dir) if os.path.isdir(output_dir) else None
+        resume = found
+        print(f"Resume: auto -> {found or 'no checkpoint found, starting fresh'}")
+    elif resume_from_checkpoint != "none":
+        resume = resume_from_checkpoint
+        print(f"Resume: {resume}")
+    trainer.train(resume_from_checkpoint=resume)
 
     # Canonical §0.4 results JSON on the held-out evaluate split (mirrors kleb_ast/train_amr.py).
     # Smoke mode (n_samples==10) has no separate evaluate split, so skip it there.
@@ -414,6 +434,15 @@ def run(
             logits, labels = logits[keep], labels[keep]
         y_prob = torch.sigmoid(logits.float()).cpu().numpy()
         y_true = labels.cpu().numpy()
+        # Per-genome scores, keyed by Sample. Two things need them and neither can be reconstructed
+        # from results.json: verifying this run really was scored on the materialised holdout (a
+        # matching n is not proof — see materialise_kfold_splits), and the paired bootstrap against
+        # the unitig model, which resamples the same genomes in both arms.
+        scored_ids = np.asarray(evaluate_ids, dtype=np.str_)[keep.cpu().numpy()]
+        scores_path = Path(output_dir) / "eval_scores.npz"
+        np.savez(scores_path, sample_ids=scored_ids, y_true=y_true, y_prob=y_prob,
+                 drug=np.asarray(label_column), operating_threshold=np.asarray(0.5))
+        print(f"Wrote eval scores: {scores_path} ({len(scored_ids)} genomes)")
         metrics_block = compute_full_metrics(y_true, y_prob)
         payload = build_results_payload(
             task="kleb_iso_source",
@@ -513,6 +542,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--n-samples", type=int, default=10000)
     p.add_argument("--seed", type=int, default=1)
     p.add_argument("--max-steps", type=int, default=100000)
+    p.add_argument(
+        "--resume-from-checkpoint",
+        type=str,
+        default="none",
+        help="'auto' resumes from the newest checkpoint in --output-dir (starting fresh if there is "
+             "none), 'none' always starts fresh, or an explicit checkpoint path. 'auto' is what lets "
+             "a 36 h fine-tune run as chained 12 h jobs.",
+    )
     p.add_argument("--early-stopping-patience", type=int, default=30)
     p.add_argument("--eval-steps", type=int, default=250)
     p.add_argument("--num-workers", type=int, default=15)
@@ -603,5 +640,6 @@ if __name__ == "__main__":
         n_folds=args.n_folds,
         fold=args.fold,
         evaluate_seed=args.evaluate_seed,
+        resume_from_checkpoint=args.resume_from_checkpoint,
         precision=args.precision,
     )
