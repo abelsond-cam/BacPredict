@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import logging
 
+import pytest
+
 from bacpredict.engine.finetune.checkpoints import (
     is_complete,
     list_checkpoints,
@@ -66,3 +68,71 @@ def test_unrelated_directories_and_files_are_ignored(tmp_path):
     (tmp_path / "results.json").write_text("{}")
     (tmp_path / "checkpoint-999").write_text("a file, not a directory")
     assert [p.name for p in list_checkpoints(tmp_path)] == ["checkpoint-700"]
+
+
+# ---------------------------------------------------------------------------
+# Resuming past HF's problem_type validation
+# ---------------------------------------------------------------------------
+
+
+def test_hf_rejects_bacformers_problem_type_outside_the_block():
+    """The bug this exists for. If transformers ever accepts it, this test fails and the shim goes."""
+    from transformers import PretrainedConfig
+
+    with pytest.raises(ValueError, match="problem_type"):
+        PretrainedConfig(problem_type="binary_classification")
+
+
+def test_inside_the_block_the_value_survives_verbatim():
+    """Preserved, never dropped: problem_type=None would match no loss branch and train at zero grad."""
+    from transformers import PretrainedConfig
+
+    from bacpredict.engine.finetune.checkpoints import tolerate_custom_problem_type
+
+    with tolerate_custom_problem_type():
+        cfg = PretrainedConfig(problem_type="binary_classification", num_labels=1)
+    assert cfg.problem_type == "binary_classification"
+    assert cfg.num_labels == 1
+
+
+def test_legal_values_still_take_the_untouched_code_path():
+    from transformers import PretrainedConfig
+
+    from bacpredict.engine.finetune.checkpoints import tolerate_custom_problem_type
+
+    with tolerate_custom_problem_type():
+        assert PretrainedConfig(problem_type="regression").problem_type == "regression"
+        assert PretrainedConfig().problem_type is None
+
+
+def test_the_patch_is_reverted_even_when_the_body_raises():
+    from transformers import PretrainedConfig
+
+    from bacpredict.engine.finetune.checkpoints import tolerate_custom_problem_type
+
+    before = PretrainedConfig.__init__
+    with pytest.raises(RuntimeError), tolerate_custom_problem_type():
+        raise RuntimeError("boom")
+    assert PretrainedConfig.__init__ is before
+    with pytest.raises(ValueError, match="problem_type"):
+        PretrainedConfig(problem_type="binary_classification")
+
+
+def test_a_real_checkpoint_config_round_trips(tmp_path):
+    """Exactly what Trainer._load_from_checkpoint does — read the file, then read its version."""
+    import json
+
+    from transformers import PretrainedConfig
+
+    from bacpredict.engine.finetune.checkpoints import tolerate_custom_problem_type
+
+    cfg_file = tmp_path / "config.json"
+    cfg_file.write_text(json.dumps({
+        "architectures": ["BacformerLargeForGenomeClassification"],
+        "model_type": "bacformer", "problem_type": "binary_classification",
+        "num_labels": 1, "transformers_version": "4.57.6",
+    }))
+    with tolerate_custom_problem_type():
+        cfg = PretrainedConfig.from_json_file(cfg_file)
+    assert cfg.transformers_version == "4.57.6"
+    assert cfg.problem_type == "binary_classification"

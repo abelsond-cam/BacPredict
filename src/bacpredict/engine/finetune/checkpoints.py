@@ -18,11 +18,22 @@ presence means everything before it landed.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
+from collections.abc import Iterator
 from pathlib import Path
 
+from transformers import PretrainedConfig
+
 logger = logging.getLogger(__name__)
+
+#: The only values ``PretrainedConfig`` accepts. Hardcoded as an inline tuple inside its ``__init__``
+#: (transformers 4.57), so it cannot be extended — only stepped around, which is what
+#: :func:`tolerate_custom_problem_type` does.
+HF_ALLOWED_PROBLEM_TYPES = frozenset(
+    {"regression", "single_label_classification", "multi_label_classification"}
+)
 
 CHECKPOINT_RE = re.compile(r"^checkpoint-(\d+)$")
 
@@ -73,3 +84,45 @@ def pick_resume_checkpoint(output_dir: str | Path) -> Path | None:
             "fresh: %s", len(skipped), COMPLETION_MARKER, ", ".join(p.name for p in skipped),
         )
     return None
+
+
+@contextlib.contextmanager
+def tolerate_custom_problem_type() -> Iterator[None]:
+    """Let HF resume from a checkpoint whose ``problem_type`` is a model's own extension.
+
+    ``Trainer._load_from_checkpoint`` reads the checkpoint's ``config.json`` through the **generic**
+    :class:`~transformers.PretrainedConfig`, which validates ``problem_type`` against its own three
+    values and raises on anything else. Bacformer sets ``problem_type="binary_classification"`` and
+    selects its loss from it — ``binary_cross_entropy_with_logits`` in
+    ``bacformer/modeling/modeling_large.py`` — so the value is load-bearing and must not be
+    "corrected" to an HF-legal one: ``single_label_classification`` would switch the estimator to
+    cross-entropy over a single label. Rewriting the saved config is equally out, because
+    ``from_pretrained`` reads that same file when the checkpoint is later evaluated.
+
+    HF reads the config there for exactly one purpose — comparing ``transformers_version`` to emit a
+    mismatch warning — so nothing is lost by letting the value through unvalidated. This suspends
+    **only** that check, **only** for values HF would reject, and **only** inside the ``with`` block;
+    the original ``__init__`` is restored in a ``finally``.
+
+    The value is preserved verbatim rather than dropped. Dropping it would leave ``problem_type=None``,
+    no loss branch would match, and Bacformer's forward would return ``loss=None`` — training that
+    silently computes no gradient and still looks like it is running.
+
+    Measured 2026-09-04: without this, every link of a chained fine-tune after the first dies with
+    ``The config parameter 'problem_type' was not understood``.
+    """
+    original = PretrainedConfig.__init__
+
+    def patched(self, *args, **kwargs):
+        problem_type = kwargs.get("problem_type")
+        if problem_type is None or problem_type in HF_ALLOWED_PROBLEM_TYPES:
+            return original(self, *args, **kwargs)
+        original(self, *args, **{k: v for k, v in kwargs.items() if k != "problem_type"})
+        self.problem_type = problem_type
+        return None
+
+    PretrainedConfig.__init__ = patched
+    try:
+        yield
+    finally:
+        PretrainedConfig.__init__ = original

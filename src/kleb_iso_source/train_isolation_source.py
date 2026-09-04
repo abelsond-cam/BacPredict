@@ -24,7 +24,7 @@ from transformers import (
     TrainingArguments,
 )
 
-from bacpredict.engine.finetune.checkpoints import pick_resume_checkpoint
+from bacpredict.engine.finetune.checkpoints import pick_resume_checkpoint, tolerate_custom_problem_type
 from bacpredict.engine.finetune.datasets import LabelInjectingFileDataset
 from bacpredict.engine.finetune.metrics import build_results_payload, compute_full_metrics, write_results_json
 from bacpredict.engine.finetune.split_utils import generate_kfold_splits
@@ -421,7 +421,14 @@ def run(
     elif resume_from_checkpoint != "none":
         resume = resume_from_checkpoint
         print(f"Resume: {resume}")
-    trainer.train(resume_from_checkpoint=resume)
+    if resume:
+        # HF reads the checkpoint's config.json through the GENERIC PretrainedConfig, purely to compare
+        # transformers_version — and that reader rejects Bacformer's own problem_type. The value picks
+        # the loss, so it cannot be changed; the check is what gets suspended, for this call only.
+        with tolerate_custom_problem_type():
+            trainer.train(resume_from_checkpoint=resume)
+    else:
+        trainer.train()
 
     # Canonical §0.4 results JSON on the held-out evaluate split (mirrors kleb_ast/train_amr.py).
     # Smoke mode (n_samples==10) has no separate evaluate split, so skip it there.
