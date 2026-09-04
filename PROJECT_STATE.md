@@ -210,6 +210,18 @@ predate the fixes and need regenerating.
 - Kp azithromycin **0.799** is the deployed head (its `results.json`); **0.816066** is the ladder's
   `ft_mean` re-probe (`…/train_kleb_ast/pangena_predict/amr_ladder/azithromycin/azithromycin_amr_ladder_table.csv`,
   rung 1). Both are honest — they are different estimators. Always say which.
+- **⚠ `finetune_amr`'s resume path crashes, unfixed — found 2026-09-04 by the invasion sweep, NOT by
+  an AMR run.** `finetune_amr.py:405` calls `trainer.train(resume_from_checkpoint=...)` on a model
+  built with `problem_type="binary_classification"` (line ~293). HF's
+  `Trainer._load_from_checkpoint` reads the checkpoint's `config.json` through the **generic**
+  `PretrainedConfig`, which rejects that value outright — so **any** `--resume-from-checkpoint` on the
+  stock-head path dies immediately with *"The config parameter `problem_type` was not understood"*.
+  The attention-pooling path may differ and was not tested. **The fix already exists and is tested**:
+  wrap the call in `bacpredict.engine.finetune.checkpoints.tolerate_custom_problem_type()` (one import,
+  one `with`). Deliberately **not applied here** — `finetune_amr.py` is the TB arm's live file and this
+  is the invasion agent's finding; whoever owns that file should apply it. Do not "fix" it by changing
+  `problem_type`: that value selects the loss (`binary_cross_entropy_with_logits`,
+  `bacformer/modeling/modeling_large.py:1375`), so an HF-legal value is a different estimator.
 
 **Owns.** `src/bacpredict/engine/`, `src/bacpredict/apps/`, `src/bacpredict/visualisations/`.
 
@@ -270,6 +282,22 @@ than refit noise? Root §0.2 reserves folds x seeds for exactly this.
   standard k-fold holdout knowingly — the sweep is a fresh estimate, not one conditioned on the original
   arbitrary partition. What *is* comparable is Bacformer vs unitig *within* the sweep, since both arms
   share this holdout.
+
+**Operational facts, measured 2026-09-04 — both cost a cluster round-trip and neither was predictable
+from the plan.**
+- **Chained resume works, and is verified end-to-end**, not assumed: link 2 of a two-link test resumed
+  at **step 708** from `checkpoint-700` with learning rate **1.0635e-05**, which is exactly what the
+  10,000-step warmup prescribes for step 709 (`1.5e-4 x 709/10000`). Checkpoint choice, global step and
+  scheduler state all restored.
+- **It did not work on the first attempt, and a one-job smoke could never have shown that.** Link 2
+  died on HF's generic config reader rejecting Bacformer's `problem_type` (fixed in `caa32d6`; see
+  §3.1's caveat, where the same defect still sits unfixed in `finetune_amr`). The failure is invisible
+  to a fresh start — it exists only in the second link — so the plan's prescribed "smoke one job first"
+  would have passed and released all 75 jobs to die one link in.
+- **A HELD job freezes an `afterany` chain forever.** 52 of the 64 unitig shards hit
+  `user_env_retrieval_failed_requeued_held` and sat held until released by hand; a held job never
+  *ends*, so the dependency never fires. The chains now submit `--no-requeue` (`75a6d57`), which turns
+  the same fault into a plain FAILED that the next link recovers from.
 
 **Split table of record for the sweep** —
 `…/sampled_country_2_1_all/kpsc_human/kfold_sweep/{kfold_selection_split.csv, kfold_fold_assignments.csv,
