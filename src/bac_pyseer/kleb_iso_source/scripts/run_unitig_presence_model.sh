@@ -28,6 +28,9 @@
 #   SELECTION_SCOPE=trainval_only SCORE_ALL_SPLITS=1 HITS_SUBMATRIX=<trainval hit submatrix> sbatch ...
 #   # + one-hot sublineage, as a FLOOR on what lineage information adds (separate OUT_DIR, enforced)
 #   WITH_SUBLINEAGE=1 SELECTION_SCOPE=trainval_only SCORE_ALL_SPLITS=1 HITS_SUBMATRIX=<...> sbatch ...
+#   # the k-fold sweep's one unitig model: selection AND fit on the invariant train+validate 80%,
+#   # so C must be cross-validated inside it rather than tuned on validate.
+#   C_SELECTION=inner-cv SELECTION_SCOPE=trainval_only SCORE_ALL_SPLITS=1 COHORT=..._kfold_trainval sbatch ...
 
 set -euo pipefail
 export PYTHONUNBUFFERED=1
@@ -61,6 +64,13 @@ BAC_SCORES=${BAC_SCORES:-$FT_COHORT/models/eval_scores.npz}
 BAC_CKPT=${BAC_CKPT:-$FT_COHORT/models}
 SELECTION_SCOPE=${SELECTION_SCOPE:-full_cohort}
 WITH_SUBLINEAGE=${WITH_SUBLINEAGE:-0}
+# How C is chosen. `validate` (default) tunes on the validate split and fits on train — the protocol
+# behind the deployed 0.7655, kept as the default so that number stays reproducible. `inner-cv` fits
+# on train+validate and cross-validates C inside it, which is what the k-fold sweep needs: there,
+# selection ALSO used train+validate, so tuning on validate would tune on rows that helped choose the
+# features. C is worth ~5 pp (validate 0.775 at C=0.01 down to 0.728 at C=10), so it cannot just be
+# pinned instead.
+C_SELECTION=${C_SELECTION:-validate}
 
 # The sublineage block makes this a DIFFERENT model, so it defaults to a different output dir.
 # presence_model/unitig_cohort_scores.npz is the artifact the lab-collection comparison is gated on;
@@ -109,7 +119,7 @@ else
     --matrix-dir "$MATRIX_DIR"
 fi
 
-echo "=== fitting + head-to-head vs Bacformer ==="
+echo "=== fitting (C by $C_SELECTION) + head-to-head vs Bacformer ==="
 EXTRA=()
 # `if`, not `[ … ] && …`. Measured, because the folk rule is wrong in both directions: a false
 # `[ … ] && cmd` does NOT abort here — set -e exempts non-final commands of an AND-OR list, so
@@ -134,6 +144,7 @@ uv run python -m $MOD fit \
   --bacformer-scores "$BAC_SCORES" \
   --bacformer-checkpoint-dir "$BAC_CKPT" \
   --selection-scope "$SELECTION_SCOPE" \
+  --c-selection "$C_SELECTION" \
   --out-dir "$OUT_DIR" \
   "${EXTRA[@]}"
 
