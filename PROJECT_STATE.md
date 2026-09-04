@@ -27,6 +27,9 @@
 > holdout verified **identical genome-for-genome** to the pooled cohort's (2,822/2,822, zero leakage
 > into train/validate) from `split_manifest.json` and both split CSVs, not inferred from matching n.
 > Lab-collection split composition (154/22/31/44) counted from `lab_collection_invasion_predictions.csv`.
+> Added 2026-09-04 (§3.4 cohort composition): computed by `sublineage_composition` from the
+> cohort split CSV joined to `models/cohort_scores.npz`, join asserted total with label==y_true and
+> identical splits across all 14,119 genomes; threshold read from `model_comparison_thresholds.json`.
 > Added 2026-09-01 (§3.4 pick list): per-sublineage counts read from the regenerated
 > `model_comparison_shortlist_meta.json`; `model_comparison_thresholds.json` re-checked unchanged
 > (md5 d4542259…), so the Youden points and the reproduce-before-use gate still stand; Section 5's
@@ -858,8 +861,26 @@ directory suffix and hold an identically named `unitig_cohort_scores.npz`.
     `unseen`. Read the invasive picks as the novel ones.
   - Section 5's two global tables are **unchanged** (verified byte-identical) and still use the
     original top/bottom-by-probability rule over the agreeing set.
-- **Published report** (2026-08-18): <https://claude.ai/code/artifact/87cbaae7-d1f0-4e47-be98-910e3fd198b3>
-  — six sections plus the register below, built from the seven `model_comparison_*` files only.
+- **Published report**: <https://claude.ai/code/artifact/87cbaae7-d1f0-4e47-be98-910e3fd198b3>
+  — seven sections plus the register below.
+
+**Cohort composition by sublineage (2026-09-04, `1a25d95`).** Built by
+`kleb_iso_source.sublineage_composition`; every figure is in
+`sublineage_composition_{all,heldout}.csv` + `sublineage_composition.json` beside the other artifacts.
+The join is guarded on more than row count — it requires a total join, `blood_vs_faeces_label ==
+y_true`, and identical split assignment for all 14,119 genomes.
+
+- **Numbers of record.** `all` n=14,119: **53.2% blood observed / 44.8% predicted**. `heldout`
+  (validate+evaluate) n=4,234: **53.5% / 43.4%**. Top 15 sublineages by size, remainder pooled.
+- ⛔ **The predicted-minus-observed gap is a threshold property, not biology.** Youden maximises
+  sens+spec and does not preserve prevalence; here sens 0.633 < spec 0.790, so the model under-calls
+  blood by **−8.4 pp** (`all`) / **−10.2 pp** (`heldout`) *globally*. Only a per-lineage gap that
+  departs from that offset says anything. `compose()` returns the offset so it cannot be forgotten.
+- **"other" is the largest single bar** — 1,363 sublineages, **6,313 genomes = 45% of the cohort**,
+  2.6× SL258. Pinned last rather than sorted first.
+- **Scope matters and both are published.** At `all` scope 70% of rows are memorised training data
+  (train AUROC 0.959 vs 0.786), so predicted bars there are largely recall; `heldout` is the honest
+  scope. SL3010 reads 53.3 → 37.5 on `all` but 40.7 → 22.2 on heldout.
 
 **Open questions from the comparison (2026-08-14/18) — observations and hypotheses, not findings.**
 None blocks anything; they are what the queued models below are pointed at.
