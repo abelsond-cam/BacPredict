@@ -55,6 +55,13 @@ for task in $TASKS; do
     args=(
       --account="$ACCT" --partition="$PART" --time="$TIME"
       --cpus-per-task="$CPUS" --mem="$MEM" --gres=gpu:1
+      # --no-requeue, deliberately. Observed 2026-09-04 on the unitig array: 52 of 64 tasks hit
+      # `user_env_retrieval_failed_requeued_held` and sat HELD until released by hand. A held job
+      # never *ends*, so an afterany dependency on it never fires and the whole chain freezes --
+      # silently, for as long as nobody is watching. Without requeue the same fault ends the link in
+      # FAILED instead, afterany fires, and the next link resumes from the last checkpoint. In a
+      # chain, requeue buys nothing anyway: the next link already is the retry.
+      --no-requeue
       --job-name="kf${task}L${link}"
       --output="$LOGDIR/kfold_t${task}_L${link}_%j.out"
       --error="$LOGDIR/kfold_t${task}_L${link}_%j.err"
