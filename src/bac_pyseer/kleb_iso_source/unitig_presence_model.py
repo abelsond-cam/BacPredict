@@ -590,6 +590,19 @@ def paired_delta_ci(
     }
 
 
+def tuning_summary(res: dict[str, Any]) -> str:
+    """One phrase naming how ``C`` was chosen and what it scored, for the run's summary line.
+
+    The two protocols return different keys — ``validate_auroc`` against ``cv_auroc`` — because they
+    are different quantities and collapsing them into one name would invite exactly the confusion the
+    ``c_selection`` field exists to prevent. This picks the right one so the summary cannot crash on
+    the shape it was not written for.
+    """
+    if res.get("c_selection") == "inner_cv":
+        return f"inner-CV {res['cv_auroc']:.4f} ({res['n_inner_folds']} folds, fit on {res['n_fit']})"
+    return f"validate {res['validate_auroc']:.4f}"
+
+
 def bacformer_on_subset(
     scores_npz: Path,
     subset_ids: list[str],
@@ -764,7 +777,7 @@ def _cmd_fit(args: argparse.Namespace) -> None:
     )
 
     print(f"\nselection scope: {args.selection_scope}")
-    print(f"unitig L2 (C={res['C']:g}): validate {res['validate_auroc']:.4f} | evaluate {unitig_auroc:.4f} "
+    print(f"unitig L2 (C={res['C']:g}): {tuning_summary(res)} | evaluate {unitig_auroc:.4f} "
           f"(n_eval={res['n_evaluate']}, {X.shape[1]} features)")
     if "head_to_head" in payload:
         h = payload["head_to_head"]

@@ -521,3 +521,13 @@ def test_fit_parser_defaults_to_the_reproducible_protocol():
     assert build_parser().parse_args(
         ["fit", "--matrix-dir", "m", "--split-csv", "s.csv", "--out-dir", "o", "--c-selection", "inner-cv"]
     ).c_selection == "inner-cv"
+
+
+def test_the_summary_line_survives_both_protocols():
+    """A successful 45-minute fit once reported FAILED because this line read the wrong key."""
+    from bac_pyseer.kleb_iso_source.unitig_presence_model import tuning_summary
+
+    X, y, split = _planted_signal()
+    assert tuning_summary(fit_l2_with_c_sweep(X, y, split, c_grid=(0.1,))).startswith("validate ")
+    inner = tuning_summary(fit_l2_inner_cv(X, y, split, c_grid=(0.1,)))
+    assert inner.startswith("inner-CV ") and "folds, fit on 480" in inner
