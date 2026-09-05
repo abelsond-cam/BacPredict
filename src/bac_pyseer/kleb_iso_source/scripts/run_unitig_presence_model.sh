@@ -30,7 +30,8 @@
 #   WITH_SUBLINEAGE=1 SELECTION_SCOPE=trainval_only SCORE_ALL_SPLITS=1 HITS_SUBMATRIX=<...> sbatch ...
 #   # the k-fold sweep's one unitig model: selection AND fit on the invariant train+validate 80%,
 #   # so C must be cross-validated inside it rather than tuned on validate.
-#   C_SELECTION=inner-cv SELECTION_SCOPE=trainval_only SCORE_ALL_SPLITS=1 COHORT=..._kfold_trainval sbatch ...
+#   C_SELECTION=inner-cv SELECTION_SCOPE=trainval_only SCORE_ALL_SPLITS=1 SKIP_HEADTOHEAD=1 \
+#     COHORT=..._kfold_trainval sbatch ...
 
 set -euo pipefail
 export PYTHONUNBUFFERED=1
@@ -62,6 +63,12 @@ MATRIX_DIR=${MATRIX_DIR:-$GWAS_DIR/presence_matrix}
 SPLIT_CSV=${SPLIT_CSV:-$FT_COHORT/binary_${LABEL_COL%_label}_with_split.csv}
 BAC_SCORES=${BAC_SCORES:-$FT_COHORT/models/eval_scores.npz}
 BAC_CKPT=${BAC_CKPT:-$FT_COHORT/models}
+# SKIP_HEADTOHEAD=1 is the way to turn the built-in head-to-head off -- NOT `BAC_SCORES=`. SLURM
+# DROPS a variable given an empty value in --export=ALL,VAR=, so the assignment above still sees it
+# unset, its `:-` default fires, and the job dies on a path under whichever cohort happens to be set.
+# Measured: that is exactly how this failed first time round.
+SKIP_HEADTOHEAD=${SKIP_HEADTOHEAD:-0}
+if [ "$SKIP_HEADTOHEAD" = "1" ]; then BAC_SCORES=""; BAC_CKPT=""; fi
 SELECTION_SCOPE=${SELECTION_SCOPE:-full_cohort}
 WITH_SUBLINEAGE=${WITH_SUBLINEAGE:-0}
 # How C is chosen. `validate` (default) tunes on the validate split and fits on train — the protocol
