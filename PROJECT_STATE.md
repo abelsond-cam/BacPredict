@@ -342,6 +342,27 @@ holdout-free. The GGCAT unitig vocabulary was built over all cohort genomes, so 
 for the AMR arm. This matches the convention the deployed 0.7655 was produced under, so the sweep's two
 arms stay comparable to each other; it is not a new exposure.
 
+**Unitig arm — the model is DONE (2026-09-05). This is the sweep's fixed baseline.** Read from
+`…/sampled_country_2_1_all_kfold_trainval/gwas_unitig_lmm/presence_model/unitig_model_results.json`:
+
+| | |
+|---|---|
+| **Evaluate AUROC** | **0.7691** (n=2,733 — the 2,823 k-fold holdout genomes that have a unitig row) |
+| `C` | **0.01**, by 5-fold CV *inside* train+validate; inner-CV AUROC **0.7686 ± 0.0059** |
+| Fit on | all **10,869** train+validate rows (`n_validate=0` — the selection table labels the whole 80% `train`) |
+| Features | 19,897 unitigs · `selection_scope` `trainval_only` · `c_selection` `inner_cv` |
+| Cohort scores | all **13,602** genomes scored; train 0.8604 / evaluate 0.7691 |
+
+Two things worth noting. The `C` sweep is cleanly unimodal (0.7218 → **0.7686** at C=0.01 → 0.7203 at
+C=10) and picks **the same optimum the validate-tuned protocol picked**, so the new protocol did not
+move the model — it only removed the reason to distrust the number. And the inner-CV estimate (0.7686)
+lands within 0.0005 of the holdout (0.7691), which says the CV was a well-calibrated estimate here
+rather than an optimistic one.
+
+**⛔ 0.7691 is NOT comparable to the deployed 0.7655** — different holdout (21.5% overlap), different
+`C`-selection protocol, and a hit set re-derived on a differently carved 80% (19,897 unitigs vs
+19,622). It is comparable only to the 15 Bacformer fits, which is the whole point.
+
 **Reading the sweep when it lands** — `kleb_iso_source.compare_kfold_sweep` writes
 `kfold_sweep_per_run.csv` + `kfold_sweep_comparison.json` into the sweep dir. It pairs each fit with
 the unitig model on the genomes they both cover, so the verdict is the sign of 15 deltas, not a contest
