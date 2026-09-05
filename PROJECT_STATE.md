@@ -329,6 +329,19 @@ and accepted that. Unitig arm: one GWAS on the carved cohort
 560-610 because prep reused the matrix chunks (they are matrix-keyed, not cohort-keyed) and took 14 min
 rather than the 2h54m budgeted; only the 902 MB LMM cache had to be rebuilt.
 
+**Unitig arm — the GWAS is DONE (2026-09-05).** From
+`…/sampled_country_2_1_all_kfold_trainval/gwas_unitig_lmm/blood_vs_faeces_unitig_gwas_summary.json`:
+**6,284,709 variants tested, 5,660,757 unique patterns, 19,897 significant** at Bonferroni
+8.8327e-09; genomic inflation **lambda 2.946**; phenotype variance 0.2491. All 64 shards COMPLETED.
+For scale, the single-split `_trainval` cohort gave 6,264,286 / 19,622 / lambda 3.181 on a differently
+carved 80% — the two agree closely, which is the sanity check that the new carve behaved.
+
+**⚠ Vocabulary caveat, unchanged from the existing leakage-free arm.** Only the *selection* is
+holdout-free. The GGCAT unitig vocabulary was built over all cohort genomes, so the feature
+*representation* was shaped by holdout sequence — the same `full_cohort` vocabulary caveat §3.3 records
+for the AMR arm. This matches the convention the deployed 0.7655 was produced under, so the sweep's two
+arms stay comparable to each other; it is not a new exposure.
+
 **Reading the sweep when it lands** — `kleb_iso_source.compare_kfold_sweep` writes
 `kfold_sweep_per_run.csv` + `kfold_sweep_comparison.json` into the sweep dir. It pairs each fit with
 the unitig model on the genomes they both cover, so the verdict is the sign of 15 deltas, not a contest
