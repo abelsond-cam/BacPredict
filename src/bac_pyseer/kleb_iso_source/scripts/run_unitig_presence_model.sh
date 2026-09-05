@@ -82,10 +82,15 @@ else
 fi
 
 echo "=== inputs ==="
-for f in "$HITS_SUBMATRIX" "$SAMPLE_UNIVERSE" "$SPLIT_CSV" "$BAC_SCORES"; do
+# BAC_SCORES is optional: set it empty to skip the built-in single-model head-to-head. The k-fold sweep
+# does that, because its comparison is 15 fits against this one model (compare_kfold_sweep) and none of
+# them exists yet when this runs. Pointing it at the deployed models/eval_scores.npz instead would
+# produce a head-to-head against a DIFFERENT holdout, which is worse than producing none.
+for f in "$HITS_SUBMATRIX" "$SAMPLE_UNIVERSE" "$SPLIT_CSV" ${BAC_SCORES:+"$BAC_SCORES"}; do
   [ -f "$f" ] || { echo "MISSING: $f"; exit 1; }
   echo "  ok  $f"
 done
+[ -n "$BAC_SCORES" ] || echo "  --  BAC_SCORES empty: skipping the built-in head-to-head"
 
 if [ "$WITH_SUBLINEAGE" = "1" ]; then
   # Refuse to overwrite the plain model even if OUT_DIR was passed explicitly.
@@ -141,8 +146,8 @@ uv run python -m $MOD fit \
   --matrix-dir "$MATRIX_DIR" \
   --split-csv "$SPLIT_CSV" \
   --label-column "$LABEL_COL" \
-  --bacformer-scores "$BAC_SCORES" \
-  --bacformer-checkpoint-dir "$BAC_CKPT" \
+  ${BAC_SCORES:+--bacformer-scores "$BAC_SCORES"} \
+  ${BAC_SCORES:+--bacformer-checkpoint-dir "$BAC_CKPT"} \
   --selection-scope "$SELECTION_SCOPE" \
   --c-selection "$C_SELECTION" \
   --out-dir "$OUT_DIR" \

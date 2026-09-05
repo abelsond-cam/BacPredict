@@ -464,16 +464,21 @@ def fit_l2_inner_cv(
     if n_splits < 2:
         raise ValueError(f"minority class has {int(np.bincount(y_fit).min())} rows — cannot cross-validate")
     cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
-    folds = list(cv.split(np.zeros(X_fit.shape[0]), y_fit))
+    # Slice each fold ONCE rather than once per (C, fold): the design is ~50M non-zeros and the grid
+    # revisits every fold, so this is 5 row-slices instead of 30 for the same arithmetic.
+    folds = [
+        (X_fit[tr], y_fit[tr], X_fit[va], y_fit[va])
+        for tr, va in cv.split(np.zeros(X_fit.shape[0]), y_fit)
+    ]
 
     sweep, best = [], None
     for c in c_grid:
         aurocs = []
-        for inner_tr, inner_va in folds:
+        for X_tr, y_tr, X_va, y_va in folds:
             # penalty left at its default (L2) — see fit_l2_with_c_sweep for why it is not passed.
             m = LogisticRegression(C=c, solver="lbfgs", max_iter=max_iter)
-            m.fit(X_fit[inner_tr], y_fit[inner_tr])
-            aurocs.append(float(roc_auc_score(y_fit[inner_va], m.predict_proba(X_fit[inner_va])[:, 1])))
+            m.fit(X_tr, y_tr)
+            aurocs.append(float(roc_auc_score(y_va, m.predict_proba(X_va)[:, 1])))
         mean = float(np.mean(aurocs))
         sweep.append({"C": c, "cv_auroc": mean, "cv_auroc_sd": float(np.std(aurocs)), "fold_aurocs": aurocs})
         logger.info("  C=%-8g inner-CV AUROC %.4f ± %.4f (%d folds)", c, mean, np.std(aurocs), len(aurocs))
