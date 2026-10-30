@@ -29,6 +29,7 @@ from __future__ import annotations
 import csv
 import gzip
 import logging
+import re
 import shutil
 import subprocess
 import tempfile
@@ -84,6 +85,61 @@ def _parse_gff_attributes(field: str) -> dict[str, str]:
             key, value = attr.split("=", 1)
             out[key.strip()] = value.strip()
     return out
+
+
+# --------------------------------------------------------------------------- #
+# Declared translational exceptions (selenocysteine / pyrrolysine)             #
+# --------------------------------------------------------------------------- #
+
+# `transl_except=(pos:53260..53262%2Caa:Sec)` or `(pos:complement(118209..118211)%2Caa:Sec)`.
+# ⛔ Matched against the RAW attributes field, not the parsed dict: _parse_gff_attributes keeps only
+# the last value for a repeated key, and a CDS may legitimately declare more than one exception.
+_TRANSL_EXCEPT = re.compile(
+    r"transl_except=\(pos:(?:complement\()?(\d+)\.\.(\d+)\)?(?:%2C|,)\s*aa:([A-Za-z]+)\)", re.IGNORECASE
+)
+# The recoded sense codons. Both are real, trained tokens in the ESM/ESM-C vocabulary; `*` is not in it
+# at all, which is why writing `*` here produced an <unk> at the encoder for months without failing.
+_RECODED_AA = {"sec": "U", "pyl": "O"}
+
+
+def _recode_declared_exceptions(
+    protein: str, attr_field: str, *, start: int, end: int, strand: str, phase: int
+) -> tuple[str, int, int]:
+    """Write the residue the annotator declared, where it declared it.
+
+    A GFF3 carries no protein sequence; it carries the annotator's *decision*, and for a recoded codon
+    that decision is ``transl_except=(pos:...,aa:Sec)``. Translating with a codon table and ignoring the
+    attribute substitutes our table for their decision — and no codon table can be right here, because
+    an in-frame ``UGA`` is recoded to selenocysteine by a SECIS stem-loop downstream in the mRNA, so the
+    protein is not a function of the DNA alone.
+
+    ⛔ **This changes the filter chain, deliberately.** A recoded codon is a *sense* codon, so once the
+    residue is written there is no internal stop and ``keep_internal_stop`` no longer applies to it.
+    A store rebuilt with this on therefore contains CDS a store built without it dropped, and
+    ``flat_index`` is a row offset — so the two stores are not index-compatible. That is the correct
+    behaviour and it is why this is named rather than silent.
+
+    ⚠ **Verified, not trusted.** The residue is written only where the declared span actually lands on a
+    ``*``. A declaration that points somewhere else means a coordinate convention differs, and writing
+    blind would corrupt a residue no downstream number would reveal.
+
+    Returns ``(protein, n_recoded, n_declared_but_not_applied)``.
+    """
+    recoded = skipped = 0
+    for lo, hi, aa in _TRANSL_EXCEPT.findall(attr_field):
+        residue = _RECODED_AA.get(aa.lower())
+        if residue is None:  # e.g. aa:OTHER / aa:TERM -- declared, but not a recoding we write
+            skipped += 1
+            continue
+        # The protein starts at `start + phase` on +, and ends at `end - phase` on -, because the phase
+        # bases are dropped before translation. Both spans are 1-based inclusive, as the GFF writes them.
+        offset = (end - phase - int(hi)) // 3 if strand == "-" else (int(lo) - (start + phase)) // 3
+        if not (0 <= offset < len(protein)) or protein[offset] != "*":
+            skipped += 1
+            continue
+        protein = protein[:offset] + residue + protein[offset + 1 :]
+        recoded += 1
+    return protein, recoded, skipped
 
 
 # --------------------------------------------------------------------------- #
@@ -388,6 +444,7 @@ def extract_proteins_from_gff_fna(
     *,
     translation_table: int = 11,
     keep_internal_stop: bool = False,
+    recode_transl_except: bool = True,
     annotate_amr: bool = False,
     amr_ref_dir: str | Path | None = None,
     minimap2_bin: str = "minimap2",
@@ -450,6 +507,8 @@ def extract_proteins_from_gff_fna(
 
     n_skipped_pseudo = 0
     n_skipped_internal_stop = 0
+    n_recoded_exceptions = 0
+    n_declared_exceptions_not_applied = 0
     n_skipped_missing_contig = 0
 
     with _open_text(gff_path) as handle:
@@ -509,6 +568,14 @@ def extract_proteins_from_gff_fna(
             protein = str(nt.translate(table=translation_table, to_stop=False))
             if protein.endswith("*"):
                 protein = protein[:-1]
+            # ⛔ BEFORE the internal-stop filter, because a recoded codon is not a stop. Ignoring this
+            # attribute is what put an <unk> into every selenoprotein embedded from our output.
+            if recode_transl_except:
+                protein, _rec, _skip = _recode_declared_exceptions(
+                    protein, parts[8], start=start, end=end, strand=strand, phase=phase
+                )
+                n_recoded_exceptions += _rec
+                n_declared_exceptions_not_applied += _skip
             if "*" in protein and not keep_internal_stop:
                 n_skipped_internal_stop += 1
                 continue
@@ -549,6 +616,16 @@ def extract_proteins_from_gff_fna(
             n_skipped_pseudo,
             n_skipped_internal_stop,
             n_skipped_missing_contig,
+        )
+    # ⚠ Reported even when zero. A silent recoder is indistinguishable from one that never ran, and the
+    # whole reason this defect survived is that nothing ever counted it. `not_applied` non-zero means the
+    # annotator declared an exception this code did not write -- a coordinate convention to look at, not
+    # a number to ignore.
+    if n_recoded_exceptions or n_declared_exceptions_not_applied:
+        logger.info(
+            "Declared transl_except: recoded=%d, declared_but_not_applied=%d",
+            n_recoded_exceptions,
+            n_declared_exceptions_not_applied,
         )
 
     # Flatten per-contig lists into the genome-level shape produced by
