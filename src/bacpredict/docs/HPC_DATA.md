@@ -50,6 +50,32 @@ each with `esm/ baclm/ bacformer/ protein_sequences/ intergenic/` plus `binary_a
 `embedding_input.csv`, etc. **TODO (confirm):** exact contents, file counts, and whether the
 pre-outage CSD3 stores are the same cohort as the Isambard re-download.
 
+### EBI AMR Portal — the all-species AST + genotype tables
+
+`raw/ebi_amr_portal/<release>/` holds the portal's FTP release, fetched from
+`https://ftp.ebi.ac.uk/pub/databases/amr_portal/releases/<release>/` (`releases.yml` there names the
+latest) and md5-checked against its `md5sums`:
+
+- **`phenotype.parquet` — the AST tests** (one row per BioSample × drug × test, all species). This is
+  the multi-species label source. Columns are unprefixed (`BioSample_ID`, `antibiotic_name`,
+  `resistance_phenotype`, `species`, …) unlike the older `phenotype-*`-prefixed per-species extracts.
+- `genotype.parquet` — AMRFinderPlus hits on every assembly the portal holds (GCA *and* EBI's own ERZ
+  assemblies); its `BioSample_ID → assembly_ID` keys are the portal's genome set.
+- ⚠ **`raw/ebi_amr_portal/ebi_amr_records_<date>.csv` is a portal-UI export of the *genotype* table**
+  (`genotype-*` columns), not AST — despite the name.
+
+Per-genome annotation (Prokka/Prodigal GFF with `##FASTA` contigs appended) is on the same FTP under
+`genomes/{ERZ,GCA}/<3>/<3>/<accession>/<accession>_annotations.gff.gz`. Scoping counts per release:
+`processed/ebi_amr_portal/scoping_<release>/` (script alongside).
+
+### AMR-GNN *P. aeruginosa* set (Nguyen et al. 2026, Nat Commun, doi 10.1038/s41467-026-69934-8)
+
+`raw/amr_gnn_nguyen2026/` — 2,515 isolates, 12 drugs, MIC + EUCAST v15 S/R. `MOESM4_ESM.xlsx` is the
+paper's Supplementary Data 1 as published; `amr_gnn_long.csv` is it tidied (one row per isolate × drug);
+`amr_gnn_isolate_biosample.csv` maps every isolate to its BioSample (runs via ENA `read_run`; the Kos
+et al. `AZPAE…` IDs are *strain names*, mapped via the WGS-set BioSamples' `strain`); `ena/` holds the
+ENA tables behind that map.
+
 ## Compute (SBATCH)
 
 - **CPU:** `--account=FLOTO-PROJECT-K-SL2-CPU --partition=icelake-himem` (icelake-himem is less
