@@ -13,8 +13,12 @@ into ``--chunk-size`` chunks; task ``k`` takes chunk ``k``):
    flags** (``-c -m -g 11 -p single``), GFF output, on every genome whatever its source.
 3. **ST** — ``mlst`` (``--scheme`` when given), and assembly statistics.
 
-Existing contigs / GFFs are reused, so a re-run only fills gaps; mlst and the statistics are recomputed
-for every genome of the chunk so the shard is always complete. One row per genome goes to
+Existing outputs are reused **only when their provenance matches**: contigs carry ``src=<source>`` in every
+header and are rebuilt if the manifest now names a different source; the GFF carries the md5 of the contigs
+it was called on (a ``# contigs_md5=`` comment) and is re-called if they differ. So a re-plan or a deleted
+contigs file can never pair stale genes with new contigs. Writes go to a unique temporary name and are
+renamed into place. mlst and the statistics are recomputed for every genome of the chunk so the shard is
+always complete. One row per genome goes to
 ``<shard-dir>/<sources>_<task>.tsv`` — a failure is a row with ``status = fail:<reason>``, never a gap.
 
 Usage::
@@ -102,15 +106,45 @@ def contigs_from_portal_gff(path: Path) -> list[tuple[str, str]]:
     return out
 
 
-def write_renamed_contigs(records: list[tuple[str, str]], sample: str, out_gz: Path) -> None:
-    """Write ``>{sample}.contig{k:05d} orig=<first word>`` records, gzipped, atomically."""
-    tmp = out_gz.with_suffix(out_gz.suffix + ".part")
+def _part(out: Path) -> Path:
+    """A unique temporary sibling of ``out`` (two writers can never share one)."""
+    fd, name = tempfile.mkstemp(dir=out.parent, prefix=f".{out.name}.", suffix=".part")
+    os.close(fd)
+    return Path(name)
+
+
+def write_renamed_contigs(records: list[tuple[str, str]], sample: str, out_gz: Path, source: str) -> None:
+    """Write ``>{sample}.contig{k:05d} orig=<first word> src=<source>`` records, gzipped, atomically."""
+    tmp = _part(out_gz)
     with gzip.open(tmp, "wt", compresslevel=6) as fh:
         for k, (header, seq) in enumerate(records, 1):
-            fh.write(f">{sample}.contig{k:05d} orig={header.split()[0]}\n")
+            fh.write(f">{sample}.contig{k:05d} orig={header.split()[0]} src={source}\n")
             for i in range(0, len(seq), 80):
                 fh.write(seq[i:i + 80] + "\n")
     tmp.replace(out_gz)
+
+
+def contigs_source(contigs_gz: Path) -> str | None:
+    """The ``src=`` a stored contigs file was built from, or None if unreadable / unlabelled."""
+    try:
+        with gzip.open(contigs_gz, "rt") as fh:
+            header = fh.readline()
+    except (OSError, EOFError):
+        return None
+    tags = dict(t.split("=", 1) for t in header.split()[1:] if "=" in t)
+    return tags.get("src")
+
+
+def gff_contigs_md5(gff_gz: Path) -> str | None:
+    """The ``# contigs_md5=`` a stored GFF was called on, or None."""
+    try:
+        with gzip.open(gff_gz, "rt") as fh:
+            for _, line in zip(range(5), fh, strict=False):
+                if line.startswith("# contigs_md5="):
+                    return line.strip().split("=", 1)[1]
+    except (OSError, EOFError):
+        return None
+    return None
 
 
 def assembly_stats(records: list[tuple[str, str]]) -> dict:
@@ -184,19 +218,24 @@ def shovill_contigs(row: pd.Series, work: Path, bin_dir: Path, threads: int, ram
 
 
 def run_prodigal(contigs_gz: Path, gff_gz: Path, bin_dir: Path, work: Path) -> int:
-    """Prodigal 2.6.3 with Prokka's flags → gzipped GFF; returns the CDS count."""
+    """Prodigal 2.6.3 with Prokka's flags → gzipped GFF stamped with the contigs' md5; returns the CDS count."""
     plain, gff = work / "contigs.fna", work / "prodigal.gff"
     with gzip.open(contigs_gz, "rb") as src, open(plain, "wb") as dst:
         shutil.copyfileobj(src, dst)
     subprocess.run([str(bin_dir / "prodigal"), "-i", str(plain), "-o", str(gff), "-f", "gff",
                     *PRODIGAL_PROKKA_FLAGS], check=True)
-    n_cds = 0
-    tmp = gff_gz.with_suffix(gff_gz.suffix + ".part")
+    n_cds, stamped = 0, False
+    tmp = _part(gff_gz)
     with open(gff) as src, gzip.open(tmp, "wt") as dst:
         for line in src:
             dst.write(line)
+            if not stamped and line.startswith("##gff-version"):
+                dst.write(f"# contigs_md5={_md5(contigs_gz)}\n")
+                stamped = True
             if "\tCDS\t" in line:
                 n_cds += 1
+    if not stamped:
+        raise ValueError("prodigal GFF has no ##gff-version line to stamp")
     tmp.replace(gff_gz)
     return n_cds
 
@@ -219,6 +258,8 @@ def build_one(row: dict, out_root: Path, bin_dir: Path, tmp_root: Path, threads:
     res.update(Sample=sample, source=row["source"], contigs_path=str(contigs_gz), gff_path=str(gff_gz))
     work = Path(tempfile.mkdtemp(prefix=f"{sample}_", dir=tmp_root))
     try:
+        if contigs_gz.exists() and contigs_source(contigs_gz) != row["source"]:
+            contigs_gz.unlink()  # built from another source (or unreadable): rebuild from the manifest's source
         if not contigs_gz.exists():
             if row["source"] == "atb":
                 dest = work / f"{sample}.fa.gz"
@@ -232,10 +273,10 @@ def build_one(row: dict, out_root: Path, bin_dir: Path, tmp_root: Path, threads:
                 records = shovill_contigs(pd.Series(row), work, bin_dir, threads, ram_gb)
             else:
                 raise ValueError(f"source {row['source']!r} is not buildable")
-            write_renamed_contigs(records, sample, contigs_gz)
+            write_renamed_contigs(records, sample, contigs_gz, row["source"])
         records = read_fasta(contigs_gz)
         res.update(assembly_stats(records))
-        if not gff_gz.exists():
+        if not gff_gz.exists() or gff_contigs_md5(gff_gz) != _md5(contigs_gz):
             res["n_cds"] = run_prodigal(contigs_gz, gff_gz, bin_dir, work)
         else:
             with gzip.open(gff_gz, "rt") as fh:

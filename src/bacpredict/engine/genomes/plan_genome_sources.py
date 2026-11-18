@@ -15,8 +15,9 @@ genome should be a shovill assembly wherever that is attainable.
    ``single_end_only``, ``below_min_depth``, ``other_strategy``, ``no_runs``).
 
 ENA is queried **by BioSample** (the portal API's ``filereport`` accepts sample accessions and returns every
-run), so a sample-accession ``reads_accession`` never needs resolving. Answers are cached in ``--ena-cache``
-so re-planning is offline and reproducible.
+run), so a sample-accession ``reads_accession`` never needs resolving. Answers — including "no runs" — are
+cached in ``--ena-cache`` so re-planning is offline and reproducible; a query that still fails after retries
+stops the plan rather than becoming a ``no_runs`` drop.
 
 Usage (CSD3 login node; ~1-2 min of ENA queries the first time)::
 
@@ -47,6 +48,7 @@ ENA_FIELDS = ["run_accession", "sample_accession", "instrument_platform", "instr
               "library_strategy", "library_source", "read_count", "base_count", "fastq_ftp", "fastq_bytes",
               "fastq_md5"]
 USABLE_STRATEGIES = frozenset({"WGS", "WGA"})
+QUERY_FAILED, NO_RUNS = "__QUERY_FAILED__", "__NO_RUNS__"  # cache sentinels, never real runs
 LONG_READ_PLATFORMS = frozenset({"OXFORD_NANOPORE", "PACBIO_SMRT"})
 
 
@@ -83,11 +85,13 @@ def _ena_query(sample: str, retries: int = 4) -> pd.DataFrame:
                 text = r.read().decode()
             df = pd.read_csv(io.StringIO(text), sep="\t", dtype=str) if text.strip() else pd.DataFrame(
                 columns=ENA_FIELDS)
+            if df.empty:  # a header-only answer: cache the "no runs" fact so re-planning stays offline
+                df = pd.DataFrame({"run_accession": [NO_RUNS]})
             df.insert(0, "query", sample)
             return df
         except Exception:  # noqa: BLE001 — network: retry, then record the failure
             if attempt == retries - 1:
-                return pd.DataFrame({"query": [sample], "run_accession": ["__QUERY_FAILED__"]})
+                return pd.DataFrame({"query": [sample], "run_accession": [QUERY_FAILED]})
             time.sleep(5 * (attempt + 1))
     raise AssertionError("unreachable")
 
@@ -96,7 +100,7 @@ def ena_runs(samples: list[str], cache_path: Path, threads: int = 8) -> pd.DataF
     """Every ENA run for each BioSample, from the cache where present; new answers are appended to it."""
     cached = pd.read_csv(cache_path, sep="\t", dtype=str) if cache_path.exists() else pd.DataFrame(
         columns=["query", *ENA_FIELDS])
-    cached = cached[cached["run_accession"] != "__QUERY_FAILED__"]
+    cached = cached[cached["run_accession"] != QUERY_FAILED]
     todo = sorted(set(samples) - set(cached["query"]))
     if todo:
         with ThreadPoolExecutor(max_workers=threads) as ex:
@@ -104,15 +108,12 @@ def ena_runs(samples: list[str], cache_path: Path, threads: int = 8) -> pd.DataF
         cached = pd.concat([cached, *new], ignore_index=True)
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         cached.to_csv(cache_path, sep="\t", index=False)
-        failed = cached["run_accession"].eq("__QUERY_FAILED__").sum()
-        if failed:
-            print(f"WARNING: {failed} ENA queries failed; re-run to retry them")
     return cached[cached["query"].isin(samples)]
 
 
 def summarise_reads(runs: pd.DataFrame, genome_size: float) -> pd.DataFrame:
     """Per BioSample: usable paired Illumina WGS/WGA runs pooled → depth and fastq URLs, or why there are none."""
-    r = runs[runs["run_accession"].notna() & (runs["run_accession"] != "__QUERY_FAILED__")].copy()
+    r = runs[runs["run_accession"].notna() & ~runs["run_accession"].isin([QUERY_FAILED, NO_RUNS])].copy()
     files = r["fastq_ftp"].fillna("").str.split(";")
     r["n_files"] = files.map(lambda f: sum(1 for x in f if x))
     # a paired run may also carry an unpaired file; keep only the _1/_2 pair
@@ -199,7 +200,12 @@ def main() -> None:
     atb = read_atb_index(args.atb_index)
     labelled = cohort[cohort["n_drugs_labelled"] > 0]
     need_reads = labelled.loc[~labelled["Sample"].isin(atb.index), "Sample"].tolist()
-    reads = summarise_reads(ena_runs(need_reads, args.ena_cache, args.threads), args.genome_size)
+    runs = ena_runs(need_reads, args.ena_cache, args.threads)
+    failed = sorted(runs.loc[runs["run_accession"].eq(QUERY_FAILED), "query"])
+    if failed:  # a failed query must never become a silent "no_runs" drop
+        raise SystemExit(f"{len(failed)} ENA queries failed (first: {failed[:5]}); re-run plan to retry them — "
+                         "no manifest written")
+    reads = summarise_reads(runs, args.genome_size)
     plan = plan_genome_sources(cohort, atb, reads, args.min_depth, args.prefer_reads)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     plan.to_csv(args.out, index=False)

@@ -12,6 +12,8 @@ from bacpredict.engine.genomes.build_genomes import (
     assembly_stats,
     build_one,
     contigs_from_portal_gff,
+    contigs_source,
+    gff_contigs_md5,
     n_chunks,
     read_fasta,
     select_chunk,
@@ -43,9 +45,11 @@ def test_portal_gff_fasta_section_and_renaming(tmp_path):
     recs = contigs_from_portal_gff(p)
     assert recs == [("KI1.1 some description", "ACGTACGTACGG"), ("KI2.1", "GGCC")]
     out = tmp_path / "S1.fna.gz"
-    write_renamed_contigs(recs, "S1", out)
+    write_renamed_contigs(recs, "S1", out, "portal_gff")
     back = read_fasta(out)
-    assert [h for h, _ in back] == ["S1.contig00001 orig=KI1.1", "S1.contig00002 orig=KI2.1"]
+    assert [h for h, _ in back] == ["S1.contig00001 orig=KI1.1 src=portal_gff", "S1.contig00002 orig=KI2.1 src=portal_gff"]
+    assert contigs_source(out) == "portal_gff"
+    assert not list(tmp_path.glob("*.part"))
     assert back[0][1] == "ACGTACGTACGG"
 
 
@@ -81,8 +85,13 @@ def test_build_one_portal_genome_end_to_end_and_failure_is_a_row(tmp_path, monke
     assert res["status"] == "ok", res["status"]
     assert res["st"] == "235" and res["n_cds"] == 1 and res["n_contigs"] == 2
     assert (out_root / "contigs" / "S1.fna.gz").exists() and (out_root / "prodigal" / "S1.gff.gz").exists()
+    assert gff_contigs_md5(out_root / "prodigal" / "S1.gff.gz") is not None
     again = build_one(row | {"portal_url": "file:///nonexistent"}, out_root, bin_dir, tmp, 1, 8, "paeruginosa")
-    assert again["status"] == "ok"                                   # existing outputs are reused, not refetched
+    assert again["status"] == "ok"                                   # same source: reused, not refetched
+    moved = build_one(row | {"source": "atb", "atb_url": "file:///nonexistent"}, out_root, bin_dir, tmp, 1, 8,
+                      "paeruginosa")
+    assert moved["status"].startswith("fail:")                      # re-planned source: rebuilt, never relabelled
+    assert not (out_root / "contigs" / "S1.fna.gz").exists()
     bad = build_one({"Sample": "S2", "source": "portal_gff", "portal_url": "file:///nonexistent"},
                     out_root, bin_dir, tmp, 1, 8, None)
     assert bad["status"].startswith("fail:") and bad["Sample"] == "S2"

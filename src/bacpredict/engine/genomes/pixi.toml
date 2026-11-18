@@ -25,6 +25,9 @@ shovill = "==1.1.0"
 # SPAdes 3.15.x: the series shovill 1.1.0 was written against (the solver otherwise pulls 4.x, which
 # ATB's 2023 assemblies predate). ATB does not publish its SPAdes version; this is the closest match.
 spades = "3.15.*"
+# SPAdes 3.15's spades.py imports distutils, which Python 3.12 removed — without this pin the solver
+# picks Python 3.15 and every shovill run dies with "Can't parse spades version".
+python = "3.11.*"
 prodigal = "==2.6.3"
 mlst = ">=2.23"
 skani = ">=0.2.2"

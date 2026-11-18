@@ -28,7 +28,8 @@ CPUS=${SLURM_CPUS_PER_TASK:-8}
 RAM_GB=$(( CPUS * 6 ))   # shovill --ram, under the 6.76 GB/core the partition grants
 
 cd "$REPO"
-TOOLS_BIN="$(cd src/bacpredict/engine/genomes && pixi run -- printenv CONDA_PREFIX)/bin"
+# Normally resolved once at submit time (build_pa_genomes.sh exports it); fall back to resolving here.
+TOOLS_BIN=${TOOLS_BIN:-"$(cd src/bacpredict/engine/genomes && pixi run -- printenv CONDA_PREFIX)/bin"}
 
 # Node-local disk for SPAdes' random I/O and the fastq; RDS scratch if /local is unavailable.
 if [[ -d /local && -w /local ]]; then BASE=/local; else BASE=$HOME/rds/hpc-work/tmp; fi
@@ -36,8 +37,9 @@ WORK="$BASE/build_genomes_${SLURM_ARRAY_JOB_ID:-local}_${SLURM_ARRAY_TASK_ID:-0}
 mkdir -p "$WORK"
 trap 'rm -rf "$WORK"' EXIT
 
-echo "[$(date -Is)] host=$(hostname) task=${SLURM_ARRAY_TASK_ID:-0} sources=$SOURCES chunk=$CHUNK cpus=$CPUS work=$WORK"
-uv run python -m bacpredict.engine.genomes.build_genomes \
+echo "[$(date -Is)] host=$(hostname) task=${SLURM_ARRAY_TASK_ID:-0} sources=$SOURCES chunk=$CHUNK cpus=$CPUS work=$WORK repo=$REPO@$(git -C "$REPO" rev-parse --short HEAD)"
+# --no-sync: hundreds of concurrent tasks must not race to re-sync the shared venv
+uv run --no-sync python -m bacpredict.engine.genomes.build_genomes \
     --manifest "$MANIFEST" --sources "$SOURCES" --chunk-size "$CHUNK" --task-index "${SLURM_ARRAY_TASK_ID:-0}" \
     --out-root "$OUT_ROOT" --shard-dir "$SHARD_DIR" --tools-bin "$TOOLS_BIN" \
     --threads "$CPUS" --ram-gb "$RAM_GB" --tmp-dir "$WORK" ${MLST_SCHEME:+--mlst-scheme "$MLST_SCHEME"}

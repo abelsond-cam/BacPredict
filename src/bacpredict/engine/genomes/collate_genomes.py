@@ -132,6 +132,9 @@ def main() -> None:
     print(f"built ok: {int(g['status'].eq('ok').sum())}; QC pass: {len(ok)}")
     print("QC failures by rule:\n" + g.loc[~g["qc_pass"], "qc_fail"].str.split(";").explode().value_counts().to_string())
     print("species calls:\n" + g["species_call"].value_counts(dropna=False).to_string())
+    # the embedding step truncates each genome at --max-proteins; make the cost of a cap visible here
+    for cap in (6000, 9000):
+        print(f"QC-passing genomes with more than {cap:,} CDS: {int((ok['n_cds'] > cap).sum())} of {len(ok)}")
     if args.labels is not None:
         st = st_counts_by_drug(g, pd.read_csv(args.labels))
         st.to_csv(args.out_dir / "st_counts_by_drug.csv", index=False)

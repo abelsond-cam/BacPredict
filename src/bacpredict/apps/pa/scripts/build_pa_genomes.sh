@@ -15,6 +15,7 @@ set -euo pipefail
 
 ROOT=${BACPREDICT_DATA_ROOT:-$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/bac_ast_prediction}
 REPO=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+export REPO  # the arrays run this checkout's code, not whatever $HOME/workspace/BacPredict holds
 T=$ROOT/processed/train_pa_ast
 GEN=$T/genomes
 STORE=$ROOT/raw/ast_cohort_genomes
@@ -36,10 +37,14 @@ submit() {  # sbatch, then print the resource line the global rules require (rea
 }
 
 chunks() { uv run python -m bacpredict.engine.genomes.build_genomes --manifest "$1" --sources "$2" --chunk-size "$3" --count-chunks; }
+# resolve the tool env once, at submit time, so array tasks never run pixi themselves
+tools_bin() { echo "$(cd "$REPO/src/bacpredict/engine/genomes" && pixi run -- printenv CONDA_PREFIX)/bin"; }
 
 case "${1:-}" in
 setup)
-    (cd src/bacpredict/engine/genomes && pixi install --all)
+    (cd src/bacpredict/engine/genomes && pixi install --all \
+        && pixi run -- spades.py --version && pixi run -- shovill --check && pixi run -- mlst --version \
+        && pixi run -e checkm2 checkm2 --version)
     mkdir -p "$REFDIR"
     for acc in GCF_000006765.1 GCF_000017205.1; do
         [[ -s "$REFDIR/$acc.fna.gz" ]] && continue
@@ -54,7 +59,7 @@ setup)
 plan)
     uv run python -m bacpredict.engine.genomes.plan_genome_sources \
         --cohort "$T/cohort.csv" --atb-index "$ATB_INDEX"/*.csv.gz \
-        --genome-size "$GENOME_SIZE" --min-depth "$MIN_DEPTH" \
+        --genome-size "$GENOME_SIZE" --min-depth "$MIN_DEPTH" --prefer-reads \
         --ena-cache "$GEN/ena_filereport_cache.tsv" --out "$GEN/genome_manifest.csv"
     ;;
 smoke)
@@ -63,7 +68,7 @@ import pandas as pd, sys
 m = pd.read_csv(sys.argv[1], dtype=str)
 m[m.source.ne('drop')].groupby('source').head(2).to_csv(sys.argv[2], index=False)" \
         "$GEN/genome_manifest.csv" "$GEN/genome_manifest_smoke.csv"
-    common="MANIFEST=$GEN/genome_manifest_smoke.csv,OUT_ROOT=$STORE,SHARD_DIR=$GEN/shards_smoke,MLST_SCHEME=$SCHEME"
+    common="MANIFEST=$GEN/genome_manifest_smoke.csv,OUT_ROOT=$STORE,SHARD_DIR=$GEN/shards_smoke,MLST_SCHEME=$SCHEME,TOOLS_BIN=$(tools_bin)"
     submit --array=0 --cpus-per-task=4 --time=00:30:00 --job-name=build-genomes-smoke-download \
         --export=ALL,$common,SOURCES=atb+portal_gff,CHUNK=4 "$ARRAY"
     submit --array=0-1 --cpus-per-task=8 --time=03:00:00 --job-name=build-genomes-smoke-shovill \
@@ -71,7 +76,7 @@ m[m.source.ne('drop')].groupby('source').head(2).to_csv(sys.argv[2], index=False
     ;;
 submit)
     M=$GEN/genome_manifest.csv
-    common="MANIFEST=$M,OUT_ROOT=$STORE,SHARD_DIR=$GEN/shards,MLST_SCHEME=$SCHEME"
+    common="MANIFEST=$M,OUT_ROOT=$STORE,SHARD_DIR=$GEN/shards,MLST_SCHEME=$SCHEME,TOOLS_BIN=$(tools_bin)"
     n=$(chunks "$M" atb,portal_gff 40)
     submit --array=0-$((n - 1))%40 --cpus-per-task=8 --time=01:00:00 --job-name=build-genomes-download \
         --export=ALL,$common,SOURCES=atb+portal_gff,CHUNK=40 "$ARRAY"

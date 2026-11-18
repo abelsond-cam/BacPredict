@@ -62,6 +62,8 @@ def test_summarise_reads_selects_paired_illumina_dna_and_pools_runs():
     assert r.loc["C", "no_reads_reason"] == "long_read_only"
     assert r.loc["D", "fastq_urls"].count("https://") == 2 and "_1.fastq.gz" in r.loc["D", "fastq_urls"]
     assert r.loc["E", "reads_depth"] == 5.0
+    cached = pd.concat([runs, pd.DataFrame({"query": ["F"], "run_accession": ["__NO_RUNS__"]})])
+    assert "F" not in summarise_reads(cached, genome_size=6.6e6).index           # "no runs" sentinel is not a run
 
 
 def _cohort():
