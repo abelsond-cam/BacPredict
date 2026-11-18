@@ -184,10 +184,25 @@ predate the fixes and need regenerating.
 
 **In flight.** **Gene-level attribution** of the two single-determinant fine-tunes — TB rifampin and
 Kp ciprofloxacin — to test whether the models read `rpoB` and `gyrA`/`parC` rather than lineage.
-Code only so far; **no compute has been spent and no attribution number exists.** Stage 1
-(`engine/explain/select_attribution_cohort`) and Stage 2 (`engine/explain/gene_ablation_attribution`)
-are written and unit-tested; the GPU smoke has not run. Plan:
-`~/.claude/plans/i-want-to-run-polymorphic-oasis.md`.
+Stages 1–3 written and unit-tested (28 tests). The Kp smoke **has run** (job 41289828, COMPLETED);
+no biological result has been read yet. Plan: `~/.claude/plans/i-want-to-run-polymorphic-oasis.md`.
+
+**⛔ bf16 cannot carry this measurement — the headline finding of the smoke.** One Kp ciprofloxacin
+genome (`SAMEA104414830`, 5,390 proteins), read from
+`$B/train_kleb_ast/attribution/ciprofloxacin/SAMEA104414830_attribution.parquet`: only **13 distinct
+attribution values**, **96.2% of genes exactly 0**, every value a multiple of 1/32. The genome's base
+logit is **7.28125**, where bf16's ULP is ~0.016, so any gene contributing less than that is not
+representable and reads as a clean zero. The signal is not absent — flat indices 3161/3162 reach
++0.71875 — but 96% of the gene universe is unresolvable, which no amount of downstream statistics
+repairs. fp32 and batched-throughput runs (jobs 41291284/41291285/41291286, all COMPLETED) are on
+disk at `$B/train_kleb_ast/attribution/precision_{fp32_ppe4,fp32_ppe16,bf16_ppe16}/` and **have not
+been read**.
+
+**⚠ Cost, measured not estimated.** 659.8 s of ablation for that one genome at
+`perturbations_per_eval=1` (122 ms per protein, from the run's own
+`attribution_manifest_all.json`). Extrapolated over the 877-genome Kp ciprofloxacin holdout that is
+**~161 GPU-hours for Kp alone**, against a plan estimate of 80–100 GPU-h for *both* organisms. The
+whole-job wall was 17:51, so ~7 min of that is model load and import, paid once per shard.
 
 Two decisions already of record for it (see §6):
 
