@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Build the P. aeruginosa AST labels: AMR-GNN supplement → test table, then portal + AMR-GNN → binary_ast.csv.
+# Unitless portal MICs are called as mg/L (--unitless-mic-as-mg-l) — David, 2026-11-18: MIC first.
 #
 # Light (one parquet filter + pandas on ~30k tests, ~1 min) — runs inline on a CSD3 login node:
 #     bash src/bacpredict/apps/pa/scripts/build_pa_ast_labels.sh
@@ -26,4 +27,5 @@ uv run python -m bacpredict.engine.ast_labels.build_binary_ast_labels \
     --species "Pseudomonas aeruginosa" \
     --drugs "$DRUGS" \
     --extra-tests "$OUT/amr_gnn_tests.csv" \
+    --unitless-mic-as-mg-l \
     --output-dir "$OUT"
