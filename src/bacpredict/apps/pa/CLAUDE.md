@@ -68,6 +68,27 @@ Every genome comes from one of two places:
   contigs split off; or
 - assemblies, from AllTheBacteria where it holds the sample, otherwise shovill on the ENA reads.
 
+Where each one is (checked by HTTP against the whole cohort, 2026-11-18):
+
+- **Portal annotation files.** Path:
+  `https://ftp.ebi.ac.uk/pub/databases/amr_portal/genomes/{GCA|ERZ}/<d1-3>/<d4-6>/<acc>/<acc>_annotations.gff.gz`.
+  - The two 3-digit groups are the accession's first six digits, taken after dropping `GCA_`/`ERZ` and the
+    version.
+  - It is one shared `genomes/` tree, not per release.
+  - The files exist only for the **genotype-table** accession. The 195 Khaledi et al. genomes that have
+    only a phenotype-table GCA have none.
+  - **The portal's ERZ assemblies are AllTheBacteria's shovill assemblies**: their contigs are
+    md5-identical.
+- **AllTheBacteria.** One file per sample:
+  `https://allthebacteria-assemblies.s3.eu-west-2.amazonaws.com/<BioSample>.fa.gz`.
+  - The bucket's weekly file list is the index.
+  - The OSF `file_list.all.latest.tsv.gz` lacks the 2026-09 batch.
+  - The OSF batch tarballs hold about 4,000 genomes each, so don't go through them.
+- **Reads.** The ENA portal API `filereport`. `cohort.reads_accession` is a run where one is known, and
+  otherwise a sample accession (SRS/ERS), which `filereport` expands to its runs.
+  - Shovill takes paired Illumina WGS only, so RNA-seq-only and ONT-only BioSamples are dropped.
+  - Reads under 10× depth are not assembled.
+
 Every genome then gets **one Prodigal 2.6.3 run with Prokka's flags**, so gene calls are uniform. STs
 come from our own `mlst` run, never from the paper's `st_reported`, which is kept only for cross-checking.
 

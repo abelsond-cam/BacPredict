@@ -1,7 +1,14 @@
 # BacPredict — project state
 
-> **Last verified: 2026-08-30 @ `034edb5`** (branch `refactor/consolidate-engine`).
-> **Verification scope, this pass (2026-08-30): §3.3 TB only, Phase 1.** Every TB figure below was read
+> **Last verified: 2026-11-18 @ `7e47486`** (branch `refactor/consolidate-engine`).
+> **Verification scope, this pass (2026-11-18): §3.6 only** — the new multi-species AMR layer. Every
+> §3.6 figure was read on CSD3 from `$R/bac_ast_prediction/processed/train_pa_ast/` (`label_counts.csv`,
+> `cohort.csv`, `call_agreement.csv`), written by `apps/pa/scripts/build_pa_ast_labels.sh` at `7e47486`;
+> the same build run locally on md5-identical inputs gave byte-identical outputs. **Nothing outside §3.6
+> was re-verified this pass** — every other section carries the scope of the stamps below.
+>
+> **Stamp before this one: 2026-08-30 @ `034edb5`.**
+> **Verification scope, that pass (2026-08-30): §3.3 TB only, Phase 1.** Every TB figure below was read
 > on CSD3 this session from the artifact named beside it — `tbprofiler_parse_manifest.json`, the two
 > cluster manifests, `assembly_refs.txt`'s resolution manifest, the ten `<drug>_split.csv` re-counted,
 > the `drugs` column of `tbprofiler_variants.parquet`, `sacct` for job `34597335`, and md5 against the
@@ -90,6 +97,8 @@ Two organisms, two phenotype families:
   hypothesis is that Bacformer reads **HGT / acquired** resistance well and **chromosomal point
   mutation** less well. Kp is the HGT-rich regime; TB is almost purely chromosomal.
 - **Invasion / isolation source** — blood vs faeces in *Klebsiella*, as a virulence proxy.
+- **Multi-species AMR** (from 2026-11) — every genome in the EBI AMR Portal: *P. aeruginosa* first,
+  then all Enterobacterales, then all species, on one drug panel of ten (§3.6).
 
 Deliverables, in the order they matter:
 
@@ -1219,6 +1228,62 @@ wrong long-term: target AMR genes are individually rare but collectively penetra
 
 **Owns.** `src/gene_array_lasso/`.
 
+### 3.6 Multi-species AMR — EBI AMR Portal (*P. aeruginosa* → Enterobacterales → all)
+
+**Status.** *P. aeruginosa* (PsA) **labels are built** on CSD3 at `7e47486`. Genomes, ESM-C embeddings,
+splits and training are not started. Mechanics: [`apps/pa/CLAUDE.md`](src/bacpredict/apps/pa/CLAUDE.md).
+
+**Numbers of record — PsA labels.** Read from
+`$R/bac_ast_prediction/processed/train_pa_ast/label_counts.csv`; its `manifest.json` records the input
+md5s (EBI AMR Portal release 2026-07 + the AMR-GNN supplement) and the code SHA.
+
+| Drug | Labelled genomes | % R | From MIC | From the source's call |
+|---|--:|--:|--:|--:|
+| ciprofloxacin | 3,394 | 62.6 | 3,143 | 251 |
+| ceftazidime | 3,039 | 47.1 | 2,791 | 247 |
+| meropenem | 2,989 | 35.4 | 2,893 | 94 |
+| tobramycin | 2,797 | 37.3 | 2,639 | 158 |
+| amikacin | 2,598 | 15.9 | 2,381 | 217 |
+| imipenem | 2,299 | 60.5 | 2,068 | 231 |
+| piperacillin-tazobactam | 2,144 | 52.8 | 2,088 | 56 |
+| aztreonam | 1,964 | 38.6 | 1,915 | 49 |
+| levofloxacin | 1,615 | 60.8 | 1,401 | 214 |
+| cefepime | 1,264 | 45.7 | 1,177 | 86 |
+
+- **24,103 clean labels over 3,932 genomes** (`cohort.csv`, `n_drugs_labelled > 0`): `genome_route`
+  assembly 2,150, reads 1,782. These are *labelled* genomes, not yet genomes we hold.
+- **The breakpoint table reproduces AMR-GNN's own EUCAST v15 calls 16,596 / 16,596**
+  (`call_agreement.csv`). Against the portal's own (mostly CLSI) calls on 7,285 tests carrying both,
+  the re-derivation flips 129 S→R and 153 R→S (meropenem MIC 8 is CLSI R, EUCAST S).
+
+**In flight.** Genome acquisition for the PsA cohort.
+
+**Next.** In the agreed order, with a checkpoint after each of steps 2 and 3:
+2. Genomes. Then QC, `mlst`, and ST counts per drug. Checkpoint: choose the held-out ST (≥50 genomes).
+3. ESM-C in bf16: a 10-genome GPU smoke test, then all PsA genomes, with throughput measured.
+4. All ~166k portal genomes, Enterobacterales first.
+5. Splits (the ST holdout plus others, through `engine/splits`), then training.
+
+Later: the AMR-GNN-cut benchmark, ANI thinning, and causal attribution of the predictions.
+
+**Caveats.**
+- **The genome yield is a scout estimate, not a number of record.** It was taken on 2026-11-18,
+  against the cohort *before* unitless MICs were called. Roughly:
+  - 143 labelled BioSamples have only RNA-seq reads, and 7 only ONT reads. All are dropped.
+  - 6 MiSeq genomes fall below 10× depth.
+  - The acquisition manifest will replace these numbers.
+- **6 labelled genomes are *P. paraeruginosa* in the portal's genotype table** (`cohort.csv`
+  `species_conflict`). The species check in step 2 decides them.
+- **3 CDC strains each sit under two BioSamples** (isolates S54485, U2504, X24509). The splits must
+  group them, or they leak across the holdout.
+- `finetune_amr` and `build_split_csv` have **no `pa_ast` task key yet**. Paths must be explicit until
+  one is added (a shared-engine change).
+- EUCAST's *Salmonella* ciprofloxacin breakpoint (R > 0.06) roughly doubles *Salmonella* %R relative to
+  the source calls. This is an observation from a local review run, to quantify at step 4.
+
+**Owns.** `engine/ast_labels/{breakpoints,ast_tests,build_binary_ast_labels}.py`,
+`engine/ast_labels/eucast_v15_breakpoints.csv`, `apps/pa/`.
+
 ---
 
 ## 4. Artifact dependency table
@@ -1237,6 +1302,8 @@ correct.**
 | `unitigs.pyseer.gz` | `ast_gwas/build_cohort_once` | every Kp drug | All Kp unitig GWAS |
 | `lineage_clusters.tsv` | `ast_gwas/sublineage_from_metadata` | `--lineage`, permutation null | Calibration only |
 | `mge_hits.parquet/` | `kleb_iso_source/map_unitig_hits_genomad` | the MGE/IS/IGR write-ups | §3.3's invasion mapping |
+| `train_pa_ast/binary_ast.csv` | `engine/ast_labels/build_binary_ast_labels` (via `apps/pa/scripts/build_pa_ast_labels.sh`) | PsA split tables (`engine/splits`) | Every PsA split and model (§3.6) |
+| `train_pa_ast/cohort.csv` | the same build | PsA genome acquisition (`genome_route`, reads/assembly accessions) | The PsA genome manifest |
 
 **`catalogue_ceiling_panel.csv` is reproducible.** It was hand-assembled once, which was itself the
 defect this file exists to prevent; `engine/ref_catalogues/build_ceiling_panel` now regenerates it
@@ -1347,6 +1414,17 @@ directory was consolidated. Several of these existed nowhere else.
 | 2026-07-24 | **Target architecture: a clean-core `segment_amr_lr`** — one segment-type parameter, routed through the single `holdout.py` resolver and one fit/score primitive, then delete the duplicates. **Not a greenfield rewrite.** The leaks recurred because of accreted merge/split code and overloaded "gene" vocabulary. |
 | 2026-07-21 | **Short CPU array jobs take a tight `--time`**, not the "be generous" default. |
 | 2026-11-18 | **captum must be pinned `>=0.9.0`.** captum **0.8.0 pins `numpy<2.0`** and silently drags the whole shared environment back to numpy 1.26 (taking zarr, scanpy and rich down with it) — measured here: a `uv sync` downgraded the shared `.venv` before it was caught and reverted. 0.9.0 drops the pin and locks as a purely additive 20-line change. The venv is shared by several concurrent agents, so this is not a local inconvenience. |
+
+### Multi-species AMR
+
+| Date | Decision |
+|---|---|
+| 2026-11-18 | **Label rule, every species:** EUCAST v15.0 from the MIC — resistant iff MIC > the R breakpoint, "I" counts as S. A censored MIC that straddles R is dropped, not rescued by the source's call. A test with no MIC keeps the source's own R/S. Portal MICs with no unit recorded (not disk tests) are called as mg/L ("MIC first"). |
+| 2026-11-18 | **One ten-drug panel for PsA and Enterobacterales:** ciprofloxacin, ceftazidime, meropenem, tobramycin, amikacin, imipenem, piperacillin-tazobactam, aztreonam, levofloxacin, cefepime. Gentamicin (no EUCAST PsA breakpoint) and colistin dropped; ceftazidime-avibactam and ceftolozane-tazobactam deferred. |
+| 2026-11-18 | **Holdout:** one MLST ST with ≥50 genomes, held out zero-shot, alongside other holdouts. Built by `engine/splits` like every other split. |
+| 2026-11-18 | **An even genome surface, for publication.** Shovill for every genome assembled from reads, including the 195 Khaledi et al. genomes that NCBI already holds assemblies for. AllTheBacteria assemblies (themselves shovill) where they exist, including the undocumented 2026-09 batch. One Prodigal 2.6.3 run with Prokka's flags on every genome, then `mlst`. Genomes that fail the species check are excluded. RNA-seq-only and ONT-only BioSamples are dropped (shovill is short-read only). Reads under 10× depth are not assembled. New pixi env (bioconda shovill / mlst / prodigal 2.6.3) approved. |
+| 2026-11-18 | **ESM-C embeddings are stored in bf16** in a new project_k store. They are computed in bf16, so this is lossless and halves the store. It does not bear on the bf16 attribution finding in §3.1, which concerns the model's logits, not its stored inputs. |
+| 2026-11-18 | **Later experiments, not the primary test:** benchmark on AMR-GNN's own cuts, which needs a restricted training set; and thin the training set by ANI so that a dominant species such as *Salmonella* cannot dominate. |
 
 ### Invasion / lab collection
 

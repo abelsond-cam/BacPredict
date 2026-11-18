@@ -64,8 +64,13 @@ latest) and md5-checked against its `md5sums`:
 - ⚠ **`raw/ebi_amr_portal/ebi_amr_records_<date>.csv` is a portal-UI export of the *genotype* table**
   (`genotype-*` columns), not AST — despite the name.
 
+**Labels built from it** live in the canonical AST tree, one dir per organism:
+`$R/bac_ast_prediction/processed/train_pa_ast/` (*P. aeruginosa*: `binary_ast.csv`, `cohort.csv`, …;
+built by `apps/pa/scripts/build_pa_ast_labels.sh`, mechanics in `apps/pa/CLAUDE.md`).
+
 Per-genome annotation (Prokka/Prodigal GFF with `##FASTA` contigs appended) is on the same FTP under
-`genomes/{ERZ,GCA}/<3>/<3>/<accession>/<accession>_annotations.gff.gz`. Scoping counts per release:
+`https://ftp.ebi.ac.uk/pub/databases/amr_portal/genomes/{ERZ,GCA}/<3>/<3>/<accession>/<accession>_annotations.gff.gz`
+(one shared tree, not per release; genotype-table accessions only). Scoping counts per release:
 `processed/ebi_amr_portal/scoping_<release>/` (script alongside).
 
 ### AMR-GNN *P. aeruginosa* set (Nguyen et al. 2026, Nat Commun, doi 10.1038/s41467-026-69934-8)
