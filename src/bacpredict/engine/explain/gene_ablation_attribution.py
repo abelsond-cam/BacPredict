@@ -58,6 +58,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 import torch
 
 from bacpredict.engine.concat.bacformer_genome_vectors import forward_inputs
@@ -363,13 +365,28 @@ def main() -> None:
     wrapped = LogitForward(model)
 
     manifest: list[dict] = []
+    failures = 0
     first = True
     for row in cohort.itertuples(index=False):
         sample = str(row.Sample)
         out_path = args.out_dir / f"{sample}_attribution.parquet"
         if out_path.exists() and not args.overwrite:
-            logger.info("%s already done; skipping", sample)
-            continue
+            # A resume must not mix precisions. bf16 and fp32 attributions are different numbers
+            # (bf16 quantises most genes to exactly zero), so a finished bf16 genome must not be
+            # accepted as satisfying an fp32 run. A parquet that cannot be read is treated as a
+            # half-written casualty of a killed job and recomputed.
+            try:
+                existing = pq.read_schema(out_path).metadata or {}
+                done_dtype = existing.get(b"bacpredict_dtype", b"").decode() or "unknown"
+            except Exception:  # noqa: BLE001 - any unreadable file is simply redone
+                logger.warning("%s exists but is unreadable; recomputing", out_path.name)
+                done_dtype = None
+            if done_dtype == args.dtype:
+                logger.info("%s already done in %s; skipping", sample, args.dtype)
+                continue
+            if done_dtype is not None:
+                logger.warning("%s exists but was computed in %s, not %s — recomputing",
+                               sample, done_dtype, args.dtype)
 
         esm_path = Path(esm_dir) / f"{sample}{paths.esm_suffix}"
         if not esm_path.exists():
@@ -378,25 +395,40 @@ def main() -> None:
             continue
 
         started = time.perf_counter()
-        inputs = load_genome(esm_path, device, dtype)
-        n_proteins = int(inputs["protein_embeddings"].shape[1])
-        if not args.skip_protein_count_check:
-            verify_protein_count(sample, n_proteins, Path(paths.parquet_dir), paths.parquet_suffix)
+        try:
+            inputs = load_genome(esm_path, device, dtype)
+            n_proteins = int(inputs["protein_embeddings"].shape[1])
+            if not args.skip_protein_count_check:
+                verify_protein_count(sample, n_proteins, Path(paths.parquet_dir), paths.parquet_suffix)
 
-        attributions, base_logit = attribute_genome(
-            wrapped, inputs,
-            perturbations_per_eval=args.perturbations_per_eval,
-            check_group_constant=first,
-        )
-        first = False
-        elapsed = time.perf_counter() - started
+            attributions, base_logit = attribute_genome(
+                wrapped, inputs,
+                perturbations_per_eval=args.perturbations_per_eval,
+                check_group_constant=first,
+            )
+            first = False
+            elapsed = time.perf_counter() - started
 
-        pd.DataFrame({
-            "Sample": sample,
-            "flat_index": np.arange(n_proteins, dtype=np.int32),
-            "attribution_logit": attributions,
-            "base_logit": base_logit,
-        }).to_parquet(out_path, index=False)
+            table = pa.Table.from_pydict({
+                "Sample": [sample] * n_proteins,
+                "flat_index": np.arange(n_proteins, dtype=np.int32),
+                "attribution_logit": attributions,
+                "base_logit": np.full(n_proteins, base_logit, dtype=np.float64),
+            })
+            # dtype travels with the data, so a later reader never has to guess which precision
+            # produced a score, and the resume check above can tell them apart.
+            table = table.replace_schema_metadata({b"bacpredict_dtype": args.dtype.encode()})
+            # Write beside the target then rename: a killed job leaves no half-written parquet that
+            # the next run would mistake for finished work.
+            tmp_path = out_path.with_suffix(".parquet.partial")
+            pq.write_table(table, tmp_path)
+            tmp_path.replace(out_path)
+        except Exception as exc:  # one bad genome must not kill the rest of the shard
+            logger.exception("%s failed; continuing with the rest of the shard", sample)
+            failures += 1
+            manifest.append({"Sample": sample, "status": "failed", "error": f"{type(exc).__name__}: {exc}",
+                             "dtype": args.dtype})
+            continue
 
         manifest.append({
             "Sample": sample, "status": "ok", "n_proteins": n_proteins, "base_logit": base_logit,
@@ -405,11 +437,14 @@ def main() -> None:
         logger.info("%s: %d proteins, base logit %+.4f, %.1fs (%.1f ms/protein)",
                     sample, n_proteins, base_logit, elapsed, 1000 * elapsed / max(n_proteins, 1))
 
-    if manifest:
-        tag = "all" if args.shard_index is None else f"shard{args.shard_index:04d}"
-        manifest_path = args.out_dir / f"attribution_manifest_{tag}.json"
-        manifest_path.write_text(json.dumps(manifest, indent=2))
-        logger.info("Wrote %s (%d genomes)", manifest_path, len(manifest))
+    # Always written, even when empty: a shard that legitimately had nothing to do and a shard that
+    # died before its first genome must not look the same to whoever audits the fan-out.
+    tag = "all" if args.shard_index is None else f"shard{args.shard_index:04d}"
+    manifest_path = args.out_dir / f"attribution_manifest_{tag}.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2))
+    logger.info("Wrote %s (%d genomes, %d failed)", manifest_path, len(manifest), failures)
+    if failures:
+        raise SystemExit(f"{failures} genome(s) failed in this shard; see {manifest_path}")
 
 
 if __name__ == "__main__":

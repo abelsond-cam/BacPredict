@@ -105,7 +105,7 @@ def attach_lineage(frame: pd.DataFrame, lineage_csv: Path | None, lineage_column
     return out
 
 
-def allocate_by_largest_remainder(sizes: pd.Series, total: int) -> pd.Series:
+def allocate_by_largest_remainder(sizes: pd.Series, total: int, seed: int = 0) -> pd.Series:
     """Split ``total`` draws across strata in proportion to ``sizes``, by the largest-remainder rule.
 
     Proportional allocation keeps the subsample's phenotype and lineage composition close to the
@@ -118,6 +118,8 @@ def allocate_by_largest_remainder(sizes: pd.Series, total: int) -> pd.Series:
         Stratum label → number of available genomes in that stratum.
     total : int
         Number of genomes to draw in all. Clamped to ``sizes.sum()``.
+    seed : int, default 0
+        Seed for breaking ties between strata with equal remainders.
 
     Returns
     -------
@@ -139,7 +141,13 @@ def allocate_by_largest_remainder(sizes: pd.Series, total: int) -> pd.Series:
 
     if shortfall > 0:
         headroom = sizes.astype(int) - floors
-        order = (exact - np.floor(exact)).where(headroom > 0, other=-1.0).sort_values(ascending=False)
+        remainder = exact - np.floor(exact)
+        # Break ties on the seed, not on label order. Strata tie constantly at these sizes, and a
+        # plain sort puts "1|<lineage>" (resistant) ahead of "0|<lineage>" every time, so the rare
+        # lineages — exactly the ones the within-lineage control depends on — would come out
+        # systematically skewed towards resistant.
+        jitter = pd.Series(np.random.default_rng(seed).random(len(sizes)), index=sizes.index) * 1e-9
+        order = (remainder + jitter).where(headroom > 0, other=-1.0).sort_values(ascending=False)
         for label in order.index:
             if shortfall == 0:
                 break
@@ -198,7 +206,7 @@ def select_cohort(
         return frame.sort_values("Sample").reset_index(drop=True)
 
     sizes = frame.groupby("stratum").size()
-    draws = allocate_by_largest_remainder(sizes, n_genomes)
+    draws = allocate_by_largest_remainder(sizes, n_genomes, seed=seed)
     rng = np.random.default_rng(seed)
     picked = [
         group.iloc[rng.permutation(len(group))[: draws[label]]]

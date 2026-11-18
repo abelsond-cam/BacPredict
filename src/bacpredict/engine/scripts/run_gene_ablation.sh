@@ -19,8 +19,10 @@
 #   N_SHARDS LIMIT DTYPE PERTURBATIONS_PER_EVAL.
 #
 #SBATCH --job-name=gene-ablation
-#SBATCH --output=/rds/user/dca36/hpc-work/logs/%x-%A_%a.out
-#SBATCH --error=/rds/user/dca36/hpc-work/logs/%x-%A_%a.out
+# %j is the task's own job id, unique for a plain job AND for each array task — %A_%a would
+# render a non-array job as <id>_4294967294, which is what the first smoke produced.
+#SBATCH --output=/rds/user/dca36/hpc-work/logs/%x-%j.out
+#SBATCH --error=/rds/user/dca36/hpc-work/logs/%x-%j.out
 #SBATCH --partition=ampere
 #SBATCH --account=FLOTO-SL2-GPU
 #SBATCH --nodes=1

@@ -166,3 +166,24 @@ def test_shard_rejects_an_out_of_range_index() -> None:
     frame = pd.DataFrame({"Sample": ["a", "b"]})
     with pytest.raises(ValueError, match="out of range"):
         shard(frame, 5, 5)
+
+
+def test_allocation_tiebreak_is_not_biased_towards_resistant() -> None:
+    """Strata tie constantly; the tie-break must not systematically favour the resistant label.
+
+    Stratum labels are ``"<ast_label>|<lineage>"``, so a plain descending sort puts every ``1|…``
+    ahead of its matching ``0|…``. Over many seeds the resistant share of the extra draws must sit
+    near half, or the rare lineages the within-lineage control depends on come out skewed.
+    """
+    from bacpredict.engine.explain.select_attribution_cohort import allocate_by_largest_remainder
+
+    sizes = pd.Series({f"{label}|lineage{i}": 7 for i in range(6) for label in (0, 1)})
+    resistant_share = []
+    for seed in range(40):
+        draws = allocate_by_largest_remainder(sizes, 27, seed=seed)
+        assert draws.sum() == 27
+        assert (draws <= sizes).all()
+        resistant = sum(v for k, v in draws.items() if k.startswith("1|"))
+        resistant_share.append(resistant / 27)
+    mean_share = sum(resistant_share) / len(resistant_share)
+    assert 0.4 < mean_share < 0.6, f"resistant share {mean_share:.3f} is skewed"
