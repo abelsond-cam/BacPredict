@@ -196,7 +196,29 @@ Kp ciprofloxacin — to test whether the models read `rpoB` and `gyrA`/`parC` ra
 Stages 1–3 written and unit-tested (28 tests). The Kp smoke **has run** (job 41289828, COMPLETED);
 no biological result has been read yet. Plan: `~/.claude/plans/i-want-to-run-polymorphic-oasis.md`.
 
-**⛔ bf16 cannot carry this measurement — the headline finding of the smoke.** One Kp ciprofloxacin
+**⛔ bf16 cannot carry this measurement — and fp32 costs 3.8×.** Same genome, same code, four
+configurations, each read from its own
+`$B/train_kleb_ast/attribution/{ciprofloxacin,precision_*}/SAMEA104414830_attribution.parquet`
+and that run's `attribution_manifest_all.json`:
+
+| dtype | perturbations/eval | seconds | ms/protein | distinct values | genes at exactly 0 |
+|---|--:|--:|--:|--:|--:|
+| bf16 | 1 | 659.8 | 122.4 | **13** | **96.2%** |
+| bf16 | 16 | 584.4 | 108.4 | 13 | 96.2% |
+| fp32 | 4 | 2,528.4 | 469.1 | **4,903** | **0.0%** |
+| fp32 | 16 | 2,491.9 | 462.3 | 4,902 | 0.0% |
+
+- **fp32 resolves the signal completely** — 4,903 distinct values against bf16's 13, no zeros at all.
+- **Batching buys nothing.** ppe=16 vs ppe=4 differ by at most 4.77e-07 (correctness confirmed), and
+  bf16 ppe=16 is only 11% faster than ppe=1. One 5,390-token sequence already saturates the A100, so
+  **throughput is not the lever — genome count is.**
+- bf16 keeps the largest effects (top-20 overlap 19/20, sd 0.0169 vs 0.0171) but destroys the body of
+  the distribution: of the 5,185 genes bf16 called exactly zero, fp32 gives median |a| = 0.0058.
+  Spearman over all 5,390 genes is only 0.320, because 96% of bf16's values are tied at zero.
+- **Cost at fp32: ~607 GPU-h for the 877-genome Kp holdout alone**, against a plan estimate of
+  80–100 GPU-h for both organisms. The TB arm would add more. **This is unaffordable as planned.**
+
+**⚠ bf16 was the original finding and still stands:** One Kp ciprofloxacin
 genome (`SAMEA104414830`, 5,390 proteins), read from
 `$B/train_kleb_ast/attribution/ciprofloxacin/SAMEA104414830_attribution.parquet`: only **13 distinct
 attribution values**, **96.2% of genes exactly 0**, every value a multiple of 1/32. The genome's base
@@ -207,11 +229,15 @@ repairs. fp32 and batched-throughput runs (jobs 41291284/41291285/41291286, all 
 disk at `$B/train_kleb_ast/attribution/precision_{fp32_ppe4,fp32_ppe16,bf16_ppe16}/` and **have not
 been read**.
 
-**⚠ Cost, measured not estimated.** 659.8 s of ablation for that one genome at
-`perturbations_per_eval=1` (122 ms per protein, from the run's own
-`attribution_manifest_all.json`). Extrapolated over the 877-genome Kp ciprofloxacin holdout that is
-**~161 GPU-hours for Kp alone**, against a plan estimate of 80–100 GPU-h for *both* organisms. The
-whole-job wall was 17:51, so ~7 min of that is model load and import, paid once per shard.
+**⚠ One genome only — NOT a result, and the genome is maximally confounded.** `SAMEA104414830` is
+**ST512 / SL258**, the KPC high-risk clone, carrying `GyrA:p.Ser83Ile; ParC:p.Ser80Ile` plus KPC-3,
+SHV-11, OXA-9 and TEM-150 (`final/metadata_v2_all_samples_and_columns.tsv`). Its base logit is
+**7.2776** (p = 0.99931). In the fp32 run, **gyrA ranks 3,580 of 5,390** genes by |attribution| and
+**parC ranks 5,010**; the median rank of all 17 AMR-annotated genes is 2,131 (39.5th percentile), and
+the top-attributed genes are a contiguous block at flat indices 3159–3163 (`abgB`/`abgT` operon) plus
+an `aac(6')-Ib` copy CARD did not call. **No conclusion may be drawn from n=1 on a clonal genome**
+where resistance is predictable from the lineage alone. Hypotheses are open and listed in the
+session hand-off; the cohort is 448 Flq-mutant / 343 wild-type, so the contrast is runnable.
 
 Two decisions already of record for it (see §6):
 
