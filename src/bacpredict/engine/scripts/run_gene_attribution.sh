@@ -16,7 +16,7 @@
 #   N_SHARDS=10 sbatch --array=0-9 --time=04:00:00 src/bacpredict/engine/scripts/run_gene_attribution.sh
 #
 # Knobs (all env vars, all with defaults below): ORGANISM DRUG COHORT_CSV CHECKPOINT OUT_DIR
-#   N_SHARDS LIMIT DTYPE METHOD PERTURBATIONS_PER_EVAL N_STEPS INTERNAL_BATCH_SIZE.
+#   N_SHARDS LIMIT DTYPE METHOD PERTURBATIONS_PER_EVAL N_STEPS INTERNAL_BATCH_SIZE ESM_DIR.
 #
 # DTYPE defaults to fp32, NOT the deployed bf16. Measured on job 41289828: in bf16 a Kp genome
 # returns 13 distinct attribution values with 96.2% of genes exactly zero, because the base logit
@@ -83,6 +83,12 @@ ARGS=(--organism "$ORGANISM" --cohort-csv "$COHORT_CSV" --checkpoint "$CHECKPOIN
       --out-dir "$OUT_DIR" --dtype "$DTYPE" --method "$METHOD"
       --perturbations-per-eval "$PERTURBATIONS_PER_EVAL"
       --n-steps "$N_STEPS" --internal-batch-size "$INTERNAL_BATCH_SIZE")
+# TB's embedding store was moved to the RDV archive tier, so a TB run points at whatever subset has
+# been restored. ESM_DIR overrides the store location; unset, the organism's default is used.
+if [[ -n "${ESM_DIR:-}" ]]; then
+    ARGS+=(--esm-dir "$ESM_DIR")
+fi
+
 # Shard only inside an array; a bare submission does the whole cohort.
 if [[ -n "${SLURM_ARRAY_TASK_ID:-}" && -n "${N_SHARDS:-}" ]]; then
     ARGS+=(--shard-index "$SLURM_ARRAY_TASK_ID" --n-shards "$N_SHARDS")
