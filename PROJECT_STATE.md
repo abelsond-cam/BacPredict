@@ -122,7 +122,7 @@ Deliverables, in the order they matter:
 | [`src/dp_short_read/`](src/dp_short_read/) | Stub. Deferred — see [`docs/_parked/`](docs/_parked/) |
 
 Engine subpackages: `ast_labels` · `download` · `embedding` · `finetune` · `splits` · `gene_lr` ·
-`segment_amr_lr` · `concat` · `ref_catalogues` · `plots` · `config.py` · `scripts`.
+`segment_amr_lr` · `concat` · `ref_catalogues` · `explain` · `plots` · `config.py` · `scripts`.
 
 ### ⚠ Dead paths — these no longer exist
 
@@ -182,7 +182,22 @@ predate the fixes and need regenerating.
 (9 drugs, WHO/TB-Profiler, **provisional**). Each row carries its own `ceiling_estimator` and
 `ceiling_status`.
 
-**In flight.** Nothing. No AMR jobs are queued or running.
+**In flight.** **Gene-level attribution** of the two single-determinant fine-tunes — TB rifampin and
+Kp ciprofloxacin — to test whether the models read `rpoB` and `gyrA`/`parC` rather than lineage.
+Code only so far; **no compute has been spent and no attribution number exists.** Stage 1
+(`engine/explain/select_attribution_cohort`) and Stage 2 (`engine/explain/gene_ablation_attribution`)
+are written and unit-tested; the GPU smoke has not run. Plan:
+`~/.claude/plans/i-want-to-run-polymorphic-oasis.md`.
+
+Two decisions already of record for it (see §6):
+
+- **The stored quantity is the logit shift plus each genome's base logit**, not the probability
+  shift. The probability target saturates on a confident model — the published Bacformer run lost
+  1,895 of 4,242 Salmonella genomes to zero attribution variance — and
+  `explain.gene_ablation_attribution.delta_probability` recovers the bounded −1..1 score exactly, so
+  nothing is given up.
+- **Cohort is a stratified subsample of the holdout**, resolved only through `load_splits`:
+  ~1,500 TB genomes stratified on phenotype × lineage, and all 877 Kp ciprofloxacin holdout genomes.
 
 **Next.**
 1. Regenerate the concat ladders and the `*_card_cause_histogram_*` figures — the checked-in copies
@@ -1293,6 +1308,9 @@ directory was consolidated. Several of these existed nowhere else.
 | 2026-08-13 | **Exclude the `other` cluster from the permutation null** (drop those samples rather than un-shuffling them). The paired real run must be scored on the same subset. |
 | 2026-06-26 | **`gene_array_lasso`: groupyr → skglm**, on a user-authored plan. Absence encoding = **zero embedding block** (sparse CSR, never stored); do **not** mean-impute. **Grouping must be a swappable input** — never hard-wire Panaroo into the estimator. Memory levers ranked: CSR sparse → float32 (validate) → warm-started decreasing-alpha path → regrouping → out-of-core last. |
 | — | **Kept as a warning:** an earlier unilateral swap to *celer* silently changed the estimator to squared-loss group lasso. That was **wrong and was reverted.** A package change *is* a change of statistical method. |
+| 2026-11-18 | **Gene attribution is run on the LOGIT, with each genome's base logit stored beside it.** Attributing `sigmoid(logit)` directly is what the published Bacformer code does, and it **saturates**: 1,895 of 4,242 Salmonella genomes came back with zero attribution variance, contributing nothing. Our two models are more confident still. Storing the logit shift loses nothing because `delta_probability()` reconstructs the bounded −1..1 probability score exactly, so one run yields both scales. |
+| 2026-11-18 | **Attribution's primary statistic is per-genome-normalised \|attribution\|; resistant-vs-susceptible per gene is secondary.** David's choice. Per-genome normalisation also makes the logit and probability scales interchangeable for ranking. Zero-variance genomes are **counted and reported**, never silently zeroed — that count is the saturation diagnostic. |
+| 2026-11-18 | **A within-lineage repeat of the R-vs-S contrast is what licenses any causal reading of attribution.** A determinant signal survives stratification by TB lineage / Kp sublineage; a lineage marker collapses. Until it is read, attribution is descriptive only. This is why the cohort is stratified on lineage at selection time rather than sampled at random. |
 
 ### Embedding and representation
 
@@ -1313,6 +1331,7 @@ directory was consolidated. Several of these existed nowhere else.
 | 2026-08-11 | **Do not use BacLM's SDPA fallback — too slow.** flash-attn can never load on CSD3 (glibc 2.28 against wheels built for 2.32). Port to Isambard, embed there, bring the store back. A stop-gap, **demoted to the last job**. |
 | 2026-07-24 | **Target architecture: a clean-core `segment_amr_lr`** — one segment-type parameter, routed through the single `holdout.py` resolver and one fit/score primitive, then delete the duplicates. **Not a greenfield rewrite.** The leaks recurred because of accreted merge/split code and overloaded "gene" vocabulary. |
 | 2026-07-21 | **Short CPU array jobs take a tight `--time`**, not the "be generous" default. |
+| 2026-11-18 | **captum must be pinned `>=0.9.0`.** captum **0.8.0 pins `numpy<2.0`** and silently drags the whole shared environment back to numpy 1.26 (taking zarr, scanpy and rich down with it) — measured here: a `uv sync` downgraded the shared `.venv` before it was caught and reverted. 0.9.0 drops the pin and locks as a purely additive 20-line change. The venv is shared by several concurrent agents, so this is not a local inconvenience. |
 
 ### Invasion / lab collection
 
