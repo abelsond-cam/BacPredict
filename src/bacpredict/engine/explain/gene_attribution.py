@@ -35,14 +35,14 @@ Examples
 --------
 Smoke one genome end to end (a short GPU sbatch, never the login node)::
 
-    python -m bacpredict.engine.explain.gene_ablation_attribution \\
+    python -m bacpredict.engine.explain.gene_attribution \\
         --organism tb --cohort-csv attribution_cohort_rifampin.csv \\
         --checkpoint "$B/train_tb_ast/checkpoints/mycobacterium_tuberculosis_rifampin_.../" \\
         --out-dir "$B/train_tb_ast/attribution/rifampin" --limit 1
 
 One shard of an array job::
 
-    python -m bacpredict.engine.explain.gene_ablation_attribution \\
+    python -m bacpredict.engine.explain.gene_attribution \\
         --organism tb --cohort-csv attribution_cohort_rifampin.csv \\
         --checkpoint "$CKPT" --out-dir "$OUT" \\
         --shard-index "$SLURM_ARRAY_TASK_ID" --n-shards 40
@@ -70,6 +70,8 @@ from bacpredict.engine.gene_lr.locate_gene import flatten_proteins
 logger = logging.getLogger(__name__)
 
 DTYPES = {"bf16": torch.bfloat16, "fp32": torch.float32}
+GRADIENT_METHODS = ("integrated_gradients", "input_x_gradient")
+METHODS = ("ablation", *GRADIENT_METHODS)
 
 
 class LogitForward(torch.nn.Module):
@@ -287,6 +289,91 @@ def attribute_genome(
     return (attr.sum(dim=1) / width).cpu().numpy(), base_logit
 
 
+def attribute_genome_gradients(
+    wrapped: LogitForward,
+    inputs: dict,
+    *,
+    method: str = "integrated_gradients",
+    n_steps: int = 50,
+    internal_batch_size: int | None = 4,
+) -> tuple[np.ndarray, float]:
+    """Attribute every protein of one genome by gradients, returning per-protein scores and the base logit.
+
+    Why this exists beside the ablation path: ablation deletes a gene and asks whether the model
+    still predicts resistance. For a determinant that is **present in every genome and differs only
+    by a point mutation** — ``gyrA``, ``parC``, ``rpoB`` — deletion is the wrong counterfactual,
+    because the model never learned "``gyrA`` present → resistant". A gradient reads how the output
+    responds to the protein's *embedding*, which is where a point mutation actually lives.
+
+    It is also far cheaper. Ablation costs one forward per protein (5,390 for a Kp genome, measured
+    at 2,492 s in fp32); integrated gradients costs ``n_steps`` forward-backward passes for the
+    **whole genome at once**.
+
+    ⚠ The per-protein aggregation is **not** the one :func:`attribute_genome` uses. captum's
+    ablation broadcasts a feature group's whole delta to every member, so that path sums and divides
+    by the embedding width. A gradient method returns a genuine per-element attribution, and its
+    completeness property is stated over their **sum** — so here the embedding dimension is summed
+    and *not* divided. Dividing would silently rescale every score by 960.
+
+    Parameters
+    ----------
+    wrapped : LogitForward
+        The model, wrapped to return ``[batch]`` logits.
+    inputs : dict
+        Forward kwargs from :func:`load_genome`.
+    method : {"integrated_gradients", "input_x_gradient"}, default "integrated_gradients"
+        ``integrated_gradients`` integrates along a path from the zero baseline and satisfies
+        completeness; ``input_x_gradient`` is a single-pass local approximation.
+    n_steps : int, default 50
+        Path steps for integrated gradients. Ignored by ``input_x_gradient``.
+    internal_batch_size : int, optional
+        How many path steps captum evaluates per forward. Lower it if a long genome runs out of
+        memory — the backward pass holds activations for 30 layers.
+
+    Returns
+    -------
+    attributions : numpy.ndarray
+        ``[n_proteins]`` float64, one score per protein in flat order.
+    base_logit : float
+        The model's logit for the unperturbed genome.
+
+    Raises
+    ------
+    ValueError
+        If ``method`` is not a known gradient method.
+    """
+    from captum.attr import InputXGradient, IntegratedGradients
+
+    if method not in GRADIENT_METHODS:
+        raise ValueError(f"Unknown gradient method {method!r}; expected one of {sorted(GRADIENT_METHODS)}")
+
+    embeddings = inputs["protein_embeddings"]
+    extra = (inputs["attention_mask"], inputs["contig_ids"])
+
+    # No inference_mode anywhere in this function: it marks tensors in a way that permanently
+    # excludes them from autograd, so the backward pass would fail. The model's parameters stay
+    # requires_grad=False (set at load) — the gradient wanted here is with respect to the input.
+    with torch.no_grad():
+        base_logit = float(wrapped(embeddings, *extra).item())
+
+    grad_input = embeddings.clone().detach().requires_grad_(True)
+    if method == "integrated_gradients":
+        attributions = IntegratedGradients(wrapped).attribute(
+            inputs=grad_input,
+            baselines=torch.zeros_like(grad_input),
+            additional_forward_args=extra,
+            n_steps=n_steps,
+            internal_batch_size=internal_batch_size,
+        )
+    else:
+        attributions = InputXGradient(wrapped).attribute(
+            inputs=grad_input, additional_forward_args=extra,
+        )
+
+    # Sum, never divide — see the warning above.
+    return attributions[0].detach().double().sum(dim=1).cpu().numpy(), base_logit
+
+
 def delta_probability(base_logit, attribution_logit):
     """Convert a stored logit shift into the probability-scale attribution, exactly.
 
@@ -335,8 +422,15 @@ def main() -> None:
     parser.add_argument("--esm-dir", type=Path, default=None, help="Override the ESM store directory.")
     parser.add_argument("--dtype", choices=tuple(DTYPES), default="bf16",
                         help="bf16 matches deployment; fp32 is the precision check.")
+    parser.add_argument("--method", choices=METHODS, default="ablation",
+                        help="ablation deletes each protein; the gradient methods read the response to "
+                             "its embedding, which is where a point mutation lives.")
     parser.add_argument("--perturbations-per-eval", type=int, default=1,
-                        help="Ablated copies per forward pass; raise to use the batch dimension.")
+                        help="Ablation only — ablated copies per forward pass.")
+    parser.add_argument("--n-steps", type=int, default=50,
+                        help="integrated_gradients only — path steps.")
+    parser.add_argument("--internal-batch-size", type=int, default=4,
+                        help="integrated_gradients only — path steps per forward; lower it on OOM.")
     parser.add_argument("--shard-index", type=int, default=None, help="This array task's index.")
     parser.add_argument("--n-shards", type=int, default=None, help="Total array tasks.")
     parser.add_argument("--limit", type=int, default=None, help="Stop after this many genomes (smoke tests).")
@@ -355,7 +449,7 @@ def main() -> None:
     cohort = shard(cohort, args.shard_index, args.n_shards)
     if args.limit is not None:
         cohort = cohort.head(args.limit)
-    logger.info("This task will attribute %d genomes", len(cohort))
+    logger.info("This task will attribute %d genomes by %s (%s)", len(cohort), args.method, args.dtype)
 
     paths = store_paths(args.organism)
     esm_dir = args.esm_dir or paths.esm_dir
@@ -378,6 +472,13 @@ def main() -> None:
             try:
                 existing = pq.read_schema(out_path).metadata or {}
                 done_dtype = existing.get(b"bacpredict_dtype", b"").decode() or "unknown"
+                done_method = existing.get(b"bacpredict_method", b"").decode() or "ablation"
+                if done_method != args.method:
+                    # An ablation score and a gradient score are different quantities on different
+                    # scales; one must never be accepted as satisfying a run of the other.
+                    logger.warning("%s exists but was computed by %s, not %s — recomputing",
+                                   sample, done_method, args.method)
+                    done_dtype = "<other-method>"
             except Exception:  # noqa: BLE001 - any unreadable file is simply redone
                 logger.warning("%s exists but is unreadable; recomputing", out_path.name)
                 done_dtype = None
@@ -401,11 +502,19 @@ def main() -> None:
             if not args.skip_protein_count_check:
                 verify_protein_count(sample, n_proteins, Path(paths.parquet_dir), paths.parquet_suffix)
 
-            attributions, base_logit = attribute_genome(
-                wrapped, inputs,
-                perturbations_per_eval=args.perturbations_per_eval,
-                check_group_constant=first,
-            )
+            if args.method == "ablation":
+                attributions, base_logit = attribute_genome(
+                    wrapped, inputs,
+                    perturbations_per_eval=args.perturbations_per_eval,
+                    check_group_constant=first,
+                )
+            else:
+                attributions, base_logit = attribute_genome_gradients(
+                    wrapped, inputs,
+                    method=args.method,
+                    n_steps=args.n_steps,
+                    internal_batch_size=args.internal_batch_size,
+                )
             first = False
             elapsed = time.perf_counter() - started
 
@@ -417,7 +526,8 @@ def main() -> None:
             })
             # dtype travels with the data, so a later reader never has to guess which precision
             # produced a score, and the resume check above can tell them apart.
-            table = table.replace_schema_metadata({b"bacpredict_dtype": args.dtype.encode()})
+            table = table.replace_schema_metadata({b"bacpredict_dtype": args.dtype.encode(),
+                                                   b"bacpredict_method": args.method.encode()})
             # Write beside the target then rename: a killed job leaves no half-written parquet that
             # the next run would mistake for finished work.
             tmp_path = out_path.with_suffix(".parquet.partial")
@@ -427,12 +537,13 @@ def main() -> None:
             logger.exception("%s failed; continuing with the rest of the shard", sample)
             failures += 1
             manifest.append({"Sample": sample, "status": "failed", "error": f"{type(exc).__name__}: {exc}",
-                             "dtype": args.dtype})
+                             "dtype": args.dtype, "method": args.method})
             continue
 
         manifest.append({
             "Sample": sample, "status": "ok", "n_proteins": n_proteins, "base_logit": base_logit,
-            "ast_label": int(getattr(row, "ast_label", -1)), "seconds": round(elapsed, 1), "dtype": args.dtype,
+            "ast_label": int(getattr(row, "ast_label", -1)), "seconds": round(elapsed, 1),
+            "dtype": args.dtype, "method": args.method,
         })
         logger.info("%s: %d proteins, base logit %+.4f, %.1fs (%.1f ms/protein)",
                     sample, n_proteins, base_logit, elapsed, 1000 * elapsed / max(n_proteins, 1))

@@ -47,7 +47,7 @@ import pandas as pd
 
 from bacpredict.engine.config import organism as resolve_organism
 from bacpredict.engine.config import store_paths
-from bacpredict.engine.explain.gene_ablation_attribution import delta_probability
+from bacpredict.engine.explain.gene_attribution import delta_probability
 from bacpredict.engine.gene_lr.locate_gene import flatten_proteins
 
 logger = logging.getLogger(__name__)
