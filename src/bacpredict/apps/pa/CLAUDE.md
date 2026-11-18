@@ -92,6 +92,41 @@ Where each one is (checked by HTTP against the whole cohort, 2026-11-18):
 Every genome then gets **one Prodigal 2.6.3 run with Prokka's flags**, so gene calls are uniform. STs
 come from our own `mlst` run, never from the paper's `st_reported`, which is kept only for cross-checking.
 
+**How the build runs.** The organism-agnostic stage is `engine/genomes/`; tool binaries come from its
+pixi env (shovill 1.1.0 with SPAdes 3.15, Prodigal 2.6.3, mlst, skani, plus CheckM2 in its own env).
+[`scripts/build_pa_genomes.sh`](scripts/build_pa_genomes.sh) runs it in stages from a login node:
+
+| Stage | What it does |
+|---|---|
+| `setup` | Installs the pixi envs and fetches the species references: PAO1 `GCF_000006765.1` and *P. paraeruginosa* PA7 `GCF_000017205.1` |
+| `plan` | Writes `genomes/genome_manifest.csv`, one source per labelled genome |
+| `smoke` | Builds 2 genomes per source |
+| `submit` | Submits the full arrays |
+| `qc` | Runs CheckM2 and skani |
+| `collate` | Writes `genomes/genome_qc.csv`, `genomes/embedding_input.csv` and `genomes/st_counts_by_drug.csv` |
+
+**Source priority** (even surface):
+
+1. AllTheBacteria.
+2. The portal's own assembly. These are submitter assemblies: `--prefer-reads` swaps them for shovill
+   wherever usable reads exist.
+3. Shovill on paired Illumina WGS/WGA reads at ≥10× depth.
+4. Drop, with a reason.
+
+**Where the outputs go:**
+- Contigs are renamed `<Sample>.contig00001` and stored at `raw/ast_cohort_genomes/contigs/<Sample>.fna.gz`.
+- Prodigal GFFs are stored at `raw/ast_cohort_genomes/prodigal/<Sample>.gff.gz`.
+- The store is keyed by BioSample and shared across organisms.
+- Each array task writes one row per genome to a shard under `genomes/shards/`. `collate` refuses to run
+  if any genome is missing a row.
+
+**QC** is AllTheBacteria's high-quality rule set:
+- CheckM2 completeness ≥90% and contamination ≤5%;
+- total length 100 kbp–15 Mbp;
+- at most 2,000 contigs;
+- N50 ≥2,000;
+- a species check: the closest reference by skani ANI must be PAO1, at ≥95%.
+
 ## Embeddings
 
 ESM-C in **bf16** on project_k, half the fp32 size. The trainer runs in bf16 already. Four consumers call

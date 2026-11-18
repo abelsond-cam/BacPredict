@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# Build the P. aeruginosa cohort's genomes, one stage at a time, from a CSD3 login node:
+#
+#   bash src/bacpredict/apps/pa/scripts/build_pa_genomes.sh setup    # pixi envs + species reference genomes
+#   bash src/bacpredict/apps/pa/scripts/build_pa_genomes.sh plan     # genome_manifest.csv (ENA queries, ~2 min)
+#   bash src/bacpredict/apps/pa/scripts/build_pa_genomes.sh smoke    # 2 genomes per source → shards_smoke/
+#   bash src/bacpredict/apps/pa/scripts/build_pa_genomes.sh submit   # the full arrays
+#   bash src/bacpredict/apps/pa/scripts/build_pa_genomes.sh qc       # CheckM2 + skani job
+#   bash src/bacpredict/apps/pa/scripts/build_pa_genomes.sh collate  # genome_qc.csv, embedding_input.csv, ST counts
+#
+# The engine stage is organism-agnostic (src/bacpredict/engine/genomes/); what is P. aeruginosa here is the
+# genome size (read depth), the PubMLST scheme and the species references: PAO1 for the target and
+# PA7 for P. paraeruginosa, the neighbour the portal's own tables already confuse it with.
+set -euo pipefail
+
+ROOT=${BACPREDICT_DATA_ROOT:-$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/bac_ast_prediction}
+REPO=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+T=$ROOT/processed/train_pa_ast
+GEN=$T/genomes
+STORE=$ROOT/raw/ast_cohort_genomes
+REFDIR=$ROOT/raw/reference_genomes
+ATB_INDEX=$ROOT/raw/allthebacteria/assemblies_list_20261115
+PAO1=$REFDIR/GCF_000006765.1.fna.gz
+PA7=$REFDIR/GCF_000017205.1.fna.gz
+GENOME_SIZE=6.6e6
+MIN_DEPTH=10
+SCHEME=paeruginosa
+ARRAY=$REPO/src/bacpredict/engine/genomes/scripts/build_genomes_array.sh
+cd "$REPO"
+
+submit() {  # sbatch, then print the resource line the global rules require (read back from SLURM)
+    local id job; id=$(sbatch --parsable "$@"); id=${id%%;*}
+    job=$(scontrol show job "$id")
+    echo "JOB $id $(grep -m1 -oE 'JobName=[^ ]+' <<<"$job") | CPU | $(grep -m1 -oE 'ReqTRES=[^ ]+' <<<"$job")" \
+         "| $(grep -m1 -oE 'TimeLimit=[^ ]+' <<<"$job") | $(grep -m1 -oE 'Partition=[^ ]+' <<<"$job")"
+}
+
+chunks() { uv run python -m bacpredict.engine.genomes.build_genomes --manifest "$1" --sources "$2" --chunk-size "$3" --count-chunks; }
+
+case "${1:-}" in
+setup)
+    (cd src/bacpredict/engine/genomes && pixi install --all)
+    mkdir -p "$REFDIR"
+    for acc in GCF_000006765.1 GCF_000017205.1; do
+        [[ -s "$REFDIR/$acc.fna.gz" ]] && continue
+        tmp=$(mktemp -d)
+        curl -fsSL --retry 5 -o "$tmp/ds.zip" \
+            "https://api.ncbi.nlm.nih.gov/datasets/v2/genome/accession/$acc/download?include_annotation_type=GENOME_FASTA"
+        unzip -p "$tmp/ds.zip" '*.fna' | gzip > "$REFDIR/$acc.fna.gz"
+        rm -rf "$tmp"
+    done
+    ls -la "$REFDIR" "$ATB_INDEX"
+    ;;
+plan)
+    uv run python -m bacpredict.engine.genomes.plan_genome_sources \
+        --cohort "$T/cohort.csv" --atb-index "$ATB_INDEX"/*.csv.gz \
+        --genome-size "$GENOME_SIZE" --min-depth "$MIN_DEPTH" \
+        --ena-cache "$GEN/ena_filereport_cache.tsv" --out "$GEN/genome_manifest.csv"
+    ;;
+smoke)
+    uv run python -I -c "
+import pandas as pd, sys
+m = pd.read_csv(sys.argv[1], dtype=str)
+m[m.source.ne('drop')].groupby('source').head(2).to_csv(sys.argv[2], index=False)" \
+        "$GEN/genome_manifest.csv" "$GEN/genome_manifest_smoke.csv"
+    common="MANIFEST=$GEN/genome_manifest_smoke.csv,OUT_ROOT=$STORE,SHARD_DIR=$GEN/shards_smoke,MLST_SCHEME=$SCHEME"
+    submit --array=0 --cpus-per-task=4 --time=00:30:00 --job-name=build-genomes-smoke-download \
+        --export=ALL,$common,SOURCES=atb+portal_gff,CHUNK=4 "$ARRAY"
+    submit --array=0-1 --cpus-per-task=8 --time=03:00:00 --job-name=build-genomes-smoke-shovill \
+        --export=ALL,$common,SOURCES=shovill,CHUNK=1 "$ARRAY"
+    ;;
+submit)
+    M=$GEN/genome_manifest.csv
+    common="MANIFEST=$M,OUT_ROOT=$STORE,SHARD_DIR=$GEN/shards,MLST_SCHEME=$SCHEME"
+    n=$(chunks "$M" atb,portal_gff 40)
+    submit --array=0-$((n - 1))%40 --cpus-per-task=8 --time=01:00:00 --job-name=build-genomes-download \
+        --export=ALL,$common,SOURCES=atb+portal_gff,CHUNK=40 "$ARRAY"
+    n=$(chunks "$M" shovill 1)
+    submit --array=0-$((n - 1))%60 --cpus-per-task=8 --time=03:00:00 --job-name=build-genomes-shovill \
+        --export=ALL,$common,SOURCES=shovill,CHUNK=1 "$ARRAY"
+    ;;
+qc)
+    submit --export=ALL,SHARD_DIR=$GEN/shards,QC_DIR=$GEN/qc,REFS="$PAO1 $PA7" \
+        src/bacpredict/engine/genomes/scripts/run_genome_qc.sh
+    ;;
+collate)
+    uv run python -m bacpredict.engine.genomes.collate_genomes \
+        --manifest "$GEN/genome_manifest.csv" --shard-dir "$GEN/shards" \
+        --checkm2 "$GEN/qc/checkm2_quality_report.tsv" --skani "$GEN/qc/skani_dist.tsv" \
+        --species-ref "Pseudomonas aeruginosa=$PAO1" --species-ref "Pseudomonas paraeruginosa=$PA7" \
+        --target-species "Pseudomonas aeruginosa" --labels "$T/binary_ast.csv" --out-dir "$GEN"
+    ;;
+*)
+    sed -n '2,9p' "$0"; exit 2 ;;
+esac

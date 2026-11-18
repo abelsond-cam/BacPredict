@@ -68,6 +68,13 @@ latest) and md5-checked against its `md5sums`:
 `$R/bac_ast_prediction/processed/train_pa_ast/` (*P. aeruginosa*: `binary_ast.csv`, `cohort.csv`, …;
 built by `apps/pa/scripts/build_pa_ast_labels.sh`, mechanics in `apps/pa/CLAUDE.md`).
 
+**Genomes built for the AST cohorts** (`engine/genomes/`, organism-agnostic, keyed by BioSample):
+`$R/raw/ast_cohort_genomes/{contigs,prodigal}/<Sample>.{fna,gff}.gz` — contigs renamed
+`<Sample>.contig00001…`, one Prodigal 2.6.3 GFF per genome. Per-cohort manifests, shards and QC sit in
+`processed/train_<org>_ast/genomes/`. Inputs staged once: `$R/raw/allthebacteria/assemblies_list_<date>/`
+(the ATB S3 inventory used to plan) and `$R/raw/reference_genomes/<GCF>.fna.gz` (species-check
+references). CheckM2's DB: `$R/raw/CheckM2/Zenodo_db/CheckM2_database/uniref100.KO.1.dmnd`.
+
 Per-genome annotation (Prokka/Prodigal GFF with `##FASTA` contigs appended) is on the same FTP under
 `https://ftp.ebi.ac.uk/pub/databases/amr_portal/genomes/{ERZ,GCA}/<3>/<3>/<accession>/<accession>_annotations.gff.gz`
 (one shared tree, not per release; genotype-table accessions only). Scoping counts per release:

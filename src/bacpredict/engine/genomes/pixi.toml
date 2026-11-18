@@ -1,0 +1,37 @@
+# Tool binaries for building AST-cohort genomes (engine/genomes). Linux-only: it runs on the cluster.
+#
+# The Python (planning, the worker, collation) runs in the repo's uv env and shells out to these
+# binaries by absolute path, so nothing here leaks onto PYTHONPATH (never `module load` spack tools
+# on CSD3 — they break uv; see ~/.claude/cluster_uohpc.md). On CSD3 the envs materialise under
+# project_k/david/envs/pixi via `detached-environments`, not in this directory.
+#
+#   cd src/bacpredict/engine/genomes && pixi install --all
+#   pixi run -- printenv CONDA_PREFIX            # → <env>/bin is what --tools-bin takes
+#   pixi run -e checkm2 checkm2 --version
+#
+# Versions are pinned where they define the genome surface:
+# - shovill 1.1.0 is what AllTheBacteria assembled with (`sw=shovill-spades/1.1.0` in ATB headers), so
+#   our own assemblies match the ATB ones we download;
+# - spades 3.15.x (see below);
+# - prodigal 2.6.3 is the gene caller every genome gets, with Prokka's flags.
+
+[workspace]
+name = "ast-genome-build"
+channels = ["conda-forge", "bioconda"]
+platforms = ["linux-64"]
+
+[dependencies]
+shovill = "==1.1.0"
+# SPAdes 3.15.x: the series shovill 1.1.0 was written against (the solver otherwise pulls 4.x, which
+# ATB's 2023 assemblies predate). ATB does not publish its SPAdes version; this is the closest match.
+spades = "3.15.*"
+prodigal = "==2.6.3"
+mlst = ">=2.23"
+skani = ">=0.2.2"
+
+[feature.checkm2.dependencies]
+# CheckM2's recipe carries old transitive pins (python <3.9 etc.), hence its own environment.
+checkm2 = ">=1.0.2"
+
+[environments]
+checkm2 = { features = ["checkm2"], no-default-feature = true }
