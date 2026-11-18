@@ -97,7 +97,7 @@ class StorePaths:
 
 @dataclass(frozen=True)
 class OrganismConfig:
-    """Identity + data location for one organism (``tb`` / ``kp``)."""
+    """Identity + data location for one organism (``tb`` / ``kp`` / ``pa``)."""
 
     key: str
     display_name: str
@@ -122,12 +122,13 @@ class OrganismConfig:
 
 TB = OrganismConfig(key="tb", display_name="M. tuberculosis", processed_task="train_tb_ast")
 KP = OrganismConfig(key="kp", display_name="K. pneumoniae", processed_task="train_kleb_ast")
+PA = OrganismConfig(key="pa", display_name="P. aeruginosa", processed_task="train_pa_ast")
 
-ORGANISMS: dict[str, OrganismConfig] = {TB.key: TB, KP.key: KP}
+ORGANISMS: dict[str, OrganismConfig] = {TB.key: TB, KP.key: KP, PA.key: PA}
 
 
 def organism(key: str) -> OrganismConfig:
-    """Resolve an organism key (``"tb"`` / ``"kp"``) to its :class:`OrganismConfig`."""
+    """Resolve an organism key (``"tb"`` / ``"kp"`` / ``"pa"``) to its :class:`OrganismConfig`."""
     try:
         return ORGANISMS[key]
     except KeyError:

@@ -1,0 +1,23 @@
+table,taxon_rank,taxon,drug,s_le_mg_l,r_gt_mg_l,eucast_row
+Enterobacterales,order,Enterobacterales,piperacillin-tazobactam,8,8,Piperacillin-tazobactam
+Enterobacterales,order,Enterobacterales,cefepime,1,4,Cefepime
+Enterobacterales,order,Enterobacterales,ceftazidime,1,4,Ceftazidime
+Enterobacterales,order,Enterobacterales,aztreonam,1,4,Aztreonam
+Enterobacterales,order,Enterobacterales,imipenem,2,4,"Imipenem, Enterobacterales except Morganellaceae"
+Enterobacterales,family,Morganellaceae,imipenem,0.001,4,"Imipenem, Morganellaceae"
+Enterobacterales,order,Enterobacterales,meropenem,2,8,Meropenem (indications other than meningitis)
+Enterobacterales,order,Enterobacterales,ciprofloxacin,0.25,0.5,Ciprofloxacin (indications other than meningitis)
+Enterobacterales,genus,Salmonella,ciprofloxacin,0.06,0.06,"Ciprofloxacin, Salmonella spp."
+Enterobacterales,order,Enterobacterales,levofloxacin,0.5,1,Levofloxacin
+Enterobacterales,order,Enterobacterales,amikacin,8,8,Amikacin (infections originating from the urinary tract; systemic value bracketed)
+Enterobacterales,order,Enterobacterales,tobramycin,2,2,Tobramycin (infections originating from the urinary tract; systemic value bracketed)
+Pseudomonas,genus,Pseudomonas,piperacillin-tazobactam,0.001,16,Piperacillin-tazobactam
+Pseudomonas,genus,Pseudomonas,cefepime,0.001,8,Cefepime
+Pseudomonas,genus,Pseudomonas,ceftazidime,0.001,8,Ceftazidime
+Pseudomonas,genus,Pseudomonas,aztreonam,0.001,16,Aztreonam
+Pseudomonas,genus,Pseudomonas,imipenem,0.001,4,Imipenem
+Pseudomonas,genus,Pseudomonas,meropenem,2,8,"Meropenem (indications other than meningitis), P. aeruginosa and other Pseudomonas"
+Pseudomonas,genus,Pseudomonas,ciprofloxacin,0.001,0.5,Ciprofloxacin
+Pseudomonas,genus,Pseudomonas,levofloxacin,0.001,2,Levofloxacin
+Pseudomonas,genus,Pseudomonas,amikacin,16,16,Amikacin (infections originating from the urinary tract; systemic value bracketed)
+Pseudomonas,genus,Pseudomonas,tobramycin,2,2,Tobramycin (infections originating from the urinary tract; systemic value bracketed)
