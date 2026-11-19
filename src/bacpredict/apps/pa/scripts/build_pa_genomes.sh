@@ -4,7 +4,8 @@
 #   bash src/bacpredict/apps/pa/scripts/build_pa_genomes.sh setup    # pixi envs + species reference genomes
 #   bash src/bacpredict/apps/pa/scripts/build_pa_genomes.sh plan     # genome_manifest.csv (ENA queries, ~2 min)
 #   bash src/bacpredict/apps/pa/scripts/build_pa_genomes.sh smoke    # 2 genomes per source → shards_smoke/
-#   bash src/bacpredict/apps/pa/scripts/build_pa_genomes.sh submit   # the full arrays (or: submit download|shovill)
+#   bash src/bacpredict/apps/pa/scripts/build_pa_genomes.sh submit   # the full arrays (or: submit download|shovill
+#                                                                     #  [indices], e.g. submit shovill 55,98)
 #   bash src/bacpredict/apps/pa/scripts/build_pa_genomes.sh qc       # CheckM2 + skani job
 #   bash src/bacpredict/apps/pa/scripts/build_pa_genomes.sh collate  # genome_qc.csv, embedding_input.csv, ST counts
 #
@@ -84,7 +85,8 @@ submit)  # submit [download|shovill] — both by default
     fi
     if [[ "${2:-all}" == all || "${2:-}" == shovill ]]; then
         n=$(chunks "$M" shovill 1)
-        submit --array=0-$((n - 1))%60 --cpus-per-task=8 --time=03:00:00 --job-name=build-genomes-shovill \
+        # optional third argument: task indices to rerun (= shards/shovill_<index>.tsv), e.g. submit shovill 55,98
+        submit --array="${3:-0-$((n - 1))%60}" --cpus-per-task=8 --time=03:00:00 --job-name=build-genomes-shovill \
             --export=ALL,$common,SOURCES=shovill,CHUNK=1 "$ARRAY"
     fi
     ;;

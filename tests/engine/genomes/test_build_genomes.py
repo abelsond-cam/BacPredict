@@ -119,6 +119,25 @@ def test_download_retries_every_failure_without_flags_old_curl_rejects(tmp_path,
     assert dest.read_text() == "hello" and len(calls.read_text().split()) == 3
 
 
+def test_download_retries_a_short_body_that_curl_reports_as_success(tmp_path, monkeypatch):
+    """ENA has served a truncated fastq with exit 0; the size check must trigger a refetch, not a failed genome."""
+    bin_dir, calls = tmp_path / "bin", tmp_path / "calls"
+    bin_dir.mkdir()
+    (bin_dir / "curl").write_text(
+        f'#!/bin/sh\necho x >> "{calls}"\n'
+        'while [ "$1" ]; do [ "$1" = "-o" ] && out="$2"; shift; done\n'
+        f'if [ "$(wc -l < "{calls}")" -lt 2 ]; then printf he > "$out"; else printf hello > "$out"; fi\n')
+    (bin_dir / "curl").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+    monkeypatch.setattr("bacpredict.engine.genomes.build_genomes.CURL_RETRY_DELAY_S", 0)
+    dest = tmp_path / "f"
+    download("https://example.org/f", dest, nbytes="5")
+    assert dest.read_text() == "hello" and len(calls.read_text().split()) == 2
+    monkeypatch.setattr("bacpredict.engine.genomes.build_genomes.CURL_RETRIES", 0)
+    with pytest.raises(ValueError, match="md5 mismatch"):
+        download("https://example.org/f", dest, md5="0" * 32)
+
+
 def _stub_shovill(bin_dir: Path, contigs: str) -> Path:
     """A shovill stand-in that records its arguments and OMP_NUM_THREADS, and writes ``contigs`` as its assembly."""
     record = bin_dir / "shovill.args"
