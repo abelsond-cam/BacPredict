@@ -223,8 +223,10 @@ def test_all_three_methods_agree_on_a_linear_model() -> None:
     expected = inputs["protein_embeddings"][0, :, 0].numpy().astype(float)
 
     ablated, _ = attribute_genome(wrapped, inputs, check_group_constant=True)
-    ixg, _ = attribute_genome_gradients(wrapped, inputs, method="input_x_gradient")
-    ig, _ = attribute_genome_gradients(wrapped, inputs, method="integrated_gradients", n_steps=64)
+    ixg, _, _ = attribute_genome_gradients(
+        wrapped, inputs, method="input_x_gradient", allow_zero_baseline=True)
+    ig, _, _ = attribute_genome_gradients(
+        wrapped, inputs, method="integrated_gradients", n_steps=64, allow_zero_baseline=True)
 
     np.testing.assert_allclose(ablated, expected, rtol=1e-5, atol=1e-6)
     np.testing.assert_allclose(ixg, expected, rtol=1e-4, atol=1e-5)
@@ -238,8 +240,8 @@ def test_integrated_gradients_satisfies_completeness() -> None:
 
     inputs = _toy_inputs()
     wrapped = LogitForward(_NonLinearToy())
-    attributions, base_logit = attribute_genome_gradients(
-        wrapped, inputs, method="integrated_gradients", n_steps=256)
+    attributions, base_logit, baseline_logit = attribute_genome_gradients(
+        wrapped, inputs, method="integrated_gradients", n_steps=256, allow_zero_baseline=True)
 
     with torch.no_grad():
         zero_logit = float(wrapped(torch.zeros_like(inputs["protein_embeddings"]),
@@ -260,8 +262,8 @@ def test_gradient_path_works_with_frozen_parameters() -> None:
     model = _NonLinearToy()
     for param in model.parameters():
         param.requires_grad_(False)
-    attributions, _ = attribute_genome_gradients(
-        LogitForward(model), _toy_inputs(), method="input_x_gradient")
+    attributions, _, _ = attribute_genome_gradients(
+        LogitForward(model), _toy_inputs(), method="input_x_gradient", allow_zero_baseline=True)
     assert np.isfinite(attributions).all()
     assert attributions.shape == (6,)
 
@@ -333,14 +335,113 @@ def test_zero_baseline_gradients_are_degenerate_on_a_layernorm_first_model() -> 
     inputs = _toy_inputs()
     wrapped = LogitForward(_LayerNormFirstToy())
 
-    ixg, _ = attribute_genome_gradients(wrapped, inputs, method="input_x_gradient")
+    ixg, _, _ = attribute_genome_gradients(
+        wrapped, inputs, method="input_x_gradient", allow_zero_baseline=True)
     assert np.abs(ixg).max() < 1e-4, f"input*gradient should vanish, got max |a| = {np.abs(ixg).max():.3e}"
 
     sums = {}
     for n_steps in (50, 100, 200):
-        attributions, _ = attribute_genome_gradients(
-            wrapped, inputs, method="integrated_gradients", n_steps=n_steps)
+        attributions, _, _ = attribute_genome_gradients(
+            wrapped, inputs, method="integrated_gradients", n_steps=n_steps,
+            allow_zero_baseline=True)
         sums[n_steps] = float(attributions.sum())
     assert sums[200] > 10 * max(abs(sums[50]), 1e-6), (
         f"IG stopped being n_steps-dependent ({sums}) — the model may no longer be scale-invariant"
     )
+
+
+def test_zero_baseline_is_refused_by_default() -> None:
+    """The degenerate path must not be reachable by accident — only by explicit opt-in."""
+    pytest.importorskip("captum")
+    from bacpredict.engine.explain.gene_attribution import attribute_genome_gradients
+
+    with pytest.raises(ValueError, match="zero baseline is degenerate"):
+        attribute_genome_gradients(
+            LogitForward(_LayerNormFirstToy()), _toy_inputs(), method="integrated_gradients")
+
+
+def _varied_toy_inputs(n: int = 6, width: int = 4) -> dict:
+    """Forward kwargs whose proteins differ in SHAPE, not merely in offset.
+
+    :func:`_toy_inputs` is a single arithmetic progression, so every protein normalises to the same
+    vector under LayerNorm — and so does their mean. That makes ``f(genome) == f(baseline)`` and
+    silently voids any test of a baseline. These values vary per protein and per dimension.
+    """
+    t = torch.arange(n, dtype=torch.float32).reshape(n, 1)
+    d = torch.arange(width, dtype=torch.float32).reshape(1, width)
+    emb = (torch.sin(1.7 * t + 0.9 * d) + 0.3 * torch.cos(0.5 * t * (d + 1.0))).reshape(1, n, width)
+    return {
+        "protein_embeddings": emb,
+        "attention_mask": torch.ones(1, n),
+        "contig_ids": torch.zeros(1, n, dtype=torch.long),
+    }
+
+
+def test_cohort_mean_baseline_restores_completeness_on_a_layernorm_first_model() -> None:
+    """The fix, asserted against the exact model shape that breaks the zero baseline.
+
+    A non-degenerate baseline removes the ``1/alpha`` integrand entirely: the path no longer passes
+    through the origin, where LayerNorm's scale invariance concentrates everything. Completeness
+    then holds at a sane ``n_steps``, which is what makes the attribution interpretable.
+    """
+    pytest.importorskip("captum")
+    from bacpredict.engine.explain.gene_attribution import attribute_genome_gradients
+
+    inputs = _varied_toy_inputs()
+    wrapped = LogitForward(_LayerNormFirstToy())
+    baseline = inputs["protein_embeddings"][0].mean(dim=0)  # the cohort-mean protein, in miniature
+
+    attributions, base_logit, baseline_logit = attribute_genome_gradients(
+        wrapped, inputs, method="integrated_gradients", baseline=baseline, n_steps=64)
+
+    gap = base_logit - baseline_logit
+    assert abs(gap) > 1e-3, "baseline must differ from the genome for this to test anything"
+    assert attributions.sum() == pytest.approx(gap, rel=1e-3), (
+        f"completeness failed: sum {attributions.sum():.6f} vs gap {gap:.6f}"
+    )
+
+
+def test_a_width_baseline_is_broadcast_to_every_token() -> None:
+    """A ``[width]`` vector and the same vector tiled to ``[1, n, width]`` must agree exactly.
+
+    The cohort-mean builder emits one protein vector; the attribution path has to turn that into a
+    baseline *genome*. Getting the broadcast wrong would silently shift the origin every score is
+    measured from.
+    """
+    pytest.importorskip("captum")
+    from bacpredict.engine.explain.gene_attribution import attribute_genome_gradients
+
+    inputs = _varied_toy_inputs()
+    wrapped = LogitForward(_LayerNormFirstToy())
+    vector = inputs["protein_embeddings"][0].mean(dim=0)
+    tiled = vector.reshape(1, 1, -1).expand_as(inputs["protein_embeddings"]).contiguous()
+
+    from_vector, _, logit_vector = attribute_genome_gradients(
+        wrapped, inputs, method="integrated_gradients", baseline=vector, n_steps=32)
+    from_tiled, _, logit_tiled = attribute_genome_gradients(
+        wrapped, inputs, method="integrated_gradients", baseline=tiled, n_steps=32)
+
+    assert logit_vector == pytest.approx(logit_tiled, abs=1e-6)
+    np.testing.assert_allclose(from_vector, from_tiled, rtol=1e-6, atol=1e-8)
+
+
+def test_cohort_mean_protein_averages_every_protein(tmp_path) -> None:
+    """The baseline is the mean over ALL proteins in ALL genomes — one vector, not a per-gene one."""
+    from bacpredict.engine.explain.build_cohort_mean_protein import cohort_mean_protein
+
+    first = torch.tensor([[0.0, 1.0], [2.0, 3.0]])          # 2 proteins
+    second = torch.tensor([[4.0, 5.0], [6.0, 7.0], [8.0, 9.0]])  # 3 proteins, so a plain
+    paths = []                                               # per-genome mean would differ
+    for name, embeddings in (("a", first), ("b", second)):
+        path = tmp_path / f"{name}.pt"
+        torch.save({"prot_embeddings": embeddings}, path)
+        paths.append(path)
+
+    mean, n_proteins = cohort_mean_protein(paths)
+    assert n_proteins == 5
+    expected = torch.cat([first, second]).mean(dim=0)
+    np.testing.assert_allclose(mean.numpy(), expected.numpy(), rtol=1e-6)
+    # Weighting each genome equally instead of each protein would give mean([1,2], [6,7]) =
+    # [3.5, 4.5]. The protein-weighted answer is [4.0, 5.0]; assert we did not take the other one.
+    np.testing.assert_allclose(mean.numpy(), np.array([4.0, 5.0]), rtol=1e-6)
+    assert not np.allclose(mean.numpy(), np.array([3.5, 4.5]))

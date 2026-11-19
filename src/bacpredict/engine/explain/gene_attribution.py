@@ -294,9 +294,11 @@ def attribute_genome_gradients(
     inputs: dict,
     *,
     method: str = "integrated_gradients",
-    n_steps: int = 50,
+    baseline: torch.Tensor | None = None,
+    n_steps: int = 200,
     internal_batch_size: int | None = 4,
-) -> tuple[np.ndarray, float]:
+    allow_zero_baseline: bool = False,
+) -> tuple[np.ndarray, float, float]:
     """Attribute every protein of one genome by gradients, returning per-protein scores and the base logit.
 
     ⛔ **From the zero baseline both methods here are INVALID on this architecture — do not use
@@ -333,21 +335,37 @@ def attribute_genome_gradients(
     inputs : dict
         Forward kwargs from :func:`load_genome`.
     method : {"integrated_gradients", "input_x_gradient"}, default "integrated_gradients"
-        ``integrated_gradients`` integrates along a path from the zero baseline;
-        ``input_x_gradient`` is a single-pass local approximation. ⛔ Both are degenerate on this
-        architecture — see the warning above. Neither satisfies completeness here.
-    n_steps : int, default 50
-        Path steps for integrated gradients. Ignored by ``input_x_gradient``.
+        ``integrated_gradients`` integrates a path from ``baseline`` to the genome;
+        ``input_x_gradient`` is a single-pass local approximation and is **identically zero** here,
+        so it is only ever a diagnostic.
+    baseline : torch.Tensor, optional
+        The reference input. Either ``[width]`` — one protein vector, broadcast to every token, which
+        is what :mod:`~bacpredict.engine.explain.build_cohort_mean_protein` produces — or the full
+        ``[1, n_proteins, width]``. ``None`` means the zero baseline, which is degenerate here and
+        refused unless ``allow_zero_baseline``.
+    n_steps : int, default 200
+        Path steps for integrated gradients. **Do not lower this.** At ``n_steps=50`` completeness
+        error on the real 30-layer model was 4-76% across four genomes; at 200 it was 0.0-0.6%,
+        where a 2-layer toy is exact at either (job 41326249).
     internal_batch_size : int, optional
         How many path steps captum evaluates per forward. Lower it if a long genome runs out of
         memory — the backward pass holds activations for 30 layers.
+    allow_zero_baseline : bool, default False
+        Escape hatch to reproduce the degenerate zero-baseline result deliberately. Never set it for
+        a run whose numbers will be reported.
 
     Returns
     -------
     attributions : numpy.ndarray
-        ``[n_proteins]`` float64, one score per protein in flat order.
+        ``[n_proteins]`` float64, one score per protein in flat order. They sum to
+        ``base_logit - baseline_logit`` (completeness), so the three returns are checkable against
+        each other and no separate convergence delta is needed.
     base_logit : float
         The model's logit for the unperturbed genome.
+    baseline_logit : float
+        The model's logit for the baseline input. With the cohort-mean baseline this is very nearly
+        genome-independent (measured -2.7569 to -2.7607 over four TB genomes), which is what makes
+        scores comparable across genomes without any per-genome renormalisation.
 
     Raises
     ------
@@ -362,17 +380,34 @@ def attribute_genome_gradients(
     embeddings = inputs["protein_embeddings"]
     extra = (inputs["attention_mask"], inputs["contig_ids"])
 
+    if baseline is None:
+        if not allow_zero_baseline:
+            raise ValueError(
+                "A zero baseline is degenerate on this architecture: LayerNorm runs first on the raw "
+                "protein embeddings, so f(alpha*x) == f(x) and the attribution measures nothing. Pass "
+                "a cohort-mean baseline (build_cohort_mean_protein), or allow_zero_baseline=True to "
+                "reproduce the degenerate result on purpose."
+            )
+        baselines = torch.zeros_like(embeddings)
+    elif baseline.dim() == 1:
+        baselines = baseline.to(embeddings).reshape(1, 1, -1).expand_as(embeddings).contiguous()
+    else:
+        baselines = baseline.to(embeddings)
+    if baselines.shape != embeddings.shape:
+        raise ValueError(f"baseline shape {tuple(baselines.shape)} != genome {tuple(embeddings.shape)}")
+
     # No inference_mode anywhere in this function: it marks tensors in a way that permanently
     # excludes them from autograd, so the backward pass would fail. The model's parameters stay
     # requires_grad=False (set at load) — the gradient wanted here is with respect to the input.
     with torch.no_grad():
         base_logit = float(wrapped(embeddings, *extra).item())
+        baseline_logit = float(wrapped(baselines, *extra).item())
 
     grad_input = embeddings.clone().detach().requires_grad_(True)
     if method == "integrated_gradients":
         attributions = IntegratedGradients(wrapped).attribute(
             inputs=grad_input,
-            baselines=torch.zeros_like(grad_input),
+            baselines=baselines,
             additional_forward_args=extra,
             n_steps=n_steps,
             internal_batch_size=internal_batch_size,
@@ -383,7 +418,7 @@ def attribute_genome_gradients(
         )
 
     # Sum, never divide — see the warning above.
-    return attributions[0].detach().double().sum(dim=1).cpu().numpy(), base_logit
+    return attributions[0].detach().double().sum(dim=1).cpu().numpy(), base_logit, baseline_logit
 
 
 def delta_probability(base_logit, attribution_logit):
@@ -440,8 +475,20 @@ def main() -> None:
                              "makes the model scale-invariant) and must not be used.")
     parser.add_argument("--perturbations-per-eval", type=int, default=1,
                         help="Ablation only — ablated copies per forward pass.")
-    parser.add_argument("--n-steps", type=int, default=50,
-                        help="integrated_gradients only — path steps.")
+    parser.add_argument("--n-steps", type=int, default=200,
+                        help="integrated_gradients only — path steps. Do NOT lower: at 50 the "
+                             "completeness error on the real model was 4-76%%, at 200 it was 0.0-0.6%%.")
+    parser.add_argument("--baseline", type=Path, default=None,
+                        help="Gradient methods — a [width] baseline protein vector from "
+                             "build_cohort_mean_protein, broadcast to every token. Required unless "
+                             "--allow-zero-baseline.")
+    parser.add_argument("--allow-zero-baseline", action="store_true",
+                        help="Reproduce the DEGENERATE zero-baseline gradient deliberately. The input "
+                             "LayerNorm makes the model scale-invariant, so it measures nothing. Never "
+                             "set this for a run whose numbers will be reported.")
+    parser.add_argument("--max-completeness-error", type=float, default=0.02,
+                        help="Gradient methods — fail a genome whose attributions miss the "
+                             "f(genome)-f(baseline) gap by more than this fraction.")
     parser.add_argument("--internal-batch-size", type=int, default=4,
                         help="integrated_gradients only — path steps per forward; lower it on OOM.")
     parser.add_argument("--shard-index", type=int, default=None, help="This array task's index.")
@@ -466,6 +513,20 @@ def main() -> None:
 
     paths = store_paths(args.organism)
     esm_dir = args.esm_dir or paths.esm_dir
+
+    baseline_vector = None
+    if args.method in GRADIENT_METHODS:
+        if args.baseline is not None:
+            baseline_vector = torch.load(args.baseline, map_location="cpu", weights_only=False)
+            logger.info("baseline %s: shape %s, L2 %.4f",
+                        args.baseline.name, tuple(baseline_vector.shape), float(baseline_vector.norm()))
+        elif not args.allow_zero_baseline:
+            parser.error(
+                f"--method {args.method} needs --baseline: a zero baseline is degenerate on this "
+                "architecture (LayerNorm runs first on the raw embeddings, so f(alpha*x) == f(x)). "
+                "Build one with build_cohort_mean_protein, or pass --allow-zero-baseline to "
+                "reproduce the degenerate result on purpose."
+            )
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     model = load_classifier(args.checkpoint, device, dtype)
@@ -515,19 +576,35 @@ def main() -> None:
             if not args.skip_protein_count_check:
                 verify_protein_count(sample, n_proteins, Path(paths.parquet_dir), paths.parquet_suffix)
 
+            completeness_rel_err = None
             if args.method == "ablation":
                 attributions, base_logit = attribute_genome(
                     wrapped, inputs,
                     perturbations_per_eval=args.perturbations_per_eval,
                     check_group_constant=first,
                 )
+                baseline_logit = float("nan")
             else:
-                attributions, base_logit = attribute_genome_gradients(
+                attributions, base_logit, baseline_logit = attribute_genome_gradients(
                     wrapped, inputs,
                     method=args.method,
+                    baseline=baseline_vector,
                     n_steps=args.n_steps,
                     internal_batch_size=args.internal_batch_size,
+                    allow_zero_baseline=args.allow_zero_baseline,
                 )
+                # Completeness is the gradient path's only self-check, and it is cheap. A run whose
+                # attributions do not sum to the gap it claims to explain is not interpretable, and
+                # that failure is silent — it was how the zero-baseline degeneracy was caught at all.
+                gap = base_logit - baseline_logit
+                if abs(gap) > 1e-9:
+                    completeness_rel_err = abs(float(attributions.sum()) - gap) / abs(gap)
+                    if completeness_rel_err > args.max_completeness_error:
+                        raise ValueError(
+                            f"{sample}: attributions sum to {attributions.sum():.4f} but the gap is "
+                            f"{gap:.4f} ({completeness_rel_err:.1%} error, limit "
+                            f"{args.max_completeness_error:.1%}). Raise --n-steps or check the baseline."
+                        )
             first = False
             elapsed = time.perf_counter() - started
 
@@ -536,6 +613,7 @@ def main() -> None:
                 "flat_index": np.arange(n_proteins, dtype=np.int32),
                 "attribution_logit": attributions,
                 "base_logit": np.full(n_proteins, base_logit, dtype=np.float64),
+                "baseline_logit": np.full(n_proteins, baseline_logit, dtype=np.float64),
             })
             # dtype travels with the data, so a later reader never has to guess which precision
             # produced a score, and the resume check above can tell them apart.
@@ -550,7 +628,9 @@ def main() -> None:
             logger.exception("%s failed; continuing with the rest of the shard", sample)
             failures += 1
             manifest.append({"Sample": sample, "status": "failed", "error": f"{type(exc).__name__}: {exc}",
-                             "dtype": args.dtype, "method": args.method})
+                             "dtype": args.dtype, "method": args.method,
+                             "baseline_logit": baseline_logit,
+                             "completeness_rel_err": completeness_rel_err})
             continue
 
         manifest.append({
