@@ -4,7 +4,7 @@
 #   bash src/bacpredict/apps/pa/scripts/build_pa_genomes.sh setup    # pixi envs + species reference genomes
 #   bash src/bacpredict/apps/pa/scripts/build_pa_genomes.sh plan     # genome_manifest.csv (ENA queries, ~2 min)
 #   bash src/bacpredict/apps/pa/scripts/build_pa_genomes.sh smoke    # 2 genomes per source → shards_smoke/
-#   bash src/bacpredict/apps/pa/scripts/build_pa_genomes.sh submit   # the full arrays
+#   bash src/bacpredict/apps/pa/scripts/build_pa_genomes.sh submit   # the full arrays (or: submit download|shovill)
 #   bash src/bacpredict/apps/pa/scripts/build_pa_genomes.sh qc       # CheckM2 + skani job
 #   bash src/bacpredict/apps/pa/scripts/build_pa_genomes.sh collate  # genome_qc.csv, embedding_input.csv, ST counts
 #
@@ -74,15 +74,19 @@ m[m.source.ne('drop')].groupby('source').head(2).to_csv(sys.argv[2], index=False
     submit --array=0-1 --cpus-per-task=8 --time=03:00:00 --job-name=build-genomes-smoke-shovill \
         --export=ALL,$common,SOURCES=shovill,CHUNK=1 "$ARRAY"
     ;;
-submit)
+submit)  # submit [download|shovill] — both by default
     M=$GEN/genome_manifest.csv
     common="MANIFEST=$M,OUT_ROOT=$STORE,SHARD_DIR=$GEN/shards,MLST_SCHEME=$SCHEME,GENOME_SIZE=$GENOME_SIZE,TOOLS_BIN=$(tools_bin)"
-    n=$(chunks "$M" atb,portal_gff 40)
-    submit --array=0-$((n - 1))%40 --cpus-per-task=8 --time=01:00:00 --job-name=build-genomes-download \
-        --export=ALL,$common,SOURCES=atb+portal_gff,CHUNK=40 "$ARRAY"
-    n=$(chunks "$M" shovill 1)
-    submit --array=0-$((n - 1))%60 --cpus-per-task=8 --time=03:00:00 --job-name=build-genomes-shovill \
-        --export=ALL,$common,SOURCES=shovill,CHUNK=1 "$ARRAY"
+    if [[ "${2:-all}" == all || "${2:-}" == download ]]; then
+        n=$(chunks "$M" atb,portal_gff 40)
+        submit --array=0-$((n - 1))%40 --cpus-per-task=8 --time=01:00:00 --job-name=build-genomes-download \
+            --export=ALL,$common,SOURCES=atb+portal_gff,CHUNK=40 "$ARRAY"
+    fi
+    if [[ "${2:-all}" == all || "${2:-}" == shovill ]]; then
+        n=$(chunks "$M" shovill 1)
+        submit --array=0-$((n - 1))%60 --cpus-per-task=8 --time=03:00:00 --job-name=build-genomes-shovill \
+            --export=ALL,$common,SOURCES=shovill,CHUNK=1 "$ARRAY"
+    fi
     ;;
 qc)
     submit --export=ALL,SHARD_DIR=$GEN/shards,QC_DIR=$GEN/qc,REFS="$PAO1 $PA7" \
