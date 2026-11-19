@@ -12,7 +12,12 @@ Stages, each its own module and each runnable alone:
 - :mod:`~bacpredict.engine.explain.gene_attribution` — the GPU attribution itself. Use
   ``--method ablation``; the two gradient methods are present but ⛔ **invalid on this
   architecture** (see below).
+- :mod:`~bacpredict.engine.explain.build_cohort_mean_protein` — the baseline every gradient
+  attribution is measured against: one vector, the mean of all proteins in all cohort genomes.
 - :mod:`~bacpredict.engine.explain.annotate_attributions` — flat index → gene → catalogue.
+- :mod:`~bacpredict.engine.explain.substitute_wt_protein` — the direct causal test, standing apart
+  from the attribution chain: swap one gene's embedding for a wild-type consensus and re-predict.
+  No captum, one forward pass per genome, and it needs cross-genome identity for that gene alone.
 
 **The stored quantity is the shift in the logit, plus each genome's base logit.** The probability-
 scale score is then recoverable exactly as ``sigmoid(base) - sigmoid(base - delta)``, so both scales
