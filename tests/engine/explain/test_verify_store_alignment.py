@@ -78,3 +78,25 @@ def test_truncation_is_distinguished_from_misalignment(tmp_path) -> None:
 def test_missing_files_are_reported_not_raised(tmp_path) -> None:
     row = compare_one("S", tmp_path / "absent.pt", tmp_path / "absent.parquet")
     assert row["status"] == "missing_pt"
+
+
+def test_contig_id_clamp_is_not_reported_as_misalignment(tmp_path) -> None:
+    """A genome with >1,000 contigs has its contig_ids clamped at 999 — the flat index is fine.
+
+    Measured on SAMEA7546160: 1,000 distinct ids, id 999 holding 93 proteins against a median contig
+    of 3, and the protein TOTAL preserved. Reporting that as "totals agree but contigs do not" would
+    raise the alarm reserved for a genuine silent misalignment.
+    """
+    pt = [1] * 999 + [15]        # 1,000 ids, the last absorbing the tail
+    parquet = [1] * 999 + [5, 4, 6]  # 1,002 real contigs, same 1,014 proteins
+    pt_path, pq_path = _write(tmp_path, "S", pt, parquet)
+    row = compare_one("S", pt_path, pq_path)
+    assert row["status"] == "aligned_contig_ids_clamped"
+    assert row["n_pt"] == row["n_parquet"] == 1014
+    assert row["n_proteins_after_break"] == 0
+
+
+def test_clamp_shape_with_differing_totals_is_still_a_mismatch(tmp_path) -> None:
+    """The clamp exemption must require the totals to agree — otherwise it would mask a real break."""
+    pt_path, pq_path = _write(tmp_path, "S", [1] * 999 + [15], [1] * 999 + [5, 4, 99])
+    assert compare_one("S", pt_path, pq_path)["status"] == "contig_count_mismatch"

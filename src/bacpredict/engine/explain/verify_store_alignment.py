@@ -25,7 +25,8 @@ Reported per genome
 which the shift begins, and ``n_proteins_after_break`` — the number of proteins whose gene identity
 is wrong, which is the number that actually matters and is typically most of the genome.
 
-Statuses: ``aligned`` · ``contig_mismatch`` (totals agree, contigs do not — the silent case) ·
+Statuses: ``aligned`` · ``aligned_contig_ids_clamped`` (>1,000 contigs; flat index still
+valid) · ``contig_mismatch`` (totals agree, contigs do not — the silent case) ·
 ``count_mismatch`` · ``truncated`` (embedding capped at the embedding-time limit; the rows that
 exist still align) · ``missing_pt`` / ``missing_parquet``.
 
@@ -54,6 +55,12 @@ from bacpredict.engine.config import store_paths
 logger = logging.getLogger(__name__)
 
 TRUNCATION_LIMIT = 6000
+# The embedding pipeline clamps contig_ids at this many distinct ids: every protein on contig 1000
+# and beyond is labelled 999. Measured on SAMEA7546160, where id 999 holds 93 proteins against a
+# median contig of 3. The protein TOTAL is preserved, so the flat index is still valid and only the
+# contig label is wrong past the clamp -- a different finding from a misalignment, and one that
+# would otherwise be reported as the alarming "totals agree but contigs do not" case.
+CONTIG_ID_LIMIT = 1000
 
 
 def contig_sizes_from_store(esm_path: Path) -> np.ndarray | None:
@@ -142,6 +149,14 @@ def compare_one(sample: str, esm_path: Path, parquet_path: Path) -> dict:
                n_contigs_pt=len(pt_sizes), n_contigs_parquet=len(pq_sizes))
 
     if len(pt_sizes) != len(pq_sizes):
+        clamped = (len(pt_sizes) == CONTIG_ID_LIMIT
+                   and len(pq_sizes) > CONTIG_ID_LIMIT
+                   and row["n_pt"] == row["n_parquet"]
+                   and np.array_equal(pt_sizes[: CONTIG_ID_LIMIT - 1], pq_sizes[: CONTIG_ID_LIMIT - 1]))
+        if clamped:
+            # Every protein is present and in flat order; only contig labels past 999 are wrong.
+            row["status"] = "aligned_contig_ids_clamped"
+            return row
         row["status"] = "contig_count_mismatch"
         row["n_proteins_after_break"] = row["n_pt"]
         return row
