@@ -8,6 +8,16 @@
 > raw inputs by four independent agents and reconciled by a fifth (0 mismatches in QC pass/fail or in the
 > 4,936 ST × drug rows). **Nothing else was re-verified this pass.**
 >
+> **Verification scope, this pass (2026-11-19, third): §3.1 gene-level attribution only**, at
+> `9906110`. Every number re-read from the artifact named beside it — the four
+> `attribution/diag/method_comparison/*_method_comparison.json`, the
+> `attribution/diag/class_baselines/class_baseline_report.json`, and the job logs
+> `attr-degeneracy-diag-41324596.out` / `attr-method-compare-41326249_[0-3].out`. Independently
+> audited against those artifacts by a second agent, which corrected six errors in the first draft
+> (an n=50/n=200 value mix, the ablation sign convention, the bf16 ULP, the scope of the gradient
+> degeneracy, and two over-claims). The bf16 ULP line in §3.1 was **wrong and is corrected here**.
+> **Nothing else was re-verified this pass.**
+>
 > **Stamp before this one: 2026-11-19 @ `c03e93c`.**
 > **Verification scope, that pass (2026-11-19): §3.6 genome sources only.** Read on CSD3 from
 > `train_pa_ast/genomes/genome_manifest.csv` (plan at `1f049c4`) and the download array's shards in
@@ -207,8 +217,75 @@ predate the fixes and need regenerating.
 
 **In flight.** **Gene-level attribution** of the two single-determinant fine-tunes — TB rifampin and
 Kp ciprofloxacin — to test whether the models read `rpoB` and `gyrA`/`parC` rather than lineage.
-Stages 1–3 written and unit-tested (28 tests). The Kp smoke **has run** (job 41289828, COMPLETED);
-no biological result has been read yet. Plan: `~/.claude/plans/i-want-to-run-polymorphic-oasis.md`.
+Stages 1–5 written and unit-tested (51 tests under `tests/engine/explain/`). **No cohort-scale
+biological result has been read for either organism.** Plan:
+`~/.claude/plans/i-want-to-run-polymorphic-oasis.md`.
+
+**⛔ Input-space zero-baseline gradient attribution is INVALID on this architecture — measured
+2026-11-19, and 100 TB + ~600 Kp genomes of output were deleted because of it.** The checkpoints'
+bundled `modeling_bacformer.py` applies `nn.LayerNorm` as the **first** operation on the raw protein
+embeddings (`:642`, `:666`), so the model is degree-0 homogeneous in its input: `f(alpha*x)` equals
+`f(x)` to within 6.4e-4 across `alpha` from 1e-3 to 10. Read from
+`/rds/user/dca36/hpc-work/logs/attr-degeneracy-diag-41324596.out` (genome `SAMEA10030293`):
+
+| quantity | value | should be |
+|---|--:|--:|
+| logit at `alpha` = 0 / 1e-5 / 1e-3 / 0.01→10 | +1.600 / +2.658 / +6.1524 / +6.1518 | — |
+| IG sum, zero baseline, `n_steps`=50 | −0.0105 | +4.5516 |
+| IG sum, zero baseline, `n_steps`=200 | **−10.51** | +4.5516 |
+| input×gradient, summed over the genome | −6.0e-08 | — |
+
+More steps is *worse*: Euler's theorem makes input×gradient identically zero, and IG's integrand goes
+as `1/alpha`, concentrating the integral below the smallest quadrature node at any affordable
+`n_steps`. **Scope this correctly — it is specific to the INPUT space.** `LayerIntegratedGradients`
+at the post-LayerNorm activation, with the same zero baseline, satisfies completeness
+(relative error 0.0000–0.0064 over four genomes). ⚠ The pip-installed `bacformer` package is
+`linear(x)` *then* LayerNorm — a **different architecture** from what these checkpoints run via
+`trust_remote_code`, and not affected. Testing against it does not describe the deployed model.
+
+**Method comparison — 4 TB genomes, full zero-baseline ablation as ground truth.** Each from
+`$B/train_tb_ast/attribution/diag/method_comparison/<Sample>_method_comparison.json`; variant status
+from `$B/train_tb_ast/tbprofiler/tbprofiler_variants.parquet`:
+
+| genome | rpoB variant | AST | ablation Δ (rank) | IG cohort-mean n200 (rank) |
+|---|---|---|--:|--:|
+| SAMEA10030293 | `p.Ser450Leu` | R | 1.231 (**1**/4071) | **+3.874** (1) |
+| SAMEA10030311 | `p.Ser450Leu` | R | 2.382 (3/4097) | **+1.935** (2) |
+| SAMEA1019317 | none catalogued | S | 0.016 (135/4056) | **−9.869** (2) |
+| SAMEA104362366 | none catalogued | S | 0.950 (8/4068) | **−15.002** (1) |
+
+Ablation Δ is `base − f(ablated)`, so a positive score means removing the protein pushed the model
+towards susceptible. ⚠ **Confounded and n=4**: both resistant genomes are MDR, both susceptible ones
+pan-susceptible, so R-vs-S here is confounded with total resistance burden. A positive control for
+the method, **not a result**. Cost: ablation 1,250 s/genome against 162 s for IG at `n_steps=200`
+(7.7×). `n_steps=50` is not usable — completeness error 4–76% on the real 30-layer model.
+
+**Decision of record 2026-11-19 — IG against a cohort-mean baseline** (one vector: the mean of every
+protein embedding over every cohort genome, broadcast to every token). `f(baseline)` is near
+genome-independent: **−2.7569, −2.7571, −2.7586, −2.7607** over genomes of 4,056–4,097 proteins, both
+labels, different lineages (`/rds/user/dca36/hpc-work/logs/attr-method-compare-41326249_[0-3].out`),
+so attributions share an origin across genomes and already compare without renormalisation. ⚠ This
+constant is from a 100-genome mean and will shift with the cohort. ⚠ The adopted method agrees only
+weakly with ablation (Spearman of |·| 0.036–0.151; top-20 overlap 3–7 of 20) — do not describe it as
+reproducing ablation.
+
+**A class-contrastive baseline buys nothing — measured, job 41393159, and the idea is closed.**
+Contrasting each resistant genome against the susceptible mean (and vice versa) was tested against
+the global mean. From
+`$B/train_tb_ast/attribution/diag/class_baselines/class_baseline_report.json`: `cosine(mean_R,
+mean_S)` = **0.99994**, their L2 gap is 1.15% of the mean vector's own norm, and `f(baseline)` moves
+only ~0.017 logits between them. rpoB's rank is **identical under all three baselines in all four
+genomes**, and whole-ranking Spearman against the global-mean baseline is **0.991–0.999**. The effect
+is in the intended direction but is ~2–3% of the score. R and S genomes share their core genome too
+completely for their means to differ.
+
+**⚠ 41 Kp genomes fail `verify_protein_count` and will block the planned 877-genome rerun.** The
+cancelled ciprofloxacin array was 2 shards COMPLETED, **5 FAILED**, 9 CANCELLED — the failures are
+genomes whose embedding and Bakta parquet disagree on protein count (e.g. `SAMEA8948660` 4,922 vs
+4,919; `SAMN35159602` 6,000 vs 6,020, the truncation cap). Fix before committing GPU-h.
+
+**⚠ The only cohort file on disk is n=100** (`$B/train_tb_ast/attribution/attribution_cohort_rifampin_n100.csv`),
+and several strata hold 1–3 genomes. No ~1,500-genome cohort file exists.
 
 **⛔ bf16 cannot carry this measurement — and fp32 costs 3.8×.** Same genome, same code, four
 configurations, each read from its own
@@ -236,8 +313,7 @@ and that run's `attribution_manifest_all.json`:
 genome (`SAMEA104414830`, 5,390 proteins), read from
 `$B/train_kleb_ast/attribution/ciprofloxacin/SAMEA104414830_attribution.parquet`: only **13 distinct
 attribution values**, **96.2% of genes exactly 0**, every value a multiple of 1/32. The genome's base
-logit is **7.28125**, where bf16's ULP is ~0.016, so any gene contributing less than that is not
-representable and reads as a clean zero. The signal is not absent — flat indices 3161/3162 reach
+logit is **7.28125**, where **bf16's ULP is 0.03125** (the next representable value is 7.3125; verified with `torch.nextafter`), so any gene contributing less than that is not representable and reads as a clean zero. *(Corrected 2026-11-19: this line previously said ~0.016, which is the HALF-ULP — the maximum rounding error, not the spacing. The 13 observed values are all integer multiples of 1/32, which is the ULP.)* The signal is not absent — flat indices 3161/3162 reach
 +0.71875 — but 96% of the gene universe is unresolvable, which no amount of downstream statistics
 repairs. fp32 and batched-throughput runs (jobs 41291284/41291285/41291286, all COMPLETED) are on
 disk at `$B/train_kleb_ast/attribution/precision_{fp32_ppe4,fp32_ppe16,bf16_ppe16}/` and **have not
