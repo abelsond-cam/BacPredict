@@ -4,7 +4,8 @@
 #   sbatch --export=ALL,SHARD_DIR=$S,QC_DIR=$T/genomes/qc,REFS="$R/raw/reference_genomes/GCF_000006765.1.fna.gz \
 #            $R/raw/reference_genomes/GCF_000017205.1.fna.gz" src/bacpredict/engine/genomes/scripts/run_genome_qc.sh
 #
-# CheckM2's DIAMOND step is the cost (~4,000 genomes ≈ 1-2 h at 32 cores); skani is seconds.
+# CheckM2's DIAMOND step is the cost: 3,773 P. aeruginosa genomes took 3 h 6 min at 32 cores (DIAMOND 2 h 12 min),
+# so keep the 6 h wall for a cohort this size and scale it with genome count. skani is seconds.
 #SBATCH --job-name=genome-qc
 #SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
 #SBATCH --partition=icelake-himem

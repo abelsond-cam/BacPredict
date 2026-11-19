@@ -8,7 +8,12 @@ otherwise looks like a smaller, representative cohort.
 CheckM2 completeness >= 90 % and contamination <= 5 %; total length 100 kbp - 15 Mbp; <= 2,000 contigs;
 N50 >= 2,000; and the species call must equal ``--target-species``. ATB calls species with sylph on reads;
 we hold assemblies, so the call here is the **closest of ``--species-ref`` genomes by skani ANI, if that
-ANI is >= 95 %** (else ``unknown``). Every failed rule is listed in ``qc_fail``.
+ANI is >= 95 %** (else ``unknown``). A built genome skani reports nothing for — skani is silent below roughly
+80 % ANI, so it is not close to any reference — is ``unknown`` too. Every failed rule is listed in ``qc_fail``;
+a genome that failed to build fails ``build`` alone, since it has no statistics to test.
+
+In ``st_counts_by_drug.csv``, ``st`` ``-`` pools every genome mlst could not type (a novel or partial allele, a
+missing locus, or a new combination of known alleles). It is not an ST, and is never a holdout candidate.
 
 Writes into ``--out-dir``: ``genome_qc.csv`` (every genome: source, build status, statistics, CheckM2,
 ANI per reference, species call, ST, pass/fail), ``embedding_input.csv`` (``Sample, sr_assembly_file,
@@ -61,9 +66,12 @@ def read_skani(path: Path, refs: dict[str, str]) -> pd.DataFrame:
 
 
 def apply_qc(g: pd.DataFrame, target_species: str) -> pd.DataFrame:
-    """Add ``qc_fail`` (semicolon list of failed rules, empty if none) and ``qc_pass``."""
+    """Add ``qc_fail`` (semicolon list of failed rules, empty if none) and ``qc_pass``.
+
+    A genome that failed to build fails ``build`` only: its statistics are missing, not failing.
+    """
+    built = g["status"].eq("ok")
     rules = {
-        "build": g["status"].ne("ok"),
         "completeness": ~(g["checkm2_completeness"] >= ATB_HQ["min_completeness"]),
         "contamination": ~(g["checkm2_contamination"] <= ATB_HQ["max_contamination"]),
         "length": ~g["total_length"].between(ATB_HQ["min_length"], ATB_HQ["max_length"]),
@@ -71,7 +79,7 @@ def apply_qc(g: pd.DataFrame, target_species: str) -> pd.DataFrame:
         "n50": ~(g["n50"] >= ATB_HQ["min_n50"]),
         "species": g["species_call"].ne(target_species),
     }
-    fails = pd.DataFrame(rules)
+    fails = pd.DataFrame({"build": ~built, **{k: v & built for k, v in rules.items()}})
     g["qc_fail"] = fails.apply(lambda r: ";".join(k for k, v in r.items() if v), axis=1)
     g["qc_pass"] = g["qc_fail"].eq("")
     return g
@@ -119,6 +127,7 @@ def main() -> None:
         shards.drop(columns="source"), on="Sample", how="left")
     g["status"] = g["status"].fillna("missing")
     g = g.join(read_checkm2(args.checkm2), on="Sample").join(read_skani(args.skani, refs), on="Sample")
+    g.loc[g["status"].eq("ok") & g["species_call"].isna(), "species_call"] = "unknown"  # skani silent: no close ref
     g = apply_qc(g, args.target_species)
 
     args.out_dir.mkdir(parents=True, exist_ok=True)

@@ -36,7 +36,8 @@ def test_qc_rules():
     assert q.loc["contam", "qc_fail"] == "contamination"
     assert q.loc["frag", "qc_fail"] == "contigs;n50"
     assert q.loc["para", "qc_fail"] == "species"
-    assert set(q.loc["broken", "qc_fail"].split(";")) >= {"build", "completeness", "species"}
+    assert q.loc["broken", "qc_fail"] == "build"  # missing statistics are not counted as failing every rule
+    assert not q.loc["broken", "qc_pass"]
 
 
 def test_read_shards_keeps_the_newest_row(tmp_path):
