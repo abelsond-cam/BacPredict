@@ -16,7 +16,8 @@
 #   N_SHARDS=10 sbatch --array=0-9 --time=04:00:00 src/bacpredict/engine/scripts/run_gene_attribution.sh
 #
 # Knobs (all env vars, all with defaults below): ORGANISM DRUG COHORT_CSV CHECKPOINT OUT_DIR
-#   N_SHARDS LIMIT DTYPE METHOD PERTURBATIONS_PER_EVAL N_STEPS INTERNAL_BATCH_SIZE ESM_DIR.
+#   N_SHARDS LIMIT DTYPE METHOD PERTURBATIONS_PER_EVAL N_STEPS INTERNAL_BATCH_SIZE ESM_DIR
+#   BASELINE.
 #
 # DTYPE defaults to fp32, NOT the deployed bf16. Measured on job 41289828: in bf16 a Kp genome
 # returns 13 distinct attribution values with 96.2% of genes exactly zero, because the base logit
@@ -67,7 +68,7 @@ export PYTHONUNBUFFERED=1
 : "${DTYPE:=fp32}"
 : "${METHOD:=ablation}"
 : "${PERTURBATIONS_PER_EVAL:=1}"
-: "${N_STEPS:=50}"
+: "${N_STEPS:=200}"   # NOT 50: completeness error was 4-76% at 50, 0.0-0.6% at 200
 : "${INTERNAL_BATCH_SIZE:=4}"
 
 if [[ "$ORGANISM" == "tb" ]]; then
@@ -97,6 +98,11 @@ ARGS=(--organism "$ORGANISM" --cohort-csv "$COHORT_CSV" --checkpoint "$CHECKPOIN
 # been restored. ESM_DIR overrides the store location; unset, the organism's default is used.
 if [[ -n "${ESM_DIR:-}" ]]; then
     ARGS+=(--esm-dir "$ESM_DIR")
+fi
+# A gradient method needs a non-degenerate baseline (build_cohort_mean_protein). Without one the
+# CLI refuses the run, which is deliberate — a zero baseline measures nothing on this architecture.
+if [[ -n "${BASELINE:-}" ]]; then
+    ARGS+=(--baseline "$BASELINE")
 fi
 
 # Shard only inside an array; a bare submission does the whole cohort.
