@@ -110,7 +110,11 @@ pixi env (shovill 1.1.0 with SPAdes 3.15, Prodigal 2.6.3, mlst, skani, plus Chec
 1. AllTheBacteria.
 2. The portal's own assembly. These are submitter assemblies: `--prefer-reads` swaps them for shovill
    wherever usable reads exist.
-3. Shovill on paired Illumina WGS/WGA reads at ≥10× depth.
+3. Shovill on paired Illumina WGS/WGA reads at ≥10× depth. These use AllTheBacteria's shovill 1.1.0 defaults
+   with two exceptions, both needed for the defaults to work at all (see `build_genomes.py`):
+   - `--gsize 6.6e6`. Shovill's own size estimate collapses on low-depth reads and then discards almost all
+     of them.
+   - `OMP_NUM_THREADS` set to the core count. CSD3 exports 1, and SPAdes obeys it.
 4. Drop, with a reason.
 
 **Where the outputs go:**
@@ -140,6 +144,17 @@ pixi env (shovill 1.1.0 with SPAdes 3.15, Prodigal 2.6.3, mlst, skani, plus Chec
   AMRFinder/CARD alignment or nuna families.
 
 ## Embeddings
+
+[`scripts/build_pa_embeddings.sh`](scripts/build_pa_embeddings.sh) runs these stages in order:
+`proteins`, `check-proteins`, `smoke`, `check-smoke`, `submit`, `check`.
+
+- `proteins` is a CPU job that runs `preprocess_assemblies_to_protein_sequences` on `embedding_input.csv`.
+- `smoke` and `submit` run the generic GPU array `engine/embedding/scripts/esm_embeddings_array.sh`, with
+  `MAX_PROTEINS=9000`, `SAVE_DTYPE=bfloat16` and `NTASKS=16`.
+- Every check counts against `embedding_input.csv`, not against the files that exist. The protein
+  extractor logs a failed genome and still exits 0, so a count of existing files would shrink with the
+  cohort and still read as complete.
+- `smoke` and `submit` refuse to start until every cohort genome has a protein parquet.
 
 ESM-C in **bf16** on project_k, half the fp32 size. The trainer runs in bf16 already. Four consumers call
 `.numpy()` on embeddings and must call `.float()` first; they fail loudly, not silently:

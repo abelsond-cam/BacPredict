@@ -1,7 +1,13 @@
 # BacPredict — project state
 
-> **Last verified: 2026-11-18 @ `7e47486`** (branch `refactor/consolidate-engine`).
-> **Verification scope, this pass (2026-11-18): §3.6 only** — the new multi-species AMR layer. Every
+> **Last verified: 2026-11-19 @ `c03e93c`** (branch `refactor/consolidate-engine`).
+> **Verification scope, this pass (2026-11-19): §3.6 genome sources only.** Read on CSD3 from
+> `train_pa_ast/genomes/genome_manifest.csv` (plan at `1f049c4`) and the download array's shards in
+> `genomes/shards/`. The shovill observations come from two smoke genomes and one debug job; their logs
+> were not kept. **Nothing else was re-verified this pass.**
+>
+> **Stamp before this one: 2026-11-18 @ `7e47486`.**
+> **Verification scope, that pass (2026-11-18): §3.6 only** — the new multi-species AMR layer. Every
 > §3.6 figure was read on CSD3 from `$R/bac_ast_prediction/processed/train_pa_ast/` (`label_counts.csv`,
 > `cohort.csv`, `call_agreement.csv`), written by `apps/pa/scripts/build_pa_ast_labels.sh` at `7e47486`;
 > the same build run locally on md5-identical inputs gave byte-identical outputs. **Nothing outside §3.6
@@ -1256,8 +1262,10 @@ wrong long-term: target AMR genes are individually rare but collectively penetra
 
 ### 3.6 Multi-species AMR — EBI AMR Portal (*P. aeruginosa* → Enterobacterales → all)
 
-**Status.** *P. aeruginosa* (PsA) **labels are built** on CSD3 at `7e47486`. Genomes, ESM-C embeddings,
-splits and training are not started. Mechanics: [`apps/pa/CLAUDE.md`](src/bacpredict/apps/pa/CLAUDE.md).
+**Status.** *P. aeruginosa* (PsA) **labels are built** on CSD3 at `7e47486`. **Genomes are being built**
+(2026-11-19): every download-sourced genome is in the store; the shovill array is running; QC and ST counts
+follow. The ESM-C stage is written and reviewed (`5a512e1`) but has not run. Splits and training are not
+started. Mechanics: [`apps/pa/CLAUDE.md`](src/bacpredict/apps/pa/CLAUDE.md).
 
 **Numbers of record — PsA labels.** Read from
 `$R/bac_ast_prediction/processed/train_pa_ast/label_counts.csv`; its `manifest.json` records the input
@@ -1282,22 +1290,54 @@ md5s (EBI AMR Portal release 2026-07 + the AMR-GNN supplement) and the code SHA.
   (`call_agreement.csv`). Against the portal's own (mostly CLSI) calls on 7,285 tests carrying both,
   the re-derivation flips 129 S→R and 153 R→S (meropenem MIC 8 is CLSI R, EUCAST S).
 
-**In flight.** Genome acquisition for the PsA cohort.
+**Numbers of record — PsA genome sources.** Read from
+`$R/bac_ast_prediction/processed/train_pa_ast/genomes/genome_manifest.csv`, written on CSD3 by
+`build_pa_genomes.sh plan` at `1f049c4` (with `--prefer-reads`, min depth 10×, genome size 6.6 Mbp):
+
+| Source | Genomes |
+|---|--:|
+| AllTheBacteria (shovill 1.1.0) | 2,187 |
+| Portal submitter assembly (`portal_gff`) | 1,236 |
+| Shovill on ENA reads | 353 |
+| Dropped: RNA-seq reads only | 143 |
+| Dropped: long reads only | 7 |
+| Dropped: under 10× depth | 6 |
+| **Total labelled** | **3,932** |
+
+- All 3,423 download-sourced genomes built `ok` (Prodigal + `mlst`): read from the `atb+portal_gff_*.tsv`
+  shards in `genomes/shards/`, array `41326140`.
+- No `portal_gff` genome has usable reads at ≥10×, so `--prefer-reads` moved none: the 1,236 have no
+  shovill alternative.
+- Shovill-sourced genomes by read depth: 10–20× 6, 20–30× 12, 30–50× 39, 50–100× 89, ≥100× 207.
+
+**In flight.** The shovill array (353 genomes, `41326674`). Then QC (CheckM2 + skani) and `collate`, which
+writes `genome_qc.csv`, `embedding_input.csv` and `st_counts_by_drug.csv`.
 
 **Next.** In the agreed order, with a checkpoint after each of steps 2 and 3:
 2. Genomes. Then QC, `mlst`, and ST counts per drug. Checkpoint: choose the held-out ST (≥50 genomes).
-3. ESM-C in bf16: a 10-genome GPU smoke test, then all PsA genomes, with throughput measured.
+3. ESM-C in bf16: a 10-genome GPU smoke test, then all PsA genomes, with throughput measured
+   (`apps/pa/scripts/build_pa_embeddings.sh`, `--max-proteins 9000`).
 4. All ~166k portal genomes, Enterobacterales first.
 5. Splits (the ST holdout plus others, through `engine/splits`), then training.
 
 Later: the AMR-GNN-cut benchmark, ANI thinning, and causal attribution of the predictions.
 
 **Caveats.**
-- **The genome yield is a scout estimate, not a number of record.** It was taken on 2026-11-18,
-  against the cohort *before* unitless MICs were called. Roughly:
-  - 143 labelled BioSamples have only RNA-seq reads, and 7 only ONT reads. All are dropped.
-  - 6 MiSeq genomes fall below 10× depth.
-  - The acquisition manifest will replace these numbers.
+- **Low-depth MiSeq 2×300 reads assemble to a fraction of a genome under shovill's defaults.** This was
+  observed on two smoke genomes, not yet measured across the cohort:
+  - The 17× genome came out at 0.48 Mbp and the 21× genome at 3.17 Mbp.
+  - For the 17× genome the reads are sound: 93.8 % map to PAO1, at 96.5 % breadth and 15.2× mean depth,
+    with 0.5 % duplicates. SPAdes assembled 6.34 Mbp.
+  - Shovill then removed 800 of 853 contigs as "low coverage (< 2×)". At its final k of 127, SPAdes reports
+    about 1× coverage on these error-dense 300-bp reads.
+  - QC (CheckM2 completeness) will drop such assemblies. **Hypothesis:** this is why these samples are
+    absent from AllTheBacteria.
+  - Rescuing them would mean non-default shovill settings for a subset, against the even-surface decision.
+    That is David's call, once the array reports completeness by depth.
+- **Shovill is given the genome size** (`--gsize 6.6 Mbp`, `d7b9656`). Its own estimate counts R1 21-mers
+  seen more than 10 times, which collapsed to 39 kbp at 17×. Shovill then believed the reads were 2,861×
+  deep, kept 5 % of them, and returned an empty assembly with exit status 0. Given the true size, shovill
+  subsamples only reads deeper than 150×, as its defaults intend.
 - **6 labelled genomes are *P. paraeruginosa* in the portal's genotype table** (`cohort.csv`
   `species_conflict`). The species check in step 2 decides them.
 - **3 CDC strains each sit under two BioSamples** (isolates S54485, U2504, X24509). The splits must
@@ -1330,6 +1370,9 @@ correct.**
 | `mge_hits.parquet/` | `kleb_iso_source/map_unitig_hits_genomad` | the MGE/IS/IGR write-ups | §3.3's invasion mapping |
 | `train_pa_ast/binary_ast.csv` | `engine/ast_labels/build_binary_ast_labels` (via `apps/pa/scripts/build_pa_ast_labels.sh`) | PsA split tables (`engine/splits`) | Every PsA split and model (§3.6) |
 | `train_pa_ast/cohort.csv` | the same build | PsA genome acquisition (`genome_route`, reads/assembly accessions) | The PsA genome manifest |
+| `train_pa_ast/genomes/genome_manifest.csv` (+ `ena_filereport_cache.tsv`) | `engine/genomes/plan_genome_sources` (`build_pa_genomes.sh plan`) | the build arrays, `collate` | Every PsA genome built from it; a re-plan that changes a genome's source rebuilds it in place |
+| `raw/ast_cohort_genomes/{contigs,prodigal}/<Sample>.{fna,gff}.gz` (keyed by BioSample, shared across organisms) | `engine/genomes/build_genomes` arrays | QC, `collate`, the protein extractor | Protein parquets and ESM-C embeddings of that genome (the PsA `check` stage flags a parquet older than its GFF) |
+| `train_pa_ast/genomes/{genome_qc,embedding_input,st_counts_by_drug}.csv` | `engine/genomes/collate_genomes` | ESM-C stage (`embedding_input.csv` is its cohort); the held-out-ST choice | The PsA embeddings' cohort, the ST holdout, every PsA split |
 
 **`catalogue_ceiling_panel.csv` is reproducible.** It was hand-assembled once, which was itself the
 defect this file exists to prevent; `engine/ref_catalogues/build_ceiling_panel` now regenerates it
