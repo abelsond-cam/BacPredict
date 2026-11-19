@@ -1,7 +1,15 @@
 # BacPredict — project state
 
-> **Last verified: 2026-11-19 @ `c03e93c`** (branch `refactor/consolidate-engine`).
-> **Verification scope, this pass (2026-11-19): §3.6 genome sources only.** Read on CSD3 from
+> **Last verified: 2026-11-19 @ `e46c81e`** (branch `refactor/consolidate-engine`).
+> **Verification scope, this pass (2026-11-19, second): §3.6 genome build, QC and ST counts only.** Read on
+> CSD3 from `train_pa_ast/genomes/`: `genome_qc.csv`, `embedding_input.csv` and `st_counts_by_drug.csv`
+> (written by `build_pa_genomes.sh collate` at `e46c81e`; md5 `b5a8b03f…`, `f6de3cfa…`, `65c09abe…`), the
+> 439 build shards and `qc/{checkm2_quality_report,skani_dist}.tsv`. Every number was recomputed from the
+> raw inputs by four independent agents and reconciled by a fifth (0 mismatches in QC pass/fail or in the
+> 4,936 ST × drug rows). **Nothing else was re-verified this pass.**
+>
+> **Stamp before this one: 2026-11-19 @ `c03e93c`.**
+> **Verification scope, that pass (2026-11-19): §3.6 genome sources only.** Read on CSD3 from
 > `train_pa_ast/genomes/genome_manifest.csv` (plan at `1f049c4`) and the download array's shards in
 > `genomes/shards/`. The shovill observations come from two smoke genomes and one debug job; their logs
 > were not kept. **Nothing else was re-verified this pass.**
@@ -1262,10 +1270,11 @@ wrong long-term: target AMR genes are individually rare but collectively penetra
 
 ### 3.6 Multi-species AMR — EBI AMR Portal (*P. aeruginosa* → Enterobacterales → all)
 
-**Status.** *P. aeruginosa* (PsA) **labels are built** on CSD3 at `7e47486`. **Genomes are being built**
-(2026-11-19): every download-sourced genome is in the store; the shovill array is running; QC and ST counts
-follow. The ESM-C stage is written and reviewed (`5a512e1`) but has not run. Splits and training are not
-started. Mechanics: [`apps/pa/CLAUDE.md`](src/bacpredict/apps/pa/CLAUDE.md).
+**Status.** *P. aeruginosa* (PsA) **labels are built** on CSD3 at `7e47486`. **Genomes are built and
+QC'd** (2026-11-19): 3,677 pass. **Waiting at the step-2 checkpoint for David**: the held-out ST, and the
+three cohort questions under *Next*. The ESM-C stage is written and reviewed (`5a512e1`) but has not run,
+because its cohort (`embedding_input.csv`) changes if those answers drop genomes. Splits and training are
+not started. Mechanics: [`apps/pa/CLAUDE.md`](src/bacpredict/apps/pa/CLAUDE.md).
 
 **Numbers of record — PsA labels.** Read from
 `$R/bac_ast_prediction/processed/train_pa_ast/label_counts.csv`; its `manifest.json` records the input
@@ -1310,11 +1319,57 @@ md5s (EBI AMR Portal release 2026-07 + the AMR-GNN supplement) and the code SHA.
   shovill alternative.
 - Shovill-sourced genomes by read depth: 10–20× 6, 20–30× 12, 30–50× 39, 50–100× 89, ≥100× 207.
 
-**In flight.** The shovill array (353 genomes, `41326674`). Then QC (CheckM2 + skani) and `collate`, which
-writes `genome_qc.csv`, `embedding_input.csv` and `st_counts_by_drug.csv`.
+**Numbers of record — PsA genome QC.** Read from `train_pa_ast/genomes/genome_qc.csv` (collate at `e46c81e`);
+shovill array `41326674` plus rerun `41335542`, QC job `41336261` (CheckM2 3 h 6 min at 32 cores).
+
+| Outcome | Genomes | 0/1 labels |
+|---|--:|--:|
+| QC pass (= `embedding_input.csv`) | 3,677 | 22,670 |
+| QC fail, built | 96 | 752 |
+| Build failure | 3 | 16 |
+| Dropped before building | 156 | 665 |
+| **Total labelled** | **3,932** | **24,103** |
+
+- **QC failures among built genomes** (a genome can fail several): completeness 47, species 38, contigs 10,
+  contamination 6, N50 3, length 0. By source: atb 55 of 2,187, portal_gff 24 of 1,236, shovill 17 of 350 built.
+- **Species** (skani, closest of PAO1/PA7 at ANI ≥ 95): *P. aeruginosa* 3,735, *P. paraeruginosa* 37
+  (ANI to PA7 98.6–99.5, to PAO1 93.5–93.9; 25 are ST2211), unknown 1 (SAMN04040115: GC 39 %, 3.9 Mbp, no
+  skani hit to either reference). The portal's genotype table flags 6 of the 37.
+- **Build failures:** SAMEA7290678 (13.6×, assembled to 5.9 kbp); SAMN11110420 and SAMN11110638, whose ENA
+  fastq for one mate is an empty *directory* on `ftp.sra.ebi.ac.uk` (it serves an HTML listing; the
+  filereport still lists the file's size and md5).
+- **Labels per drug after QC** (`st_counts_by_drug.csv`, summed): CIP 3,150 · CAZ 2,800 · MEM 2,746 ·
+  TOB 2,578 · AMK 2,493 · IPM 2,199 · TZP 2,052 · ATM 1,888 · LVX 1,554 · FEP 1,210.
+- **CDS per QC-passing genome:** 5,085–7,954; 2,458 of 3,677 exceed 6,000, none exceeds 9,000.
+- **mlst** agrees with the AMR-GNN paper's ST for 2,188 of 2,189 genomes where both are numbers
+  (`cohort.csv` `st_reported`; the exception is one mutL allele). 205 QC-passing genomes are untyped (`-`).
+
+**Held-out-ST candidates** (≥ 50 QC-passing labelled genomes; `st_counts_by_drug.csv`, `genome_qc.csv`).
+"Scoreable" = drugs where both R and S have ≥ 10 genomes in the ST.
+
+| ST | Genomes | Drugs n ≥ 50 | Scoreable drugs | Largest study share | Typed SLV genomes outside the ST |
+|---|--:|--:|--:|--:|---|
+| 235 | 286 | 10 | 10 | 21 % | 1 (+13 untyped) |
+| 621 | 244 | 8 | 6 (no S for CIP, LVX) | 99 % no study recorded | 20 (ST4588 ×19) |
+| 175 | 144 | 8 | 4 | 44 % (two Barrio-Tofiño papers) | 0 |
+| 111 | 125 | 9 | 8 | 30 % | 9 (ST966 ×6) |
+| 244 | 115 | 8 | 7 | 21 % | 1 (+6 untyped) |
+| 155 | 82 | 9 | 9 | 45 % | 3 |
+| 253 | 80 | 5 | 5 | 18 % | 3 |
+| 274 | 77 | 5 | 7 | 26 % | 16 (7 STs) |
+| 17 | 68 | 1 | 6 | 21 % | 14 (ST845) |
+| 179 | 63 | 3 | 8 | 29 % | 1 |
+| 395 | 63 | 3 | 6 | 35 % | 4 |
+| 308 | 57 | 1 | 6 | 21 % | 0 |
+
+**In flight.** Nothing.
 
 **Next.** In the agreed order, with a checkpoint after each of steps 2 and 3:
-2. Genomes. Then QC, `mlst`, and ST counts per drug. Checkpoint: choose the held-out ST (≥50 genomes).
+2. **Checkpoint now — David to decide:** (a) the held-out ST, and whether membership is the ST alone or the
+   ST plus its single-locus variants and near-matching untyped genomes; (b) whether to drop the 20
+   QC-passing portal assemblies whose only reads are long reads; (c) the low-depth Cortes-Lara 2021
+   genomes (drop, as now, or rescue with non-default shovill); (d) the minimum per-class count for a drug
+   to be scored on the held-out ST.
 3. ESM-C in bf16: a 10-genome GPU smoke test, then all PsA genomes, with throughput measured
    (`apps/pa/scripts/build_pa_embeddings.sh`, `--max-proteins 9000`).
 4. All ~166k portal genomes, Enterobacterales first.
@@ -1323,23 +1378,41 @@ writes `genome_qc.csv`, `embedding_input.csv` and `st_counts_by_drug.csv`.
 Later: the AMR-GNN-cut benchmark, ANI thinning, and causal attribution of the predictions.
 
 **Caveats.**
-- **Low-depth MiSeq 2×300 reads assemble to a fraction of a genome under shovill's defaults.** This was
-  observed on two smoke genomes, not yet measured across the cohort:
-  - The 17× genome came out at 0.48 Mbp and the 21× genome at 3.17 Mbp.
-  - For the 17× genome the reads are sound: 93.8 % map to PAO1, at 96.5 % breadth and 15.2× mean depth,
-    with 0.5 % duplicates. SPAdes assembled 6.34 Mbp.
-  - Shovill then removed 800 of 853 contigs as "low coverage (< 2×)". At its final k of 127, SPAdes reports
-    about 1× coverage on these error-dense 300-bp reads.
-  - QC (CheckM2 completeness) will drop such assemblies. **Hypothesis:** this is why these samples are
-    absent from AllTheBacteria.
-  - Rescuing them would mean non-default shovill settings for a subset, against the even-surface decision.
-    That is David's call, once the array reports completeness by depth.
+- **Low-depth MiSeq 2×300 reads assemble to a fraction of a genome under shovill's defaults** — measured
+  across the cohort, all in one study (Cortes-Lara et al. 2021): of the 18 shovill genomes under 30×, 12
+  fail completeness and 1 fails to build; all 14 shovill completeness failures are this study, at
+  13.6–32×. At ≥ 50×, 3 of 295 built shovill genomes fail QC (2 species, 1 contamination), none on
+  completeness.
+  - For a 17× genome the reads are sound: 93.8 % map to PAO1, at 96.5 % breadth and 15.2× mean depth.
+    SPAdes assembled 6.34 Mbp; shovill then removed 800 of 853 contigs as "low coverage (< 2×)", because at
+    k = 127 SPAdes reports about 1× coverage on these error-dense 300-bp reads.
+  - **Hypothesis:** this is why these samples are absent from AllTheBacteria.
+  - Rescuing them needs non-default shovill settings for a subset, against the even-surface decision.
+- **Long-read portal assemblies pass QC on a different error profile.** 32 `portal_gff` genomes have only
+  long reads in ENA (`genome_manifest.csv` `no_reads_reason`); 20 pass QC. 15 of those are one Ecuador
+  BioSample block (SAMN338…, 2–16 contigs) at 951–1,140 CDS per Mbp (10 above 1,000) against the cohort's
+  ~917, and 10 of the 15 get no ST. **Hypothesis:** unpolished indel errors splitting genes. The other 5
+  are single contigs at normal density. Whether to keep them is decision (b) under *Next*.
+- **ST621 is one collection with almost no metadata.** All 244 are `portal_gff` with no reads; 240 sit in
+  one BioSample block (SAMN29441777–SAMN29442029) with one assembly-accession block, `NCBI_antibiogram`
+  labels, and no study, country or year. All 240 CIP and 99 LVX labels are R. Its single-locus variant
+  ST4588 (19 genomes, all R for CIP) is a separate collection (atb, MBRL isolates, USA 2019).
+- **Genome source is nearly collinear with study.** 315 of 333 QC-passing shovill genomes are Khaledi et
+  al. 2021, labelled almost only for CIP/CAZ/MEM/TOB. All 244 ST621 genomes are `portal_gff`, and they
+  hold 199 of that source's ~230 TOB-resistant labels: TOB %R is 70 % in `portal_gff` against 32 % in atb.
+- **`st` `-` is not an ST.** It pools the 205 untyped QC-passing genomes in `st_counts_by_drug.csv`; 39
+  of them match a typed cohort ST once mlst's novel/partial-allele flags are removed (ST235 3, ST179 3,
+  ST308 3, …).
+- **`cohort.csv` `study` is not a PubMed-ID column.** It joins the portal's `AMR_associated_publications`
+  (PMIDs) with AMR-GNN's author-year citations; 557 QC-passing genomes have neither. AMR-GNN-only genomes
+  (1,506 QC-passing) carry no country or year anywhere locally. 157 `st_reported` values are 40-character
+  hex strings, not ST numbers.
+- **Study 27216077 is lost entirely** (135 genomes, RNA-seq reads only), which is why pre-build drops sit
+  almost wholly in CIP/CAZ/MEM/TOB.
 - **Shovill is given the genome size** (`--gsize 6.6 Mbp`, `d7b9656`). Its own estimate counts R1 21-mers
   seen more than 10 times, which collapsed to 39 kbp at 17×. Shovill then believed the reads were 2,861×
   deep, kept 5 % of them, and returned an empty assembly with exit status 0. Given the true size, shovill
   subsamples only reads deeper than 150×, as its defaults intend.
-- **6 labelled genomes are *P. paraeruginosa* in the portal's genotype table** (`cohort.csv`
-  `species_conflict`). The species check in step 2 decides them.
 - **3 CDC strains each sit under two BioSamples** (isolates S54485, U2504, X24509). The splits must
   group them, or they leak across the holdout.
 - `finetune_amr` and `build_split_csv` have **no `pa_ast` task key yet**. Paths must be explicit until
