@@ -19,7 +19,7 @@ run), so a sample-accession ``reads_accession`` never needs resolving. Answers â
 cached in ``--ena-cache`` so re-planning is offline and reproducible; a query that still fails after retries
 stops the plan rather than becoming a ``no_runs`` drop.
 
-Usage (CSD3 login node; ~1-2 min of ENA queries the first time)::
+Usage (CSD3 login node; ~2 min of ENA queries the first time, at 8 concurrent)::
 
     uv run python -m bacpredict.engine.genomes.plan_genome_sources \
         --cohort $T/cohort.csv --atb-index $ATB/*.csv.gz --genome-size 6.6e6 --min-depth 10 \
@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import io
 import re
+import ssl
 import time
 import urllib.parse
 import urllib.request
@@ -76,12 +77,25 @@ def read_atb_index(paths: list[Path]) -> pd.DataFrame:
         columns={"size": "atb_bytes", "last_modified": "atb_last_modified"})
 
 
-def _ena_query(sample: str, retries: int = 4) -> pd.DataFrame:
+def _tls_context() -> ssl.SSLContext:
+    """Verify against certifi's CA bundle where installed.
+
+    uv's standalone Python looks for ``/etc/ssl/cert.pem``, which RHEL (CSD3) does not have, so the default
+    context fails every HTTPS request with CERTIFICATE_VERIFY_FAILED while ``curl`` works.
+    """
+    try:
+        import certifi
+    except ImportError:
+        return ssl.create_default_context()
+    return ssl.create_default_context(cafile=certifi.where())
+
+
+def _ena_query(sample: str, retries: int = 4, raise_on_fail: bool = False) -> pd.DataFrame:
     params = urllib.parse.urlencode({"accession": sample, "result": "read_run", "fields": ",".join(ENA_FIELDS),
                                      "format": "tsv"})
     for attempt in range(retries):
         try:
-            with urllib.request.urlopen(f"{ENA_FILEREPORT}?{params}", timeout=60) as r:
+            with urllib.request.urlopen(f"{ENA_FILEREPORT}?{params}", timeout=60, context=_tls_context()) as r:
                 text = r.read().decode()
             df = pd.read_csv(io.StringIO(text), sep="\t", dtype=str) if text.strip() else pd.DataFrame(
                 columns=ENA_FIELDS)
@@ -89,22 +103,29 @@ def _ena_query(sample: str, retries: int = 4) -> pd.DataFrame:
                 df = pd.DataFrame({"run_accession": [NO_RUNS]})
             df.insert(0, "query", sample)
             return df
-        except Exception:  # noqa: BLE001 â€” network: retry, then record the failure
+        except Exception as e:  # network: retry, then record (or raise) the failure
             if attempt == retries - 1:
+                if raise_on_fail:
+                    raise RuntimeError(f"ENA filereport failed for {sample} after {retries} attempts: {e!r}") from e
                 return pd.DataFrame({"query": [sample], "run_accession": [QUERY_FAILED]})
             time.sleep(5 * (attempt + 1))
     raise AssertionError("unreachable")
 
 
 def ena_runs(samples: list[str], cache_path: Path, threads: int = 8) -> pd.DataFrame:
-    """Every ENA run for each BioSample, from the cache where present; new answers are appended to it."""
+    """Every ENA run for each BioSample, from the cache where present; new answers are appended to it.
+
+    The first uncached query runs alone and raises on failure, so a fault that fails every query (TLS, proxy,
+    an API change) stops the plan in seconds, with its cause, instead of after every query's retries.
+    """
     cached = pd.read_csv(cache_path, sep="\t", dtype=str) if cache_path.exists() else pd.DataFrame(
         columns=["query", *ENA_FIELDS])
     cached = cached[cached["run_accession"] != QUERY_FAILED]
     todo = sorted(set(samples) - set(cached["query"]))
     if todo:
+        probe = _ena_query(todo[0], raise_on_fail=True)
         with ThreadPoolExecutor(max_workers=threads) as ex:
-            new = list(ex.map(_ena_query, todo))
+            new = [probe, *ex.map(_ena_query, todo[1:])]
         cached = pd.concat([cached, *new], ignore_index=True)
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         cached.to_csv(cache_path, sep="\t", index=False)

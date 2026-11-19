@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import gzip
+import ssl
 
 import numpy as np
 import pandas as pd
 import pytest
 
+import bacpredict.engine.genomes.plan_genome_sources as pgs
 from bacpredict.engine.genomes.plan_genome_sources import (
     plan_genome_sources,
     portal_gff_url,
@@ -92,3 +94,22 @@ def test_priority_atb_then_portal_then_shovill_then_drop():
     assert plan.loc["rna", "drop_reason"] == "rna_seq_only"
     prefer = plan_genome_sources(_cohort(), atb, reads, min_depth=10, prefer_reads=True).set_index("Sample")
     assert prefer.loc["portal_reads", "source"] == "shovill" and prefer.loc["portal", "source"] == "portal_gff"
+
+
+def test_ena_fault_that_fails_every_query_stops_at_the_first(tmp_path, monkeypatch):
+    """A TLS fault (CSD3: no CA bundle where uv's Python looks) must stop the plan at once, with its cause."""
+    calls = []
+
+    def refuse(url, **kw):
+        calls.append(url)
+        raise ssl.SSLCertVerificationError("certificate verify failed: unable to get local issuer certificate")
+
+    monkeypatch.setattr(pgs.urllib.request, "urlopen", refuse)
+    monkeypatch.setattr(pgs.time, "sleep", lambda s: None)
+    cache = tmp_path / "ena.tsv"
+    # a cache holding an earlier run's failures: those must be retried, not trusted
+    pd.DataFrame({"query": ["SAMN1", "SAMN2"], "run_accession": [pgs.QUERY_FAILED] * 2}).to_csv(
+        cache, sep="\t", index=False)
+    with pytest.raises(RuntimeError, match="CERTIFICATE|certificate verify failed"):
+        pgs.ena_runs(["SAMN1", "SAMN2", "SAMN3"], cache, threads=2)
+    assert len(calls) == 4  # the probe's retries only; the other two samples were never queried

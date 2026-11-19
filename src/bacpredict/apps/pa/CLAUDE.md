@@ -127,6 +127,18 @@ pixi env (shovill 1.1.0 with SPAdes 3.15, Prodigal 2.6.3, mlst, skani, plus Chec
 - N50 ≥2,000;
 - a species check: the closest reference by skani ANI must be PAO1, at ≥95%.
 
+**Two consequences for everything downstream:**
+- **Embed with `--max-proteins 9000`.** `generate_embeddings` defaults to 6,000 and cuts each genome's
+  flat protein list at that point. A *P. aeruginosa* genome has about 6,400 CDS, and contigs are
+  length-sorted, so the default would silently drop the smallest contigs first: plasmids and integrons,
+  where acquired carbapenemases and aminoglycoside-modifying enzymes sit. The trainer's own default is
+  already 9,000. `collate` reports how many genomes exceed each cap.
+- **Prodigal GFFs carry no gene names.** The extractor falls back to Prodigal's positional `ID`
+  (`1_1`, `1_2`, …), which repeats in every genome without meaning the same gene. Fine-tuning does not
+  care. Before any name-keyed arm (per-gene LR, attribution's named-gene flag, catalogue ceilings,
+  `locate_gene`) runs on this store, gene identity has to come from elsewhere, for example an
+  AMRFinder/CARD alignment or nuna families.
+
 ## Embeddings
 
 ESM-C in **bf16** on project_k, half the fp32 size. The trainer runs in bf16 already. Four consumers call
