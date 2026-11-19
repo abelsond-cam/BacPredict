@@ -7,6 +7,7 @@ import stat
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from bacpredict.engine.genomes.build_genomes import (
     assembly_stats,
@@ -18,6 +19,7 @@ from bacpredict.engine.genomes.build_genomes import (
     n_chunks,
     read_fasta,
     select_chunk,
+    shovill_contigs,
     write_renamed_contigs,
 )
 
@@ -115,3 +117,47 @@ def test_download_retries_every_failure_without_flags_old_curl_rejects(tmp_path,
     dest = tmp_path / "f"
     download("https://example.org/f", dest, md5="5d41402abc4b2a76b9719d911017c592", nbytes="5")
     assert dest.read_text() == "hello" and len(calls.read_text().split()) == 3
+
+
+def _stub_shovill(bin_dir: Path, contigs: str) -> Path:
+    """A shovill stand-in that records its arguments and OMP_NUM_THREADS, and writes ``contigs`` as its assembly."""
+    record = bin_dir / "shovill.args"
+    (bin_dir / "shovill").write_text(
+        f'#!/bin/sh\necho "OMP=$OMP_NUM_THREADS $*" > "{record}"\n'
+        'while [ "$1" ]; do [ "$1" = "--outdir" ] && out="$2"; shift; done\nmkdir -p "$out"\n'
+        f'printf "{contigs}" > "$out/contigs.fa"\necho "[shovill] It contains 0 contigs" > "$out/shovill.log"\n')
+    (bin_dir / "shovill").chmod(0o755)
+    return record
+
+
+def _fastq_row(tmp_path: Path) -> dict:
+    urls = []
+    for mate in (1, 2):
+        f = tmp_path / f"R_{mate}.fastq.gz"
+        with gzip.open(f, "wt") as fh:
+            fh.write("@r\nACGT\n+\nIIII\n")
+        urls.append(f.as_uri())
+    return {"fastq_urls": ";".join(urls), "fastq_bytes": "", "fastq_md5": ""}
+
+
+def test_shovill_gets_genome_size_and_every_thread(tmp_path, monkeypatch):
+    """CSD3 exports OMP_NUM_THREADS=1, and shovill's own size estimate collapses on low-depth reads."""
+    monkeypatch.setenv("OMP_NUM_THREADS", "1")
+    bin_dir, work = tmp_path / "bin", tmp_path / "work"
+    bin_dir.mkdir()
+    work.mkdir()
+    record = _stub_shovill(bin_dir, ">NODE_1\\nACGTACGT\\n")
+    out = shovill_contigs(pd.Series(_fastq_row(tmp_path)), work, bin_dir, threads=8, ram_gb=48, genome_size=6.6e6)
+    assert out == [("NODE_1", "ACGTACGT")]
+    args = record.read_text().split()
+    assert args[0] == "OMP=8"
+    assert args[args.index("--gsize") + 1] == "6600000"
+
+
+def test_empty_shovill_assembly_is_an_error_with_its_log(tmp_path):
+    bin_dir, work = tmp_path / "bin", tmp_path / "work"
+    bin_dir.mkdir()
+    work.mkdir()
+    _stub_shovill(bin_dir, "")
+    with pytest.raises(RuntimeError, match="no contigs.*It contains 0 contigs"):
+        shovill_contigs(pd.Series(_fastq_row(tmp_path)), work, bin_dir, threads=2, ram_gb=8, genome_size=6.6e6)

@@ -68,7 +68,7 @@ import pandas as pd, sys
 m = pd.read_csv(sys.argv[1], dtype=str)
 m[m.source.ne('drop')].groupby('source').head(2).to_csv(sys.argv[2], index=False)" \
         "$GEN/genome_manifest.csv" "$GEN/genome_manifest_smoke.csv"
-    common="MANIFEST=$GEN/genome_manifest_smoke.csv,OUT_ROOT=$STORE,SHARD_DIR=$GEN/shards_smoke,MLST_SCHEME=$SCHEME,TOOLS_BIN=$(tools_bin)"
+    common="MANIFEST=$GEN/genome_manifest_smoke.csv,OUT_ROOT=$STORE,SHARD_DIR=$GEN/shards_smoke,MLST_SCHEME=$SCHEME,GENOME_SIZE=$GENOME_SIZE,TOOLS_BIN=$(tools_bin)"
     submit --array=0 --cpus-per-task=4 --time=00:30:00 --job-name=build-genomes-smoke-download \
         --export=ALL,$common,SOURCES=atb+portal_gff,CHUNK=4 "$ARRAY"
     submit --array=0-1 --cpus-per-task=8 --time=03:00:00 --job-name=build-genomes-smoke-shovill \
@@ -76,7 +76,7 @@ m[m.source.ne('drop')].groupby('source').head(2).to_csv(sys.argv[2], index=False
     ;;
 submit)
     M=$GEN/genome_manifest.csv
-    common="MANIFEST=$M,OUT_ROOT=$STORE,SHARD_DIR=$GEN/shards,MLST_SCHEME=$SCHEME,TOOLS_BIN=$(tools_bin)"
+    common="MANIFEST=$M,OUT_ROOT=$STORE,SHARD_DIR=$GEN/shards,MLST_SCHEME=$SCHEME,GENOME_SIZE=$GENOME_SIZE,TOOLS_BIN=$(tools_bin)"
     n=$(chunks "$M" atb,portal_gff 40)
     submit --array=0-$((n - 1))%40 --cpus-per-task=8 --time=01:00:00 --job-name=build-genomes-download \
         --export=ALL,$common,SOURCES=atb+portal_gff,CHUNK=40 "$ARRAY"

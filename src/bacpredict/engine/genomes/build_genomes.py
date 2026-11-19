@@ -8,7 +8,16 @@ into ``--chunk-size`` chunks; task ``k`` takes chunk ``k``):
    ``atb`` downloads the ATB object (md5-checked against the S3 etag where it is one); ``portal_gff`` takes
    the ``##FASTA`` section of the portal's annotation file; ``shovill`` downloads the paired fastq
    (size-checked against ENA), pools runs, and runs **shovill 1.1.0 with its defaults** — the same
-   assembler and version as AllTheBacteria (``sw=shovill-spades/1.1.0`` in ATB headers).
+   assembler and version as AllTheBacteria (``sw=shovill-spades/1.1.0`` in ATB headers) — except two
+   settings that only decide whether the defaults work at all:
+
+   - ``--gsize`` is the organism's expected size (``--genome-size``). Shovill otherwise estimates it from
+     21-mers seen more than 10 times in R1, which fails below ~25x: a 17x MiSeq 2x300 sample was estimated
+     at 39 kbp, "subsampled" from a supposed 2,861x to 150x (5 % of its reads, under 1x real depth), and
+     came back as an empty assembly with exit status 0. The subsampling step — the only thing gsize
+     changes besides Lighter's k-mer table size — then caps genuinely deep samples at 150x, as intended.
+   - ``OMP_NUM_THREADS`` is set to ``--threads``. CSD3 exports ``OMP_NUM_THREADS=1`` to every session and
+     job, and SPAdes, an OpenMP program, obeys it over its own ``--threads``.
 2. **Genes** → ``<out-root>/prodigal/<Sample>.gff.gz``: one ``prodigal`` 2.6.3 call with **Prokka's
    flags** (``-c -m -g 11 -p single``), GFF output, on every genome whatever its source.
 3. **ST** — ``mlst`` (``--scheme`` when given), and assembly statistics.
@@ -27,6 +36,7 @@ Usage::
         --chunk-size 40 --task-index $SLURM_ARRAY_TASK_ID --out-root $G --shard-dir $T/genomes/shards \
         --tools-bin $PIXI_ENV/bin --threads $SLURM_CPUS_PER_TASK --mlst-scheme paeruginosa
     python -m bacpredict.engine.genomes.build_genomes --manifest M --sources shovill --chunk-size 1 --count-chunks
+    # shovill tasks also take --genome-size (bp), e.g. 6.6e6 for P. aeruginosa
 """
 
 from __future__ import annotations
@@ -196,8 +206,9 @@ def _split(field) -> list[str]:
     return [x for x in str(field).split(";") if x and x != "nan"] if pd.notna(field) else []
 
 
-def shovill_contigs(row: pd.Series, work: Path, bin_dir: Path, threads: int, ram_gb: int) -> list[tuple[str, str]]:
-    """Download the paired fastq (runs pooled) and assemble with shovill defaults."""
+def shovill_contigs(row: pd.Series, work: Path, bin_dir: Path, threads: int, ram_gb: int,
+                    genome_size: float | None = None) -> list[tuple[str, str]]:
+    """Download the paired fastq (runs pooled) and assemble with shovill defaults (``--gsize`` when given)."""
     urls, sizes, md5s = _split(row["fastq_urls"]), _split(row["fastq_bytes"]), _split(row["fastq_md5"])
     r1 = [u for u in urls if u.endswith("_1.fastq.gz")]
     r2 = [u for u in urls if u.endswith("_2.fastq.gz")]
@@ -220,12 +231,18 @@ def shovill_contigs(row: pd.Series, work: Path, bin_dir: Path, threads: int, ram
                     with open(p, "rb") as fh:
                         shutil.copyfileobj(fh, out)
     outdir = work / "shovill"
-    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}"}
+    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}", "OMP_NUM_THREADS": str(threads)}
+    gsize = ["--gsize", str(round(genome_size))] if genome_size else []
     subprocess.run([str(bin_dir / "shovill"), "--R1", str(pooled["R1"]), "--R2", str(pooled["R2"]),
-                    "--outdir", str(outdir), "--cpus", str(threads), "--ram", str(ram_gb),
+                    "--outdir", str(outdir), "--cpus", str(threads), "--ram", str(ram_gb), *gsize,
                     "--tmpdir", str(work), "--force"], check=True, env=env,
                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-    return read_fasta(outdir / "contigs.fa")
+    records = read_fasta(outdir / "contigs.fa")
+    if not records:  # shovill can exit 0 with an empty assembly; say why rather than fail later in Prodigal
+        log = outdir / "shovill.log"
+        tail = " | ".join(log.read_text(errors="replace").splitlines()[-6:]) if log.exists() else "no shovill.log"
+        raise RuntimeError(f"shovill produced no contigs: {tail}")
+    return records
 
 
 def run_prodigal(contigs_gz: Path, gff_gz: Path, bin_dir: Path, work: Path) -> int:
@@ -260,7 +277,7 @@ def run_mlst(contigs_gz: Path, bin_dir: Path, scheme: str | None) -> tuple[str, 
 
 
 def build_one(row: dict, out_root: Path, bin_dir: Path, tmp_root: Path, threads: int, ram_gb: int,
-              mlst_scheme: str | None) -> dict:
+              mlst_scheme: str | None, genome_size: float | None = None) -> dict:
     """Fetch/assemble, gene-call and type one genome; never raises — failures become a status."""
     t0, sample = time.time(), row["Sample"]
     contigs_gz = out_root / "contigs" / f"{sample}.fna.gz"
@@ -281,7 +298,7 @@ def build_one(row: dict, out_root: Path, bin_dir: Path, tmp_root: Path, threads:
                 download(row["portal_url"], dest)
                 records = contigs_from_portal_gff(dest)
             elif row["source"] == "shovill":
-                records = shovill_contigs(pd.Series(row), work, bin_dir, threads, ram_gb)
+                records = shovill_contigs(pd.Series(row), work, bin_dir, threads, ram_gb, genome_size)
             else:
                 raise ValueError(f"source {row['source']!r} is not buildable")
             write_renamed_contigs(records, sample, contigs_gz, row["source"])
@@ -320,6 +337,8 @@ def main() -> None:
     ap.add_argument("--ram-gb", type=int, default=32, help="shovill --ram")
     ap.add_argument("--tmp-dir", type=Path, default=Path(os.environ.get("TMPDIR", "/tmp")))
     ap.add_argument("--mlst-scheme", default=None)
+    ap.add_argument("--genome-size", type=float, default=None,
+                    help="expected genome size (bp), passed to shovill as --gsize; required for shovill sources")
     args = ap.parse_args()
 
     manifest = pd.read_csv(args.manifest, dtype=str)
@@ -328,6 +347,8 @@ def main() -> None:
     if args.count_chunks:
         print(n_chunks(manifest, sources, args.chunk_size))
         return
+    if "shovill" in sources and not args.genome_size:
+        raise SystemExit("--genome-size is required for shovill: its own estimate fails on low-depth reads")
     chunk = select_chunk(manifest, sources, args.chunk_size, args.task_index)
     if chunk.empty:
         raise SystemExit(f"task {args.task_index} has no genomes ({len(sources)} sources, chunk {args.chunk_size})")
@@ -339,11 +360,11 @@ def main() -> None:
     rows = chunk.to_dict("records")
     if "shovill" in sources or args.threads == 1:  # shovill takes every thread; one genome at a time
         results = [build_one(r, args.out_root, args.tools_bin, args.tmp_dir, args.threads, args.ram_gb,
-                             args.mlst_scheme) for r in rows]
+                             args.mlst_scheme, args.genome_size) for r in rows]
     else:
         with ProcessPoolExecutor(max_workers=args.threads) as ex:
             futs = [ex.submit(build_one, r, args.out_root, args.tools_bin, args.tmp_dir, 1, args.ram_gb,
-                              args.mlst_scheme) for r in rows]
+                              args.mlst_scheme, args.genome_size) for r in rows]
             results = [f.result() for f in futs]
     shard = args.shard_dir / f"{'+'.join(sources)}_{args.task_index:05d}.tsv"
     pd.DataFrame(results, columns=SHARD_COLUMNS).to_csv(shard.with_suffix(".part"), sep="\t", index=False)

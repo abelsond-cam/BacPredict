@@ -19,6 +19,7 @@ set -euo pipefail
 : "${SHARD_DIR:?}" "${QC_DIR:?}" "${REFS:?}"
 REPO=${REPO:-$HOME/workspace/BacPredict}
 CPUS=${SLURM_CPUS_PER_TASK:-32}
+export OMP_NUM_THREADS=$CPUS  # CSD3 exports 1 to every job; OpenMP tools would otherwise run on one core
 DB=${CHECKM2_DB:-$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/raw/CheckM2/Zenodo_db/CheckM2_database/uniref100.KO.1.dmnd}
 
 cd "$REPO/src/bacpredict/engine/genomes"

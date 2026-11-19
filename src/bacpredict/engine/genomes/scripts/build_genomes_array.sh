@@ -4,12 +4,12 @@
 #
 # Everything is passed by --export; size the array with build_genomes --count-chunks. Two shapes:
 #   download sources (atb, portal_gff): CHUNK≈40, 8 cores (one genome per core), ~15 min
-#   shovill: CHUNK=1, 8 cores / 54 GB (icelake-himem 6,760 MB per core), ~45 min per genome
+#   shovill: CHUNK=1, 8 cores / 54 GB (icelake-himem 6,760 MB per core), ~45 min per genome; needs GENOME_SIZE (bp)
 # e.g.
 #   N=$(uv run python -m bacpredict.engine.genomes.build_genomes --manifest $M --sources shovill \
 #         --chunk-size 1 --count-chunks)
 #   sbatch --array=0-$((N-1)) --cpus-per-task=8 --time=03:00:00 --job-name=build-genomes-shovill \
-#     --export=ALL,MANIFEST=$M,SOURCES=shovill,CHUNK=1,OUT_ROOT=$G,SHARD_DIR=$S,MLST_SCHEME=paeruginosa \
+#     --export=ALL,MANIFEST=$M,SOURCES=shovill,CHUNK=1,OUT_ROOT=$G,SHARD_DIR=$S,MLST_SCHEME=paeruginosa,GENOME_SIZE=6.6e6 \
 #     src/bacpredict/engine/genomes/scripts/build_genomes_array.sh
 #SBATCH --job-name=build-genomes
 #SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
@@ -42,5 +42,6 @@ echo "[$(date -Is)] host=$(hostname) task=${SLURM_ARRAY_TASK_ID:-0} sources=$SOU
 uv run --no-sync python -m bacpredict.engine.genomes.build_genomes \
     --manifest "$MANIFEST" --sources "$SOURCES" --chunk-size "$CHUNK" --task-index "${SLURM_ARRAY_TASK_ID:-0}" \
     --out-root "$OUT_ROOT" --shard-dir "$SHARD_DIR" --tools-bin "$TOOLS_BIN" \
-    --threads "$CPUS" --ram-gb "$RAM_GB" --tmp-dir "$WORK" ${MLST_SCHEME:+--mlst-scheme "$MLST_SCHEME"}
+    --threads "$CPUS" --ram-gb "$RAM_GB" --tmp-dir "$WORK" ${MLST_SCHEME:+--mlst-scheme "$MLST_SCHEME"} \
+    ${GENOME_SIZE:+--genome-size "$GENOME_SIZE"}
 echo "[$(date -Is)] done"
