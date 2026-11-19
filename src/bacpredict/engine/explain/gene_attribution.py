@@ -299,15 +299,26 @@ def attribute_genome_gradients(
 ) -> tuple[np.ndarray, float]:
     """Attribute every protein of one genome by gradients, returning per-protein scores and the base logit.
 
-    Why this exists beside the ablation path: ablation deletes a gene and asks whether the model
-    still predicts resistance. For a determinant that is **present in every genome and differs only
-    by a point mutation** — ``gyrA``, ``parC``, ``rpoB`` — deletion is the wrong counterfactual,
-    because the model never learned "``gyrA`` present → resistant". A gradient reads how the output
-    responds to the protein's *embedding*, which is where a point mutation actually lives.
+    ⛔ **From the zero baseline both methods here are INVALID on this architecture — do not use
+    them.** The checkpoint's bundled ``modeling_bacformer.py`` applies ``nn.LayerNorm`` as the
+    *first* operation on the raw protein embeddings (``:642``, ``:666``), so ``f(alpha * x) == f(x)``
+    exactly for ``alpha`` above ~1e-4. The model is degree-0 homogeneous in its input. By Euler's
+    theorem ``input_x_gradient`` is then identically zero (measured ``-6.0e-08`` summed over a
+    genome), and IG's integrand goes as ``1/alpha``. LayerNorm's ``eps`` keeps the integral finite
+    but concentrates nearly all of it in ``alpha < ~5e-5`` — below the smallest Gauss-Legendre node
+    at any affordable ``n_steps``. So the sum swings with ``n_steps`` instead of converging: it gave
+    ``-0.0105`` against a target gap of ``+4.5516`` at ``n_steps=50``, and ``-10.51`` at
+    ``n_steps=200``. *More* steps is *worse*. Measured on job 41324596.
 
-    It is also far cheaper. Ablation costs one forward per protein (5,390 for a Kp genome, measured
-    at 2,492 s in fp32); integrated gradients costs ``n_steps`` forward-backward passes for the
-    **whole genome at once**.
+    A gradient path is valid here only against a **non-degenerate baseline** (e.g. a cohort-mean
+    protein, which is also the continuous form of a wild-type-substitution counterfactual) or on a
+    **post-LayerNorm layer** (``LayerIntegratedGradients`` at ``bacformer.embeddings.norm1``), and
+    then only at ``n_steps >= 200``: at ``n_steps=50`` completeness error on the real 30-layer model
+    is 5-76%, where a 2-layer toy is exact. Neither variant is wired into this function yet.
+
+    The cost argument for a gradient path still holds — ablation is one forward per protein
+    (measured 1,250 s for a 4,071-protein TB genome in fp32, batched 16), against ``n_steps``
+    forward-backward passes for the **whole genome at once** (measured 162 s at ``n_steps=200``).
 
     ⚠ The per-protein aggregation is **not** the one :func:`attribute_genome` uses. captum's
     ablation broadcasts a feature group's whole delta to every member, so that path sums and divides
@@ -322,8 +333,9 @@ def attribute_genome_gradients(
     inputs : dict
         Forward kwargs from :func:`load_genome`.
     method : {"integrated_gradients", "input_x_gradient"}, default "integrated_gradients"
-        ``integrated_gradients`` integrates along a path from the zero baseline and satisfies
-        completeness; ``input_x_gradient`` is a single-pass local approximation.
+        ``integrated_gradients`` integrates along a path from the zero baseline;
+        ``input_x_gradient`` is a single-pass local approximation. ⛔ Both are degenerate on this
+        architecture — see the warning above. Neither satisfies completeness here.
     n_steps : int, default 50
         Path steps for integrated gradients. Ignored by ``input_x_gradient``.
     internal_batch_size : int, optional
@@ -423,8 +435,9 @@ def main() -> None:
     parser.add_argument("--dtype", choices=tuple(DTYPES), default="bf16",
                         help="bf16 matches deployment; fp32 is the precision check.")
     parser.add_argument("--method", choices=METHODS, default="ablation",
-                        help="ablation deletes each protein; the gradient methods read the response to "
-                             "its embedding, which is where a point mutation lives.")
+                        help="ablation deletes each protein and is the only validated choice; the "
+                             "gradient methods are DEGENERATE on this architecture (input LayerNorm "
+                             "makes the model scale-invariant) and must not be used.")
     parser.add_argument("--perturbations-per-eval", type=int, default=1,
                         help="Ablation only — ablated copies per forward pass.")
     parser.add_argument("--n-steps", type=int, default=50,

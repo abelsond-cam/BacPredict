@@ -261,6 +261,28 @@ def annotate_tb(frame: pd.DataFrame, sample: str, variant_genes: pd.DataFrame) -
     return out
 
 
+def _attribution_method(attribution_path: Path) -> str:
+    """Read the method a per-genome attribution parquet was written by.
+
+    The writer stamps ``bacpredict_method`` into the parquet's key-value metadata. Files written
+    before that stamp existed are ablation, which is what the default has always been.
+
+    Parameters
+    ----------
+    attribution_path : pathlib.Path
+        One ``{Sample}_attribution.parquet``.
+
+    Returns
+    -------
+    str
+        ``"ablation"``, ``"integrated_gradients"`` or ``"input_x_gradient"``.
+    """
+    import pyarrow.parquet as pq
+
+    meta = pq.read_schema(attribution_path).metadata or {}
+    return meta.get(b"bacpredict_method", b"ablation").decode() or "ablation"
+
+
 def annotate_cohort(
     attribution_dir: Path,
     cohort: pd.DataFrame,
@@ -320,7 +342,16 @@ def annotate_cohort(
         frame = frame.merge(genes, on="flat_index", how="left")
         frame["is_named_gene"] = ~looks_like_a_locus_tag(frame["gene_name"])
         frame["ast_label"] = labels.get(sample, -1)
-        frame["attribution_prob"] = delta_probability(frame["base_logit"], frame["attribution_logit"])
+        # delta_probability is only meaningful for ablation, where a score IS the counterfactual
+        # logit shift from one perturbation. A gradient method returns a *share of the total gap*
+        # f(x) - f(baseline), so sigmoid(base) - sigmoid(base - a_i) is not any probability shift.
+        # Writing it anyway produced a column that looked authoritative and meant nothing.
+        written_method = _attribution_method(attribution_path)
+        if written_method == "ablation":
+            frame["attribution_prob"] = delta_probability(frame["base_logit"], frame["attribution_logit"])
+        else:
+            frame["attribution_prob"] = np.nan
+        frame["attribution_method"] = written_method
 
         frame = (annotate_tb(frame, sample, variant_genes) if organism_key == "tb"
                  else annotate_kp(frame, sample, task_root, drug, determinant_sets=kp_sets))

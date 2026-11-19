@@ -273,3 +273,74 @@ def test_unknown_gradient_method_is_rejected() -> None:
 
     with pytest.raises(ValueError, match="Unknown gradient method"):
         attribute_genome_gradients(LogitForward(_ToyModel()), _toy_inputs(), method="saliency")
+
+
+class _LayerNormFirstToy(torch.nn.Module):
+    """The deployed architecture in miniature: LayerNorm is the FIRST op on the raw embeddings.
+
+    The checkpoints' bundled ``modeling_bacformer.py`` does exactly this (``:642``, ``:666``):
+    ``linear(norm1(protein_embeddings))``. It makes the model degree-0 homogeneous in its input —
+    ``f(alpha * x) == f(x)`` for any ``alpha > 0`` — which is the property that silently voided
+    every zero-baseline gradient attribution. The toys above lack it, which is why they passed.
+    """
+
+    def __init__(self, width: int = 4) -> None:
+        super().__init__()
+        self.norm1 = torch.nn.LayerNorm(width, eps=1e-12)
+        self.linear = torch.nn.Linear(width, 1, bias=False)
+        with torch.no_grad():
+            self.linear.weight.copy_(torch.tensor([[1.0, -0.5, 0.25, 2.0]]))
+
+    def forward(self, protein_embeddings, attention_mask=None, contig_ids=None, return_dict=True):
+        """Normalise each protein, project it, and sum over the genome."""
+        return _ToyOutput(self.linear(self.norm1(protein_embeddings)).squeeze(-1).sum(dim=1, keepdim=True))
+
+
+def test_layernorm_first_model_is_scale_invariant() -> None:
+    """f(alpha*x) == f(x). This is the structural fact behind the degeneracy — pin it."""
+    model = _LayerNormFirstToy()
+    inputs = _toy_inputs()
+    wrapped = LogitForward(model)
+    with torch.no_grad():
+        base = float(wrapped(inputs["protein_embeddings"], inputs["attention_mask"], inputs["contig_ids"]).item())
+        for alpha in (0.01, 0.5, 2.0, 100.0):
+            scaled = float(wrapped(inputs["protein_embeddings"] * alpha,
+                                   inputs["attention_mask"], inputs["contig_ids"]).item())
+            assert scaled == pytest.approx(base, abs=1e-4), f"alpha={alpha} changed the logit"
+
+
+def test_zero_baseline_gradients_are_degenerate_on_a_layernorm_first_model() -> None:
+    """⛔ The regression test the earlier suite did not have.
+
+    On a LayerNorm-first model ``f(alpha*x) == f(x)``, so the gradient is degree ``-1`` homogeneous
+    and the integrand of a zero-baseline IG behaves as ``1/alpha``. LayerNorm's ``eps`` keeps the
+    integral finite, but it concentrates essentially all of it in ``alpha < ~1e-5`` — below the
+    smallest Gauss-Legendre node at any affordable ``n_steps``. Two consequences, both asserted:
+
+    - ``input_x_gradient`` is identically zero (Euler's theorem). Measured ``-6.0e-08`` summed over
+      a real genome.
+    - The IG sum swings wildly with ``n_steps`` instead of converging. Measured on this toy:
+      ``0.002`` at ``n=25``, ``0.53`` at ``n=100``, ``5.68`` at ``n=200``, ``10.64`` at ``n=400``.
+      On the real 30-layer model (job 41324596) it went ``-0.0105`` at ``n=50`` to ``-10.51`` at
+      ``n=200`` against a target gap of ``+4.5516`` — more steps, worse answer.
+
+    A convergent quadrature is stable in ``n`` by construction. If this test starts failing, the
+    architecture changed; re-read ``modeling_bacformer.py`` before trusting a gradient attribution.
+    """
+    pytest.importorskip("captum")
+    from bacpredict.engine.explain.gene_attribution import attribute_genome_gradients
+
+    inputs = _toy_inputs()
+    wrapped = LogitForward(_LayerNormFirstToy())
+
+    ixg, _ = attribute_genome_gradients(wrapped, inputs, method="input_x_gradient")
+    assert np.abs(ixg).max() < 1e-4, f"input*gradient should vanish, got max |a| = {np.abs(ixg).max():.3e}"
+
+    sums = {}
+    for n_steps in (50, 100, 200):
+        attributions, _ = attribute_genome_gradients(
+            wrapped, inputs, method="integrated_gradients", n_steps=n_steps)
+        sums[n_steps] = float(attributions.sum())
+    assert sums[200] > 10 * max(abs(sums[50]), 1e-6), (
+        f"IG stopped being n_steps-dependent ({sums}) — the model may no longer be scale-invariant"
+    )

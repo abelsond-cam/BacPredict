@@ -22,10 +22,20 @@
 # returns 13 distinct attribution values with 96.2% of genes exactly zero, because the base logit
 # sits near 7.3 where the bf16 ULP is ~0.016. fp32 returns 4,903 distinct values and no zeros.
 #
-# METHOD defaults to integrated_gradients. Ablation deletes a gene, which is the wrong counterfactual
-# for a determinant present in every genome and differing only by a point mutation (gyrA, parC, rpoB).
-# It is also ~50x cheaper: n_steps forward-backward passes for the whole genome, against one forward
-# per protein.
+# METHOD defaults to ablation. ⛔ Do NOT set METHOD=integrated_gradients or input_x_gradient:
+# from the zero baseline both are INVALID on this architecture. The checkpoint's bundled
+# modeling_bacformer.py applies nn.LayerNorm as the FIRST operation on the raw protein embeddings
+# (modeling_bacformer.py:642,666), so f(alpha*x) == f(x) exactly for alpha above ~1e-4. The model is
+# degree-0 homogeneous in its input, which makes input_x_gradient identically zero by Euler's
+# theorem (measured -6.0e-08 summed over a genome) and puts the entire integral of IG below the
+# smallest quadrature node captum ever samples (completeness: sum -0.0105 against a target gap of
+# +4.5516 at n_steps=50; sum -10.51 at n_steps=200 -- MORE steps is WORSE, the signature of a
+# singular integrand). Measured on job 41324596.
+#
+# A gradient path is only valid here against a non-degenerate baseline (cohort-mean protein) or on a
+# post-LayerNorm layer (LayerIntegratedGradients at bacformer.embeddings.norm1), and then only at
+# n_steps=200 -- at n_steps=50 completeness error is 5-76% on the real 30-layer model. Neither is
+# wired into this script yet; see job 41326249 for the measured comparison.
 #
 #SBATCH --job-name=gene-ablation
 # %j is the task's own job id, unique for a plain job AND for each array task — %A_%a would
@@ -55,7 +65,7 @@ export PYTHONUNBUFFERED=1
 : "${ORGANISM:=tb}"
 : "${DRUG:=rifampin}"
 : "${DTYPE:=fp32}"
-: "${METHOD:=integrated_gradients}"
+: "${METHOD:=ablation}"
 : "${PERTURBATIONS_PER_EVAL:=1}"
 : "${N_STEPS:=50}"
 : "${INTERNAL_BATCH_SIZE:=4}"
