@@ -1,7 +1,15 @@
 # BacPredict — project state
 
-> **Last verified: 2026-11-19 @ `e46c81e`** (branch `refactor/consolidate-engine`).
-> **Verification scope, this pass (2026-11-19, second): §3.6 genome build, QC and ST counts only.** Read on
+> **Last verified: 2026-11-19 @ `480ce9d`** (branch `refactor/consolidate-engine`).
+> **Verification scope, this pass (2026-11-19, fourth): §3.6 Enterobacterales labels, BakRep coverage, the
+> CheckM2 scikit-learn check and the PsA ESM-C smoke only.** Read on CSD3 from
+> `train_entero_ast/{label_counts,cohort,label_provenance}.csv` (built at `480ce9d`; md5 `2bbb7558…`,
+> `84b67e1f…`), `processed/bakrep_coverage_20261119/join_output.txt` (the join re-run on CSD3 against the
+> staged BakRep export, md5 `95e43aa1…`), `train_pa_ast/genomes/qc/checkm2_sklearn_check/` and the logs of
+> jobs `41397962`, `41399821`, `41405814`. **Nothing else was re-verified this pass.**
+>
+> **Stamp before this one: 2026-11-19 @ `e46c81e`.**
+> **Verification scope, that pass (2026-11-19, second): §3.6 genome build, QC and ST counts only.** Read on
 > CSD3 from `train_pa_ast/genomes/`: `genome_qc.csv`, `embedding_input.csv` and `st_counts_by_drug.csv`
 > (written by `build_pa_genomes.sh collate` at `e46c81e`; md5 `b5a8b03f…`, `f6de3cfa…`, `65c09abe…`), the
 > 439 build shards and `qc/{checkm2_quality_report,skani_dist}.tsv`. Every number was recomputed from the
@@ -1346,11 +1354,15 @@ wrong long-term: target AMR genes are individually rare but collectively penetra
 
 ### 3.6 Multi-species AMR — EBI AMR Portal (*P. aeruginosa* → Enterobacterales → all)
 
-**Status.** *P. aeruginosa* (PsA) **labels are built** on CSD3 at `7e47486`. **Genomes are built and
-QC'd** (2026-11-19): 3,677 pass. **Waiting at the step-2 checkpoint for David**: the held-out ST, and the
-three cohort questions under *Next*. The ESM-C stage is written and reviewed (`5a512e1`) but has not run,
-because its cohort (`embedding_input.csv`) changes if those answers drop genomes. Splits and training are
-not started. Mechanics: [`apps/pa/CLAUDE.md`](src/bacpredict/apps/pa/CLAUDE.md).
+**Status.** Scope is **PsA and Enterobacterales only** for now (David, 2026-11-19); the all-species
+cohort stays planned. *P. aeruginosa* (PsA) **labels are built** (`7e47486`) and its **genomes are built and
+QC'd**: 3,677 pass. **Enterobacterales labels are built** (`480ce9d`); its genomes are not.
+**Annotation is switching from Prodigal to Bakta** (David, 2026-11-19: "Bakta as standard"), so nothing is
+embedded yet: the PsA Prodigal protein parquets (job `41397962`) and ESM-C smoke (`41399821`) ran and passed,
+but the full PsA ESM-C array (`41401432`) was cancelled before any task started. QC (CheckM2, skani), MLST, the
+3,677 pass set and the held-out-ST candidates do not use gene calls and stand. The PsA held-out ST and cohort
+drops are deferred to the splits stage. Splits and training are not started. Mechanics:
+[`apps/pa/CLAUDE.md`](src/bacpredict/apps/pa/CLAUDE.md) (its *Genomes* section still describes Prodigal).
 
 **Numbers of record — PsA labels.** Read from
 `$R/bac_ast_prediction/processed/train_pa_ast/label_counts.csv`; its `manifest.json` records the input
@@ -1438,18 +1450,80 @@ shovill array `41326674` plus rerun `41335542`, QC job `41336261` (CheckM2 3 h 6
 | 395 | 63 | 3 | 6 | 35 % | 4 |
 | 308 | 57 | 1 | 6 | 21 % | 0 |
 
+**Numbers of record — Enterobacterales labels.** Read from
+`$R/bac_ast_prediction/processed/train_entero_ast/label_counts.csv`, built by
+`apps/entero/scripts/build_entero_ast_labels.sh` at `480ce9d` (every Enterobacterales genus in
+`engine/ast_labels/breakpoints.py`, the PsA ten drugs and label rule, portal only).
+
+| Drug | Labelled genomes | % R | From MIC | From the source's call |
+|---|--:|--:|--:|--:|
+| ciprofloxacin | 61,385 | 27.5 | 46,560 | 14,741 |
+| meropenem | 46,499 | 6.0 | 36,737 | 9,737 |
+| ceftazidime | 26,382 | 34.9 | 17,183 | 9,191 |
+| amikacin | 21,194 | 11.2 | 18,544 | 2,618 |
+| piperacillin-tazobactam | 20,797 | 27.7 | 14,573 | 6,224 |
+| imipenem | 16,340 | 11.9 | 13,712 | 2,615 |
+| cefepime | 13,748 | 42.1 | 11,813 | 1,929 |
+| tobramycin | 13,179 | 38.3 | 10,171 | 3,000 |
+| aztreonam | 11,812 | 49.9 | 9,973 | 1,837 |
+| levofloxacin | 11,237 | 49.1 | 10,198 | 1,031 |
+
+- **242,573 clean labels over 67,763 genomes** (`cohort.csv`, `n_drugs_labelled > 0`), 9 genera, 44 species
+  labels: *Salmonella* 32,253, *Escherichia* 21,905, *Klebsiella* 9,478, *Shigella* 2,275, *Enterobacter*
+  1,333, *Serratia* 329, *Proteus* 105, *Morganella* 60, *Providencia* 25. `genome_route` assembly 67,077,
+  reads 686. 25 cells are fractional (conflicting tests).
+- **EUCAST re-derivation moves %R per genus.** *Salmonella* ciprofloxacin is 17.3 % R under EUCAST (31,691
+  genomes; `label_provenance.csv` × `cohort.csv` species) against 9.0 % under the portal's own calls
+  (`processed/ebi_amr_portal/scoping_2026-07/species_drug_counts.csv`; not the same genome set, so a contrast,
+  not a paired comparison). Other large shifts in the same read: *Enterobacter* imipenem 13.9 % vs 54.4 %,
+  *E. coli* aztreonam 30.0 % vs 12.3 %.
+- **6,919 of the 7,088 Kp AST samples (§3.1) are in this cohort.** Any comparison against the July Kp
+  checkpoints must hold out none of their train/validate samples.
+
+**Numbers of record — BakRep coverage.** BakRep v2 serves AllTheBacteria's own Bakta run (Bakta 1.9.4, full
+DB v5.1, over ATB release 0.2 + the 2024-08 increment). Read from
+`processed/bakrep_coverage_20261119/join_output.txt` (`join.py` beside it, re-run on CSD3): the BakRep export
+staged at `$R/raw/bakrep/v2_export_20250612/bakrep-export.tsv.gz` joined to each cohort and the ATB inventory.
+
+| Cohort | In BakRep | We must run Bakta |
+|---|--:|--:|
+| PsA, QC-pass | 1,792 of 3,677 | 1,885: 339 ATB 2026-09 batch, 1 ATB 2025-06, 1,212 `portal_gff`, 333 shovill |
+| Enterobacterales, labelled | 63,700 of 67,763 | 4,063: 283 ATB Bakta failures (274 *Salmonella*), 1,380 later ATB batches, 2,176 non-ATB assemblies, 224 reads-only |
+
+- For all 1,843 PsA genomes BakRep holds, its contig count, total length and N50 equal ours exactly
+  (`cmp_pa.py`); sequence-level checks on 4 genomes match byte for byte (BakRep ran Bakta with
+  `--keep-contig-headers`), so BakRep GFF3 coordinates sit on our ATB contigs.
+- **BakRep's MLST is not used.** It leaves 464 of the 1,843 PsA genomes untyped where ours leaves 132, and
+  never disagrees where both type (`cmp_pa.py`). Our own `mlst` 2.35.0 runs on every genome.
+
+**Numbers of record — CheckM2 scikit-learn check.** CheckM2 1.1.0 warns that its scaler was pickled under
+scikit-learn 1.6.1 and is loaded under 1.9.1. Rerun on 50 PsA genomes (10 nearest the QC thresholds, 40
+random) under both versions, in two envs that differ only in scikit-learn (job `41405814`): the two
+`quality_report.tsv` are **byte-identical** (md5 `df9df788…`) and equal `genome_qc.csv` exactly. No pin; the
+PsA QC numbers stand. Artifacts: `train_pa_ast/genomes/qc/checkm2_sklearn_check/`.
+
+**Measured — ESM-C throughput on one A100** (PsA smoke, job `41399821`, Prodigal inputs, superseded but the
+rate stands): ~18 s per genome at ~6,400 proteins (2.8 ms per protein) after warm-up, HuggingFace ESM-C (no
+faESM), bf16, `--max-proteins 9000`; log `pa-esm-smoke_41399821_0.err`. 34 of 3,677 PsA genomes have more
+than 1,000 contigs; Bacformer's input packing (`max_n_contigs=1000`) keeps all their proteins but gives every
+contig past the 1,000th the same contig id.
+
 **In flight.** Nothing.
 
-**Next.** In the agreed order, with a checkpoint after each of steps 2 and 3:
-2. **Checkpoint now — David to decide:** (a) the held-out ST, and whether membership is the ST alone or the
-   ST plus its single-locus variants and near-matching untyped genomes; (b) whether to drop the 20
-   QC-passing portal assemblies whose only reads are long reads; (c) the low-depth Cortes-Lara 2021
-   genomes (drop, as now, or rescue with non-default shovill); (d) the minimum per-class count for a drug
-   to be scored on the held-out ST.
-3. ESM-C in bf16: a 10-genome GPU smoke test, then all PsA genomes, with throughput measured
-   (`apps/pa/scripts/build_pa_embeddings.sh`, `--max-proteins 9000`).
-4. All ~166k portal genomes, Enterobacterales first.
-5. Splits (the ST holdout plus others, through `engine/splits`), then training.
+**Next.** Agreed with David 2026-11-19 ("even annotation sorted before embedding and models lock us in"):
+1. **Bakta surface.** Use BakRep's Bakta 1.9.4 / DB v5.1 annotation where BakRep holds the genome; run the
+   *same* Bakta version and flags (`--keep-contig-headers`, default translation table) on every genome it
+   lacks. First a **validation gate**: our Bakta 1.9.4 on ~15 genomes BakRep holds (PsA, *E. coli*,
+   *Salmonella*, *Klebsiella*) plus 2–3 of the 283 ATB Bakta failures, diffing CDS coordinates and extracted
+   proteins against BakRep. Ingest checks every GFF3's `# Software:` / `# Database:` header (a BakRep re-run
+   is being prepared upstream).
+2. **PsA:** BakRep GFF3 for 1,792; our Bakta for 1,885; rebuild protein parquets; then ESM-C (SL2-GPU).
+3. **Enterobacterales:** genome sources and contigs (ATB first; build design in `apps/entero/CLAUDE.md`),
+   CheckM2 on every genome (ours, uniform), skani species check (rule to be decided with data), our `mlst`,
+   BakRep GFF3 + our Bakta for the rest, then ESM-C (~250 A100-h at the measured rate, SL2-GPU).
+4. Splits (the ST holdout plus others, through `engine/splits`), then training. **PsA decisions deferred to
+   here:** (a) the held-out ST and its membership rule; (b) the 20 long-read-only portal assemblies; (c) the
+   low-depth Cortes-Lara 2021 genomes; (d) the minimum per-class count for a drug to be scored.
 
 Later: the AMR-GNN-cut benchmark, ANI thinning, and causal attribution of the predictions.
 
@@ -1493,11 +1567,18 @@ Later: the AMR-GNN-cut benchmark, ANI thinning, and causal attribution of the pr
   group them, or they leak across the holdout.
 - `finetune_amr` and `build_split_csv` have **no `pa_ast` task key yet**. Paths must be explicit until
   one is added (a shared-engine change).
-- EUCAST's *Salmonella* ciprofloxacin breakpoint (R > 0.06) roughly doubles *Salmonella* %R relative to
-  the source calls. This is an observation from a local review run, to quantify at step 4.
+- **The QC-pass Prodigal GFFs and `n_cds` in `genome_qc.csv` are not the annotation of record** once Bakta
+  lands; `n_cds` and the CDS-per-Mbp figures above are Prodigal counts.
+- **Unverified, raised by a design review — check before training:** `finetune_amr` casts labels with
+  `int()`, which would turn a fractional (conflicting) label into 0, and draws k-folds over every labelled
+  genome, so a genome with no embedding would fail mid-run. PsA has 2 fractional cells and 255 labelled
+  genomes without an embedding; Enterobacterales 25 and thousands. Splits must restrict to QC-passing genomes
+  with 0/1 labels.
+- **ST numbers collide across MLST schemes** (ST11 is *Salmonella*, *K. pneumoniae* and *E. coli*). Any
+  multi-genus ST count or ST holdout must key on scheme:ST, never `st` alone.
 
 **Owns.** `engine/ast_labels/{breakpoints,ast_tests,build_binary_ast_labels}.py`,
-`engine/ast_labels/eucast_v15_breakpoints.csv`, `apps/pa/`.
+`engine/ast_labels/eucast_v15_breakpoints.csv`, `apps/pa/`, `apps/entero/`.
 
 ---
 
@@ -1522,6 +1603,8 @@ correct.**
 | `train_pa_ast/genomes/genome_manifest.csv` (+ `ena_filereport_cache.tsv`) | `engine/genomes/plan_genome_sources` (`build_pa_genomes.sh plan`) | the build arrays, `collate` | Every PsA genome built from it; a re-plan that changes a genome's source rebuilds it in place |
 | `raw/ast_cohort_genomes/{contigs,prodigal}/<Sample>.{fna,gff}.gz` (keyed by BioSample, shared across organisms) | `engine/genomes/build_genomes` arrays | QC, `collate`, the protein extractor | Protein parquets and ESM-C embeddings of that genome (the PsA `check` stage flags a parquet older than its GFF) |
 | `train_pa_ast/genomes/{genome_qc,embedding_input,st_counts_by_drug}.csv` | `engine/genomes/collate_genomes` | ESM-C stage (`embedding_input.csv` is its cohort); the held-out-ST choice | The PsA embeddings' cohort, the ST holdout, every PsA split |
+| `train_entero_ast/{binary_ast,cohort,label_counts}.csv` | `engine/ast_labels/build_binary_ast_labels` (via `apps/entero/scripts/build_entero_ast_labels.sh`) | Enterobacterales genome acquisition and splits | Every Enterobacterales genome manifest, split and model |
+| `raw/bakrep/v2_export_20250612/bakrep-export.tsv.gz` + `processed/bakrep_coverage_20261119/` | BakRep's published export; `join.py` | Which genomes take BakRep's Bakta annotation and which get our own Bakta run | The annotation source of every PsA and Enterobacterales genome |
 
 **`catalogue_ceiling_panel.csv` is reproducible.** It was hand-assembled once, which was itself the
 defect this file exists to prevent; `engine/ref_catalogues/build_ceiling_panel` now regenerates it
@@ -1643,6 +1726,10 @@ directory was consolidated. Several of these existed nowhere else.
 | 2026-11-18 | **An even genome surface, for publication.** Shovill for every genome assembled from reads, including the 195 Khaledi et al. genomes that NCBI already holds assemblies for. AllTheBacteria assemblies (themselves shovill) where they exist, including the undocumented 2026-09 batch. One Prodigal 2.6.3 run with Prokka's flags on every genome, then `mlst`. Genomes that fail the species check are excluded. RNA-seq-only and ONT-only BioSamples are dropped (shovill is short-read only). Reads under 10× depth are not assembled. New pixi env (bioconda shovill / mlst / prodigal 2.6.3) approved. |
 | 2026-11-18 | **ESM-C embeddings are stored in bf16** in a new project_k store. They are computed in bf16, so this is lossless and halves the store. It does not bear on the bf16 attribution finding in §3.1, which concerns the model's logits, not its stored inputs. |
 | 2026-11-18 | **Later experiments, not the primary test:** benchmark on AMR-GNN's own cuts, which needs a restricted training set; and thin the training set by ANI so that a dominant species such as *Salmonella* cannot dominate. |
+| 2026-11-19 | **Scope: PsA and Enterobacterales only for now**; the all-species cohort stays planned. Its labels need a decision first: our breakpoint table holds only Enterobacterales and *Pseudomonas* rows, and many species × drug pairs (all of *M. tuberculosis*) have no EUCAST breakpoint. |
+| 2026-11-19 | **Bakta is the annotation standard, not Prodigal** (amends the 2026-11-18 surface decision's "one Prodigal 2.6.3 run"). Bakta 1.9.4 with the full DB v5.1: BakRep's annotation where BakRep holds the genome, our own run of the same version and flags otherwise, gated by a reproduction check. Even annotation is sorted before anything is embedded. `mlst` stays ours (2.35.0) on every genome. |
+| 2026-11-19 | **CheckM2: our own run on every genome** (one QC surface), not AllTheBacteria's published values. scikit-learn stays unpinned: 1.6.1 and 1.9.1 give byte-identical reports on 50 genomes. |
+| 2026-11-19 | **PsA: embed every QC-passing genome; decide the held-out ST and the two cohort drops at the splits stage.** Embeddings are per genome and label-free. **ESM-C runs on FLOTO-SL2-GPU.** |
 
 ### Invasion / lab collection
 
