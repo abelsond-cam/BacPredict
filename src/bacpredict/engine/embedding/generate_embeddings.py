@@ -12,6 +12,7 @@ downstream uses). Models are loaded once and reused across genomes.
 
 import argparse
 import logging
+import os
 import sys
 import time
 from datetime import datetime, timedelta
@@ -202,6 +203,21 @@ def check_embeddings_exist(sample_id: str, esm_dir: Path, bacformer_dir: Path | 
     return (bacformer_dir / f"{sample_id}_bacformer_embeddings.pt").exists()
 
 
+def _atomic_torch_save(obj, path: Path) -> None:
+    """``torch.save`` to a sibling ``.part`` file, then rename it into place.
+
+    ``--skip-existing`` trusts any file at the final name, so a save cut short by a wall-time kill must never
+    leave one there: it would be skipped on every rerun and fail only inside a later fine-tune's DataLoader.
+    The ``.part`` name matches no ``*_embeddings.pt`` glob.
+    """
+    tmp = path.with_name(path.name + ".part")
+    try:
+        torch.save(obj, tmp)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def load_protein_sequences(protein_seq_path: Path) -> tuple[str, list]:
     """Load protein sequences from parquet file.
 
@@ -229,6 +245,7 @@ def process_genome_from_protein_sequences(
     batch_size: int = 128,
     max_proteins: int = 6000,
     max_contigs: int = 1000,
+    save_dtype: torch.dtype = torch.float32,
 ) -> tuple[str, bool, str]:
     """Process a single genome from pre-generated protein sequences.
 
@@ -247,6 +264,10 @@ def process_genome_from_protein_sequences(
         batch_size: Batch size for ESM embedding computation
         max_proteins: Maximum number of proteins per genome
         max_contigs: Maximum number of contigs per genome
+        save_dtype: dtype the embedding tensors are stored in (``protein_embeddings`` and the Bacformer
+            output). ``torch.bfloat16`` halves the store; ESM-C already runs in bf16, and the trainer casts its
+            weights to bf16. Masks and contig ids keep their historical float32 either way — contig ids in
+            bf16 would round above 256.
 
     Returns
     -------
@@ -287,7 +308,8 @@ def process_genome_from_protein_sequences(
         esm_output_path = esm_dir / f"{sample_id}_esm_embeddings.pt"
         logger.debug(f"Processing {sample_id}: Saving ESM embeddings to {esm_output_path}")
         esm_embeddings_cpu = {k: v.float().cpu() for k, v in bacformer_inputs.items()}
-        torch.save(esm_embeddings_cpu, esm_output_path)
+        esm_embeddings_cpu["protein_embeddings"] = esm_embeddings_cpu["protein_embeddings"].to(save_dtype)
+        _atomic_torch_save(esm_embeddings_cpu, esm_output_path)
 
         # Optional Bacformer stage
         if bacformer_model is not None and bacformer_dir is not None:
@@ -295,8 +317,8 @@ def process_genome_from_protein_sequences(
             last_hidden_state = bacformer_last_hidden_state(bacformer_model, bacformer_inputs)
             bacformer_output_path = bacformer_dir / f"{sample_id}_bacformer_embeddings.pt"
             logger.debug(f"Processing {sample_id}: Saving Bacformer embeddings to {bacformer_output_path}")
-            bacformer_embeddings_cpu = last_hidden_state.float().cpu()
-            torch.save(bacformer_embeddings_cpu, bacformer_output_path)
+            bacformer_embeddings_cpu = last_hidden_state.float().cpu().to(save_dtype)
+            _atomic_torch_save(bacformer_embeddings_cpu, bacformer_output_path)
 
         return sample_id, True, ""
 
@@ -329,6 +351,13 @@ def main():
         type=int,
         default=6000,
         help="Maximum number of proteins per genome (default: 6000)",
+    )
+    parser.add_argument(
+        "--save-dtype",
+        choices=["float32", "bfloat16"],
+        default="float32",
+        help="dtype of the stored embeddings (default float32; bfloat16 halves the store — protein "
+        "embeddings and Bacformer outputs only, masks and contig ids stay float32)",
     )
     parser.add_argument(
         "--max-contigs",
@@ -485,6 +514,7 @@ def main():
             batch_size=args.batch_size,
             max_proteins=args.max_proteins,
             max_contigs=args.max_contigs,
+            save_dtype=getattr(torch, args.save_dtype),
         )
 
         genome_elapsed = time.time() - genome_start
