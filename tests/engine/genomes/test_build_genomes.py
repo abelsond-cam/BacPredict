@@ -13,6 +13,7 @@ from bacpredict.engine.genomes.build_genomes import (
     build_one,
     contigs_from_portal_gff,
     contigs_source,
+    download,
     gff_contigs_md5,
     n_chunks,
     read_fasta,
@@ -96,3 +97,21 @@ def test_build_one_portal_genome_end_to_end_and_failure_is_a_row(tmp_path, monke
                     out_root, bin_dir, tmp, 1, 8, None)
     assert bad["status"].startswith("fail:") and bad["Sample"] == "S2"
     assert list(tmp.iterdir()) == []                                  # work dirs cleaned up
+
+
+def test_download_retries_every_failure_without_flags_old_curl_rejects(tmp_path, monkeypatch):
+    """CSD3 ships curl 7.61, which exits 2 on ``--retry-all-errors``; the retry loop must be ours."""
+    bin_dir, calls = tmp_path / "bin", tmp_path / "calls"
+    bin_dir.mkdir()
+    # a curl 7.61 stand-in: unknown flag → exit 2; otherwise fail twice (as a throttled EBI would), then succeed
+    (bin_dir / "curl").write_text(
+        '#!/bin/sh\nfor a; do [ "$a" = "--retry-all-errors" ] && exit 2; done\n'
+        f'echo x >> "{calls}"\n'
+        f'[ "$(wc -l < "{calls}")" -lt 3 ] && {{ echo "curl: (7) Failed to connect" >&2; exit 7; }}\n'
+        'while [ "$1" ]; do [ "$1" = "-o" ] && out="$2"; shift; done\nprintf hello > "$out"\n')
+    (bin_dir / "curl").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+    monkeypatch.setattr("bacpredict.engine.genomes.build_genomes.CURL_RETRY_DELAY_S", 0)
+    dest = tmp_path / "f"
+    download("https://example.org/f", dest, md5="5d41402abc4b2a76b9719d911017c592", nbytes="5")
+    assert dest.read_text() == "hello" and len(calls.read_text().split()) == 3

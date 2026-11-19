@@ -171,10 +171,21 @@ def _md5(path: Path) -> str:
 
 
 def download(url: str, dest: Path, md5: str | None = None, nbytes: str | None = None) -> None:
-    """Fetch with curl (retrying), then verify md5 and/or size when the source publishes them."""
-    subprocess.run(["curl", "-fsSL", "--retry", str(CURL_RETRIES), "--retry-delay", str(CURL_RETRY_DELAY_S),
-                    "--retry-all-errors",
-                    "--connect-timeout", "60", "-o", str(dest), url], check=True)
+    """Fetch with curl, retrying any failure, then verify md5 and/or size when the source publishes them.
+
+    Every failure is retried, because EBI refuses bursts of parallel requests with errors curl does not treat
+    as transient. The loop is ours rather than curl's ``--retry-all-errors``, which needs curl >= 7.71: CSD3's
+    Rocky 8 ships 7.61, where that flag exits 2 before fetching anything.
+    """
+    cmd = ["curl", "-fsSL", "--retry", "2", "--connect-timeout", "60", "-o", str(dest), url]
+    for attempt in range(CURL_RETRIES + 1):
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+            break
+        except subprocess.CalledProcessError:
+            if attempt == CURL_RETRIES:
+                raise
+            time.sleep(CURL_RETRY_DELAY_S)
     if nbytes and str(nbytes).isdigit() and dest.stat().st_size != int(nbytes):
         raise ValueError(f"size mismatch for {url}: {dest.stat().st_size} != {nbytes}")
     if md5 and isinstance(md5, str) and len(md5) == 32 and _md5(dest) != md5:
