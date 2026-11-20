@@ -8,6 +8,7 @@
 #   cd src/bacpredict/engine/genomes && pixi install --all
 #   pixi run -- printenv CONDA_PREFIX            # → <env>/bin is what --tools-bin takes
 #   pixi run -e checkm2 checkm2 --version
+#   pixi run -e bakta bakta --version
 #
 # Versions are pinned where they define the genome surface:
 # - shovill 1.1.0 is what AllTheBacteria assembled with (`sw=shovill-spades/1.1.0` in ATB headers), so
@@ -36,5 +37,17 @@ skani = ">=0.2.2"
 # CheckM2's recipe carries old transitive pins (python <3.9 etc.), hence its own environment.
 checkm2 = ">=1.0.2"
 
+[feature.bakta.dependencies]
+# Bakta 1.9.4 is the annotation of record (PROJECT_STATE §6): it is what BakRep v2 / AllTheBacteria ran (every
+# BakRep GFF3 is stamped `# Software: v1.9.4` / `# Database: v5.1, full`), so genomes BakRep lacks are annotated
+# by the same release. Not ≥1.10: those write pseudogenes as `pseudogene=`, and the protein extractor filters on
+# `pseudo` only. pyhmmer stays below 0.12, which made `Hit.name` a str that bakta 1.9.x still `.decode()`s on the
+# CDS path (found in nuna's env, setup/csd3/bakta; python 3.10 as there). Its own environment so Bakta's ~170
+# packages never re-solve the build tools above.
+python = "3.10.*"
+bakta = "==1.9.4"
+pyhmmer = ">=0.10.15,<0.12"
+
 [environments]
 checkm2 = { features = ["checkm2"], no-default-feature = true }
+bakta = { features = ["bakta"], no-default-feature = true }
