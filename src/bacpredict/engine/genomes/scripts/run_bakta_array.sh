@@ -3,7 +3,8 @@
 #
 #   ROSTER     TSV, no header, absolute path: Sample<TAB>contigs path. Task k takes rows k*CHUNK+1 … (k+1)*CHUNK;
 #              a task whose slice is empty fails (the --array range does not match the roster).
-#   OUT_DIR    <Sample>.bakta.<ext>.gz (KEEP, default gff3,faa,json,txt), the log, and <Sample>.bakta.run.json
+#   OUT_DIR    <Sample>.bakta.<ext>.gz (KEEP, '+'-joined so sbatch --export can carry it; default
+#              gff3+faa+json+txt), the log, and <Sample>.bakta.run.json
 #   TOOLS_BIN  bin/ of the engine/genomes `bakta` pixi env — resolve at submit time, never in a task
 #   DB         Bakta database v5.1 full ($ROOT/raw/bakta_db/v5.1_full)
 #   CHUNK      genomes per task (default 1); EXPECT_SHA: refuse to run if the shared checkout has moved
@@ -54,7 +55,7 @@ for row in "${rows[@]}"; do
     # --no-sync: concurrent tasks must not race to re-sync the shared venv
     if ! uv run --no-sync python -m bacpredict.engine.genomes.bakta run --contigs "$contigs" --sample "$sample" \
             --out-dir "$OUT_DIR" --tools-bin "$TOOLS_BIN" --db "$DB" --threads "$CPUS" --tmp-dir "$WORK" \
-            --keep "${KEEP:-gff3,faa,json,txt}" --skip-existing; then
+            --keep "${KEEP:-gff3+faa+json+txt}" --skip-existing; then
         echo "FAIL $sample"; fail=$((fail + 1))
     fi
 done

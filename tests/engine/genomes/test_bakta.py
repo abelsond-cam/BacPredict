@@ -131,3 +131,38 @@ def test_a_run_is_current_only_for_the_same_contigs_tools_and_db(tmp_path):
     assert not bakta.is_current(out, "S1", contigs, bakta.run_fingerprint(env / "bin", db))
     other = _write(tmp_path / "d.fna.gz", f">S1.contig00001\n{C2}\n")
     assert not bakta.is_current(out, "S1", other, fp)
+
+
+def _bakrep_serves(monkeypatch, gff_text: str) -> None:
+    monkeypatch.setattr(bakta, "bakrep_urls", lambda s: {"gff3": f"https://x/{s}.bakta.gff3.gz"})
+    monkeypatch.setattr(bakta, "download", lambda url, dest, **k: _write(Path(dest), gff_text))
+
+
+def test_ingest_keeps_bakreps_file_only_on_our_contigs(tmp_path, monkeypatch):
+    _bakrep_serves(monkeypatch, _gff())
+    ours = _write(tmp_path / "c" / "S1.fna.gz", f">S1.contig00001 orig=x src=atb\n{C1}\n>S1.contig00002\n{C2}\n")
+    rec = bakta.ingest_bakrep("S1", ours, tmp_path / "ann")
+    assert rec["n_cds"] == 3 and rec["n_pseudo"] == 1 and rec["contigs_md5"] == bakta._md5(ours)
+    assert (tmp_path / "ann" / "S1.bakta.gff3.gz").exists() and bakta.ingest_record(tmp_path / "ann", "S1").exists()
+    other = _write(tmp_path / "c" / "S2.fna.gz", f">S1.contig00001\n{C1}\n>S1.contig00002\n{C2}A\n")
+    with pytest.raises(ValueError, match="not ours"):
+        bakta.ingest_bakrep("S2", other, tmp_path / "ann")
+    assert not list((tmp_path / "ann").glob("S2*")) and not list((tmp_path / "ann").glob(".*part"))
+
+
+def test_collate_takes_exactly_one_current_record_per_genome(tmp_path, monkeypatch):
+    _bakrep_serves(monkeypatch, _gff())
+    ann, fp = tmp_path / "ann", "f" * 32
+    rows = []
+    for s in ("S1", "S2", "S3", "S4"):
+        c = _write(tmp_path / "c" / f"{s}.fna.gz", f">S1.contig00001\n{C1}\n>S1.contig00002\n{C2}\n")
+        rows.append({"Sample": s, "sr_assembly_file": str(c)})
+    bakta.ingest_bakrep("S1", Path(rows[0]["sr_assembly_file"]), ann)                  # BakRep's
+    for s, f in (("S2", fp), ("S3", "0" * 32)):                                          # ours; S3 from another env
+        _write(ann / f"{s}.bakta.gff3.gz", _gff())
+        bakta.run_record(ann, s).write_text(json.dumps(
+            {"fingerprint": f, "contigs_md5": bakta._md5(Path(rows[1]["sr_assembly_file"])), "n_cds": 3, "n_pseudo": 1}))
+    good, bad = bakta.collate(pd.DataFrame(rows), ann, fp, workers=2)
+    assert good.set_index("Sample")["origin"].to_dict() == {"S1": "bakrep", "S2": "bakta_run"}
+    assert set(bad["Sample"]) == {"S3", "S4"}
+    assert list(good.columns[:3]) == ["Sample", "sr_assembly_file", "sr_gff_file"]

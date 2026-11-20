@@ -8,10 +8,12 @@
 #   bash src/bacpredict/apps/pa/scripts/build_pa_embeddings.sh submit       # GPU array: every genome → esm/
 #   bash src/bacpredict/apps/pa/scripts/build_pa_embeddings.sh check        # every cohort genome, end to end
 #
-# The cohort is genomes/embedding_input.csv from build_pa_genomes.sh collate, and every check counts against it
-# (never against whatever files happen to exist): the protein extractor logs a failed genome and exits 0, so
-# a parquet-based count would shrink with the cohort and still read complete. smoke and submit refuse to start
-# until every cohort genome has a parquet, which also keeps the array's slices tiling a fixed list.
+# The cohort is genomes/bakta_annotation.csv from annotate_pa_genomes.sh collate (the QC-passing genomes, each with
+# its one Bakta 1.9.4 GFF3), and every check counts against it (never against whatever files happen to exist): the
+# protein extractor logs a failed genome and exits 0, so a parquet-based count would shrink with the cohort and
+# still read complete. check-proteins also requires each parquet to hold exactly the GFF3's non-pseudogene CDS: a
+# contig-name mismatch between GFF3 and contigs would otherwise drop proteins silently. smoke and submit refuse to
+# start until every cohort genome has a parquet, which also keeps the array's slices tiling a fixed list.
 #
 # Two settings are PsA-specific and deliberate: --max-proteins 9000 (a PsA genome has ~6,400 CDS;
 # generate_embeddings' default of 6,000 would cut the smallest contigs — plasmids — first) and bf16 storage
@@ -23,7 +25,7 @@ REPO=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 export REPO
 T=$ROOT/processed/train_pa_ast
 GEN=$T/genomes
-COHORT=$GEN/embedding_input.csv
+COHORT=$GEN/bakta_annotation.csv
 PROT=$T/protein_sequences
 MAX_PROTEINS=9000
 SAVE_DTYPE=bfloat16
@@ -42,10 +44,11 @@ submit() {  # sbatch, then print the resource line the global rules require (rea
 }
 
 # check_store <esm dir> <all|N> [proteins-only]
-#   all: the cohort is every Sample of embedding_input.csv; N: the first N sorted parquets (what the smoke embeds).
-#   Fails on: an empty cohort; a genome with no parquet, or a parquet older than its GFF (built from a genome
-#   since rebuilt); with an embedding stage, a missing, unreadable or stale .pt, or a sampled file of the wrong
-#   shape, width or dtype, or holding NaN.
+#   all: the cohort is every Sample of bakta_annotation.csv; N: the first N sorted parquets (what the smoke embeds).
+#   Fails on: an empty cohort; a genome with no parquet, a parquet older than its GFF (built from a genome since
+#   rebuilt), or, at scope all, a parquet whose protein count is not the GFF3's CDS minus pseudogenes; with an
+#   embedding stage, a missing, unreadable or stale .pt, or a sampled file of the wrong shape, width or dtype, or
+#   holding NaN.
 check_store() {
     uv run --no-sync python -I - "$COHORT" "$PROT" "$1" "$2" "${3:-}" "$MAX_PROTEINS" "$SAVE_DTYPE" <<'EOF'
 import random, sys, zipfile
@@ -66,8 +69,16 @@ problems["no parquet"] = [s for s in samples if not pq[s].exists()]
 have_pq = [s for s in samples if pq[s].exists()]
 problems["parquet older than its GFF"] = [
     s for s in have_pq if s in c.index and pq[s].stat().st_mtime < Path(c.at[s, "sr_gff_file"]).stat().st_mtime]
-print(f"cohort: {len(samples)} genomes ({'embedding_input.csv' if scope == 'all' else f'first {scope} parquets'}); "
+print(f"cohort: {len(samples)} genomes ({Path(cohort_csv).name if scope == 'all' else f'first {scope} parquets'}); "
       f"with a protein parquet: {len(have_pq)}")
+if scope == "all" and {"n_cds", "n_pseudo"} <= set(c.columns):
+    import pyarrow.parquet as papq
+    expect = (c["n_cds"] - c["n_pseudo"]).astype(int)
+    got = {s: sum(len(x) for x in papq.read_table(pq[s], columns=["protein_sequence"]).column(0).to_pylist()[0])
+           for s in have_pq}
+    problems["protein count != CDS - pseudogenes"] = [s for s in have_pq if got[s] != expect[s]]
+    print(f"protein count = CDS - pseudogenes: {len(have_pq) - len(problems['protein count != CDS - pseudogenes'])}"
+          f"/{len(have_pq)}")
 if not proteins_only:
     problems["no embedding"] = [s for s in have_pq if not pt[s].exists()]
     have_pt = [s for s in have_pq if pt[s].exists()]

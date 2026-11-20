@@ -142,7 +142,7 @@ def compare_one(row: pd.Series, gate: Path) -> tuple[dict, list[dict]]:
     if not (ours["gff3"].exists() and run.exists()):
         out["status"] = "no run"
         return out, diffs
-    out.update({k: v for k, v in json.loads(run.read_text()).items() if k in ("seconds", "max_rss_gb", "threads")})
+    out.update({k: v for k, v in json.loads(run.read_text()).items() if k in ("seconds", "max_child_rss_gb", "max_rss_gb", "threads")})
     out["status"] = "ok"
     our_contigs = {h.split()[0]: seq for h, seq in read_fasta(contigs)}
     out["n_contigs"] = len(our_contigs)
