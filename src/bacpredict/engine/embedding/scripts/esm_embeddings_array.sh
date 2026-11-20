@@ -47,6 +47,13 @@
 #SBATCH --error=/rds/user/dca36/hpc-work/logs/%x_%A_%a.err
 set -euo pipefail
 
+# The job inherits the submitting shell's environment (sbatch --export=ALL). A cclake login node (login-p-*) loads
+# spack modules whose LD_LIBRARY_PATH points at cascadelake-built libraries; on ampere's AMD CPUs `import torch` then
+# dies with "Fatal Python error: Illegal instruction" and exit 1, printing nothing unless -X faulthandler is on
+# (measured 2026-11-20, jobs 41520932 and 41525227; a clean environment imports torch 2.10.0+cu128 fine). The uv env
+# is self-contained (torch ships its own CUDA libraries), so drop the loader paths.
+unset LD_LIBRARY_PATH LIBRARY_PATH LD_PRELOAD
+
 : "${INPUT_DIR:?}" "${ESM_DIR:?}" "${MAX_PROTEINS:?}" "${SAVE_DTYPE:?}" "${NTASKS:?full array size}"
 REPO=${REPO:-$HOME/workspace/BacPredict}
 export PYTHONUNBUFFERED=1
@@ -88,7 +95,7 @@ echo "[$(date -Is)] host=$(hostname) gpu=${CUDA_VISIBLE_DEVICES:-none} task=$TAS
      "${SAMPLES:+samples=$SAMPLES md5=$SAMPLES_SUM}"
 if (( START >= END )); then echo "empty slice"; exit 0; fi
 
-uv run --project "$REPO" --no-sync python -m bacpredict.engine.embedding.generate_embeddings \
+uv run --project "$REPO" --no-sync python -X faulthandler -m bacpredict.engine.embedding.generate_embeddings \
     --input-dir "$INPUT_DIR" --esm-dir "$ESM_DIR" --max-proteins "$MAX_PROTEINS" --save-dtype "$SAVE_DTYPE" \
     --skip-existing --start-idx "$START" --end-idx "$END" ${N:+--n "$N"} ${SAMPLES:+--samples-file "$SAMPLES"} \
     ${SAMPLES_MD5:+--samples-md5 "$SAMPLES_MD5"}
