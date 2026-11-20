@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 
 from bacpredict.engine.explain.attribution_statistics import (
+    collapse_gene_copies,
     normalise_within_genome,
     rank_genes,
     report_unnamed_share,
@@ -93,8 +94,9 @@ def test_resistant_vs_susceptible_detects_a_real_effect() -> None:
     frame = normalise_within_genome(_cohort(120, determinant_effect=2.5, seed=1))
     out = resistant_vs_susceptible(frame, min_per_class=5).set_index("gene_name")
     assert out.loc["determinant", "p_adj"] < 0.05
-    assert out.loc["determinant", "delta_z"] > 0
+    assert out.loc["determinant", "delta"] > 0
     assert out.loc["boring1", "p_adj"] > 0.05
+    assert (out["value_column"] == "signed_score").all(), "the signed score is the default contrast"
 
 
 def test_lineage_control_separates_a_determinant_from_a_lineage_marker() -> None:
@@ -129,14 +131,15 @@ def test_normalisation_is_compositional_at_small_gene_counts() -> None:
     way it points.
     """
     tiny = normalise_within_genome(_cohort(120, determinant_effect=2.5, seed=1, n_background=8))
-    out = resistant_vs_susceptible(tiny, min_per_class=5).set_index("gene_name")
-    assert out.loc["determinant", "delta_z"] > 0
+    out = resistant_vs_susceptible(tiny, value_column="z_abs", min_per_class=5).set_index("gene_name")
+    assert out.loc["determinant", "delta"] > 0
     # The inert gene is dragged the other way — that is the compositional artifact, not a signal.
-    assert out.loc["boring1", "delta_z"] < 0
+    assert out.loc["boring1", "delta"] < 0
 
     realistic = normalise_within_genome(_cohort(120, determinant_effect=2.5, seed=1, n_background=400))
-    big = resistant_vs_susceptible(realistic, min_per_class=5).set_index("gene_name")
-    assert abs(big.loc["boring1", "delta_z"]) < abs(out.loc["boring1", "delta_z"])
+    big = resistant_vs_susceptible(realistic, value_column="z_abs", min_per_class=5).set_index("gene_name")
+    assert abs(big.loc["boring1", "delta"]) < abs(out.loc["boring1", "delta"])
+
 
 
 def test_unnamed_share_is_reported() -> None:
@@ -150,3 +153,105 @@ def test_empty_result_is_returned_not_raised() -> None:
     frame = normalise_within_genome(_cohort(6))
     assert rank_genes(frame, min_genomes=50).empty
     assert resistant_vs_susceptible(frame, min_per_class=50).empty
+
+
+def _wild_type_negative_cohort(n_genomes: int = 60, seed: int = 7, n_background: int = 200) -> pd.DataFrame:
+    """A toy of the measured ``rpoB`` pattern: wild-type strongly negative, mutant mildly positive.
+
+    On the TB rifampicin cohort the gene's signed attribution was median -10.10 in genomes with no
+    ``rpoB`` variant and +3.85 in those carrying one. Magnitude therefore runs the *opposite* way to
+    the phenotype, which is the whole reason the contrast is computed on the signed score.
+    """
+    rng = np.random.default_rng(seed)
+    rows = []
+    for i in range(n_genomes):
+        label = int(i % 2 == 0)
+        lineage = "A" if i % 4 < 2 else "B"  # both lineages mixed, so both are testable
+        rows.append({"Sample": f"G{i:03d}", "gene_name": "rpoB_like", "is_named_gene": True,
+                     "attribution_logit": (4.0 if label else -10.0) + rng.normal(0.0, 0.5),
+                     "ast_label": label, "lineage": lineage})
+        rows.append({"Sample": f"G{i:03d}", "gene_name": "inert", "is_named_gene": True,
+                     "attribution_logit": rng.normal(0.0, 1.0), "ast_label": label, "lineage": lineage})
+        for j in range(n_background):
+            rows.append({"Sample": f"G{i:03d}", "gene_name": f"LOCUS_{i}_{j}", "is_named_gene": False,
+                         "attribution_logit": rng.normal(0.0, 1.0),
+                         "ast_label": label, "lineage": lineage})
+    return pd.DataFrame(rows)
+
+
+def test_absolute_value_inverts_the_contrast_the_signed_score_recovers() -> None:
+    """The measured failure, pinned as a regression: |.| does not merely weaken this, it reverses it.
+
+    A determinant whose wild-type form carries a large negative attribution and whose mutant form
+    carries a smaller positive one separates cleanly on the signed score and **confidently
+    backwards** on the absolute value. A reader of the ``|.|`` table alone would conclude the model
+    reads the gene more in susceptible genomes.
+    """
+    frame = normalise_within_genome(_wild_type_negative_cohort())
+
+    signed = resistant_vs_susceptible(frame, min_per_class=5).set_index("gene_name")
+    assert signed.loc["rpoB_like", "delta"] > 0
+    assert signed.loc["rpoB_like", "p_adj"] < 1e-6
+    assert bool(signed.loc["rpoB_like", "disjoint"]), "the two classes do not overlap at all"
+    assert signed.loc["inert", "p_adj"] > 0.05
+
+    magnitude = resistant_vs_susceptible(frame, value_column="z_abs", min_per_class=5).set_index("gene_name")
+    assert magnitude.loc["rpoB_like", "delta"] < 0, "this is the inversion, not a weaker effect"
+    assert magnitude.loc["rpoB_like", "p_adj"] < 1e-6, "and it is reported with full confidence"
+
+
+def test_signed_contrast_survives_stratification_where_the_magnitude_one_cannot() -> None:
+    """The lineage control must be read on the statistic that carries the signal."""
+    frame = normalise_within_genome(_wild_type_negative_cohort())
+    overall = resistant_vs_susceptible(frame, min_per_class=5)
+    within = resistant_vs_susceptible(frame, min_per_class=5, stratum="lineage")
+    control = summarise_lineage_control(overall, within, "lineage").set_index("gene_name")
+
+    assert control.loc["rpoB_like", "n_strata_tested"] == 2
+    assert control.loc["rpoB_like", "n_strata_significant"] == 2
+    assert bool(control.loc["rpoB_like", "survives_stratification"])
+    assert control.loc["rpoB_like", "n_strata_disjoint"] == 2
+
+
+def _multi_copy_frame() -> pd.DataFrame:
+    """30 genomes where ``multi`` is annotated three times and ``single`` once."""
+    rng = np.random.default_rng(3)
+    rows = []
+    for i in range(30):
+        label = int(i % 2 == 0)
+        for copy_value in (-5.0, 2.0, 1.0):
+            rows.append({"Sample": f"M{i:02d}", "gene_name": "multi", "is_named_gene": True,
+                         "attribution_logit": copy_value + rng.normal(0.0, 0.01), "ast_label": label})
+        rows.append({"Sample": f"M{i:02d}", "gene_name": "single", "is_named_gene": True,
+                     "attribution_logit": rng.normal(0.0, 1.0), "ast_label": label})
+        for j in range(100):
+            rows.append({"Sample": f"M{i:02d}", "gene_name": f"LOCUS_{i}_{j}", "is_named_gene": False,
+                         "attribution_logit": rng.normal(0.0, 1.0), "ast_label": label})
+    return pd.DataFrame(rows)
+
+
+def test_multi_copy_genes_collapse_to_one_value_per_genome() -> None:
+    """``n_genomes`` must count genomes. Counting rows made ``rpoC`` read 190 across 98 genomes."""
+    frame = normalise_within_genome(_multi_copy_frame())
+    ranked = rank_genes(frame, min_genomes=20).set_index("gene_name")
+    assert ranked.loc["multi", "n_genomes"] == 30, "three copies in one genome are one observation"
+    assert ranked.loc["multi", "median_n_copies"] == 3.0
+    assert ranked.loc["single", "n_genomes"] == 30
+
+
+def test_collapse_sums_copies_by_default_and_max_keeps_the_strongest_copys_sign() -> None:
+    """Summing is the IG-additive choice; ``max`` must not return |.| stripped of its sign."""
+    frame = normalise_within_genome(_multi_copy_frame())
+    named = frame[frame["is_named_gene"]]
+
+    summed = collapse_gene_copies(named, how="sum")
+    multi = summed[summed["gene_name"] == "multi"]
+    assert len(multi) == 30
+    assert (multi["n_copies"] == 3).all()
+    # -5 + 2 + 1 = -2, the gene's total contribution to the logit.
+    assert multi["signed_score"].mean() == pytest.approx(-2.0, abs=0.05)
+
+    peak = collapse_gene_copies(named, how="max")
+    multi_peak = peak[peak["gene_name"] == "multi"]
+    assert multi_peak["abs_score"].mean() == pytest.approx(5.0, abs=0.05)
+    assert multi_peak["signed_score"].mean() == pytest.approx(-5.0, abs=0.05), "sign must be kept"
