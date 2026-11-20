@@ -1,6 +1,11 @@
 # BacPredict — project state
 
-> **Last verified: 2026-11-20 @ `4ff29d7`** (branch `refactor/consolidate-engine`).
+> **Last verified: 2026-11-20 @ `82ca4f2`** (branch `refactor/consolidate-engine`).
+> **Verification scope, this pass (2026-11-20, fifth): §3.6 PsA ESM-C completion and the Enterobacterales jobs in
+> flight only.** Read on CSD3: sacct of array `41526902`; `build_pa_embeddings.sh check` at `4ff29d7`; the store
+> count and one file's size; squeue/sacct of the Enterobacterales arrays. **Nothing else was re-verified this pass.**
+>
+> **Stamp before this one: 2026-11-20 @ `4ff29d7`.**
 > **Verification scope, this pass (2026-11-20, fourth): §3.6 Enterobacterales genome sources and build shape, PsA
 > proteins, and the ampere torch crash only.** Read on CSD3: `enterobacterales/genomes/genome_manifest.csv` (plan at
 > `6369d50`) joined to `bakrep_coverage_20261119/in_bakrep_ids.txt`; `shards_smoke/atb+portal_gff_00000.tsv`; sacct of
@@ -1518,7 +1523,7 @@ Enterobacterales as soon as possible — **a cross-species model is the aim**.
 **Annotation is Bakta 1.9.4 with the full DB v5.1, not Prodigal** (David, 2026-11-19: "Bakta as standard").
 Our run reproduces BakRep's exactly (the gate below), so a genome takes BakRep's GFF3 where BakRep holds it on
 our contigs, and our run otherwise. **PsA annotation is complete** (3,677 genomes: 1,781 BakRep, 1,896 ours);
-proteins are extracted and checked (3,677 of 3,677); ESM-C is in flight. **All §3.6 data now lives under `$AMR` = `project_k/david/amr_prediction`**
+**PsA ESM-C embeddings are complete and checked (3,677 of 3,677).** **All §3.6 data now lives under `$AMR` = `project_k/david/amr_prediction`**
 (David, 2026-11-20; map of the old paths in §2). The Prodigal protein parquets (job
 `41397962`) and ESM-C smoke (`41399821`) are superseded and kept aside as `$AMR/processed/_superseded_prodigal/paeruginosa_protein_sequences/`
 and `paeruginosa_esm_smoke/`; the Prodigal ESM-C array (`41401432`) was cancelled before any task started. QC
@@ -1725,6 +1730,13 @@ random) under both versions, in two envs that differ only in scikit-learn (job `
 `quality_report.tsv` are **byte-identical** (md5 `df9df788…`) and equal `genome_qc.csv` exactly. No pin; the
 PsA QC numbers stand. Artifacts: `$AMR/processed/paeruginosa/genomes/qc/checkm2_sklearn_check/`.
 
+**Numbers of record — PsA ESM-C embeddings.** `$AMR/processed/esm/<Sample>_esm_embeddings.pt`, 3,677 of 3,677:
+array `41526902` at `4ff29d7` (16 × A100, FLOTO-SL2-GPU; 66–73 min per task, 18.6 GPU-h in all) over
+`processed/paeruginosa/esm_samples.txt` (md5 `7944b380…`), from the proteins of job `41519198`
+(`$AMR/processed/protein_sequences/`). `build_pa_embeddings.sh check` at `4ff29d7` passes: every cohort genome has a
+readable parquet holding CDS − pseudogenes proteins, contigs unchanged since annotation, a readable `.pt` newer than
+its parquet, and 10 sampled `.pt` of shape (1, proteins, 960), bf16, no NaN. ~11 MB per genome (~41 GB).
+
 **Measured — ESM-C throughput on one A100** (PsA smoke, job `41399821`, Prodigal inputs, superseded but the
 rate stands): ~18 s per genome at ~6,400 proteins (2.8 ms per protein) after warm-up, HuggingFace ESM-C (no
 faESM), bf16, `--max-proteins 9000`; log `pa-esm-smoke_41399821_0.err`. 34 of 3,677 PsA genomes have more
@@ -1732,16 +1744,20 @@ than 1,000 contigs; Bacformer's input packing (`max_n_contigs=1000`) keeps all t
 contig past the 1,000th the same contig id.
 
 **In flight.**
-- **PsA ESM-C.** Proteins done (job `41519198`, 11 min at 8 cores; `check-proteins` passes 3,677 of 3,677). The
-  smoke (job `41526046`) runs from the pinned worktree `/rds/user/dca36/hpc-work/worktrees/BacPredict-4ff29d7` over
-  `processed/paeruginosa/esm_samples_smoke.txt`; then `check-smoke` and the full array (16 × A100, FLOTO-SL2-GPU,
-  over `esm_samples.txt`) into `$AMR/processed/esm/`. The first smoke failed (below, *Caveats*).
-- **Enterobacterales build.** ATB array `41519203` (654 tasks), portal array `41526057` (52 × 40), shovill array
-  `41526058` (214), from pinned worktrees (`…/BacPredict-fbc500a` for ATB, `…-4ff29d7` for the rest). The 39-genome
-  skani panel (`apps/entero/species_reference_panel.tsv`, DRAFT) is on disk in `$AMR/raw/reference_genomes/`.
+- **Enterobacterales.** Built: all 65,363 ATB genomes (array `41519203`, 0 failed) and the 2,049 portal assemblies
+  (array `41526057`); the 214 shovill genomes are building (array `41526058`). Running, pre-QC and label-free:
+  BakRep ingest of the 63,700 (job `41530416`, 8 streams), CheckM2 on the 66,603 built at freeze time (array
+  `41530887`, 34 × 2,000, `ALLOW_PARTIAL`; the rest via `qc topup`), and our Bakta on the 2,903 built genomes BakRep
+  lacks (array `41530989`, 24 cores / 72 GB on icelake). All from the pinned worktree
+  `/rds/user/dca36/hpc-work/worktrees/BacPredict-4ff29d7` (ATB from `…-fbc500a`). The 39-genome skani panel
+  (`apps/entero/species_reference_panel.tsv`, DRAFT) is on disk in `$AMR/raw/reference_genomes/`.
 
 **Next.** Agreed with David 2026-11-19 ("even annotation sorted before embedding and models lock us in"):
-1. **PsA:** finish ESM-C (in flight) and `build_pa_embeddings.sh check` against all 3,677.
+1. **A cross-species model as soon as possible** (David, 2026-11-20). Needs: a split builder that holds out STs
+   (keyed scheme:ST, grouping the 3 two-BioSample CDC strains) beside a random holdout, restricted to QC-passing
+   genomes with 0/1 labels — `engine/splits` today makes random k-fold holdouts only; and a trainer task that reads
+   labels from several species folders and the shared ESM store (`finetune_amr` maps only `tb_ast`/`kleb_ast`).
+   PsA is ready to train once its split decisions (item 3) are made.
 2. **Enterobacterales** (stages in `apps/entero/CLAUDE.md`): when the builds finish, `status` (every genome built or
    failed by cause); BakRep ingest pre-QC (`annotate_entero_genomes.sh plan`, `ingest`); CheckM2 (34 × 2,000) and
    skani (`build_entero_genomes.sh qc`); collate in report mode → `species_crosstab.csv` and
