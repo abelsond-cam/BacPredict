@@ -10,7 +10,7 @@ pytest.importorskip("pandas")
 import pandas as pd
 
 from bacpredict.engine.splits.generate_kfold_splits import build_split_table
-from bacpredict.engine.splits.load_splits import load_splits
+from bacpredict.engine.splits.load_splits import load_split_ids, load_splits
 
 
 def _table_csv(tmp_path: Path) -> Path:
@@ -52,3 +52,39 @@ def test_build_then_load_roundtrip(tmp_path: Path) -> None:
     assert len(label_map) == 120
     assert set(train) | set(validate) | set(holdout) == set(label_map)
     assert not (set(train) & set(holdout)) and not (set(validate) & set(holdout))
+
+
+def _table_with_holdout_st(tmp_path: Path) -> Path:
+    df = pd.DataFrame({
+        "Sample": ["a", "b", "c", "d", "e", "f", "g"],
+        "species": "paeruginosa",
+        "st_key": ["paeruginosa:1", "paeruginosa:1", "paeruginosa:2", "paeruginosa:3", "paeruginosa:235",
+                   "paeruginosa:235", "paeruginosa:235"],
+        "ast_label": ["1", "0", "1", "0", "1", "0", "0.5"],   # 'g' conflicting → never scored
+        "split": ["train", "train", "validate", "holdout", "holdout_st", "holdout_st", "holdout_st"],
+    })
+    path = tmp_path / "ciprofloxacin_split.csv"
+    df.to_csv(path, index=False)
+    return path
+
+
+def test_load_split_ids_reads_holdout_st_clean_rows_only(tmp_path: Path) -> None:
+    """holdout_st comes back through load_split_ids, 0/1 rows only; load_splits' three lists exclude it."""
+    path = _table_with_holdout_st(tmp_path)
+    assert load_split_ids(path, "holdout_st") == ["e", "f"]
+    label_map, train, validate, holdout = load_splits(path)
+    assert train == ["a", "b"] and validate == ["c"] and holdout == ["d"]
+    assert label_map == {"a": 1, "b": 0, "c": 1, "d": 0, "e": 1, "f": 0}  # labels for holdout_st too
+
+
+def test_load_split_ids_equals_load_splits_for_the_three_splits(tmp_path: Path) -> None:
+    """For train/validate/holdout the accessor returns exactly load_splits' lists (one read, one filter)."""
+    for path in (_table_csv(tmp_path), _table_with_holdout_st(tmp_path)):
+        _, train, validate, holdout = load_splits(path)
+        assert [load_split_ids(path, s) for s in ("train", "validate", "holdout")] == [train, validate, holdout]
+
+
+def test_load_split_ids_rejects_an_unknown_split(tmp_path: Path) -> None:
+    """A misspelt split is an error, not an empty list."""
+    with pytest.raises(ValueError, match="not one of"):
+        load_split_ids(_table_with_holdout_st(tmp_path), "holdout-st")

@@ -238,3 +238,68 @@ ESM-C in **bf16** in `processed/esm/`, half the fp32 size. The trainer runs in b
 `.numpy()` on embeddings and must call `.float()` first; they fail loudly, not silently:
 `engine/concat/bacformer_token_cache.py`, `engine/concat/cache_bacformer_gene_embeddings.py`,
 `engine/embedding/protein_pooling.py`, `engine/embedding/genome_assemblies_from_bacformer_embeddings.py`.
+
+## Splits
+
+`engine/splits/build_amr_holdout_splits.py` builds the split tables (its docstring has the mechanics). It is
+light: a CSD3 login node is enough. Everything downstream reads the tables through `load_splits`, and reads
+`holdout_st` through `load_split_ids(path, "holdout_st")`. Nothing else may resolve a holdout (root `CLAUDE.md`,
+*Data-leakage guarantees*).
+
+| Input | Where |
+|---|---|
+| Labels | `processed/paeruginosa/binary_ast.csv` |
+| Eligible genomes | `processed/paeruginosa/genomes/bakta_annotation.csv`: the 3,677 annotated and embedded |
+| ST (`mlst_scheme`, `st`) | `processed/paeruginosa/genomes/genome_qc.csv`. Keyed `<scheme>:<st>`, never `st` alone |
+| Genomes left out | [`excluded_genomes.tsv`](excluded_genomes.tsv): the 15 Ecuador long-read portal assemblies |
+| One isolate under two BioSamples | [`duplicate_isolate_groups.csv`](duplicate_isolate_groups.csv): the CDC strains S54485, U2504 and X24509. Each pair always shares a split |
+
+**What it implements** (PROJECT_STATE §6, 2026-11-20):
+- ST235 (`paeruginosa:235`) is held out whole as `holdout_st`. Membership is the exact ST, so a single-locus
+  variant or an untyped genome stays in the random pool.
+- A random 20 % of the remaining genomes is `holdout`.
+- The rest is cut into 5 folds: fold 0 is `validate`, folds 1–4 are `train`. Seed 1.
+- There is no per-class minimum.
+
+**How the split is drawn:**
+- Splits are assigned per genome, not per drug: a genome is in the same split in all ten tables. Each drug's
+  table holds only the eligible genomes labelled for that drug. A fractional (conflicting) label keeps its row but
+  is never scored.
+- PsA has its own RNG, seeded from (seed, `paeruginosa`). Adding Enterobacterales to an arm therefore changes
+  no PsA row.
+
+**The two arms:**
+
+| Arm | `--species` | Extra flags |
+|---|---|---|
+| PsA-only (baseline) | `paeruginosa` | none |
+| PsA + Enterobacterales | both | `--assert-same-as paeruginosa=<PsA-only dir>` |
+
+- The builder refuses the cross-species arm unless its PsA rows equal the PsA-only arm's, row for row, for every
+  drug. That is what makes both arms score the same PsA holdouts.
+- Pass this folder's exclusion and group files to the cross-species run as well, or the check fails.
+
+**Outputs:**
+- `<out-dir>/<drug>_split.csv` and `split_manifest.json`. The manifest records the arguments, input md5s, git
+  SHA, each table's md5 and the counts per drug × species × split.
+- The builder will not replace a table whose content differs unless given `--overwrite`. A new split invalidates
+  every model trained on the old one.
+
+The PsA-only arm, from the repo root (the out dir is a proposal, not yet a decision):
+
+```bash
+AMR=${BACPREDICT_AMR_ROOT:-$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/amr_prediction}
+P=$AMR/processed/paeruginosa
+uv run python -m bacpredict.engine.splits.build_amr_holdout_splits \
+  --species paeruginosa=$P/binary_ast.csv,$P/genomes/bakta_annotation.csv,$P/genomes/genome_qc.csv \
+  --holdout-st paeruginosa=paeruginosa:235 \
+  --exclude src/bacpredict/apps/pa/excluded_genomes.tsv \
+  --groups src/bacpredict/apps/pa/duplicate_isolate_groups.csv \
+  --drugs ciprofloxacin ceftazidime meropenem tobramycin amikacin imipenem piperacillin-tazobactam \
+          aztreonam levofloxacin cefepime \
+  --out-dir $P/splits
+```
+
+⚠ The builder stops if a group spans the held-out ST and not. One case would trigger it: a CDC strain whose two
+BioSamples type differently, with one of them ST235. That has not been checked against `genome_qc.csv`. If it
+happens, the call is David's.
