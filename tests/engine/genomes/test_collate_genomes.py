@@ -19,7 +19,7 @@ from bacpredict.engine.genomes.collate_genomes import (
     untyped,
 )
 
-from .collate_fixtures import EC, PA, PARA, SF, entero_argv, psa_argv, write_entero_inputs, write_psa_inputs
+from .collate_fixtures import EC, KP, MM, PA, PARA, SF, entero_argv, psa_argv, write_entero_inputs, write_psa_inputs
 
 
 def test_skani_species_call(tmp_path):
@@ -93,6 +93,7 @@ def test_psa_call_writes_byte_identical_outputs(tmp_path, monkeypatch):
     for name in ("genome_qc.csv", "embedding_input.csv", "st_counts_by_drug.csv"):
         assert (tmp_path / "out" / name).read_bytes() == (GOLDEN / name).read_bytes(), name
     assert not (tmp_path / "out" / "species_crosstab.csv").exists()
+    assert not (tmp_path / "out" / "embedding_input_unfiltered.csv").exists()  # report mode's name only
 
 
 def test_psa_call_with_split_qc_files_equals_one_file(tmp_path, monkeypatch):
@@ -144,6 +145,28 @@ def test_read_skani_rejects_a_pair_in_two_files(tmp_path):
         read_skani([a, b], {PA: "/x/PAO1.fna.gz"})
 
 
+def test_read_skani_rejects_a_reference_it_was_not_given(tmp_path):
+    """A reference list that has drifted from the skani run stops collate, naming the reference, rather than
+    dropping its hits; a given reference skani found nothing for is fine (its column is empty)."""
+    p = tmp_path / "skani.tsv"
+    pd.DataFrame({"Ref_file": ["/r/k12.fna.gz", "/r/sflex.fna.gz", "/r/kpne.fna.gz"],
+                  "Query_file": ["/l/A.fna.gz", "/l/A.fna.gz", "/l/B.fna.gz"],
+                  "ANI": [97.0, 96.0, 99.0]}).to_csv(p, sep="\t", index=False)
+    with pytest.raises(ValueError, match=r"1 reference file\(s\) .* not among the 2 references given: \['kpne.fna.gz'\]"):
+        read_skani(p, [(EC, "/x/k12.fna.gz"), (SF, "/x/sflex.fna.gz")])
+    s = read_skani(p, [(EC, "/x/k12.fna.gz"), (SF, "/x/sflex.fna.gz"), (KP, "/x/kpne.fna.gz"), (MM, "/x/mmor.fna.gz")])
+    assert s.loc["B", "species_call"] == KP and s[f"ani_{MM}"].isna().all()
+
+
+def test_collate_stops_when_the_reference_list_drifted_from_skani(tmp_path, monkeypatch):
+    p = write_entero_inputs(tmp_path / "in")
+    argv = entero_argv(p, tmp_path / "out")
+    i = argv.index(f"{MM}=/x/GCF_006094455.1.fna.gz")  # E7's only hit
+    with pytest.raises(ValueError, match="GCF_006094455.1.fna.gz"):
+        _run(argv[:i - 1] + argv[i + 1:], monkeypatch)
+    assert not (tmp_path / "out").exists()
+
+
 def test_repeated_species_name_takes_its_best_reference(tmp_path):
     p = tmp_path / "skani.tsv"
     pd.DataFrame({"Ref_file": ["/r/k12.fna.gz", "/r/sakai.fna.gz", "/r/sflex.fna.gz", "/r/k12.fna.gz", "/r/sflex.fna.gz"],
@@ -176,17 +199,22 @@ def test_report_mode_never_fails_species():
     assert apply_qc(g.copy(), EC)["qc_fail"].tolist() == ["", "species"]
 
 
-def test_report_mode_end_to_end(tmp_path, monkeypatch):
+def test_report_mode_end_to_end(tmp_path, monkeypatch, capsys):
     p = write_entero_inputs(tmp_path / "in")
     _run(entero_argv(p, tmp_path / "out"), monkeypatch)
     out = tmp_path / "out"
+    assert "embedding_input.csv is not written in report mode" in capsys.readouterr().out
     q = pd.read_csv(out / "genome_qc.csv", dtype={"st": str}).set_index("Sample")
     assert list(q.columns[:5]) == ["source", "n_drugs_labelled", "species", "species_genotype", "species_conflict"]
     assert not q["qc_fail"].fillna("").str.contains("species").any()
     assert q.loc["E6", "species_call"] == "unknown" and q.loc["E6", "qc_pass"]  # no skani hit, still passes
     assert q.loc["E3", "species_call"] == SF and q.loc["E1", f"ani_{EC}"] == 97.8
     assert q.loc["E8", "qc_fail"] == "build"
-    assert len(pd.read_csv(out / "embedding_input.csv")) == 7
+    # no species rule yet: the pass set is written under its own name, never as the embedding input
+    assert not (out / "embedding_input.csv").exists()
+    unfiltered = pd.read_csv(out / "embedding_input_unfiltered.csv")
+    assert list(unfiltered.columns) == ["Sample", "sr_assembly_file", "sr_gff_file"]
+    assert sorted(unfiltered["Sample"]) == ["E1", "E2", "E3", "E4", "E5", "E6", "E7"]
 
     xt = pd.read_csv(out / "species_crosstab.csv").set_index(["label_species", "species_call"])
     assert xt.loc[("Escherichia coli", EC), "n"] == 1 and xt.loc[("Escherichia coli", SF), "n"] == 1

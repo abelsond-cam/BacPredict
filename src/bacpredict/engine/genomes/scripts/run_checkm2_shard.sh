@@ -86,6 +86,9 @@ mv "$OUT.part" "$OUT"
 n_rows=$(( $(wc -l < "$OUT") - 1 ))
 echo "[$(date -Is)] checkm2 done: $n_rows of ${#rows[@]} genomes → $OUT"
 if (( n_rows != ${#rows[@]} )); then
-    missing=$(comm -23 <(printf '%s\n' "${rows[@]}" | cut -f1 | sort) <(tail -n +2 "$OUT" | cut -f1 | sort) | head -20)
+    # Name normalised as collate_genomes.read_checkm2 does (a trailing .fna or .fna.gz dropped), so a reported genome
+    # is never listed as missing; one collation order for both sides of comm
+    missing=$(LC_ALL=C comm -23 <(printf '%s\n' "${rows[@]}" | cut -f1 | LC_ALL=C sort) \
+                       <(tail -n +2 "$OUT" | cut -f1 | sed -E 's/\.fna(\.gz)?$//' | LC_ALL=C sort) | head -20)
     echo "task $K: CheckM2 reported $n_rows of ${#rows[@]} genomes; missing (first 20): $(tr '\n' ' ' <<<"$missing")"; exit 6
 fi

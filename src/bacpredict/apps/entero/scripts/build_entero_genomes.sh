@@ -10,7 +10,8 @@
 #   bash src/bacpredict/apps/entero/scripts/build_entero_genomes.sh qc       # freeze qc/checkm2_list.tsv; CheckM2 array
 #                                                                             #  + skani job (or: qc checkm2 [indices] |
 #                                                                             #  qc skani, reruns from the frozen list)
-#   bash src/bacpredict/apps/entero/scripts/build_entero_genomes.sh collate  # genome_qc.csv, species_crosstab.csv, …
+#   bash src/bacpredict/apps/entero/scripts/build_entero_genomes.sh collate  # genome_qc.csv, species_crosstab.csv,
+#                                                                             #  embedding_input_unfiltered.csv, …
 #   bash src/bacpredict/apps/entero/scripts/build_entero_genomes.sh status   # build, CheckM2 and skani progress
 #
 # The same engine stage as P. aeruginosa (engine/genomes/; mechanics in apps/pa/CLAUDE.md), with what differs for a
@@ -67,15 +68,20 @@ tools_bin() { echo "$(cd "$REPO/src/bacpredict/engine/genomes" && pixi run -- pr
 checkm2_bin() { echo "$(cd "$REPO/src/bacpredict/engine/genomes" && pixi run -e checkm2 -- printenv CONDA_PREFIX)/bin"; }
 panel() { grep -v '^#' "$PANEL" | tail -n +2 | cut -f1,2; }  # species<TAB>accession, the DRAFT panel's rows
 n_checkm2_tasks() { echo $(( ($(wc -l < "$QCD/checkm2_list.tsv") + CHECKM2_CHUNK - 1) / CHECKM2_CHUNK )); }
-# array tasks take manifest rows by position: never re-plan while any build array of this cohort is queued
-no_live_arrays() {
-    local live; live=$(squeue -u "$USER" -h -o '%j' | grep -c '^entero-build-genomes' || true)
-    (( live == 0 )) || { echo "an entero-build-genomes array is queued or running: re-planning would shift its rows"; exit 1; }
+# refuse_if_queued <job-name prefix> <why>: exit 1 if any of this user's jobs whose name starts with the prefix is
+# queued or running — or if squeue itself fails, which must never read as "none queued" (as `grep -c … || true` on a
+# failed squeue's empty output would). Call it directly, never in $(…), so its exit stops the script.
+refuse_if_queued() {
+    local q n
+    q=$(squeue -u "$USER" -h -o '%j') || { echo "squeue failed: cannot tell whether any $1 job is queued, so refusing"; exit 1; }
+    n=$(awk -v p="$1" 'index($0, p) == 1 {n++} END {print n + 0}' <<<"$q") || exit 1
+    (( n == 0 )) || { echo "$n $1 job(s) queued or running: $2"; exit 1; }
 }
 
 case "${1:-}" in
 plan)
-    no_live_arrays
+    # array tasks take manifest rows by position: never re-plan while any build array of this cohort is queued
+    refuse_if_queued entero-build-genomes "re-planning would shift its rows"
     mkdir -p "$GEN"
     # a fresh ENA cache per cohort: the cache never expires a "no runs" answer
     uv run --no-sync python -m bacpredict.engine.genomes.plan_genome_sources \
@@ -172,10 +178,16 @@ qc)  # qc — freeze the list, submit both; qc checkm2 [indices] | qc skani — 
     LIST=$QCD/checkm2_list.tsv
     what=${2:-all}
     [[ $what == all || $what == checkm2 || $what == skani ]] || { echo "qc [checkm2 [indices] | skani]"; exit 2; }
+    # tasks run from a pinned worktree, exactly as for submit: the shared checkout's HEAD moves under queued tasks.
+    # Checked first, so a missing ARRAY_REPO never leaves a frozen list with nothing submitted against it
+    array_repo=${ARRAY_REPO:?set ARRAY_REPO to a detached worktree at the SHA to run (see the header)}
+    pin="REPO=$array_repo,EXPECT_SHA=$(git -C "$array_repo" rev-parse HEAD)"
+    # one skani job at a time: two would race each other to qc/skani_dist.tsv and its reference list (checked before
+    # anything is frozen or submitted)
+    [[ $what == checkm2 ]] || refuse_if_queued entero-skani "wait for it, or scancel it, before submitting another"
     if [[ ! -e $LIST ]]; then
         [[ $what == all ]] || { echo "no frozen list yet: run qc with no arguments first"; exit 1; }
-        live=$(squeue -u "$USER" -h -o '%j' | grep -c '^entero-build-genomes' || true)
-        (( live == 0 )) || { echo "an entero-build-genomes job is queued or running: its genomes would miss CheckM2"; exit 1; }
+        refuse_if_queued entero-build-genomes "its genomes would miss CheckM2"
         mkdir -p "$QCD"
         # every built genome (status ok), from the newest shard row per genome (as collate reads them), sorted; the
         # build must be complete, so no genome can become ok after the list is frozen
@@ -202,10 +214,6 @@ EOF
     elif [[ $what == all ]]; then
         echo "$LIST is frozen (task k takes rows by position): rerun with qc checkm2 <indices>, or qc skani"; exit 1
     fi
-    # tasks run here; it holds no code they use (they run CheckM2 / skani by absolute path), so the shared checkout
-    # is fine, but a pinned worktree (ARRAY_REPO, as for submit) keeps EXPECT_SHA from stopping pending tasks
-    array_repo=${ARRAY_REPO:-$REPO}
-    pin="REPO=$array_repo,EXPECT_SHA=$(git -C "$array_repo" rev-parse HEAD)"
     if [[ $what == all || $what == checkm2 ]]; then
         [[ -s $CHECKM2_DB ]] || { echo "no CheckM2 database at $CHECKM2_DB"; exit 1; }
         cbin=$(checkm2_bin)
@@ -219,7 +227,9 @@ EOF
              "memory unmeasured, 100G fits icelake's 32 × 3,380 MB (QC_PARTITION=icelake-himem QC_MEM=200G if not)"
     fi
     if [[ $what == all || $what == skani ]]; then
-        # skani's references as it runs them; collate reads this file, not the panel, so the two cannot drift
+        # skani's input only: the job copies it at its start and publishes that copy as qc/skani_dist.refs.tsv
+        # beside qc/skani_dist.tsv, which is what collate reads, so a later rewrite of this file cannot drift from
+        # a result
         panel | while IFS=$'\t' read -r sp acc; do
             [[ -s "$REFDIR/$acc.fna.gz" ]] || { echo "reference $acc is not on disk: run refs" >&2; exit 1; }
             printf '%s\t%s\n' "$sp" "$REFDIR/$acc.fna.gz"
@@ -235,7 +245,11 @@ EOF
     ;;
 collate)
     LIST=$QCD/checkm2_list.tsv
-    [[ -s $LIST && -s $QCD/skani_dist.tsv && -s $QCD/skani_refs.tsv ]] || { echo "run qc first (status)"; exit 1; }
+    # the skani result and the reference list it ran with, both written by the skani job in one step
+    SKANI_REFS=$QCD/skani_dist.refs.tsv
+    for f in "$LIST" "$QCD/skani_dist.tsv" "$SKANI_REFS"; do
+        [[ -s $f ]] || { echo "no $f: run qc (or qc skani for the skani pair) first (status)"; exit 1; }
+    done
     reports=(); missing=(); n=$(n_checkm2_tasks)
     for ((k = 0; k < n; k++)); do
         f=$(printf '%s/checkm2/checkm2_quality_report_%05d.tsv' "$QCD" "$k")
@@ -243,8 +257,9 @@ collate)
     done
     (( ${#missing[@]} == 0 )) || { echo "CheckM2 tasks without a report: $(IFS=,; echo "${missing[*]}") (qc checkm2 <indices>)"; exit 1; }
     refs=()
-    while IFS=$'\t' read -r sp path; do refs+=(--species-ref "$sp=$path"); done < "$QCD/skani_refs.tsv"
-    # report mode: no species rule yet — it is decided from species_crosstab.csv (label × call) with David
+    while IFS=$'\t' read -r sp path; do refs+=(--species-ref "$sp=$path"); done < "$SKANI_REFS"
+    # report mode: no species rule yet — it is decided from species_crosstab.csv (label × call) with David. So the
+    # QC pass set goes to embedding_input_unfiltered.csv; embedding_input.csv waits for a target-mode collate
     uv run --no-sync python -m bacpredict.engine.genomes.collate_genomes \
         --manifest "$GEN/genome_manifest.csv" --shard-dir "$GEN/shards" \
         --checkm2 "${reports[@]}" --skani "$QCD/skani_dist.tsv" "${refs[@]}" \
@@ -282,14 +297,17 @@ want = pd.read_csv(lst, sep="\t", header=None, names=["Sample", "contigs"], dtyp
 n = -(-len(want) // chunk)
 reports = {int(p.stem.rsplit("_", 1)[1]): p for p in (qcd / "checkm2").glob("checkm2_quality_report_*.tsv")}
 missing = sorted(set(range(n)) - set(reports))
+# Name normalised as collate_genomes.read_checkm2 does (a trailing .fna or .fna.gz dropped)
 got = pd.concat([pd.read_csv(p, sep="\t", usecols=["Name"], dtype=str) for p in reports.values()])["Name"] \
-    if reports else pd.Series(dtype=str)
+    .str.replace(r"\.fna(\.gz)?$", "", regex=True) if reports else pd.Series(dtype=str)
 print(f"CheckM2: {len(reports)}/{n} tasks written; missing tasks: {','.join(map(str, missing))}; "
       f"{int(want.isin(got).sum())} of {len(want)} listed genomes reported")
 sk = qcd / "skani_dist.tsv"
 if sk.exists():
     hit = pd.read_csv(sk, sep="\t", usecols=["Query_file"])["Query_file"].map(lambda p: Path(p).name.split(".")[0])
     print(f"skani: {hit.nunique()} of {len(want)} listed genomes within ~80 % ANI of a panel reference")
+    if not (qcd / "skani_dist.refs.tsv").exists():
+        print("skani: no skani_dist.refs.tsv beside it (the job's own reference list), so collate refuses: qc skani")
 else:
     print("skani: skani_dist.tsv not written")
 xt = qcd.parent / "species_crosstab.csv"
@@ -298,5 +316,5 @@ if xt.exists():
 EOF
     ;;
 *)
-    sed -n '2,15p' "$0"; exit 2 ;;
+    sed -n '2,16p' "$0"; exit 2 ;;
 esac

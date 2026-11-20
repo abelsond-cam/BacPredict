@@ -74,10 +74,10 @@ The stages of [`scripts/build_entero_genomes.sh`](scripts/build_entero_genomes.s
 | Stage | What it does |
 |---|---|
 | `refs` | Login node. Fetches every accession of [`species_reference_panel.tsv`](species_reference_panel.tsv) from NCBI Datasets into `raw/reference_genomes/<acc>.fna.gz` (as `build_pa_genomes.sh setup`); skips files already there; exits 1 unless every reference is on disk |
-| `qc` | Refuses while any `entero-build-genomes` job is queued or running, or while any buildable manifest genome has no shard row. Writes `genomes/qc/checkm2_list.tsv` (`Sample`, contigs path; every `ok` genome by its newest shard row, sorted, no header) and makes it read-only. Submits the CheckM2 array (`entero-checkm2`, `%40`) and the skani job (`entero-skani`), each with its resource line |
-| `qc checkm2 [indices]`, `qc skani` | Rerun from the frozen list, e.g. `qc checkm2 3,17`. `qc` alone refuses once the list exists: task k takes rows by position |
-| `collate` | Refuses unless every CheckM2 task wrote its report. Runs `collate_genomes --species-mode report --cohort cohort.csv` over every report, `qc/skani_dist.tsv`, and the references skani ran with (`qc/skani_refs.tsv`, written when `qc` submits skani; collate never re-reads the panel) |
-| `status` | Also: CheckM2 tasks written and missing indices, listed genomes reported, genomes with a skani hit |
+| `qc` | Needs `ARRAY_REPO` (a detached worktree at the SHA to run), exactly as `submit` does; there is no fallback to the shared checkout. Refuses while any `entero-build-genomes` or `entero-skani` job is queued or running, if `squeue` itself fails (never read as "none queued"), or while any buildable manifest genome has no shard row. Writes `genomes/qc/checkm2_list.tsv` (`Sample`, contigs path; every `ok` genome by its newest shard row, sorted, no header) and makes it read-only. Submits the CheckM2 array (`entero-checkm2`, `%40`) and the skani job (`entero-skani`), each with its resource line |
+| `qc checkm2 [indices]`, `qc skani` | Rerun from the frozen list, e.g. `qc checkm2 3,17`. `qc` alone refuses once the list exists: task k takes rows by position. `qc skani` refuses while another `entero-skani` job is queued or running |
+| `collate` | Refuses unless every CheckM2 task wrote its report and the skani job wrote both `qc/skani_dist.tsv` and `qc/skani_dist.refs.tsv`. Runs `collate_genomes --species-mode report --cohort cohort.csv` over every report, `qc/skani_dist.tsv`, and the references skani ran with: `qc/skani_dist.refs.tsv`, the job's own output (never the panel, nor `qc/skani_refs.tsv`, which is only the job's input). Writes `genome_qc.csv`, `species_crosstab.csv`, `st_counts_by_drug.csv` and **`embedding_input_unfiltered.csv`, not `embedding_input.csv`** (see *Collate in report mode*) |
+| `status` | Also: CheckM2 tasks written and missing indices, listed genomes reported (CheckM2 `Name` normalised as collate reads it), genomes with a skani hit, and a skani result with no reference list beside it |
 
 **The two engine scripts** (`engine/genomes/scripts/`; `run_genome_qc.sh` stays PsA's one-job QC):
 - `run_checkm2_shard.sh`: array task k takes rows k·2,000+1 … of the list (the 2,000 is fixed in the driver, never
@@ -85,15 +85,24 @@ The stages of [`scripts/build_entero_genomes.sh`](scripts/build_entero_genomes.s
   `CHECKM2_BIN` (the `checkm2` pixi env's `bin/`, resolved at submit: no pixi in a task). It writes
   `qc/checkm2/checkm2_quality_report_<k, 5 digits>.tsv` atomically. Exits 3 if the checkout moved (`EXPECT_SHA`),
   4 on an empty slice or a bad list, 5 on an unreadable contigs file, and 6 if CheckM2 reported fewer genomes
-  than it was given (that report is still written). Shape: 32 cores, 100 GB, 4 h on `icelake`, from PsA's
+  than it was given (that report is still written; the missing ones are named after normalising CheckM2's `Name`
+  as collate does, a trailing `.fna`/`.fna.gz` dropped). Shape: 32 cores, 100 GB, 4 h on `icelake`, from PsA's
   ~1.6 core-min per genome; `QC_PARTITION`, `QC_MEM`, `QC_TIME` override it. CheckM2's memory has never been
   measured: read sacct MaxRSS on the first tasks.
 - `run_skani.sh`: one job, `skani dist` of every listed genome against every panel reference, in slices of
-  5,000 genomes (`QCHUNK`) so memory stays bounded, concatenated under one header into `qc/skani_dist.tsv`.
-- Both run under `ARRAY_REPO` if set (as `submit`), otherwise this checkout; neither runs repo code.
+  5,000 genomes (`QCHUNK`) so memory stays bounded, concatenated under one header into `qc/skani_dist.tsv`. It
+  copies `REFS_TSV` when it starts and publishes that copy as `qc/skani_dist.refs.tsv` in the same step as the
+  result (old list removed, then result and list moved in), so the result always carries the reference list it
+  was run with; a job killed between the moves leaves no list, which collate refuses. `collate_genomes` stops if
+  the skani table names a reference that is not in the list it was given.
+- Both run under `ARRAY_REPO`, which `qc` requires exactly as `submit` does (the shared checkout's `HEAD` moves
+  under queued tasks); neither runs repo code.
 
 **Collate in report mode** (`engine/genomes/collate_genomes.py`; PsA's target mode is unchanged):
-- No species rule: species never fails QC, so this `embedding_input.csv` is not species-filtered.
+- No species rule: species never fails QC, so the QC pass set is not species-filtered. It is written to
+  `genomes/embedding_input_unfiltered.csv`; **`genomes/embedding_input.csv` (the embedding step's input) is not
+  written until a species rule is chosen** and collate runs in target mode (`--species-mode target
+  --target-species …`, as PsA).
 - `genomes/species_crosstab.csv`: the label species (`cohort.csv` `species`) × the called species, over every
   built genome: `n`, `n_qc_pass`, `n_species_conflict` (the portal's two tables disagree), `n_no_skani_hit`,
   quantiles of the best ANI (`best_ani_min`, `_q01`, `_q05`, `_q25`, `_median`, `_q75`, `_max`), and

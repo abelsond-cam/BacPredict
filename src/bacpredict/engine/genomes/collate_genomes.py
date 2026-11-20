@@ -11,15 +11,19 @@ CheckM2 completeness >= 90 % and contamination <= 5 %; total length 100 kbp - 15
 N50 >= 2,000; and the species call must equal ``--target-species``. ATB calls species with sylph on reads;
 we hold assemblies, so the call here is the **closest of ``--species-ref`` genomes by skani ANI, if that
 ANI is >= 95 %** (else ``unknown``). A ``--species-ref`` name may repeat: a species with several reference
-genomes counts its best ANI. A built genome skani reports nothing for — skani is silent below roughly
+genomes counts its best ANI. Every reference in the skani table must be one of the ``--species-ref`` files (by
+file name), or collate stops: a reference list that has drifted from the skani run would otherwise drop that
+reference's hits silently. A built genome skani reports nothing for — skani is silent below roughly
 80 % ANI, so it is not close to any reference — is ``unknown`` too. Every failed rule is listed in ``qc_fail``;
 a genome that failed to build fails ``build`` alone, since it has no statistics to test.
 
 **``--species-mode report``** (a multi-species cohort, before its species rule is decided) applies no species
-rule: species never fails QC, so ``embedding_input.csv`` is not species-filtered. It writes
-``species_crosstab.csv`` instead: the label species from ``--cohort`` × the called species over every built
-genome, with counts, QC passes, and quantiles of the best ANI. ``--cohort`` (cohort.csv) joins the portal's
-``species``, ``species_genotype`` and ``species_conflict`` into ``genome_qc.csv`` in either mode.
+rule, so its QC pass set is not species-filtered: it is written to ``embedding_input_unfiltered.csv``, and
+``embedding_input.csv`` (the input the embedding step reads) is not written until a species rule is chosen and
+collate runs in target mode. It writes ``species_crosstab.csv`` too: the label species from ``--cohort`` × the
+called species over every built genome, with counts, QC passes, and quantiles of the best ANI. ``--cohort``
+(cohort.csv) joins the portal's ``species``, ``species_genotype`` and ``species_conflict`` into ``genome_qc.csv``
+in either mode.
 
 In ``st_counts_by_drug.csv``, ``st`` ``-`` pools every genome mlst could not type (a novel or partial allele, a
 missing locus, or a new combination of known alleles). It is not an ST, and is never a holdout candidate. When the
@@ -28,9 +32,9 @@ an untyped genome is ``<scheme>:-``.
 
 Writes into ``--out-dir``: ``genome_qc.csv`` (every genome: source, build status, statistics, CheckM2,
 ANI per reference species, species call, ST, pass/fail), ``embedding_input.csv`` (``Sample, sr_assembly_file,
-sr_gff_file`` for passing genomes — the input of ``embedding/preprocess_assemblies_to_protein_sequences``),
-given ``--labels``, ``st_counts_by_drug.csv`` (passing genomes with a clean 0/1 label, per drug × ST), and in
-report mode ``species_crosstab.csv``.
+sr_gff_file`` for passing genomes — the input of ``embedding/preprocess_assemblies_to_protein_sequences``;
+``embedding_input_unfiltered.csv`` instead in report mode), given ``--labels``, ``st_counts_by_drug.csv``
+(passing genomes with a clean 0/1 label, per drug × ST), and in report mode ``species_crosstab.csv``.
 """
 
 from __future__ import annotations
@@ -81,7 +85,9 @@ def read_skani(paths: Path | Iterable[Path], refs: dict[str, str] | Sequence[tup
     """``skani dist`` output(s) → per Sample: the best ANI to each named species, and the species call.
 
     ``refs`` is ``{name: path}`` or ``[(name, path), …]``; a name may repeat (several reference genomes for one
-    species), and the species' ANI is then its best. References are matched to ``Ref_file`` by file name.
+    species), and the species' ANI is then its best. References are matched to ``Ref_file`` by file name, and a
+    ``Ref_file`` that matches none of them is an error: ``refs`` must be the list skani ran with, not one that has
+    drifted from it (its hits would otherwise be dropped without a word).
     """
     paths = _paths(paths)
     pairs = list(refs.items()) if isinstance(refs, dict) else list(refs)
@@ -93,6 +99,10 @@ def read_skani(paths: Path | Iterable[Path], refs: dict[str, str] | Sequence[tup
         if by_file.setdefault(base, name) != name:
             raise ValueError(f"reference file {base} is given for both {by_file[base]!r} and {name!r}")
     s["ref_base"] = s["Ref_file"].map(lambda p: Path(p).name)
+    unknown = sorted(set(s["ref_base"]) - set(by_file))
+    if unknown:
+        raise ValueError(f"{len(unknown)} reference file(s) in the {len(paths)} skani file(s) are not among the "
+                         f"{len(by_file)} references given: {unknown[:20]}; pass the reference list skani ran with")
     dup = s.duplicated(["Sample", "ref_base"])
     if dup.any():
         raise ValueError(f"{int(dup.sum())} (genome, reference) pairs appear twice across {len(paths)} skani "
@@ -201,7 +211,8 @@ def main() -> None:
                          "A NAME may repeat: that species' ANI is the best over its references")
     ap.add_argument("--species-mode", choices=["target", "report"], default="target",
                     help="target (default): a genome must be called --target-species to pass. report: no species "
-                         "rule; writes species_crosstab.csv (needs --cohort)")
+                         "rule; writes species_crosstab.csv (needs --cohort), and the QC pass set to "
+                         "embedding_input_unfiltered.csv, not embedding_input.csv")
     ap.add_argument("--target-species", default=None, help="required with --species-mode target")
     ap.add_argument("--cohort", type=Path, default=None,
                     help="cohort.csv: joins species, species_genotype, species_conflict into genome_qc.csv")
@@ -247,13 +258,19 @@ def main() -> None:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     g.to_csv(args.out_dir / "genome_qc.csv", index=False)
     ok = g[g["qc_pass"]]
+    # report mode has no species rule yet, so its pass set is not the embedding input: a separate name keeps it from
+    # being read as one
+    emb = args.out_dir / ("embedding_input.csv" if args.species_mode == "target" else "embedding_input_unfiltered.csv")
     pd.DataFrame({"Sample": ok["Sample"], "sr_assembly_file": ok["contigs_path"], "sr_gff_file": ok["gff_path"]}
-                 ).to_csv(args.out_dir / "embedding_input.csv", index=False)
+                 ).to_csv(emb, index=False)
 
     print(f"manifest: {len(manifest)} labelled genomes, {len(built)} buildable, "
           f"{int(manifest['source'].eq('drop').sum())} dropped before building")
     print(f"built ok: {int(g['status'].eq('ok').sum())}; QC pass: {len(ok)}"
           + (" (species mode report: no species rule)" if args.species_mode == "report" else ""))
+    if args.species_mode == "report":
+        print(f"QC pass set, not species-filtered → {emb}; embedding_input.csv is not written in report mode "
+              "(choose the species rule from species_crosstab.csv, then collate in target mode)")
     print("QC failures by rule:\n" + g.loc[~g["qc_pass"], "qc_fail"].str.split(";").explode().value_counts().to_string())
     print("species calls:\n" + g["species_call"].value_counts(dropna=False).to_string())
     # the embedding step truncates each genome at --max-proteins; make the cost of a cap visible here
