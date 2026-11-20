@@ -67,7 +67,30 @@ chunks() { uv run --no-sync python -m bacpredict.engine.genomes.build_genomes --
 tools_bin() { echo "$(cd "$REPO/src/bacpredict/engine/genomes" && pixi run -- printenv CONDA_PREFIX)/bin"; }
 checkm2_bin() { echo "$(cd "$REPO/src/bacpredict/engine/genomes" && pixi run -e checkm2 -- printenv CONDA_PREFIX)/bin"; }
 panel() { grep -v '^#' "$PANEL" | tail -n +2 | cut -f1,2; }  # species<TAB>accession, the DRAFT panel's rows
-n_checkm2_tasks() { echo $(( ($(wc -l < "$QCD/checkm2_list.tsv") + CHECKM2_CHUNK - 1) / CHECKM2_CHUNK )); }
+n_checkm2_tasks() { echo $(( ($(wc -l < "${1:-$QCD/checkm2_list.tsv}") + CHECKM2_CHUNK - 1) / CHECKM2_CHUNK )); }
+TOPUP=$QCD/checkm2_list_topup.tsv  # the genomes built after a partial freeze (qc topup); its reports in qc/topup/
+# ok genomes of the finished build that are in neither frozen list, as Sample<TAB>contigs path (refuses while the
+# build is incomplete). Prints the rows to stdout; used by qc topup, and by qc skani to refuse an incomplete union
+unlisted_built() {
+    uv run --no-sync python -I - "$GEN/genome_manifest.csv" "$GEN/shards" "$QCD/checkm2_list.tsv" "$TOPUP" <<'EOF'
+import sys
+from pathlib import Path
+import pandas as pd
+from bacpredict.engine.genomes.collate_genomes import read_shards
+m = pd.read_csv(sys.argv[1], dtype=str)
+want = set(m.loc[m["source"].ne("drop"), "Sample"])
+s = read_shards(Path(sys.argv[2]))
+s = s[s["Sample"].isin(want)]
+if missing := want - set(s["Sample"]):
+    sys.exit(f"{len(missing)} of {len(want)} buildable genomes have no shard row yet, e.g. {sorted(missing)[:5]}")
+listed = set()
+for f in sys.argv[3:5]:
+    if Path(f).exists():
+        listed |= set(pd.read_csv(f, sep="\t", header=None, dtype=str)[0])
+ok = s[s["status"].eq("ok") & ~s["Sample"].isin(listed)].sort_values("Sample")
+ok[["Sample", "contigs_path"]].to_csv(sys.stdout, sep="\t", header=False, index=False)
+EOF
+}
 # refuse_if_queued <job-name prefix> <why>: exit 1 if any of this user's jobs whose name starts with the prefix is
 # queued or running — or if squeue itself fails, which must never read as "none queued" (as `grep -c … || true` on a
 # failed squeue's empty output would). Call it directly, never in $(…), so its exit stops the script.
@@ -177,7 +200,8 @@ refs)
 qc)  # qc — freeze the list, submit both; qc checkm2 [indices] | qc skani — rerun from the frozen list
     LIST=$QCD/checkm2_list.tsv
     what=${2:-all}
-    [[ $what == all || $what == checkm2 || $what == skani ]] || { echo "qc [checkm2 [indices] | skani]"; exit 2; }
+    [[ $what =~ ^(all|checkm2|skani|topup|topup-checkm2)$ ]] || {
+        echo "qc [checkm2 [indices] | skani | topup | topup-checkm2 [indices]]"; exit 2; }
     # tasks run from a pinned worktree, exactly as for submit: the shared checkout's HEAD moves under queued tasks.
     # Checked first, so a missing ARRAY_REPO never leaves a frozen list with nothing submitted against it
     array_repo=${ARRAY_REPO:?set ARRAY_REPO to a detached worktree at the SHA to run (see the header)}
@@ -187,11 +211,15 @@ qc)  # qc — freeze the list, submit both; qc checkm2 [indices] | qc skani — 
     [[ $what == checkm2 ]] || refuse_if_queued entero-skani "wait for it, or scancel it, before submitting another"
     if [[ ! -e $LIST ]]; then
         [[ $what == all ]] || { echo "no frozen list yet: run qc with no arguments first"; exit 1; }
-        refuse_if_queued entero-build-genomes "its genomes would miss CheckM2"
+        # ALLOW_PARTIAL=1 freezes the genomes built so far (e.g. while a slow shovill tail is queued) and leaves skani
+        # for later; `qc topup` then runs CheckM2 on the rest once the build is done, and `qc skani` runs on both lists
+        partial=${ALLOW_PARTIAL:-0}
+        [[ $partial == 1 ]] || refuse_if_queued entero-build-genomes \
+            "its genomes would miss CheckM2 (ALLOW_PARTIAL=1 freezes the built genomes now; qc topup adds the rest)"
         mkdir -p "$QCD"
         # every built genome (status ok), from the newest shard row per genome (as collate reads them), sorted; the
-        # build must be complete, so no genome can become ok after the list is frozen
-        uv run --no-sync python -I - "$GEN/genome_manifest.csv" "$GEN/shards" "$LIST" <<'EOF'
+        # build must be complete unless ALLOW_PARTIAL=1, so no genome can become ok after the list is frozen unnoticed
+        uv run --no-sync python -I - "$GEN/genome_manifest.csv" "$GEN/shards" "$LIST" "$partial" <<'EOF'
 import sys
 from pathlib import Path
 import pandas as pd
@@ -200,9 +228,11 @@ m = pd.read_csv(sys.argv[1], dtype=str)
 want = set(m.loc[m["source"].ne("drop"), "Sample"])
 s = read_shards(Path(sys.argv[2]))
 s = s[s["Sample"].isin(want)]
-if missing := want - set(s["Sample"]):
+if (missing := want - set(s["Sample"])) and sys.argv[4] != "1":
     sys.exit(f"{len(missing)} of {len(want)} buildable genomes have no shard row yet, e.g. {sorted(missing)[:5]}: "
              "finish the build (status) before freezing the CheckM2 list")
+if missing:
+    print(f"ALLOW_PARTIAL: {len(missing)} buildable genomes not built yet are left for qc topup")
 ok = s[s["status"].eq("ok")].sort_values("Sample")
 if not ok["contigs_path"].str.startswith("/").all():
     sys.exit("contigs paths must be absolute")
@@ -213,6 +243,26 @@ EOF
         chmod a-w "$LIST"
     elif [[ $what == all ]]; then
         echo "$LIST is frozen (task k takes rows by position): rerun with qc checkm2 <indices>, or qc skani"; exit 1
+    fi
+    if [[ $what == topup ]]; then
+        [[ -e $LIST ]] || { echo "no frozen list: run qc first"; exit 1; }
+        [[ ! -e $TOPUP ]] || { echo "$TOPUP is frozen: rerun its tasks with qc topup-checkm2 <indices>"; exit 1; }
+        refuse_if_queued entero-build-genomes "the top-up must come after the whole build"
+        unlisted_built > "$TOPUP.part" || { rm -f "$TOPUP.part"; exit 1; }
+        mv "$TOPUP.part" "$TOPUP"; chmod a-w "$TOPUP"
+        echo "CheckM2 top-up list: $(wc -l < "$TOPUP") genomes → $TOPUP"
+        [[ -s $TOPUP ]] || { echo "nothing to top up"; exit 0; }
+        what=topup-checkm2
+    fi
+    if [[ $what == topup-checkm2 ]]; then
+        [[ -s $TOPUP ]] || { echo "no top-up list: run qc topup"; exit 1; }
+        cbin=$(checkm2_bin)
+        n=$(n_checkm2_tasks "$TOPUP")
+        submit --array="${3:-0-$((n - 1))}" --partition=${QC_PARTITION:-icelake} --cpus-per-task=32 \
+            --mem=${QC_MEM:-100G} --time=${QC_TIME:-04:00:00} --job-name=entero-checkm2-topup \
+            --export=ALL,$pin,LIST=$TOPUP,QC_DIR=$QCD/topup,CHUNK=$CHECKM2_CHUNK,CHECKM2_BIN=$cbin,CHECKM2_DB=$CHECKM2_DB \
+            src/bacpredict/engine/genomes/scripts/run_checkm2_shard.sh
+        exit 0
     fi
     if [[ $what == all || $what == checkm2 ]]; then
         [[ -s $CHECKM2_DB ]] || { echo "no CheckM2 database at $CHECKM2_DB"; exit 1; }
@@ -226,7 +276,15 @@ EOF
         echo "  CheckM2: $n tasks × $CHECKM2_CHUNK genomes; ~1.7 h each at PsA's 1.6 core-min per genome, so 4 h;" \
              "memory unmeasured, 100G fits icelake's 32 × 3,380 MB (QC_PARTITION=icelake-himem QC_MEM=200G if not)"
     fi
-    if [[ $what == all || $what == skani ]]; then
+    if [[ $what == all && ${partial:-0} == 1 ]]; then
+        echo "  skani: not submitted (ALLOW_PARTIAL): run qc topup, then qc skani, once the build is done"
+    elif [[ $what == all || $what == skani ]]; then
+        # skani covers every built genome: the frozen list plus any top-up, and nothing built may be left out
+        refuse_if_queued entero-build-genomes "skani must see every built genome"
+        left=$(unlisted_built | wc -l) || exit 1
+        (( left == 0 )) || { echo "$left built genomes are in no CheckM2 list: run qc topup first"; exit 1; }
+        cat "$LIST" $([[ -e $TOPUP ]] && echo "$TOPUP") > "$QCD/skani_list.tsv.part"
+        mv "$QCD/skani_list.tsv.part" "$QCD/skani_list.tsv"
         # skani's input only: the job copies it at its start and publishes that copy as qc/skani_dist.refs.tsv
         # beside qc/skani_dist.tsv, which is what collate reads, so a later rewrite of this file cannot drift from
         # a result
@@ -237,9 +295,9 @@ EOF
         mv "$QCD/skani_refs.tsv.part" "$QCD/skani_refs.tsv"
         submit --partition=${QC_PARTITION:-icelake} --cpus-per-task=32 --mem=64G --time=01:00:00 \
             --job-name=entero-skani \
-            --export="ALL,$pin,LIST=$LIST,REFS_TSV=$QCD/skani_refs.tsv,QC_DIR=$QCD,TOOLS_BIN=$(tools_bin)" \
+            --export="ALL,$pin,LIST=$QCD/skani_list.tsv,REFS_TSV=$QCD/skani_refs.tsv,QC_DIR=$QCD,TOOLS_BIN=$(tools_bin)" \
             src/bacpredict/engine/genomes/scripts/run_skani.sh
-        echo "  skani: $(wc -l < "$LIST") genomes × $(wc -l < "$QCD/skani_refs.tsv") references in slices of 5,000;" \
+        echo "  skani: $(wc -l < "$QCD/skani_list.tsv") genomes × $(wc -l < "$QCD/skani_refs.tsv") references in slices of 5,000;" \
              "minutes expected (PsA: seconds for 3,773 × 2), so 1 h; 64G bounds 5,000 sketches"
     fi
     ;;
@@ -256,6 +314,14 @@ collate)
         if [[ -s $f ]]; then reports+=("$f"); else missing+=("$k"); fi
     done
     (( ${#missing[@]} == 0 )) || { echo "CheckM2 tasks without a report: $(IFS=,; echo "${missing[*]}") (qc checkm2 <indices>)"; exit 1; }
+    if [[ -e $TOPUP ]]; then  # the top-up's reports (qc topup), which a partial freeze leaves to after the build
+        n=$(n_checkm2_tasks "$TOPUP")
+        for ((k = 0; k < n; k++)); do
+            f=$(printf '%s/topup/checkm2/checkm2_quality_report_%05d.tsv' "$QCD" "$k")
+            if [[ -s $f ]]; then reports+=("$f"); else missing+=("$k"); fi
+        done
+        (( ${#missing[@]} == 0 )) || { echo "top-up CheckM2 tasks without a report: $(IFS=,; echo "${missing[*]}") (qc topup-checkm2 <indices>)"; exit 1; }
+    fi
     refs=()
     while IFS=$'\t' read -r sp path; do refs+=(--species-ref "$sp=$path"); done < "$SKANI_REFS"
     # report mode: no species rule yet — it is decided from species_crosstab.csv (label × call) with David. So the

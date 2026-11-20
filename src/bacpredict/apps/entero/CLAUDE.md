@@ -130,6 +130,12 @@ gaps it leaves.
 - Logging in both embedding modules is silently lost (a `bacformer.pp` import configures the root logger first),
   so read throughput from tqdm or `sacct`.
 
+**Partial freeze and top-up.** A slow tail (shovill on a busy `icelake-himem`) need not hold up CheckM2 for everything
+else: `ALLOW_PARTIAL=1 … qc` freezes the genomes built so far and submits their CheckM2, but not skani. Once the
+build has finished, `qc topup` freezes the rest as `qc/checkm2_list_topup.tsv` (reports in `qc/topup/checkm2/`;
+reruns `qc topup-checkm2 <indices>`), and `qc skani` runs on the union of both lists (`qc/skani_list.tsv`), refusing
+while any built genome is in neither list. `collate` reads both sets of reports.
+
 ## Annotation (Bakta)
 
 [`scripts/annotate_entero_genomes.sh`](scripts/annotate_entero_genomes.sh) runs `engine/genomes/bakta.py` as PsA
