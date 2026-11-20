@@ -14,6 +14,7 @@ Per-sample extractor is chosen by file extension on the `sr_gff_file` column:
 
 import argparse
 import logging
+import os
 import sys
 import time
 from datetime import datetime, timedelta
@@ -62,9 +63,18 @@ def check_output_exists(sample_id: str, output_dir: Path) -> bool:
 
 
 def save_to_parquet(data_dict: dict, output_path: Path) -> None:
-    """Save a single-row dict as a parquet file."""
+    """Save a single-row dict as a parquet file, atomically.
+
+    Written to a hidden sibling and renamed into place: ``--skip-existing`` tests existence only, so a parquet
+    truncated by a wall-time or OOM kill would otherwise be kept by every rerun.
+    """
     df = pd.DataFrame([data_dict])
-    df.to_parquet(output_path, engine="pyarrow", compression="snappy")
+    tmp = output_path.with_name(f".{output_path.name}.{os.getpid()}.part")
+    try:
+        df.to_parquet(tmp, engine="pyarrow", compression="snappy")
+        os.replace(tmp, output_path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _extract_genome_info(sample_id: str, sr_assembly_file: str, sr_gff_file: str,

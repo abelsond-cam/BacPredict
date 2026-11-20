@@ -3,14 +3,17 @@
 #
 #   bash src/bacpredict/apps/pa/scripts/annotate_pa_genomes.sh plan     # which genomes BakRep covers, which we run
 #   bash src/bacpredict/apps/pa/scripts/annotate_pa_genomes.sh ingest   # CPU job: BakRep's GFF3s, checked on our contigs
-#   bash src/bacpredict/apps/pa/scripts/annotate_pa_genomes.sh submit   # CPU array: our Bakta on the rest
+#   bash src/bacpredict/apps/pa/scripts/annotate_pa_genomes.sh submit   # CPU array: our Bakta on the rest, and on
+#                                                                        #  any genome ingest refused
 #   bash src/bacpredict/apps/pa/scripts/annotate_pa_genomes.sh collate  # genomes/bakta_annotation.csv (exit 1 if any
 #                                                                        #  genome lacks one current annotation)
 #
 # Bakta is the annotation of record (PROJECT_STATE §6). BakRep's GFF3 is used where BakRep holds the genome and our
 # contigs are ATB's (its coordinates sit on ATB's contigs; ingest re-checks every file base for base); every other
 # genome is annotated by us with the same release, flags and database. That our run reproduces BakRep's was gated on
-# 16 genomes (engine/genomes/scripts/validate_bakta_against_bakrep.sh). The cohort is genomes/embedding_input.csv
+# 18 genomes (engine/genomes/scripts/validate_bakta_against_bakrep.sh), so a genome whose BakRep file ingest refuses
+# is simply annotated by us. The refusals seen: AllTheBacteria contig numbering with gaps (contig00130, 00132, …),
+# which our store renumbers consecutively, so BakRep's seqids name different contigs of ours (same sequences). The cohort is genomes/embedding_input.csv
 # (build_pa_genomes.sh collate); bakta_annotation.csv is what build_pa_embeddings.sh then reads.
 set -euo pipefail
 
@@ -69,12 +72,34 @@ python -m bacpredict.engine.genomes.bakta ingest --roster $PLAN/bakrep_roster.ts
     ;;
 submit)
     [[ -s "$PLAN/run_roster.tsv" && -s "$DB/version.json" ]] || { echo "run plan first; DB at $DB"; exit 1; }
+    # the run roster = the planned one + every BakRep-roster genome without a current ingest record
+    uv run --no-sync python -I - "$PLAN" "$ANN" <<'EOF'
+import sys
+from pathlib import Path
+import pandas as pd
+from bacpredict.engine.genomes.bakta import _record_if_current, ingest_record
+from bacpredict.engine.genomes.build_genomes import _md5
+plan, ann = Path(sys.argv[1]), Path(sys.argv[2])
+cols = ["Sample", "contigs"]
+planned = pd.read_csv(plan / "run_roster.tsv", sep="\t", header=None, names=cols, dtype=str)
+bakrep = pd.read_csv(plan / "bakrep_roster.tsv", sep="\t", header=None, names=cols, dtype=str)
+refused = bakrep[[_record_if_current(ingest_record(ann, s), _md5(Path(c))) is None
+                  for s, c in zip(bakrep["Sample"], bakrep["contigs"], strict=True)]]
+roster = pd.concat([planned, refused]).sort_values("Sample")
+assert roster["Sample"].is_unique
+roster.to_csv(plan / "run_roster_with_refused.tsv", sep="\t", header=False, index=False)
+print(f"run roster: {len(planned)} planned + {len(refused)} BakRep genomes without a current ingest = {len(roster)}")
+EOF
+    roster=$PLAN/run_roster_with_refused.tsv
     chunk=4
-    n=$(( ($(wc -l < "$PLAN/run_roster.tsv") + chunk - 1) / chunk ))
-    # 8 cores / 52 GB per task: sacct MaxRSS was 38-40 GB per genome in the gate (52G is under 8 x 6,760 MB).
-    # ~9 min per genome at 10 threads in the gate, longer for >1,000 contigs: 4 genomes ≈ 40-90 min, so 3 h.
+    n=$(( ($(wc -l < "$roster") + chunk - 1) / chunk ))
+    # 8 cores / 52 GB per task: sacct MaxRSS was 38-42.5 GB per genome in the gate (52G is under 8 x 6,760 MB).
+    # 7.5-9.5 min per genome at 10 threads in the gate, 16-18 min at 1,677-3,010 contigs: 4 genomes ≈ 40-90 min → 3 h.
+    # ARRAY_REPO: the checkout the tasks run (default this one) — a detached worktree keeps hours of array immune to
+    # other agents' pulls of the shared checkout (see run_bakta_array.sh)
+    array_repo=${ARRAY_REPO:-$REPO}
     submit --array=0-$((n - 1))%100 --cpus-per-task=8 --mem=52G --time=03:00:00 --job-name=pa-bakta \
-        --export=ALL,ROSTER=$PLAN/run_roster.tsv,OUT_DIR=$ANN,TOOLS_BIN=$(tools_bin),DB=$DB,CHUNK=$chunk,KEEP=gff3+faa+txt,EXPECT_SHA=$(git rev-parse HEAD) \
+        --export=ALL,REPO=$array_repo,ROSTER=$roster,OUT_DIR=$ANN,TOOLS_BIN=$(tools_bin),DB=$DB,CHUNK=$chunk,KEEP=gff3+faa+txt,EXPECT_SHA=$(git -C "$array_repo" rev-parse HEAD) \
         src/bacpredict/engine/genomes/scripts/run_bakta_array.sh
     ;;
 collate)

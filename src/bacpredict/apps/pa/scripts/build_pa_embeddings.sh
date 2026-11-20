@@ -71,14 +71,34 @@ problems["parquet older than its GFF"] = [
     s for s in have_pq if s in c.index and pq[s].stat().st_mtime < Path(c.at[s, "sr_gff_file"]).stat().st_mtime]
 print(f"cohort: {len(samples)} genomes ({Path(cohort_csv).name if scope == 'all' else f'first {scope} parquets'}); "
       f"with a protein parquet: {len(have_pq)}")
-if scope == "all" and {"n_cds", "n_pseudo"} <= set(c.columns):
+if scope == "all" and {"n_cds", "n_pseudo", "contigs_md5"} <= set(c.columns):
+    import hashlib
+    from concurrent.futures import ThreadPoolExecutor
     import pyarrow.parquet as papq
+    # the annotation table must still describe the QC cohort and the contigs it was made on
+    qc = pd.read_csv(Path(cohort_csv).with_name("embedding_input.csv"), dtype={"Sample": str})
+    problems["cohort differs from embedding_input.csv"] = sorted(set(qc["Sample"]) ^ set(c.index))
+    def md5(p):
+        h = hashlib.md5()
+        with open(p, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 22), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    with ThreadPoolExecutor(16) as ex:
+        now = dict(zip(c.index, ex.map(md5, c["sr_assembly_file"])))
+    problems["contigs changed since annotation"] = [s for s in c.index if now[s] != c.at[s, "contigs_md5"]]
     expect = (c["n_cds"] - c["n_pseudo"]).astype(int)
-    got = {s: sum(len(x) for x in papq.read_table(pq[s], columns=["protein_sequence"]).column(0).to_pylist()[0])
-           for s in have_pq}
-    problems["protein count != CDS - pseudogenes"] = [s for s in have_pq if got[s] != expect[s]]
-    print(f"protein count = CDS - pseudogenes: {len(have_pq) - len(problems['protein count != CDS - pseudogenes'])}"
-          f"/{len(have_pq)}")
+    got, unreadable = {}, []
+    for s in have_pq:
+        try:
+            got[s] = sum(len(x) for x in papq.read_table(pq[s], columns=["protein_sequence"]).column(0).to_pylist()[0])
+        except Exception:
+            unreadable.append(s)
+    problems["unreadable parquet (delete it and rerun proteins)"] = unreadable
+    problems["protein count != CDS - pseudogenes"] = [s for s in got if got[s] != expect[s]]
+    print(f"protein count = CDS - pseudogenes: {len(got) - len(problems['protein count != CDS - pseudogenes'])}"
+          f"/{len(have_pq)}; contigs unchanged since annotation: "
+          f"{len(c) - len(problems['contigs changed since annotation'])}/{len(c)}")
 if not proteins_only:
     problems["no embedding"] = [s for s in have_pq if not pt[s].exists()]
     have_pt = [s for s in have_pq if pt[s].exists()]

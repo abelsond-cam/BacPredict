@@ -8,6 +8,8 @@
 #   TOOLS_BIN  bin/ of the engine/genomes `bakta` pixi env — resolve at submit time, never in a task
 #   DB         Bakta database v5.1 full ($ROOT/raw/bakta_db/v5.1_full)
 #   CHUNK      genomes per task (default 1); EXPECT_SHA: refuse to run if the shared checkout has moved
+#   REPO       the checkout to run (default ~/workspace/BacPredict). For a long array, a detached worktree at the
+#              submitting SHA with .venv symlinked to the shared env: other agents' pulls then cannot stop it.
 #
 # A genome whose finished run used the same contigs, tool env, flags and database (its run.json) is skipped, so
 # a rerun of the same indices only redoes what is missing or stale. Sizing (icelake-himem, 6,760 MB per core):
@@ -31,6 +33,9 @@ CHUNK=${CHUNK:-1}
 CPUS=${SLURM_CPUS_PER_TASK:-10}
 K=${SLURM_ARRAY_TASK_ID:-0}
 cd "$REPO"
+# $REPO's own code, even when $REPO is a worktree whose .venv is the shared env (its editable install points at the
+# main checkout): PYTHONPATH precedes site-packages
+export PYTHONPATH="$REPO/src${PYTHONPATH:+:$PYTHONPATH}"
 head=$(git rev-parse HEAD)
 if [[ -n "${EXPECT_SHA:-}" && "$head" != "$EXPECT_SHA"* ]]; then
     echo "the shared checkout moved: HEAD ${head:0:7}, this array was submitted at $EXPECT_SHA"; exit 3

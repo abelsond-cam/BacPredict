@@ -166,3 +166,7 @@ def test_collate_takes_exactly_one_current_record_per_genome(tmp_path, monkeypat
     assert good.set_index("Sample")["origin"].to_dict() == {"S1": "bakrep", "S2": "bakta_run"}
     assert set(bad["Sample"]) == {"S3", "S4"}
     assert list(good.columns[:3]) == ["Sample", "sr_assembly_file", "sr_gff_file"]
+    assert good[["n_cds", "n_pseudo"]].to_numpy().tolist() == [[3, 1], [3, 1]]  # counted from the GFF3 itself
+    bakta.ingest_record(ann, "S1").write_text('{"truncated')                      # a killed write → not current
+    good, bad = bakta.collate(pd.DataFrame(rows), ann, fp, workers=2)
+    assert "S1" in set(bad["Sample"])

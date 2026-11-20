@@ -234,6 +234,13 @@ def is_current(out_dir: Path, sample: str, contigs: Path, fingerprint: str) -> b
         return False
 
 
+def _write_json(path: Path, rec: dict) -> None:
+    """Write a record atomically: a killed job leaves the old record or none, never a truncated one."""
+    tmp = _part(path)
+    tmp.write_text(json.dumps(rec) + "\n")
+    tmp.replace(path)
+
+
 def ingest_record(out_dir: Path, sample: str) -> Path:
     """``<out_dir>/<sample>.bakta.ingest.json``: where an ingested BakRep GFF3 came from and which contigs it sits on."""
     return out_dir / f"{sample}.bakta.ingest.json"
@@ -251,6 +258,7 @@ def ingest_bakrep(sample: str, contigs: Path, out_dir: Path) -> dict:
         raise LookupError(f"{sample}: BakRep has no GFF3" + (f" (has {sorted(urls)})" if urls else ""))
     out_dir.mkdir(parents=True, exist_ok=True)
     dest = out_dir / f"{sample}.bakta.gff3.gz"
+    contigs_md5 = _md5(contigs)  # before the comparison, re-checked after: the record must certify what was compared
     tmp = _part(dest)
     try:
         download(urls["gff3"], tmp)
@@ -262,20 +270,23 @@ def ingest_bakrep(sample: str, contigs: Path, out_dir: Path) -> dict:
             raise ValueError(f"{sample}: BakRep's contigs are not ours ({same}/{len(ours)} identical by name, "
                              f"{len(theirs)} in BakRep's GFF3)")
         counts = cds_counts(tmp)
+        if _md5(contigs) != contigs_md5:
+            raise RuntimeError(f"{sample}: {contigs} changed during ingest")
         tmp.replace(dest)
     finally:
         tmp.unlink(missing_ok=True)
     rec = {"sample": sample, "origin": "bakrep", "url": urls["gff3"], "gff3_md5": _md5(dest),
-           "contigs": str(contigs), "contigs_md5": _md5(contigs), "software": BAKTA_SOFTWARE,
+           "contigs": str(contigs), "contigs_md5": contigs_md5, "software": BAKTA_SOFTWARE,
            "database": BAKTA_DATABASE, **counts}
-    ingest_record(out_dir, sample).write_text(json.dumps(rec) + "\n")
+    _write_json(ingest_record(out_dir, sample), rec)
     return rec
 
 
 def _record_if_current(path: Path, contigs_md5: str, fingerprint: str | None = None) -> dict | None:
-    if not path.exists():
+    try:
+        r = json.loads(path.read_text())
+    except (OSError, ValueError):  # absent or unreadable: not current, so ingest re-fetches and collate reports it
         return None
-    r = json.loads(path.read_text())
     if r.get("contigs_md5") != contigs_md5 or (fingerprint is not None and r.get("fingerprint") != fingerprint):
         return None
     return r
@@ -288,7 +299,8 @@ def collate(cohort: pd.DataFrame, annotation_dir: Path, fingerprint: str, worker
     ``cohort`` needs ``Sample`` and ``sr_assembly_file`` (the contigs). A genome is accepted when exactly one of its
     records is current: an ingest record on the same contigs, or a run record on the same contigs made with the
     tool env, flags and database of ``fingerprint``. The table has the protein stage's columns (``Sample``,
-    ``sr_assembly_file``, ``sr_gff_file``) plus ``origin``, ``n_cds``, ``n_pseudo`` and ``contigs_md5``.
+    ``sr_assembly_file``, ``sr_gff_file``) plus ``origin``, ``n_cds``, ``n_pseudo`` (counted here, from the GFF3
+    handed on) and ``contigs_md5``.
     """
     def one(row: tuple[str, str]) -> dict:
         s, contigs = row
@@ -303,9 +315,14 @@ def collate(cohort: pd.DataFrame, annotation_dir: Path, fingerprint: str, worker
             have = [p.name for p in (ingest_record(annotation_dir, s), run_record(annotation_dir, s)) if p.exists()]
             what = "two current annotations" if len(recs) > 1 else f"no current annotation (records: {have or 'none'})"
             return {"Sample": s, "problem": what}
-        r = recs[0]
-        return {"Sample": s, "sr_assembly_file": contigs, "sr_gff_file": str(gff), "origin": r.get("origin", "bakta_run"),
-                "n_cds": r.get("n_cds"), "n_pseudo": r.get("n_pseudo"), "contigs_md5": md5}
+        try:
+            counts = cds_counts(gff)
+        except (OSError, EOFError, ValueError) as e:
+            return {"Sample": s, "problem": f"GFF3 unreadable: {type(e).__name__}"}
+        if counts["n_cds"] == 0:
+            return {"Sample": s, "problem": "GFF3 has no CDS"}
+        return {"Sample": s, "sr_assembly_file": contigs, "sr_gff_file": str(gff),
+                "origin": recs[0].get("origin", "bakta_run"), **counts, "contigs_md5": md5}
 
     rows = list(zip(cohort["Sample"].astype(str), cohort["sr_assembly_file"].astype(str), strict=True))
     with ThreadPoolExecutor(workers) as ex:
@@ -354,17 +371,21 @@ def main() -> None:
             print(json.dumps({"sample": a.sample, "skipped": "current"}))
             return
         run_record(a.out_dir, a.sample).unlink(missing_ok=True)  # a run that dies leaves no record
+        contigs_md5 = _md5(a.contigs)  # before the run, re-checked after: the record must certify what Bakta read
         tmp_root = a.tmp_dir or (Path(os.environ["TMPDIR"]) if os.environ.get("TMPDIR") else None)
         stats = run_bakta(a.contigs, a.sample, a.out_dir, a.tools_bin, a.db, a.threads, tmp_root=tmp_root,
                           keep=tuple(a.keep.replace("+", ",").split(",")))
+        if _md5(a.contigs) != contigs_md5:
+            raise SystemExit(f"{a.sample}: {a.contigs} changed during the run; no record written")
         sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
-        rec = {"sample": a.sample, "contigs": str(a.contigs), "contigs_md5": _md5(a.contigs),
+        rec = {"sample": a.sample, "contigs": str(a.contigs), "contigs_md5": contigs_md5,
                "fingerprint": fingerprint, "flags": " ".join(BAKTA_FLAGS), "tools_bin": str(a.tools_bin.resolve()),
                "db": str(a.db.resolve()), "code_sha": sha or None,
                "software": BAKTA_SOFTWARE, "database": BAKTA_DATABASE,
                "amrfinderplus_db": (a.db / "amrfinderplus-db" / "latest").resolve().name,
-               "threads": a.threads, "host": os.uname().nodename, **stats}
-        run_record(a.out_dir, a.sample).write_text(json.dumps(rec) + "\n")
+               "threads": a.threads, "host": os.uname().nodename,
+               **cds_counts(a.out_dir / f"{a.sample}.bakta.gff3.gz"), **stats}
+        _write_json(run_record(a.out_dir, a.sample), rec)
         print(json.dumps(rec))
     elif a.cmd == "fetch":
         a.out_dir.mkdir(parents=True, exist_ok=True)
@@ -402,8 +423,9 @@ def main() -> None:
         if len(bad):
             problems = a.out.with_name(a.out.stem + "_problems.csv")
             bad.to_csv(problems, index=False)
+            a.out.unlink(missing_ok=True)  # a previous table must not outlive a failed collate
             print(f"{len(bad)} without: {bad['problem'].value_counts().to_dict()} — listed in {problems}; "
-                  f"{a.out} not written")
+                  f"{a.out} not written (any previous one removed)")
             sys.exit(1)
         tmp = _part(a.out)
         good.to_csv(tmp, index=False)
