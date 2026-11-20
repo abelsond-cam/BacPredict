@@ -1762,14 +1762,11 @@ contig past the 1,000th the same contig id.
    failed by cause); BakRep ingest pre-QC (`annotate_entero_genomes.sh plan`, `ingest`); CheckM2 (34 × 2,000) and
    skani (`build_entero_genomes.sh qc`); collate in report mode → `species_crosstab.csv` and
    `embedding_input_unfiltered.csv`; our Bakta on the rest; proteins; ESM-C (~250 A100-h, SL2-GPU).
-   **Decisions asked of David, 2026-11-20, unanswered** (recommendation first): (i) annotate and embed every genome
-   passing the non-species QC, with the species rule set from the crosstab and applied at splits — or wait for the rule;
-   (ii) BakRep files refused on contig names go to our Bakta run (~390 expected, ~430 core-h) — or map seqids by
-   sequence (~1 day of code); (iii) recompute ESM-C for the ~9,500 *Klebsiella* rather than reuse the Kp pipeline's
-   fp32 embeddings (other contigs and annotation).
-3. Splits (the ST holdout plus others, through `engine/splits`), then training. **PsA decisions deferred to
-   here:** (a) the held-out ST and its membership rule; (b) the 20 long-read-only portal assemblies; (c) the
-   low-depth Cortes-Lara 2021 genomes; (d) the minimum per-class count for a drug to be scored.
+   Decided 2026-11-20 (§6): embed every genome passing the non-species QC; BakRep-refused genomes get our Bakta;
+   existing Kp ESM-C embeddings are reused by symlink where they align (*Caveats*).
+3. Splits (the ST holdout plus others, through `engine/splits`), then training. **PsA decisions made 2026-11-20**
+   (§6): ST235 held out (exact ST), random 20 % holdout, the 15 Ecuador long-read assemblies dropped, Cortes-Lara
+   kept, no per-class minimum.
 
 Later: the AMR-GNN-cut benchmark, ANI thinning, and causal attribution of the predictions.
 
@@ -1824,6 +1821,14 @@ Later: the AMR-GNN-cut benchmark, ANI thinning, and causal attribution of the pr
   this change still slices the store's whole listing, so no Enterobacterales parquet may land while one is live:
   `build_entero_embeddings.sh proteins` refuses while any `pa-esm-*` job is queued or running.
 - The `bakrep_coverage_20261119/{join,cmp_pa,miss}.py` scripts are kept as they ran and still build pre-move paths.
+- **Reusing the Kp ESM-C store (`david/bacformer_processed/esm/klebsiella/`) for Enterobacterales *Klebsiella*,
+  measured 2026-11-20** (`kp_reuse_probe.py`; 40 random genomes our BakRep ingest had taken): 8,917 of the 9,478
+  labelled *Klebsiella* have a Kp `.pt`. Its proteins are ours in the same order and count except the three
+  selenoproteins (fdnG ×2, fdhF), where our extractor writes selenocysteine as `U` and the Kp parquet had `*`; 39 of
+  40 `.pt` have exactly our protein count, 1 lacks those three (so it would misalign positionally). The `.pt` are
+  **fp32** (ours bf16), 960-dim, keys `protein_embeddings, attention_mask, contig_ids`. The Kp *parquets* on disk were
+  regenerated later and some drop the three selenoproteins, so they are not what the `.pt` were made from. Link a Kp
+  `.pt` only when its protein count and per-contig counts equal our parquet's; compute the rest.
 - **A GPU job submitted from a cclake login node crashed `import torch` on ampere** ("Fatal Python error: Illegal
   instruction", exit 1, nothing on stderr): `sbatch --export=ALL` carried the login node's spack `LD_LIBRARY_PATH`
   (cascadelake-built libraries) to ampere's AMD CPUs. Jobs `41520932` (the first PsA smoke) and `41525227` (the
@@ -2001,6 +2006,7 @@ directory was consolidated. Several of these existed nowhere else.
 | 2026-11-19 | **CheckM2: our own run on every genome** (one QC surface), not AllTheBacteria's published values. scikit-learn stays unpinned: 1.6.1 and 1.9.1 give byte-identical reports on 50 genomes. |
 | 2026-11-19 | **PsA: embed every QC-passing genome; decide the held-out ST and the two cohort drops at the splits stage.** Embeddings are per genome and label-free. **ESM-C runs on FLOTO-SL2-GPU.** |
 | 2026-11-20 | **The Bakta gate passed, so a genome BakRep lacks gets our Bakta run** (as agreed 2026-11-19, conditional on the gate): 15/15 identical to BakRep in every feature, attribute and AMR call. BakRep's GFF3 is used only when its embedded contigs equal ours name for name; any genome it refuses is also annotated by us. **AMRFinderPlus DB 2024-07-22.1**, not the 2023-11-15.1 that DB v5.1 ships: AMRFinderPlus 3.12.8 (what Bakta 1.9.4 resolves to) refuses it ("requires database version at least 2023-12-15.2"); with 2024-07-22.1 every AMR call matched BakRep's. |
+| 2026-11-20 | **Enterobacterales pipeline choices** (David): (i) **annotate and embed every genome that passes the non-species QC**; the species rule is set from the label × call crosstab and applied at splits. (ii) **A BakRep file ingest refuses (contig names, release, content) is annotated by our Bakta run** ("use Bakta, that is the point"). (iii) **Existing *Klebsiella* ESM-C embeddings are reused where done**: symlinked into `$AMR/processed/esm/` and skipped by the ESM array. |
 | 2026-11-20 | **Cross-species design** (David): **one model per drug**. **PsA-only is the baseline; PsA + all Enterobacterales is the comparison experiment.** H0: PsA alone is the best we can do; H1: cross-species training does better on PsA and/or makes attribution more accurate. **Holdouts:** one large, scoreable ST per species (PsA: ST235) held out zero-shot beside a random 20 % holdout; ST membership **exact ST only** (not urgent). **PsA drops:** the 15 Ecuador long-read portal assemblies (SAMN338421xx) are left out ("inconsequential, not worth time"); the low-depth Cortes-Lara genomes that pass QC stay. **No per-class minimum:** the ten drugs were chosen with > 1,000 genomes each. |
 | 2026-11-20 | **All multi-species AMR data lives under `project_k/david/amr_prediction/{raw,processed,final}`**, never in `~/rds/hpc-work` (David's scratch: logs and temporary files only). Per-sample files keyed by BioSample are flat and shared across species (`raw/{contigs,bakta}`, `processed/{protein_sequences,esm}`); per-species batch tables go in a species folder (`processed/paeruginosa/`, `processed/enterobacterales/`). Raw inputs and annotation in `raw/`; QC, proteins, embeddings, splits and models in `processed/`. |
 
