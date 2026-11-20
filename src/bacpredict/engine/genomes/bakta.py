@@ -18,11 +18,16 @@ Both paths write ``<store>/bakta/<Sample>.bakta.gff3.gz`` beside a record of whe
 sits on (``.bakta.ingest.json`` for BakRep's, ``.bakta.run.json`` for ours); ``collate`` accepts a genome only if exactly
 one record is current for the contigs the cohort now holds.
 
+``ingest`` gives every roster genome one outcome (``INGEST_STATUSES``; ``--status-out`` writes them as a TSV) and exits
+non-zero only if any is ``error:*``. A genome with our own run record is ``skipped:run``: ingest never replaces our GFF3.
+
 Usage::
 
     python -m bacpredict.engine.genomes.bakta run --contigs C.fna.gz --sample S --out-dir D \
         --tools-bin $BAKTA_ENV/bin --db $ROOT/raw/bakta_db/v5.1_full --threads 8      # one genome
-    python -m bacpredict.engine.genomes.bakta ingest --roster bakrep_roster.tsv --out-dir D --workers 8
+    python -m bacpredict.engine.genomes.bakta ingest --roster bakrep_roster.tsv --out-dir D --workers 8 \
+        [--status-out ingest_status.tsv]
+    python -m bacpredict.engine.genomes.bakta fingerprint --tools-bin $BAKTA_ENV/bin --db $DB   # what a run record holds
     python -m bacpredict.engine.genomes.bakta collate --cohort embedding_input.csv --annotation-dir D \
         --tools-bin $BAKTA_ENV/bin --db $DB --out bakta_annotation.csv
 """
@@ -40,6 +45,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import zlib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -53,6 +59,35 @@ BAKTA_FLAGS = ("--keep-contig-headers", "--skip-plot")
 BAKREP_API = "https://bakrep.computational.bio/api/v2/datasets/{sample}"
 # What each run keeps (gzipped): the GFF3 is the annotation of record; the rest serve validation and audit.
 DEFAULT_KEEP = ("gff3", "faa", "json", "txt")
+# What ingest concluded for one roster genome. ``ingested``: a current ingest record now stands (fetched now, or kept from
+# an earlier ingest). ``absent``: BakRep has no GFF3 for it. ``refused:release``: BakRep's GFF3 is not Bakta 1.9.4 / DB
+# v5.1 full. ``refused:names``: its embedded contigs are ours under other names (the same sequence multiset: ATB contig
+# numbering with gaps, which our store renumbers). ``refused:content``: its sequences are not ours. ``skipped:run``: our
+# own run record exists, so BakRep's file is never fetched over our GFF3. ``error:transient``: BakRep's API or file
+# server failed after retries, or served a truncated body (re-run ingest). ``error:other``: anything else (our contigs
+# missing or unreadable, a changed file, a bug). Every outcome but ``ingested`` and ``error:*`` sends the genome to our run.
+INGEST_STATUSES = ("ingested", "absent", "refused:release", "refused:names", "refused:content", "skipped:run",
+                   "error:transient", "error:other")
+
+
+class BakrepUnavailable(RuntimeError):
+    """BakRep's API or file server failed after retries: says nothing about whether BakRep holds the sample."""
+
+
+class NotInBakrep(LookupError):
+    """BakRep has no Bakta GFF3 for the sample (API 404, or no ``gff3`` among its files)."""
+
+
+class IngestRefused(ValueError):
+    """BakRep's GFF3 exists but cannot stand for ours; ``reason`` is ``release``, ``names`` or ``content``."""
+
+    def __init__(self, reason: str, message: str):
+        super().__init__(message)
+        self.reason = reason
+
+
+class RunRecordExists(FileExistsError):
+    """Our own Bakta run record exists for the sample: ingest must not replace that run's GFF3."""
 
 
 def _open(path: Path):
@@ -133,7 +168,8 @@ def bakrep_urls(sample: str, retries: int = 5, delay_s: float = 15) -> dict[str,
             res = json.loads(body).get("results", [])
             return {x["attributes"]["filetype"]: x["url"] for x in res if x["attributes"].get("tool") == "bakta"}
         if attempt == retries:
-            raise RuntimeError(f"BakRep API {url}: curl exit {r.returncode}, HTTP {code or '?'} {r.stderr.strip()}")
+            raise BakrepUnavailable(f"BakRep API {url}: curl exit {r.returncode}, HTTP {code or '?'} "
+                                    f"{r.stderr.strip()}")
         time.sleep(delay_s)
     raise AssertionError("unreachable")
 
@@ -251,27 +287,48 @@ def ingest_bakrep(sample: str, contigs: Path, out_dir: Path) -> dict:
 
     Accepted only if it is of the release of record and its embedded ``##FASTA`` equals ``contigs`` name for name
     and base for base, so its coordinates provably sit on our contigs (a mismatch would otherwise surface only as
-    proteins silently missing from the parquet). Raises ``LookupError`` if BakRep has no GFF3 for the sample.
+    proteins silently missing from the parquet). Raises (``ingest_status`` maps each to an outcome):
+
+    - ``RunRecordExists`` (a ``FileExistsError``) if our own run record exists for ``sample``, before any download
+      and again before the file is put in place: ingest never replaces our run's GFF3;
+    - ``NotInBakrep`` (a ``LookupError``) if BakRep has no GFF3 for the sample;
+    - ``IngestRefused`` (a ``ValueError``) with ``reason`` ``release``, ``names`` (the same sequences under other
+      contig names) or ``content``;
+    - ``BakrepUnavailable`` (a ``RuntimeError``) if BakRep's API fails after retries or the GFF3 it served is
+      truncated or corrupt, and ``subprocess.CalledProcessError`` if the download fails after retries.
     """
+    if run_record(out_dir, sample).exists():
+        raise RunRecordExists(f"{sample}: our own Bakta run record exists; ingest never replaces its GFF3")
     urls = bakrep_urls(sample)
     if "gff3" not in urls:
-        raise LookupError(f"{sample}: BakRep has no GFF3" + (f" (has {sorted(urls)})" if urls else ""))
+        raise NotInBakrep(f"{sample}: BakRep has no GFF3" + (f" (has {sorted(urls)})" if urls else " (API 404)"))
     out_dir.mkdir(parents=True, exist_ok=True)
     dest = out_dir / f"{sample}.bakta.gff3.gz"
     contigs_md5 = _md5(contigs)  # before the comparison, re-checked after: the record must certify what was compared
+    ours = {h.split()[0]: s for h, s in read_fasta(contigs)}  # read first: an error here is ours, not BakRep's
     tmp = _part(dest)
     try:
         download(urls["gff3"], tmp)
-        require_release(tmp)
-        ours = {h.split()[0]: s for h, s in read_fasta(contigs)}
-        theirs = gff3_fasta(tmp)  # reads the whole file, so a truncated gzip fails here
+        software, database = gff3_release(tmp)
+        if (software, database) != (BAKTA_SOFTWARE, BAKTA_DATABASE):
+            raise IngestRefused("release", f"{sample}: BakRep's GFF3 is Bakta {software} / database {database}, "
+                                           f"not the release of record {BAKTA_SOFTWARE} / {BAKTA_DATABASE}")
+        try:
+            theirs = gff3_fasta(tmp)  # reads the whole file, so a truncated gzip fails here
+        except (EOFError, gzip.BadGzipFile, zlib.error) as e:
+            raise BakrepUnavailable(f"{sample}: BakRep's GFF3 is truncated or corrupt ({type(e).__name__}: {e})") from e
         if theirs != ours:
             same = sum(theirs.get(k) == v for k, v in ours.items())
-            raise ValueError(f"{sample}: BakRep's contigs are not ours ({same}/{len(ours)} identical by name, "
-                             f"{len(theirs)} in BakRep's GFF3)")
+            if sorted(theirs.values()) == sorted(ours.values()):
+                raise IngestRefused("names", f"{sample}: BakRep's contigs are ours under other names ({same}/{len(ours)} "
+                                             f"identical by name; the same {len(ours)} sequences)")
+            raise IngestRefused("content", f"{sample}: BakRep's contigs are not ours ({same}/{len(ours)} identical by "
+                                           f"name, {len(theirs)} in BakRep's GFF3)")
         counts = cds_counts(tmp)
         if _md5(contigs) != contigs_md5:
             raise RuntimeError(f"{sample}: {contigs} changed during ingest")
+        if run_record(out_dir, sample).exists():  # our run finished while BakRep's file downloaded
+            raise RunRecordExists(f"{sample}: our own Bakta run record appeared during ingest; its GFF3 is kept")
         tmp.replace(dest)
     finally:
         tmp.unlink(missing_ok=True)
@@ -280,6 +337,51 @@ def ingest_bakrep(sample: str, contigs: Path, out_dir: Path) -> dict:
            "database": BAKTA_DATABASE, **counts}
     _write_json(ingest_record(out_dir, sample), rec)
     return rec
+
+
+def ingest_status(exc: BaseException) -> str:
+    """The ``INGEST_STATUSES`` outcome an exception from ``ingest_bakrep`` stands for."""
+    if isinstance(exc, RunRecordExists):
+        return "skipped:run"
+    if isinstance(exc, IngestRefused):
+        return f"refused:{exc.reason}"
+    if isinstance(exc, NotInBakrep):  # not any LookupError: a KeyError from a changed API shape is not "absent"
+        return "absent"
+    if isinstance(exc, (BakrepUnavailable, subprocess.CalledProcessError)):
+        return "error:transient"
+    return "error:other"
+
+
+def ingest_one(sample: str, contigs: Path, out_dir: Path) -> tuple[str, str]:
+    """``(status, detail)`` for one roster genome; never raises. A current ingest record is kept, not re-fetched."""
+    if run_record(out_dir, sample).exists():
+        return "skipped:run", "our own Bakta run record exists; ingest never replaces its GFF3"
+    try:
+        rec = _record_if_current(ingest_record(out_dir, sample), _md5(contigs))
+        if rec and (out_dir / f"{sample}.bakta.gff3.gz").exists():
+            return "ingested", "current record kept"
+        ingest_bakrep(sample, contigs, out_dir)
+        return "ingested", "fetched"
+    except Exception as e:  # noqa: BLE001 (one genome's failure is reported, the roster carries on)
+        return ingest_status(e), f"{type(e).__name__}: {e}".replace("\t", " ").replace("\n", " ")[:400]
+
+
+def ingest_roster(roster: pd.DataFrame, out_dir: Path, workers: int = 8) -> pd.DataFrame:
+    """``ingest_one`` over a roster (``Sample``, ``contigs``) → ``Sample, status, detail`` in roster order.
+
+    Logs every genome not ingested and every 100th; resumable, since a current ingest record is kept.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    samples = roster["Sample"].astype(str).tolist()
+    contigs = [Path(c) for c in roster["contigs"].astype(str)]
+    out = []
+    with ThreadPoolExecutor(workers) as ex:
+        results = ex.map(ingest_one, samples, contigs, [out_dir] * len(samples))
+        for k, (s, (status, detail)) in enumerate(zip(samples, results, strict=True), 1):
+            out.append((s, status, detail))
+            if status != "ingested" or k % 100 == 0:
+                print(f"[{k}/{len(samples)}] {s}: {status} {detail}", flush=True)
+    return pd.DataFrame(out, columns=["Sample", "status", "detail"])
 
 
 def _record_if_current(path: Path, contigs_md5: str, fingerprint: str | None = None) -> dict | None:
@@ -335,7 +437,10 @@ def collate(cohort: pd.DataFrame, annotation_dir: Path, fingerprint: str, worker
 
 
 def main() -> None:
-    """CLI: ``run`` one genome, ``fetch`` one sample's BakRep files, ``ingest`` a roster, ``collate`` a cohort."""
+    """CLI: ``run`` one genome, ``fetch`` one sample's BakRep files, ``ingest`` a roster, ``collate`` a cohort.
+
+    ``fingerprint`` prints the fingerprint a run record of this tool env and database would carry.
+    """
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run", help="Bakta on one genome")
@@ -358,6 +463,11 @@ def main() -> None:
     i.add_argument("--roster", type=Path, required=True, help="TSV, no header: Sample<TAB>contigs path")
     i.add_argument("--out-dir", type=Path, required=True)
     i.add_argument("--workers", type=int, default=8, help="concurrent BakRep streams (a 76-way pull was throttled)")
+    i.add_argument("--status-out", type=Path, default=None,
+                   help="TSV (Sample, status, detail): every roster genome's outcome, one of INGEST_STATUSES")
+    p = sub.add_parser("fingerprint", help="print the run fingerprint of a tool env and database")
+    p.add_argument("--tools-bin", type=Path, required=True, help="bin/ of the engine/genomes `bakta` pixi env")
+    p.add_argument("--db", type=Path, required=True, help="Bakta database v5.1 full")
     c = sub.add_parser("collate", help="one current Bakta GFF3 per cohort genome → the protein stage's input")
     c.add_argument("--cohort", type=Path, required=True, help="CSV with Sample, sr_assembly_file")
     c.add_argument("--annotation-dir", type=Path, required=True)
@@ -391,30 +501,21 @@ def main() -> None:
         a.out_dir.mkdir(parents=True, exist_ok=True)
         print(json.dumps({k: str(v) for k, v in fetch_bakrep(a.sample, a.out_dir, tuple(a.filetypes.split(","))).items()}))
     elif a.cmd == "ingest":
-        a.out_dir.mkdir(parents=True, exist_ok=True)
         roster = pd.read_csv(a.roster, sep="\t", header=None, names=["Sample", "contigs"], dtype=str)
         if roster.empty or roster["contigs"].isna().any():
             raise SystemExit(f"{a.roster}: empty, or a row without a contigs path")
-
-        def one(r: tuple[str, str]) -> tuple[str, str]:
-            s, contigs = r
-            try:
-                rec = _record_if_current(ingest_record(a.out_dir, s), _md5(Path(contigs)))
-                if rec and (a.out_dir / f"{s}.bakta.gff3.gz").exists():
-                    return s, "current"
-                ingest_bakrep(s, Path(contigs), a.out_dir)
-                return s, "ok"
-            except Exception as e:  # noqa: BLE001 (one genome's failure is reported, the roster carries on)
-                return s, f"fail: {type(e).__name__}: {e}"
-
-        n_fail = 0
-        with ThreadPoolExecutor(a.workers) as ex:
-            for k, (s, status) in enumerate(ex.map(one, zip(roster["Sample"], roster["contigs"], strict=True)), 1):
-                n_fail += status.startswith("fail")
-                if status.startswith("fail") or k % 100 == 0:
-                    print(f"[{k}/{len(roster)}] {s}: {status}", flush=True)
-        print(f"ingest: {len(roster) - n_fail} ok or current, {n_fail} failed", flush=True)
-        sys.exit(1 if n_fail else 0)
+        res = ingest_roster(roster, a.out_dir, a.workers)
+        if a.status_out is not None:
+            tmp = _part(a.status_out)
+            res.to_csv(tmp, sep="\t", index=False)
+            tmp.replace(a.status_out)
+        counts = res["status"].value_counts().to_dict()
+        n_err = int(res["status"].str.startswith("error:").sum())
+        print(f"ingest: {len(res)} genomes: {counts}" + (f"; status → {a.status_out}" if a.status_out else ""),
+              flush=True)
+        sys.exit(1 if n_err else 0)
+    elif a.cmd == "fingerprint":
+        print(run_fingerprint(a.tools_bin, a.db))
     else:
         cohort = pd.read_csv(a.cohort, dtype={"Sample": str})
         good, bad = collate(cohort, a.annotation_dir, run_fingerprint(a.tools_bin, a.db))
