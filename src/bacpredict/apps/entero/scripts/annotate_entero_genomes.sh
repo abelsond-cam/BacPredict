@@ -254,8 +254,11 @@ EOF
     # 8 cores / 52 GB (under 8 × 6,760 MB) on icelake-himem and 3 h
     export_vars="ALL,REPO=$ar,ROSTER=$roster,OUT_DIR=$ANN,TOOLS_BIN=$tb,DB=$DB,CHUNK=$chunk,KEEP=gff3+faa+txt"
     export_vars+=",EXPECT_SHA=$(git -C "$ar" rev-parse HEAD)"
-    submit --array=0-$((n - 1))%100 --account=$ACCOUNT --partition=icelake-himem --cpus-per-task=8 --mem=52G \
-        --time=03:00:00 --job-name=entero-bakta-$mode --export="$export_vars" \
+    # BAKTA_PARTITION/CPUS/MEM/TIME: icelake-himem's 8 cores carry 52G (PsA's sacct peak 42.6 GB); on a congested
+    # himem queue, icelake (3,380 MB per core) needs 24 cores for 72G
+    submit --array=0-$((n - 1))%${BAKTA_CONCURRENT:-100} --account=$ACCOUNT --partition=${BAKTA_PARTITION:-icelake-himem} \
+        --cpus-per-task=${BAKTA_CPUS:-8} --mem=${BAKTA_MEM:-52G} \
+        --time=${BAKTA_TIME:-03:00:00} --job-name=entero-bakta-$mode --export="$export_vars" \
         "$ar/src/bacpredict/engine/genomes/scripts/run_bakta_array.sh"
     echo "roster: $roster"
     ;;
