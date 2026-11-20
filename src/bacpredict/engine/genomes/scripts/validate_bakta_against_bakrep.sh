@@ -15,14 +15,17 @@
 # What is compared: engine/genomes/compare_bakta_to_bakrep.py.
 set -euo pipefail
 
-ROOT=${BACPREDICT_DATA_ROOT:-$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/bac_ast_prediction}
+# the multi-species AMR root on project_k (PROJECT_STATE §3.6 *Data layout*): per-sample stores flat, keyed by
+# BioSample; per-species tables under processed/<species>/
+ROOT=${BACPREDICT_AMR_ROOT:-$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/amr_prediction}
+[[ -d $ROOT ]] || { echo "no AMR root at $ROOT (set BACPREDICT_AMR_ROOT)"; exit 1; }
 REPO=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 export REPO
 GATE=$ROOT/processed/bakta_vs_bakrep_validation
 DB=$ROOT/raw/bakta_db/v5.1_full
 COVERAGE=$ROOT/processed/bakrep_coverage_20261119
-PA=$ROOT/processed/train_pa_ast
-EN=$ROOT/processed/train_entero_ast
+PA=$ROOT/processed/paeruginosa
+EN=$ROOT/processed/enterobacterales
 ATB_INDEX=$ROOT/raw/allthebacteria/assemblies_list_20261115
 cd "$REPO"
 

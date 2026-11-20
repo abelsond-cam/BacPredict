@@ -9,7 +9,7 @@ Enterobacterales data files.
 
 [`scripts/build_entero_ast_labels.sh`](scripts/build_entero_ast_labels.sh) runs
 `engine/ast_labels/build_binary_ast_labels` on a CSD3 login node (~1 min) into
-`<root>/processed/train_entero_ast/`. Same ten drugs and rule as PsA (see `apps/pa/CLAUDE.md`): EUCAST v15 from
+`processed/enterobacterales/` under the AMR root (layout: `apps/pa/CLAUDE.md` *Where the data lives*). Same ten drugs and rule as PsA (see `apps/pa/CLAUDE.md`): EUCAST v15 from
 the MIC, the portal's own call where there is no MIC, unitless MICs as mg/L. Portal only (AMR-GNN is PsA-only).
 The genus list is every genus whose family maps to the order Enterobacterales in
 `engine/ast_labels/breakpoints.py`, so the label filter and breakpoint resolution cannot disagree. Of those 21
@@ -21,20 +21,26 @@ Scale: ~67.8k labelled genomes, 96.5 % of them in AllTheBacteria (ATB). The PsA 
 (`engine/genomes/`) is reused; PsA outputs must stay byte-identical (regression-check every engine change by
 re-running PsA collate/plan into `$TMPDIR` and md5-ing against the live files).
 
+**Where it goes** (layout: `apps/pa/CLAUDE.md` *Where the data lives*): contigs, Bakta, protein parquets and ESM-C
+into the same flat per-BioSample stores as PsA (`raw/contigs/`, `raw/bakta/`, `processed/protein_sequences/`,
+`processed/esm/`); manifests, shards, QC and the annotation table under `processed/enterobacterales/`. ⚠ Before
+the first Enterobacterales protein parquet lands, give `esm_embeddings_array.sh` a sample list: it slices the
+store's whole listing, so it would otherwise embed PsA and Enterobacterales together.
+
 **Annotation is Bakta 1.9.4 + full DB v5.1, not Prodigal** (decision of record, PROJECT_STATE §6):
 - BakRep v2 (<https://bakrep.computational.bio>) serves ATB's own Bakta run for ATB release 0.2 + the 2024-08
   increment. Its GFF3 embeds the contigs, and its contigs are byte-identical to ATB's (Bakta ran with
   `--keep-contig-headers`), so its coordinates sit on our ATB contigs.
 - Per-sample files need one API GET to find the host bucket:
   `https://bakrep.computational.bio/api/v2/datasets/<BioSample>`. The full index is the export at
-  `$R/raw/bakrep/v2_export_20250612/bakrep-export.tsv.gz`. BakRep serves ~0.6 MB/s per stream (ATB's S3 ~6
+  `raw/bakrep/v2_export_20250612/bakrep-export.tsv.gz` under the AMR root. BakRep serves ~0.6 MB/s per stream (ATB's S3 ~6
   MB/s); keep concurrency modest (a 76-way pull hit SSL EOF throttling).
 - On ingest, refuse any GFF3 whose `# Software:` / `# Database:` header is not `v1.9.4` / `v5.1, full`: a
   BakRep re-run with Bakta 1.12 is being prepared upstream.
 - Genomes BakRep lacks get our own Bakta run of the same version and flags, after a reproduction gate against
   BakRep-held genomes. Pin 1.9.4: Bakta ≥ 1.10 writes pseudogenes as `pseudogene=` rather than `pseudo=True`,
   and the protein extractor filters on `pseudo` only.
-- Already on CSD3: BakRep GFF3s for 8,710 of the 9,478 *Klebsiella* (`$R/raw/klebsiella_gff3`, from the Kp
+- Already on CSD3: BakRep GFF3s for 8,710 of the 9,478 *Klebsiella* (`project_k/david/raw/klebsiella_gff3`, from the Kp
   pipeline; also Bakta 1.9.4 / DB v5.1).
 - Guard the protein step: every CDS contig must be found in the assembly and the protein count must equal the
   non-pseudo CDS count. A contig-name mismatch otherwise yields empty parquets that every existing check passes.
@@ -42,7 +48,7 @@ re-running PsA collate/plan into `$TMPDIR` and md5-ing against the live files).
   `apps/pa/scripts/build_pa_embeddings.sh`; mechanics in `apps/pa/CLAUDE.md` *Annotation*. Reuse them.)
 - ⚠ **ATB contig numbering can have gaps** (`contig00130`, `contig00132`, …) that our store renumbers
   consecutively, so a BakRep GFF3 can carry our sequences under other names: ingest refuses it (the PsA count is
-  in PROJECT_STATE §3.6). The same applies to the 8,710 Kp files in `$R/raw/klebsiella_gff3`. Decide at Entero scale between our-run
+  in PROJECT_STATE §3.6). The same applies to the 8,710 Kp files in `project_k/david/raw/klebsiella_gff3`. Decide at Entero scale between our-run
   fallback (~1.3 core-h each) and mapping seqids by sequence.
 
 **Stages** (each `sbatch` prints its resource line; checks count against the manifest, never against files that

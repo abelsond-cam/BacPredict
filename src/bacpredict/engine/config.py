@@ -62,6 +62,20 @@ def resolve_data_root(explicit: str | Path | None = None) -> Path:
     )
 
 
+# The multi-species AMR work (EBI AMR Portal: P. aeruginosa, then Enterobacterales) has its own root on project_k,
+# with per-sample stores flat across species and per-species tables in processed/<species>/ (apps/pa/CLAUDE.md
+# *Where the data lives*). Its scripts read $BACPREDICT_AMR_ROOT, not $BACPREDICT_DATA_ROOT.
+_CSD3_AMR_ROOT = Path.home() / "rds/rds-floto-bacterial-4k08a2yyQLw/david/amr_prediction"
+
+
+def resolve_amr_root(explicit: str | Path | None = None) -> Path:
+    """Resolve the multi-species AMR root: ``explicit`` → ``$BACPREDICT_AMR_ROOT`` → the CSD3 ``amr_prediction``."""
+    if explicit:
+        return Path(explicit)
+    val = os.environ.get("BACPREDICT_AMR_ROOT")
+    return Path(val) if val else _CSD3_AMR_ROOT
+
+
 def raw_root(explicit: str | Path | None = None) -> Path:
     """``<root>/raw`` — raw inputs (assemblies, GFFs, EBI AMR tables). See :func:`resolve_data_root`."""
     return resolve_data_root(explicit) / "raw"
@@ -101,16 +115,27 @@ class OrganismConfig:
 
     key: str
     display_name: str
-    processed_task: str  # sub-dir under $SCRATCHDIR/processed/ (e.g. "train_tb_ast")
+    processed_task: str  # sub-dir under $SCRATCHDIR/processed/ (e.g. "train_tb_ast"); the species folder if amr
     sample_id_aliases: tuple[str, ...] = ("Sample", "phenotype-BioSample_ID")
+    amr: bool = False  # lives under the multi-species AMR root (resolve_amr_root), not the TB/Kp data root
 
     def data_root(self, root: str | Path | None = None) -> Path:
-        """``<resolved root>/processed/<processed_task>`` — see :func:`resolve_data_root`."""
+        """``<resolved root>/processed/<processed_task>`` — see :func:`resolve_data_root` / :func:`resolve_amr_root`."""
+        if self.amr:
+            return resolve_amr_root(root) / "processed" / self.processed_task
         return resolve_data_root(root) / "processed" / self.processed_task
 
     def store_paths(self) -> StorePaths:
         """Default per-sample store locations under :meth:`data_root` (CLI-overridable)."""
         root = self.data_root()
+        if self.amr:  # per-sample stores are flat under <amr root>/processed, shared across species
+            return StorePaths(
+                ast_sheet=root / "binary_ast_with_split.csv",
+                esm_dir=root.parent / "esm",
+                baclm_dir=root.parent / "baclm",
+                parquet_dir=root.parent / "protein_sequences",
+                input_csv=root / "genomes" / "bakta_annotation.csv",
+            )
         return StorePaths(
             ast_sheet=root / "binary_ast_with_split.csv",
             esm_dir=root / "esm",
@@ -122,7 +147,7 @@ class OrganismConfig:
 
 TB = OrganismConfig(key="tb", display_name="M. tuberculosis", processed_task="train_tb_ast")
 KP = OrganismConfig(key="kp", display_name="K. pneumoniae", processed_task="train_kleb_ast")
-PA = OrganismConfig(key="pa", display_name="P. aeruginosa", processed_task="train_pa_ast")
+PA = OrganismConfig(key="pa", display_name="P. aeruginosa", processed_task="paeruginosa", amr=True)
 
 ORGANISMS: dict[str, OrganismConfig] = {TB.key: TB, KP.key: KP, PA.key: PA}
 

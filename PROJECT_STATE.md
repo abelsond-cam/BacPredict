@@ -193,6 +193,20 @@ They are still referenced by older docs and by every memory written before 2026-
 | `src/admixture/` | Never created. Deferred — [`docs/_parked/`](docs/_parked/) |
 | `snp_vs_esm_prediction.py` | Deleted. Its holdout resolver is now `engine/finetune/holdout.py` |
 
+**Data paths moved 2026-11-20** (multi-species AMR, §3.6; David: one root on project_k). Stamps and job logs
+older than that name the old paths; this is the map. `$AMR` = `project_k/david/amr_prediction`.
+
+| Referenced as (`$R` = `project_k/david`) | Now |
+|---|---|
+| `$R/raw/ast_cohort_genomes/{contigs,prodigal,bakta}/` (also spelled `$R/bac_ast_prediction/raw/…`) | `$AMR/raw/{contigs,prodigal,bakta}/` |
+| `$R/raw/{bakta_db,bakrep,ebi_amr_portal,allthebacteria,reference_genomes}/` | `$AMR/raw/` + the same name |
+| `$R/raw/amr_gnn_nguyen2026/` | `$AMR/raw/paeruginosa/amr_gnn_nguyen2026/` |
+| `$R/bac_ast_prediction/processed/train_pa_ast/` | `$AMR/processed/paeruginosa/` |
+| `…/train_pa_ast/{protein_sequences_prodigal,esm_smoke_prodigal}/` | `$AMR/processed/_superseded_prodigal/paeruginosa_{protein_sequences,esm_smoke}/` |
+| `$R/bac_ast_prediction/processed/train_entero_ast/` | `$AMR/processed/enterobacterales/` |
+| `$R/bac_ast_prediction/processed/{bakrep_coverage_20261119,bakta_vs_bakrep_validation}/` | `$AMR/processed/` + the same name |
+| `$R/processed/ebi_amr_portal/` | `$AMR/processed/ebi_amr_portal/` |
+
 ---
 
 ## 3. Layers
@@ -1489,15 +1503,15 @@ QC'd**: 3,677 pass. **Enterobacterales labels are built** (`480ce9d`); its genom
 Our run reproduces BakRep's exactly (the gate below), so a genome takes BakRep's GFF3 where BakRep holds it on
 our contigs, and our run otherwise. **PsA annotation is under way:** 1,781 BakRep GFF3s are ingested and our
 Bakta array over the other 1,896 is running; nothing is embedded yet. The Prodigal protein parquets (job
-`41397962`) and ESM-C smoke (`41399821`) are superseded and kept aside as `train_pa_ast/protein_sequences_prodigal/`
-and `esm_smoke_prodigal/`; the Prodigal ESM-C array (`41401432`) was cancelled before any task started. QC
+`41397962`) and ESM-C smoke (`41399821`) are superseded and kept aside as `$AMR/processed/_superseded_prodigal/paeruginosa_protein_sequences/`
+and `paeruginosa_esm_smoke/`; the Prodigal ESM-C array (`41401432`) was cancelled before any task started. QC
 (CheckM2, skani), MLST, the 3,677 pass set and the held-out-ST candidates do not use gene calls and stand. The PsA
 held-out ST and cohort drops are deferred to the splits stage. Splits and training are not started. Mechanics:
 [`apps/pa/CLAUDE.md`](src/bacpredict/apps/pa/CLAUDE.md) (its *Genomes* section still describes Prodigal); the
 Bakta stages are [`apps/pa/scripts/annotate_pa_genomes.sh`](src/bacpredict/apps/pa/scripts/annotate_pa_genomes.sh).
 
 **Numbers of record — PsA labels.** Read from
-`$R/bac_ast_prediction/processed/train_pa_ast/label_counts.csv`; its `manifest.json` records the input
+`$AMR/processed/paeruginosa/label_counts.csv`; its `manifest.json` records the input
 md5s (EBI AMR Portal release 2026-07 + the AMR-GNN supplement) and the code SHA.
 
 | Drug | Labelled genomes | % R | From MIC | From the source's call |
@@ -1520,7 +1534,7 @@ md5s (EBI AMR Portal release 2026-07 + the AMR-GNN supplement) and the code SHA.
   the re-derivation flips 129 S→R and 153 R→S (meropenem MIC 8 is CLSI R, EUCAST S).
 
 **Numbers of record — PsA genome sources.** Read from
-`$R/bac_ast_prediction/processed/train_pa_ast/genomes/genome_manifest.csv`, written on CSD3 by
+`$AMR/processed/paeruginosa/genomes/genome_manifest.csv`, written on CSD3 by
 `build_pa_genomes.sh plan` at `1f049c4` (with `--prefer-reads`, min depth 10×, genome size 6.6 Mbp):
 
 | Source | Genomes |
@@ -1539,7 +1553,7 @@ md5s (EBI AMR Portal release 2026-07 + the AMR-GNN supplement) and the code SHA.
   shovill alternative.
 - Shovill-sourced genomes by read depth: 10–20× 6, 20–30× 12, 30–50× 39, 50–100× 89, ≥100× 207.
 
-**Numbers of record — PsA genome QC.** Read from `train_pa_ast/genomes/genome_qc.csv` (collate at `e46c81e`);
+**Numbers of record — PsA genome QC.** Read from `$AMR/processed/paeruginosa/genomes/genome_qc.csv` (collate at `e46c81e`);
 shovill array `41326674` plus rerun `41335542`, QC job `41336261` (CheckM2 3 h 6 min at 32 cores).
 
 | Outcome | Genomes | 0/1 labels |
@@ -1583,7 +1597,7 @@ shovill array `41326674` plus rerun `41335542`, QC job `41336261` (CheckM2 3 h 6
 | 308 | 57 | 1 | 6 | 21 % | 0 |
 
 **Numbers of record — Enterobacterales labels.** Read from
-`$R/bac_ast_prediction/processed/train_entero_ast/label_counts.csv`, built by
+`$AMR/processed/enterobacterales/label_counts.csv`, built by
 `apps/entero/scripts/build_entero_ast_labels.sh` at `480ce9d` (every Enterobacterales genus in
 `engine/ast_labels/breakpoints.py`, the PsA ten drugs and label rule, portal only).
 
@@ -1606,7 +1620,7 @@ shovill array `41326674` plus rerun `41335542`, QC job `41336261` (CheckM2 3 h 6
   reads 686. 25 cells are fractional (conflicting tests).
 - **EUCAST re-derivation moves %R per genus.** *Salmonella* ciprofloxacin is 17.3 % R under EUCAST (31,691
   genomes; `label_provenance.csv` × `cohort.csv` species) against 9.0 % under the portal's own calls
-  (`processed/ebi_amr_portal/scoping_2026-07/species_drug_counts.csv`; not the same genome set, so a contrast,
+  (`$AMR/processed/ebi_amr_portal/scoping_2026-07/species_drug_counts.csv`; not the same genome set, so a contrast,
   not a paired comparison). Other large shifts in the same read: *Enterobacter* imipenem 13.9 % vs 54.4 %,
   *E. coli* aztreonam 30.0 % vs 12.3 %.
 - **6,919 of the 7,088 Kp AST samples (§3.1) are in this cohort.** Any comparison against the July Kp
@@ -1614,8 +1628,8 @@ shovill array `41326674` plus rerun `41335542`, QC job `41336261` (CheckM2 3 h 6
 
 **Numbers of record — BakRep coverage.** BakRep v2 serves AllTheBacteria's own Bakta run (Bakta 1.9.4, full
 DB v5.1, over ATB release 0.2 + the 2024-08 increment). Read from
-`processed/bakrep_coverage_20261119/join_output.txt` (`join.py` beside it, re-run on CSD3): the BakRep export
-staged at `$R/raw/bakrep/v2_export_20250612/bakrep-export.tsv.gz` joined to each cohort and the ATB inventory.
+`$AMR/processed/bakrep_coverage_20261119/join_output.txt` (`join.py` beside it, re-run on CSD3): the BakRep export
+staged at `$AMR/raw/bakrep/v2_export_20250612/bakrep-export.tsv.gz` joined to each cohort and the ATB inventory.
 
 | Cohort | In BakRep | We must run Bakta |
 |---|--:|--:|
@@ -1630,8 +1644,8 @@ staged at `$R/raw/bakrep/v2_export_20250612/bakrep-export.tsv.gz` joined to each
 - ⚠ Equal contig count, length and N50 did **not** guarantee equal contig *names*: see the ingest refusals below.
 
 **Numbers of record — Bakta reproduction gate.** Read from
-`processed/bakta_vs_bakrep_validation/bakta_gate_summary.csv` (`engine/genomes/compare_bakta_to_bakrep.py`;
-array `41495079` at `be9891b`, compared at `b72b500`). Our Bakta 1.9.4 + DB v5.1 full (`raw/bakta_db/v5.1_full`,
+`$AMR/processed/bakta_vs_bakrep_validation/bakta_gate_summary.csv` (`engine/genomes/compare_bakta_to_bakrep.py`;
+array `41495079` at `be9891b`, compared at `b72b500`). Our Bakta 1.9.4 + DB v5.1 full (`$AMR/raw/bakta_db/v5.1_full`,
 AMRFinderPlus DB 2024-07-22.1, the `bakta` env of `engine/genomes/pixi.toml`), BakRep's flags
 (`--keep-contig-headers`, plus `--skip-plot`), on 18 genomes: 4 PsA and 11 Enterobacterales that BakRep holds
 (3 each of *E. coli*, *S. enterica*, *K. pneumoniae*; 1 *E. cloacae*, 1 *S. sonnei*; 31–3,010 contigs), and 3 of
@@ -1649,7 +1663,7 @@ the 283 whose ATB Bakta run failed.
 **Numbers of record — PsA Bakta annotation (in progress).** `annotate_pa_genomes.sh plan` at `503be9a`: of the
 3,677 QC-passing genomes, 1,792 are ATB-sourced and in BakRep (`genomes/bakta/bakrep_roster.tsv`), 1,885 are not
 (`run_roster.tsv`: 1,212 `portal_gff`, 340 ATB, 333 shovill). Ingest (job `41497655`, 4 min):
-- **1,781 BakRep GFF3s accepted** into `raw/ast_cohort_genomes/bakta/`, each kept byte for byte and accepted only
+- **1,781 BakRep GFF3s accepted** into `$AMR/raw/bakta/`, each kept byte for byte and accepted only
   with BakRep's release header and its embedded contigs equal to ours, name for name and base for base.
 - **11 refused** (SAMEA5312861, SAMN02360661, SAMN04901631, SAMN07291495, SAMN07291501, SAMN07291533, SAMN07291537,
   SAMN07291538, SAMN07291549, SAMN07291553, SAMN11110650): AllTheBacteria's contig numbering in these
@@ -1661,7 +1675,7 @@ the 283 whose ATB Bakta run failed.
 scikit-learn 1.6.1 and is loaded under 1.9.1. Rerun on 50 PsA genomes (10 nearest the QC thresholds, 40
 random) under both versions, in two envs that differ only in scikit-learn (job `41405814`): the two
 `quality_report.tsv` are **byte-identical** (md5 `df9df788…`) and equal `genome_qc.csv` exactly. No pin; the
-PsA QC numbers stand. Artifacts: `train_pa_ast/genomes/qc/checkm2_sklearn_check/`.
+PsA QC numbers stand. Artifacts: `$AMR/processed/paeruginosa/genomes/qc/checkm2_sklearn_check/`.
 
 **Measured — ESM-C throughput on one A100** (PsA smoke, job `41399821`, Prodigal inputs, superseded but the
 rate stands): ~18 s per genome at ~6,400 proteins (2.8 ms per protein) after warm-up, HuggingFace ESM-C (no
@@ -1670,7 +1684,7 @@ than 1,000 contigs; Bacformer's input packing (`max_n_contigs=1000`) keeps all t
 contig past the 1,000th the same contig id.
 
 **In flight.** PsA Bakta array `41499745` (474 tasks × 4 genomes; 8 cores, 52 GB, 3 h; `%100`) over
-`genomes/bakta/run_roster_with_refused.tsv` into `raw/ast_cohort_genomes/bakta/`. It runs from the pinned worktree
+`genomes/bakta/run_roster_with_refused.tsv` into `$AMR/raw/bakta/`. It runs from the pinned worktree
 `/rds/user/dca36/hpc-work/worktrees/BacPredict-871bc69` (`.venv` symlinked to the shared env), so other agents'
 pulls of the shared checkout cannot stop it; remove the worktree once the array is collated.
 
@@ -1763,17 +1777,17 @@ correct.**
 | `unitigs.pyseer.gz` | `ast_gwas/build_cohort_once` | every Kp drug | All Kp unitig GWAS |
 | `lineage_clusters.tsv` | `ast_gwas/sublineage_from_metadata` | `--lineage`, permutation null | Calibration only |
 | `mge_hits.parquet/` | `kleb_iso_source/map_unitig_hits_genomad` | the MGE/IS/IGR write-ups | §3.3's invasion mapping |
-| `train_pa_ast/binary_ast.csv` | `engine/ast_labels/build_binary_ast_labels` (via `apps/pa/scripts/build_pa_ast_labels.sh`) | PsA split tables (`engine/splits`) | Every PsA split and model (§3.6) |
-| `train_pa_ast/cohort.csv` | the same build | PsA genome acquisition (`genome_route`, reads/assembly accessions) | The PsA genome manifest |
-| `train_pa_ast/genomes/genome_manifest.csv` (+ `ena_filereport_cache.tsv`) | `engine/genomes/plan_genome_sources` (`build_pa_genomes.sh plan`) | the build arrays, `collate` | Every PsA genome built from it; a re-plan that changes a genome's source rebuilds it in place |
-| `raw/ast_cohort_genomes/{contigs,prodigal}/<Sample>.{fna,gff}.gz` (keyed by BioSample, shared across organisms) | `engine/genomes/build_genomes` arrays | QC, `collate`, the protein extractor | Protein parquets and ESM-C embeddings of that genome (the PsA `check` stage flags a parquet older than its GFF) |
-| `train_pa_ast/genomes/{genome_qc,embedding_input,st_counts_by_drug}.csv` | `engine/genomes/collate_genomes` | Bakta annotation (`embedding_input.csv` is the cohort annotated and embedded); the held-out-ST choice | The PsA annotation table and embeddings' cohort, the ST holdout, every PsA split |
-| `train_entero_ast/{binary_ast,cohort,label_counts}.csv` | `engine/ast_labels/build_binary_ast_labels` (via `apps/entero/scripts/build_entero_ast_labels.sh`) | Enterobacterales genome acquisition and splits | Every Enterobacterales genome manifest, split and model |
-| `raw/bakrep/v2_export_20250612/bakrep-export.tsv.gz` + `processed/bakrep_coverage_20261119/` | BakRep's published export; `join.py` | Which genomes take BakRep's Bakta annotation and which get our own Bakta run | The annotation source of every PsA and Enterobacterales genome |
-| `raw/bakta_db/v5.1_full/` (+ `v5.1_full.md5`, `README.txt`) | copied from nuna's `refs/bakta/db` (job `41494699`); AMRFinderPlus DB `latest` → 2024-07-22.1 | every Bakta run of ours (`engine/genomes/bakta.py`) | Every our-run annotation (a run's fingerprint includes this DB's `version.json` and AMRFinderPlus DB) |
-| `raw/ast_cohort_genomes/bakta/<Sample>.bakta.gff3.gz` + `.ingest.json` (BakRep's) or `.run.json` (ours) | `engine/genomes/bakta.py` `ingest` / `run` (`annotate_pa_genomes.sh`) | `bakta.py collate` | Protein parquets and ESM-C embeddings of that genome |
-| `train_pa_ast/genomes/bakta_annotation.csv` | `bakta.py collate` (`annotate_pa_genomes.sh collate`) | `build_pa_embeddings.sh` (its cohort) | PsA protein parquets and ESM-C embeddings |
-| `processed/bakta_vs_bakrep_validation/` | `engine/genomes/scripts/validate_bakta_against_bakrep.sh` | the decision to annotate BakRep-less genomes with our own run | — (evidence only) |
+| `$AMR/processed/paeruginosa/binary_ast.csv` | `engine/ast_labels/build_binary_ast_labels` (via `apps/pa/scripts/build_pa_ast_labels.sh`) | PsA split tables (`engine/splits`) | Every PsA split and model (§3.6) |
+| `$AMR/processed/paeruginosa/cohort.csv` | the same build | PsA genome acquisition (`genome_route`, reads/assembly accessions) | The PsA genome manifest |
+| `$AMR/processed/paeruginosa/genomes/genome_manifest.csv` (+ `ena_filereport_cache.tsv`) | `engine/genomes/plan_genome_sources` (`build_pa_genomes.sh plan`) | the build arrays, `collate` | Every PsA genome built from it; a re-plan that changes a genome's source rebuilds it in place |
+| `$AMR/raw/{contigs,prodigal}/<Sample>.{fna,gff}.gz` (keyed by BioSample, shared across organisms) | `engine/genomes/build_genomes` arrays | QC, `collate`, the protein extractor | Protein parquets and ESM-C embeddings of that genome (the PsA `check` stage flags a parquet older than its GFF) |
+| `$AMR/processed/paeruginosa/genomes/{genome_qc,embedding_input,st_counts_by_drug}.csv` | `engine/genomes/collate_genomes` | Bakta annotation (`embedding_input.csv` is the cohort annotated and embedded); the held-out-ST choice | The PsA annotation table and embeddings' cohort, the ST holdout, every PsA split |
+| `$AMR/processed/enterobacterales/{binary_ast,cohort,label_counts}.csv` | `engine/ast_labels/build_binary_ast_labels` (via `apps/entero/scripts/build_entero_ast_labels.sh`) | Enterobacterales genome acquisition and splits | Every Enterobacterales genome manifest, split and model |
+| `$AMR/raw/bakrep/v2_export_20250612/bakrep-export.tsv.gz` + `$AMR/processed/bakrep_coverage_20261119/` | BakRep's published export; `join.py` | Which genomes take BakRep's Bakta annotation and which get our own Bakta run | The annotation source of every PsA and Enterobacterales genome |
+| `$AMR/raw/bakta_db/v5.1_full/` (+ `v5.1_full.md5`, `README.txt`) | copied from nuna's `refs/bakta/db` (job `41494699`); AMRFinderPlus DB `latest` → 2024-07-22.1 | every Bakta run of ours (`engine/genomes/bakta.py`) | Every our-run annotation (a run's fingerprint includes this DB's `version.json` and AMRFinderPlus DB) |
+| `$AMR/raw/bakta/<Sample>.bakta.gff3.gz` + `.ingest.json` (BakRep's) or `.run.json` (ours) | `engine/genomes/bakta.py` `ingest` / `run` (`annotate_pa_genomes.sh`) | `bakta.py collate` | Protein parquets and ESM-C embeddings of that genome |
+| `$AMR/processed/paeruginosa/genomes/bakta_annotation.csv` | `bakta.py collate` (`annotate_pa_genomes.sh collate`) | `build_pa_embeddings.sh` (its cohort) | PsA protein parquets and ESM-C embeddings |
+| `$AMR/processed/bakta_vs_bakrep_validation/` | `engine/genomes/scripts/validate_bakta_against_bakrep.sh` | the decision to annotate BakRep-less genomes with our own run | — (evidence only) |
 
 **`catalogue_ceiling_panel.csv` is reproducible.** It was hand-assembled once, which was itself the
 defect this file exists to prevent; `engine/ref_catalogues/build_ceiling_panel` now regenerates it
@@ -1810,6 +1824,7 @@ Recent AMR and GWAS work is on **CSD3**. Per-cluster detail is in `~/.claude/clu
 | Cluster | Root |
 |---|---|
 | CSD3 | `/home/dca36/rds/rds-floto-bacterial-4k08a2yyQLw/david` (referred to as `$R`) |
+| CSD3, multi-species AMR (§3.6) | `$R/amr_prediction` (referred to as `$AMR`; `$BACPREDICT_AMR_ROOT` overrides it; its scripts do not read `$BACPREDICT_DATA_ROOT`) |
 | Isambard | `$SCRATCHDIR` = `/scratch/u6fp/dca36.u6fp` |
 
 **Cohorts — never write a bare count.** Three different numbers exist per organism and they mean

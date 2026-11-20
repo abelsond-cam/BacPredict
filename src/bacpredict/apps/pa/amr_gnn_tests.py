@@ -15,9 +15,9 @@ paper's ``ST`` is carried as ``st_reported`` for cross-checking — the cohort's
 Usage::
 
     uv run python -m bacpredict.apps.pa.amr_gnn_tests \
-        --long $ROOT/raw/amr_gnn_nguyen2026/amr_gnn_long.csv \
-        --biosample-map $ROOT/raw/amr_gnn_nguyen2026/amr_gnn_isolate_biosample.csv \
-        --out $ROOT/processed/train_pa_ast/amr_gnn_tests.csv
+        --long $ROOT/raw/paeruginosa/amr_gnn_nguyen2026/amr_gnn_long.csv \
+        --biosample-map $ROOT/raw/paeruginosa/amr_gnn_nguyen2026/amr_gnn_isolate_biosample.csv \
+        --out $ROOT/processed/paeruginosa/amr_gnn_tests.csv
 """
 
 from __future__ import annotations

@@ -14,12 +14,15 @@
 # PA7 for P. paraeruginosa, the neighbour the portal's own tables already confuse it with.
 set -euo pipefail
 
-ROOT=${BACPREDICT_DATA_ROOT:-$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/bac_ast_prediction}
+# the multi-species AMR root on project_k (PROJECT_STATE §3.6 *Data layout*): per-sample stores flat, keyed by
+# BioSample; per-species tables under processed/<species>/
+ROOT=${BACPREDICT_AMR_ROOT:-$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/amr_prediction}
+[[ -d $ROOT ]] || { echo "no AMR root at $ROOT (set BACPREDICT_AMR_ROOT)"; exit 1; }
 REPO=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 export REPO  # the arrays run this checkout's code, not whatever $HOME/workspace/BacPredict holds
-T=$ROOT/processed/train_pa_ast
+T=$ROOT/processed/paeruginosa
 GEN=$T/genomes
-STORE=$ROOT/raw/ast_cohort_genomes
+STORE=$ROOT/raw  # build_genomes writes contigs/ and prodigal/ under it
 REFDIR=$ROOT/raw/reference_genomes
 ATB_INDEX=$ROOT/raw/allthebacteria/assemblies_list_20261115
 PAO1=$REFDIR/GCF_000006765.1.fna.gz

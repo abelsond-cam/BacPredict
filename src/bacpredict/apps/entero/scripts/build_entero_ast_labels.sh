@@ -6,12 +6,15 @@
 # Light (one parquet filter + pandas; the portal holds ~72k Enterobacterales BioSamples) — runs inline on a
 # CSD3 login node:
 #     bash src/bacpredict/apps/entero/scripts/build_entero_ast_labels.sh
-# Outputs land in <root>/processed/train_entero_ast/ (files listed in engine/ast_labels/build_binary_ast_labels.py).
+# Outputs land in <root>/processed/enterobacterales/ (files listed in engine/ast_labels/build_binary_ast_labels.py).
 set -euo pipefail
 
-ROOT=${BACPREDICT_DATA_ROOT:-$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/bac_ast_prediction}
+# the multi-species AMR root on project_k (PROJECT_STATE §3.6 *Data layout*): per-sample stores flat, keyed by
+# BioSample; per-species tables under processed/<species>/
+ROOT=${BACPREDICT_AMR_ROOT:-$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/amr_prediction}
+[[ -d $ROOT ]] || { echo "no AMR root at $ROOT (set BACPREDICT_AMR_ROOT)"; exit 1; }
 PORTAL=$ROOT/raw/ebi_amr_portal/2026-07
-OUT=$ROOT/processed/train_entero_ast
+OUT=$ROOT/processed/enterobacterales
 DRUGS=ciprofloxacin,ceftazidime,meropenem,tobramycin,amikacin,imipenem,piperacillin-tazobactam,aztreonam,levofloxacin,cefepime
 
 cd "$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"

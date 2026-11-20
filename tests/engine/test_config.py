@@ -14,6 +14,7 @@ def _clear_data_root_env(monkeypatch):
     """Isolate every test from a dev shell that happens to export $BACPREDICT_DATA_ROOT/$SCRATCHDIR."""
     monkeypatch.delenv("BACPREDICT_DATA_ROOT", raising=False)
     monkeypatch.delenv("SCRATCHDIR", raising=False)
+    monkeypatch.delenv("BACPREDICT_AMR_ROOT", raising=False)
 
 
 def test_store_paths_tb_matches_legacy_layout(monkeypatch):
@@ -74,3 +75,16 @@ def test_resolve_data_root_unresolvable_raises(monkeypatch):
 def test_data_root_honours_explicit_override():
     # the CLI --data-root seam: OrganismConfig.data_root(root=...) bypasses env entirely
     assert str(TB.data_root("/custom")) == "/custom/processed/train_tb_ast"
+
+
+def test_store_paths_pa_live_under_the_amr_root(monkeypatch):
+    # PsA is the multi-species AMR layout: tables in processed/paeruginosa, per-sample stores flat beside it,
+    # and the TB/Kp root never consulted
+    monkeypatch.setenv("BACPREDICT_DATA_ROOT", "/elsewhere")
+    monkeypatch.setenv("BACPREDICT_AMR_ROOT", "/amr")
+    p = store_paths("pa")
+    assert str(organism("pa").data_root()) == "/amr/processed/paeruginosa"
+    assert str(p.parquet_dir) == "/amr/processed/protein_sequences"
+    assert str(p.esm_dir) == "/amr/processed/esm"
+    assert str(p.input_csv) == "/amr/processed/paeruginosa/genomes/bakta_annotation.csv"
+    assert str(store_paths("tb").esm_dir) == "/elsewhere/processed/train_tb_ast/esm"

@@ -7,12 +7,29 @@ then every genome in the EBI AMR Portal. **Status, numbers and next steps live o
 The pipeline itself is the engine. This folder holds only what is PsA-specific: the adapter for the
 AMR-GNN supplement and the run scripts.
 
+## Where the data lives
+
+All the multi-species AMR data is under one root on project_k (David, 2026-11-20):
+`$BACPREDICT_AMR_ROOT`, default `~/rds/rds-floto-bacterial-4k08a2yyQLw/david/amr_prediction`, with `raw/`,
+`processed/` and `final/`. Every script here sets it. **Nothing goes in `~/rds/hpc-work`**: that is David's
+scratch, for SLURM logs and temporary files only.
+
+| Kind | Where |
+|---|---|
+| **Per-sample files**, keyed by BioSample. Flat, shared across species | `raw/contigs/`, `raw/prodigal/`, `raw/bakta/`, `processed/protein_sequences/`, `processed/esm/` (`processed/esm_smoke/` for the smoke test) |
+| **Per-species tables and batch outputs**, in a species folder | `processed/paeruginosa/` (labels, then `genomes/`: manifest, shards, CheckM2 + skani QC, Bakta rosters, `bakta_annotation.csv`; later splits and models); `processed/enterobacterales/`; `raw/paeruginosa/` (the AMR-GNN supplement) |
+| **Multi-species inputs and evidence**, flat | `raw/{ebi_amr_portal,bakrep,bakta_db,allthebacteria,reference_genomes}/`; `processed/{ebi_amr_portal,bakrep_coverage_20261119,bakta_vs_bakrep_validation}/` |
+| Superseded, pending deletion | `processed/_superseded_prodigal/` (the Prodigal-based protein parquets and ESM-C smoke) |
+| Curated tables | `final/` (nothing yet) |
+
+CheckM2's database is the one already on project_k (`david/raw/CheckM2/`), shared with the Kp work.
+
 ## Labels: `binary_ast.csv`
 
 Built by `bacpredict.engine.ast_labels.build_binary_ast_labels`, which is organism-agnostic (species or
 genus filter, drug list and extra sources are arguments). Run it with
 [`scripts/build_pa_ast_labels.sh`](scripts/build_pa_ast_labels.sh). It is light enough for a CSD3 login node.
-Output goes to `<root>/processed/train_pa_ast/`.
+Output goes to `processed/paeruginosa/`.
 
 **Two label sources, one rule.**
 
@@ -119,8 +136,8 @@ pixi env (shovill 1.1.0 with SPAdes 3.15, Prodigal 2.6.3, mlst, skani, plus Chec
 4. Drop, with a reason.
 
 **Where the outputs go:**
-- Contigs are renamed `<Sample>.contig00001` and stored at `raw/ast_cohort_genomes/contigs/<Sample>.fna.gz`.
-- Prodigal GFFs (superseded by Bakta) are stored at `raw/ast_cohort_genomes/prodigal/<Sample>.gff.gz`.
+- Contigs are renamed `<Sample>.contig00001` and stored at `raw/contigs/<Sample>.fna.gz`.
+- Prodigal GFFs (not the annotation of record) are stored at `raw/prodigal/<Sample>.gff.gz`.
 - The store is keyed by BioSample and shared across organisms.
 - Each array task writes one row per genome to a shard under `genomes/shards/`. `collate` refuses to run
   if any genome is missing a row.
@@ -151,7 +168,7 @@ Bakta 1.9.4 + full DB v5.1 is the annotation of record (PROJECT_STATE §6). The 
 | Stage | What it does |
 |---|---|
 | `plan` | Splits `embedding_input.csv` into `genomes/bakta/bakrep_roster.tsv` (ATB-sourced and in BakRep) and `run_roster.tsv` (the rest) |
-| `ingest` | One CPU job, 8 BakRep streams: BakRep's GFF3 into `raw/ast_cohort_genomes/bakta/`, byte for byte, with a `.bakta.ingest.json` |
+| `ingest` | One CPU job, 8 BakRep streams: BakRep's GFF3 into `raw/bakta/`, byte for byte, with a `.bakta.ingest.json` |
 | `submit` | The CPU array `engine/genomes/scripts/run_bakta_array.sh` (4 genomes per task, 8 cores, 52 GB) over the run roster plus every BakRep-roster genome ingest refused; each run writes a `.bakta.run.json` |
 | `collate` | Writes `genomes/bakta_annotation.csv` only if every cohort genome has exactly one current annotation |
 
@@ -169,7 +186,8 @@ Bakta 1.9.4 + full DB v5.1 is the annotation of record (PROJECT_STATE §6). The 
 - **AMRFinderPlus DB is 2024-07-22.1**, not the 2023-11-15.1 that DB v5.1 ships: AMRFinderPlus 3.12.8 (what
   Bakta 1.9.4 resolves to) refuses the older one. With it, AMR calls matched BakRep's on every gate genome.
 - **Long arrays run from a pinned worktree** (`ARRAY_REPO=…/worktrees/BacPredict-<sha>`, with `.venv` symlinked to
-  the shared env): other agents pull the shared checkout, and `EXPECT_SHA` would otherwise stop pending tasks.
+  the shared env): other agents pull the shared checkout, and `EXPECT_SHA` would otherwise stop pending tasks. The
+  worktree holds code only (every output goes under the AMR root) and is removed once the array is collated.
 - **Memory:** size `--mem` from sacct (measured peaks: PROJECT_STATE §3.6), not from a run record's
   `max_child_rss_gb`, which sees only the largest single child process.
 
@@ -189,8 +207,13 @@ Bakta 1.9.4 + full DB v5.1 is the annotation of record (PROJECT_STATE §6). The 
   name mismatch would otherwise drop proteins silently); the annotation table's genomes = `embedding_input.csv`'s;
   every genome's contigs unchanged since annotation (md5). Unreadable parquets are listed, not fatal to the check.
 - `smoke` and `submit` refuse to start until every cohort genome has a protein parquet.
+- ⚠ **The protein and ESM stores are shared across species, but the ESM array is not yet.**
+  `esm_embeddings_array.sh` slices the whole sorted listing of `processed/protein_sequences/`, and the smoke test
+  takes its first N files. Give it a sample list before a second species writes protein parquets there;
+  otherwise a PsA submit would also embed that species' genomes, and the slices would shift if the store grows
+  mid-array.
 
-ESM-C in **bf16** on project_k, half the fp32 size. The trainer runs in bf16 already. Four consumers call
+ESM-C in **bf16** in `processed/esm/`, half the fp32 size. The trainer runs in bf16 already. Four consumers call
 `.numpy()` on embeddings and must call `.float()` first; they fail loudly, not silently:
 `engine/concat/bacformer_token_cache.py`, `engine/concat/cache_bacformer_gene_embeddings.py`,
 `engine/embedding/protein_pooling.py`, `engine/embedding/genome_assemblies_from_bacformer_embeddings.py`.

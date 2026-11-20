@@ -50,9 +50,19 @@ each with `esm/ baclm/ bacformer/ protein_sequences/ intergenic/` plus `binary_a
 `embedding_input.csv`, etc. **TODO (confirm):** exact contents, file counts, and whether the
 pre-outage CSD3 stores are the same cohort as the Isambard re-download.
 
+## Multi-species AMR — `project_k/david/amr_prediction` (`$AMR`)
+
+The EBI AMR Portal work (*P. aeruginosa*, then Enterobacterales) has its own root, separate from the TB/Kp
+tree above (David, 2026-11-20): `$AMR` = `$BACPREDICT_AMR_ROOT`, default
+`~/rds/rds-floto-bacterial-4k08a2yyQLw/david/amr_prediction`, with `raw/`, `processed/`, `final/`. Its scripts
+(`apps/pa/scripts/`, `apps/entero/scripts/`, `engine/genomes/scripts/validate_bakta_against_bakrep.sh`) set it
+themselves; they do not read `$BACPREDICT_DATA_ROOT`. **Per-sample files are flat and keyed by BioSample; per-species
+tables sit in a species folder** (`processed/paeruginosa/`, `processed/enterobacterales/`, `raw/paeruginosa/`).
+Full table: `apps/pa/CLAUDE.md` *Where the data lives*.
+
 ### EBI AMR Portal — the all-species AST + genotype tables
 
-`raw/ebi_amr_portal/<release>/` holds the portal's FTP release, fetched from
+`$AMR/raw/ebi_amr_portal/<release>/` holds the portal's FTP release, fetched from
 `https://ftp.ebi.ac.uk/pub/databases/amr_portal/releases/<release>/` (`releases.yml` there names the
 latest) and md5-checked against its `md5sums`:
 
@@ -61,33 +71,34 @@ latest) and md5-checked against its `md5sums`:
   `resistance_phenotype`, `species`, …) unlike the older `phenotype-*`-prefixed per-species extracts.
 - `genotype.parquet` — AMRFinderPlus hits on every assembly the portal holds (GCA *and* EBI's own ERZ
   assemblies); its `BioSample_ID → assembly_ID` keys are the portal's genome set.
-- ⚠ **`raw/ebi_amr_portal/ebi_amr_records_<date>.csv` is a portal-UI export of the *genotype* table**
+- ⚠ **`$AMR/raw/ebi_amr_portal/ebi_amr_records_<date>.csv` is a portal-UI export of the *genotype* table**
   (`genotype-*` columns), not AST — despite the name.
 
-**Labels built from it** live in the canonical AST tree, one dir per organism:
-`$R/bac_ast_prediction/processed/train_pa_ast/` (*P. aeruginosa*: `binary_ast.csv`, `cohort.csv`, …;
-built by `apps/pa/scripts/build_pa_ast_labels.sh`, mechanics in `apps/pa/CLAUDE.md`).
+**Labels built from it**, one folder per species: `$AMR/processed/paeruginosa/` (*P. aeruginosa*:
+`binary_ast.csv`, `cohort.csv`, …; built by `apps/pa/scripts/build_pa_ast_labels.sh`, mechanics in
+`apps/pa/CLAUDE.md`) and `$AMR/processed/enterobacterales/`.
 
 **Genomes built for the AST cohorts** (`engine/genomes/`, organism-agnostic, keyed by BioSample):
-`$R/raw/ast_cohort_genomes/{contigs,prodigal}/<Sample>.{fna,gff}.gz` — contigs renamed
-`<Sample>.contig00001…`, one Prodigal 2.6.3 GFF per genome (superseded) — and
-`$R/raw/ast_cohort_genomes/bakta/<Sample>.bakta.gff3.gz`, the annotation of record (Bakta 1.9.4, DB v5.1 full):
-BakRep's file beside a `.bakta.ingest.json`, or our run's beside a `.bakta.run.json` (+ `.faa`, `.txt`, `.log`).
-Our Bakta DB: `$R/raw/bakta_db/v5.1_full/` (AMRFinderPlus DB `latest` → 2024-07-22.1; md5s in
-`v5.1_full.md5`). The ours-vs-BakRep gate: `processed/bakta_vs_bakrep_validation/`. Per-cohort manifests, shards and QC sit in
-`processed/train_<org>_ast/genomes/`. Inputs staged once: `$R/raw/allthebacteria/assemblies_list_<date>/`
-(the ATB S3 inventory used to plan) and `$R/raw/reference_genomes/<GCF>.fna.gz` (species-check
-references). CheckM2's DB: `$R/raw/CheckM2/Zenodo_db/CheckM2_database/uniref100.KO.1.dmnd`.
+`$AMR/raw/{contigs,prodigal}/<Sample>.{fna,gff}.gz` — contigs renamed `<Sample>.contig00001…`, one Prodigal 2.6.3
+GFF per genome (not the annotation of record) — and `$AMR/raw/bakta/<Sample>.bakta.gff3.gz`, the annotation of
+record (Bakta 1.9.4, DB v5.1 full): BakRep's file beside a `.bakta.ingest.json`, or our run's beside a
+`.bakta.run.json` (+ `.faa`, `.txt`, `.log`). Proteins and ESM-C: `$AMR/processed/{protein_sequences,esm}/`.
+Our Bakta DB: `$AMR/raw/bakta_db/v5.1_full/` (AMRFinderPlus DB `latest` → 2024-07-22.1; md5s in `v5.1_full.md5`).
+The ours-vs-BakRep gate: `$AMR/processed/bakta_vs_bakrep_validation/`; BakRep's export and the coverage join:
+`$AMR/raw/bakrep/`, `$AMR/processed/bakrep_coverage_20261119/`. Per-species manifests, shards and QC (CheckM2,
+skani) sit in `$AMR/processed/<species>/genomes/`. Inputs staged once: `$AMR/raw/allthebacteria/assemblies_list_<date>/`
+(the ATB S3 inventory used to plan) and `$AMR/raw/reference_genomes/<GCF>.fna.gz` (species-check references).
+CheckM2's DB is the shared one: `$R/raw/CheckM2/Zenodo_db/CheckM2_database/uniref100.KO.1.dmnd`.
 
 Per-genome annotation (Prokka/Prodigal GFF with `##FASTA` contigs appended) is on the same FTP under
 `https://ftp.ebi.ac.uk/pub/databases/amr_portal/genomes/{ERZ,GCA}/<3>/<3>/<accession>/<accession>_annotations.gff.gz`
 (one shared tree, not per release; genotype-table accessions only). Scoping counts per release:
-`processed/ebi_amr_portal/scoping_<release>/` (script alongside).
+`$AMR/processed/ebi_amr_portal/scoping_<release>/` (script alongside).
 
 ### AMR-GNN *P. aeruginosa* set (Nguyen et al. 2026, Nat Commun, doi 10.1038/s41467-026-69934-8)
 
-`raw/amr_gnn_nguyen2026/` — 2,515 isolates, 12 drugs, MIC + EUCAST v15 S/R. `MOESM4_ESM.xlsx` is the
-paper's Supplementary Data 1 as published; `amr_gnn_long.csv` is it tidied (one row per isolate × drug);
+`$AMR/raw/paeruginosa/amr_gnn_nguyen2026/` — 2,515 isolates, 12 drugs, MIC + EUCAST v15 S/R. `MOESM4_ESM.xlsx` is
+the paper's Supplementary Data 1 as published; `amr_gnn_long.csv` is it tidied (one row per isolate × drug);
 `amr_gnn_isolate_biosample.csv` maps every isolate to its BioSample (runs via ENA `read_run`; the Kos
 et al. `AZPAE…` IDs are *strain names*, mapped via the WGS-set BioSamples' `strain`); `ena/` holds the
 ENA tables behind that map.

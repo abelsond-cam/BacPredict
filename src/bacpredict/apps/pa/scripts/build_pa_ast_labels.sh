@@ -4,13 +4,16 @@
 #
 # Light (one parquet filter + pandas on ~30k tests, ~1 min) — runs inline on a CSD3 login node:
 #     bash src/bacpredict/apps/pa/scripts/build_pa_ast_labels.sh
-# Inputs are mapped in src/bacpredict/docs/HPC_DATA.md; outputs land in <root>/processed/train_pa_ast/.
+# Inputs are mapped in src/bacpredict/docs/HPC_DATA.md; outputs land in <root>/processed/paeruginosa/.
 set -euo pipefail
 
-ROOT=${BACPREDICT_DATA_ROOT:-$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/bac_ast_prediction}
+# the multi-species AMR root on project_k (PROJECT_STATE §3.6 *Data layout*): per-sample stores flat, keyed by
+# BioSample; per-species tables under processed/<species>/
+ROOT=${BACPREDICT_AMR_ROOT:-$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/amr_prediction}
+[[ -d $ROOT ]] || { echo "no AMR root at $ROOT (set BACPREDICT_AMR_ROOT)"; exit 1; }
 PORTAL=$ROOT/raw/ebi_amr_portal/2026-07
-GNN=$ROOT/raw/amr_gnn_nguyen2026
-OUT=$ROOT/processed/train_pa_ast
+GNN=$ROOT/raw/paeruginosa/amr_gnn_nguyen2026
+OUT=$ROOT/processed/paeruginosa
 DRUGS=ciprofloxacin,ceftazidime,meropenem,tobramycin,amikacin,imipenem,piperacillin-tazobactam,aztreonam,levofloxacin,cefepime
 
 cd "$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"

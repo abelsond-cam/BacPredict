@@ -17,12 +17,15 @@
 # (build_pa_genomes.sh collate); bakta_annotation.csv is what build_pa_embeddings.sh then reads.
 set -euo pipefail
 
-ROOT=${BACPREDICT_DATA_ROOT:-$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/bac_ast_prediction}
+# the multi-species AMR root on project_k (PROJECT_STATE §3.6 *Data layout*): per-sample stores flat, keyed by
+# BioSample; per-species tables under processed/<species>/
+ROOT=${BACPREDICT_AMR_ROOT:-$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/amr_prediction}
+[[ -d $ROOT ]] || { echo "no AMR root at $ROOT (set BACPREDICT_AMR_ROOT)"; exit 1; }
 REPO=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 export REPO
-T=$ROOT/processed/train_pa_ast
+T=$ROOT/processed/paeruginosa
 GEN=$T/genomes
-ANN=$ROOT/raw/ast_cohort_genomes/bakta
+ANN=$ROOT/raw/bakta
 PLAN=$GEN/bakta
 DB=$ROOT/raw/bakta_db/v5.1_full
 IN_BAKREP=$ROOT/processed/bakrep_coverage_20261119/in_bakrep_ids.txt

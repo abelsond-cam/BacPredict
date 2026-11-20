@@ -20,13 +20,20 @@
 # (decision of record, PROJECT_STATE.md §6).
 set -euo pipefail
 
-ROOT=${BACPREDICT_DATA_ROOT:-$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/bac_ast_prediction}
+# the multi-species AMR root on project_k (PROJECT_STATE §3.6 *Data layout*): per-sample stores flat, keyed by
+# BioSample; per-species tables under processed/<species>/
+ROOT=${BACPREDICT_AMR_ROOT:-$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/amr_prediction}
+[[ -d $ROOT ]] || { echo "no AMR root at $ROOT (set BACPREDICT_AMR_ROOT)"; exit 1; }
 REPO=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 export REPO
-T=$ROOT/processed/train_pa_ast
+T=$ROOT/processed/paeruginosa
 GEN=$T/genomes
 COHORT=$GEN/bakta_annotation.csv
-PROT=$T/protein_sequences
+# the per-sample stores are flat and shared across species. ⚠ esm_embeddings_array.sh tiles INPUT_DIR's whole
+# listing (and the smoke its first N files), so it needs a sample list before a second species writes here
+PROT=$ROOT/processed/protein_sequences
+ESM=$ROOT/processed/esm
+ESM_SMOKE=$ROOT/processed/esm_smoke
 MAX_PROTEINS=9000
 SAVE_DTYPE=bfloat16
 NTASKS=16
@@ -73,6 +80,9 @@ pq = {s: prot / f"{s}_protein_sequences.parquet" for s in samples}
 pt = {s: esm / f"{s}_esm_embeddings.pt" for s in samples}
 problems = {}
 problems["no parquet"] = [s for s in samples if not pq[s].exists()]
+if scope == "all":  # the ESM array slices the store's whole listing, so the store must hold this cohort only
+    listed = {f.name.removesuffix("_protein_sequences.parquet") for f in prot.glob("*_protein_sequences.parquet")}
+    problems["parquets outside this cohort (the ESM array would embed them too)"] = sorted(listed - set(samples))
 have_pq = [s for s in samples if pq[s].exists()]
 problems["parquet older than its GFF"] = [
     s for s in have_pq if s in c.index and pq[s].stat().st_mtime < Path(c.at[s, "sr_gff_file"]).stat().st_mtime]
@@ -148,25 +158,25 @@ python -m bacpredict.engine.embedding.preprocess_assemblies_to_protein_sequences
     echo "logs: $run_dir"
     ;;
 check-proteins)
-    check_store "$T/esm" all proteins-only
+    check_store "$ESM" all proteins-only
     ;;
 smoke)
-    check_store "$T/esm" all proteins-only >/dev/null || { echo "proteins incomplete: run check-proteins"; exit 1; }
+    check_store "$ESM" all proteins-only >/dev/null || { echo "proteins incomplete: run check-proteins"; exit 1; }
     submit --array=0 --time=00:20:00 --job-name=pa-esm-smoke \
-        --export=ALL,INPUT_DIR=$PROT,ESM_DIR=$T/esm_smoke,MAX_PROTEINS=$MAX_PROTEINS,SAVE_DTYPE=$SAVE_DTYPE,NTASKS=1,N=10 \
+        --export=ALL,INPUT_DIR=$PROT,ESM_DIR=$ESM_SMOKE,MAX_PROTEINS=$MAX_PROTEINS,SAVE_DTYPE=$SAVE_DTYPE,NTASKS=1,N=10 \
         "$ARRAY"
     ;;
 check-smoke)
-    check_store "$T/esm_smoke" 10
+    check_store "$ESM_SMOKE" 10
     ;;
 submit)
-    check_store "$T/esm" all proteins-only >/dev/null || { echo "proteins incomplete: run check-proteins"; exit 1; }
+    check_store "$ESM" all proteins-only >/dev/null || { echo "proteins incomplete: run check-proteins"; exit 1; }
     submit --array=0-$((NTASKS - 1)) --time=04:00:00 --job-name=pa-esm-embeddings \
-        --export=ALL,INPUT_DIR=$PROT,ESM_DIR=$T/esm,MAX_PROTEINS=$MAX_PROTEINS,SAVE_DTYPE=$SAVE_DTYPE,NTASKS=$NTASKS \
+        --export=ALL,INPUT_DIR=$PROT,ESM_DIR=$ESM,MAX_PROTEINS=$MAX_PROTEINS,SAVE_DTYPE=$SAVE_DTYPE,NTASKS=$NTASKS \
         "$ARRAY"
     ;;
 check)
-    check_store "$T/esm" all
+    check_store "$ESM" all
     ;;
 *)
     sed -n '2,9p' "$0"; exit 2 ;;

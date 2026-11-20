@@ -23,8 +23,8 @@ Example (CSD3, *P. aeruginosa*; see ``apps/pa/scripts/build_pa_ast_labels.sh``):
         --phenotype $ROOT/raw/ebi_amr_portal/2026-07/phenotype.parquet \
         --genotype  $ROOT/raw/ebi_amr_portal/2026-07/genotype.parquet \
         --species "Pseudomonas aeruginosa" --drugs ciprofloxacin,meropenem,... \
-        --extra-tests $ROOT/processed/train_pa_ast/amr_gnn_tests.csv \
-        --output-dir $ROOT/processed/train_pa_ast
+        --extra-tests $ROOT/processed/paeruginosa/amr_gnn_tests.csv \
+        --output-dir $ROOT/processed/paeruginosa
 """
 
 from __future__ import annotations
