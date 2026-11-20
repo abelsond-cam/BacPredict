@@ -1,6 +1,13 @@
 # BacPredict — project state
 
-> **Last verified: 2026-11-20 @ `b7cd555`** (branch `refactor/consolidate-engine`).
+> **Last verified: 2026-11-20 @ `0f5cc5d`** (branch `refactor/consolidate-engine`).
+> **Verification scope, this pass (2026-11-20, third): §3.6 PsA Bakta annotation completion and the move of every
+> §3.6 artifact to `$AMR` only.** Read on CSD3: sacct of array `41499745`; `bakta_annotation.csv` re-collated at
+> `0f5cc5d` (md5 `53bb2fa5…`); the migration log `/rds/user/dca36/hpc-work/logs/amr_data_migration/`
+> (16 directories renamed, 48,623 paths rewritten in 4,203 records, 0 left, 11,244 of 11,244 pre-move paths
+> present after). Paths in the stamps below are pre-move (§2 maps them). **Nothing else was re-verified this pass.**
+>
+> **Stamp before this one: 2026-11-20 @ `b7cd555`.**
 > **Verification scope, this pass (2026-11-20): §3.6 Bakta reproduction gate, PsA BakRep ingest and the Bakta
 > environment/database only.** Read on CSD3 from `processed/bakta_vs_bakrep_validation/bakta_gate_summary.csv`
 > (md5 `0ed46bbf…`; array `41495079` at `be9891b`, compared at `b72b500`) and its empty `bakta_gate_diffs.csv`,
@@ -1501,8 +1508,9 @@ cohort stays planned. *P. aeruginosa* (PsA) **labels are built** (`7e47486`) and
 QC'd**: 3,677 pass. **Enterobacterales labels are built** (`480ce9d`); its genomes are not.
 **Annotation is Bakta 1.9.4 with the full DB v5.1, not Prodigal** (David, 2026-11-19: "Bakta as standard").
 Our run reproduces BakRep's exactly (the gate below), so a genome takes BakRep's GFF3 where BakRep holds it on
-our contigs, and our run otherwise. **PsA annotation is under way:** 1,781 BakRep GFF3s are ingested and our
-Bakta array over the other 1,896 is running; nothing is embedded yet. The Prodigal protein parquets (job
+our contigs, and our run otherwise. **PsA annotation is complete** (3,677 genomes: 1,781 BakRep, 1,896 ours);
+protein extraction and ESM-C are in flight. **All §3.6 data now lives under `$AMR` = `project_k/david/amr_prediction`**
+(David, 2026-11-20; map of the old paths in §2). The Prodigal protein parquets (job
 `41397962`) and ESM-C smoke (`41399821`) are superseded and kept aside as `$AMR/processed/_superseded_prodigal/paeruginosa_protein_sequences/`
 and `paeruginosa_esm_smoke/`; the Prodigal ESM-C array (`41401432`) was cancelled before any task started. QC
 (CheckM2, skani), MLST, the 3,677 pass set and the held-out-ST candidates do not use gene calls and stand. The PsA
@@ -1660,7 +1668,7 @@ the 283 whose ATB Bakta run failed.
 - **Cost (sacct):** 7.7–9.5 min per genome at 10 cores up to 513 contigs, 16.2 and 18.6 min at 1,677 and 3,010
   contigs; MaxRSS 8.7–42.6 GB (bimodal: 7 tasks ≤ 35 GB, 11 at 37.5–42.6 GB).
 
-**Numbers of record — PsA Bakta annotation (in progress).** `annotate_pa_genomes.sh plan` at `503be9a`: of the
+**Numbers of record — PsA Bakta annotation.** `annotate_pa_genomes.sh plan` at `503be9a`: of the
 3,677 QC-passing genomes, 1,792 are ATB-sourced and in BakRep (`genomes/bakta/bakrep_roster.tsv`), 1,885 are not
 (`run_roster.tsv`: 1,212 `portal_gff`, 340 ATB, 333 shovill). Ingest (job `41497655`, 4 min):
 - **1,781 BakRep GFF3s accepted** into `$AMR/raw/bakta/`, each kept byte for byte and accepted only
@@ -1670,6 +1678,13 @@ the 283 whose ATB Bakta run failed.
   files has gaps, which our store renumbers consecutively, so BakRep's seqids name different contigs of ours. The
   sequences are the same (identical multisets on the 4 checked). They join our run: 1,896 genomes
   (`run_roster_with_refused.tsv`).
+- **Our run: 1,896 of 1,896 annotated, 0 failed** (array `41499745` at `871bc69`, 474 tasks × 4 genomes, all
+  `COMPLETED`; sacct: 33 min mean and 61 min max per task, MaxRSS 34.6 GB at most at 8 cores).
+- **Collate: 3,677 of 3,677 genomes have exactly one current annotation** (bakrep 1,781, bakta_run 1,896):
+  `$AMR/processed/paeruginosa/genomes/bakta_annotation.csv`, md5 `53bb2fa5…` (re-collated from the moved
+  paths at `0f5cc5d`; byte-identical to the path-rewritten table). Proteins per genome (CDS − pseudogenes):
+  5,065–7,445, median 6,209 (BakRep) and 6,127 (ours); none near the 9,000 cap. Pseudogenes per genome: ATB-sourced
+  3–53 (99th percentile 33); `portal_gff` up to 766 (below).
 
 **Numbers of record — CheckM2 scikit-learn check.** CheckM2 1.1.0 warns that its scaler was pickled under
 scikit-learn 1.6.1 and is loaded under 1.9.1. Rerun on 50 PsA genomes (10 nearest the QC thresholds, 40
@@ -1683,16 +1698,13 @@ faESM), bf16, `--max-proteins 9000`; log `pa-esm-smoke_41399821_0.err`. 34 of 3,
 than 1,000 contigs; Bacformer's input packing (`max_n_contigs=1000`) keeps all their proteins but gives every
 contig past the 1,000th the same contig id.
 
-**In flight.** PsA Bakta array `41499745` (474 tasks × 4 genomes; 8 cores, 52 GB, 3 h; `%100`) over
-`genomes/bakta/run_roster_with_refused.tsv` into `$AMR/raw/bakta/`. It runs from the pinned worktree
-`/rds/user/dca36/hpc-work/worktrees/BacPredict-871bc69` (`.venv` symlinked to the shared env), so other agents'
-pulls of the shared checkout cannot stop it; remove the worktree once the array is collated.
+**In flight.** PsA protein extraction, job `41516634` at `0f5cc5d` (32 cores, 128 GB, 45 min) from
+`bakta_annotation.csv` into `$AMR/processed/protein_sequences/`. Then, in order and each gated on the last:
+`check-proteins`, the ESM-C smoke (10 genomes, `$AMR/processed/esm_smoke/`), `check-smoke`, and the full ESM-C array
+(16 × A100, FLOTO-SL2-GPU) into `$AMR/processed/esm/`.
 
 **Next.** Agreed with David 2026-11-19 ("even annotation sorted before embedding and models lock us in"):
-1. **PsA:** `annotate_pa_genomes.sh collate` → `genomes/bakta_annotation.csv` (written only if every one of the
-   3,677 has exactly one current annotation); then `build_pa_embeddings.sh proteins` and `check-proteins` (now also
-   requiring each parquet's protein count to equal CDS − pseudogenes, and the contigs unchanged since annotation),
-   the ESM-C smoke, then the full ESM-C array on SL2-GPU.
+1. **PsA:** finish ESM-C (in flight) and `build_pa_embeddings.sh check` against all 3,677.
 2. **Enterobacterales:** genome sources and contigs (ATB first; build design in `apps/entero/CLAUDE.md`),
    CheckM2 on every genome (ours, uniform), skani species check (rule to be decided with data), our `mlst`,
    BakRep GFF3 + our Bakta for the rest, then ESM-C (~250 A100-h at the measured rate, SL2-GPU). Expect ingest to
@@ -1720,6 +1732,9 @@ Later: the AMR-GNN-cut benchmark, ANI thinning, and causal attribution of the pr
   BioSample block (SAMN338…, 2–16 contigs) at 951–1,140 CDS per Mbp (10 above 1,000) against the cohort's
   ~917, and 10 of the 15 get no ST. **Hypothesis:** unpolished indel errors splitting genes. The other 5
   are single contigs at normal density. Whether to keep them is decision (b) under *Next*.
+  - **Bakta flags the same 15** (`bakta_annotation.csv` × `genome_qc.csv`): 125–766 pseudogenes each against at most
+    53 in any ATB genome, 6,105–7,943 CDS, and CheckM2 completeness 91.3–99.8 % (every other QC-passing genome:
+    median 100 %, 1st percentile 99.92 %). The same hypothesis; their protein inputs would carry gene fragments.
 - **ST621 is one collection with almost no metadata.** All 244 are `portal_gff` with no reads; 240 sit in
   one BioSample block (SAMN29441777–SAMN29442029) with one assembly-accession block, `NCBI_antibiogram`
   labels, and no study, country or year. All 240 CIP and 99 LVX labels are R. Its single-locus variant
@@ -1744,6 +1759,13 @@ Later: the AMR-GNN-cut benchmark, ANI thinning, and causal attribution of the pr
   group them, or they leak across the holdout.
 - `finetune_amr` and `build_split_csv` have **no `pa_ast` task key yet**. Paths must be explicit until
   one is added (a shared-engine change).
+- **`engine/config.py` `PA` resolves under `$AMR`** (`0f5cc5d`): tables in `processed/paeruginosa/`, per-sample
+  stores flat in `processed/{protein_sequences,esm}/`. The `pa_ast` trainer key, when added, should read it.
+- **The ESM-C array tiles the whole protein store.** `esm_embeddings_array.sh` slices the sorted listing of
+  `processed/protein_sequences/`, which is now shared across species; `build_pa_embeddings.sh` refuses to submit
+  while the store holds any parquet outside the PsA cohort. Give the array a sample list before Enterobacterales
+  writes its first parquet there.
+- The `bakrep_coverage_20261119/{join,cmp_pa,miss}.py` scripts are kept as they ran and still build pre-move paths.
 - **The QC-pass Prodigal GFFs and `n_cds` in `genome_qc.csv` are not the annotation of record**: Bakta is.
   `n_cds` and the CDS-per-Mbp figures above are Prodigal counts.
 - **Bakta's memory is sacct's to measure.** A run record's `max_child_rss_gb` (getrusage, the largest single
@@ -1915,6 +1937,7 @@ directory was consolidated. Several of these existed nowhere else.
 | 2026-11-19 | **CheckM2: our own run on every genome** (one QC surface), not AllTheBacteria's published values. scikit-learn stays unpinned: 1.6.1 and 1.9.1 give byte-identical reports on 50 genomes. |
 | 2026-11-19 | **PsA: embed every QC-passing genome; decide the held-out ST and the two cohort drops at the splits stage.** Embeddings are per genome and label-free. **ESM-C runs on FLOTO-SL2-GPU.** |
 | 2026-11-20 | **The Bakta gate passed, so a genome BakRep lacks gets our Bakta run** (as agreed 2026-11-19, conditional on the gate): 15/15 identical to BakRep in every feature, attribute and AMR call. BakRep's GFF3 is used only when its embedded contigs equal ours name for name; any genome it refuses is also annotated by us. **AMRFinderPlus DB 2024-07-22.1**, not the 2023-11-15.1 that DB v5.1 ships: AMRFinderPlus 3.12.8 (what Bakta 1.9.4 resolves to) refuses it ("requires database version at least 2023-12-15.2"); with 2024-07-22.1 every AMR call matched BakRep's. |
+| 2026-11-20 | **All multi-species AMR data lives under `project_k/david/amr_prediction/{raw,processed,final}`**, never in `~/rds/hpc-work` (David's scratch: logs and temporary files only). Per-sample files keyed by BioSample are flat and shared across species (`raw/{contigs,bakta}`, `processed/{protein_sequences,esm}`); per-species batch tables go in a species folder (`processed/paeruginosa/`, `processed/enterobacterales/`). Raw inputs and annotation in `raw/`; QC, proteins, embeddings, splits and models in `processed/`. |
 
 ### Invasion / lab collection
 
