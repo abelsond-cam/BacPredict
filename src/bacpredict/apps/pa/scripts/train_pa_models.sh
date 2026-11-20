@@ -59,7 +59,7 @@ ARRAY=src/bacpredict/engine/finetune/scripts/finetune_amr_array.sh
 # what the array runs in ARRAY_REPO: it must be this driver's own copy of each (same_array_code)
 ARRAY_CODE=("$ARRAY" src/bacpredict/engine/finetune/finetune_amr.py src/bacpredict/engine/finetune/datasets.py
             src/bacpredict/engine/finetune/metrics.py src/bacpredict/engine/finetune/attention_pool.py
-            src/bacpredict/engine/splits/load_splits.py src/bacpredict/engine/splits/load_split_species.py
+            src/bacpredict/engine/splits/load_splits.py
             src/bacpredict/engine/splits/subsample.py
             src/bacpredict/engine/config.py)
 cd "$HERE"
