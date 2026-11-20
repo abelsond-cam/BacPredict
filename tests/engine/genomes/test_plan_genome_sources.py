@@ -113,3 +113,20 @@ def test_ena_fault_that_fails_every_query_stops_at_the_first(tmp_path, monkeypat
     with pytest.raises(RuntimeError, match="CERTIFICATE|certificate verify failed"):
         pgs.ena_runs(["SAMN1", "SAMN2", "SAMN3"], cache, threads=2)
     assert len(calls) == 4  # the probe's retries only; the other two samples were never queried
+
+
+def test_genome_size_by_genus_sets_depth_and_a_manifest_column():
+    runs = pd.DataFrame([_run("A", "SRR1"), _run("B", "SRR2")])            # the same bases for both
+    cohort = pd.DataFrame({"Sample": ["A", "B", "C"], "species": ["Escherichia coli", "Proteus mirabilis", None]})
+    sizes = pgs.genome_sizes_by_genus(cohort, {"Escherichia": 5.0e6, "Proteus": 4.0e6}, default=6.6e6)
+    assert sizes.to_dict() == {"A": 5.0e6, "B": 4.0e6, "C": 6.6e6}
+    r = summarise_reads(runs, sizes)
+    assert r.loc["B", "reads_depth"] == pytest.approx(r.loc["A", "reads_depth"] * 5.0 / 4.0, rel=1e-2)
+    c = _cohort().assign(species="Escherichia coli")
+    s = pgs.genome_sizes_by_genus(c, {"Escherichia": 5.0e6}, default=6.6e6)
+    atb = pd.DataFrame({"atb_bytes": ["1"], "atb_md5": ["m"], "atb_last_modified": ["t"]}, index=["inATB"])
+    plan = plan_genome_sources(c, atb, pd.DataFrame(columns=["runs", "fastq_urls", "fastq_bytes", "fastq_md5",
+                                                             "reads_depth", "no_reads_reason"]), 10, genome_size=s)
+    assert plan["genome_size"].eq(5.0e6).all()
+    assert "genome_size" not in plan_genome_sources(c, atb, pd.DataFrame(columns=["runs", "fastq_urls", "fastq_bytes",
+                                                    "fastq_md5", "reads_depth", "no_reads_reason"]), 10).columns

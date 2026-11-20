@@ -11,6 +11,10 @@
 #   sbatch --array=0-$((N-1)) --cpus-per-task=8 --time=03:00:00 --job-name=build-genomes-shovill \
 #     --export=ALL,MANIFEST=$M,SOURCES=shovill,CHUNK=1,OUT_ROOT=$G,SHARD_DIR=$S,MLST_SCHEME=paeruginosa,GENOME_SIZE=6.6e6 \
 #     src/bacpredict/engine/genomes/scripts/build_genomes_array.sh
+#
+# REPO (default ~/workspace/BacPredict): the checkout to run. For a long array, a detached worktree at the submitting
+# SHA with .venv symlinked to the shared env, so other agents' pulls of the shared checkout cannot change the code
+# mid-array. EXPECT_SHA: refuse to run if REPO's HEAD is not it.
 #SBATCH --job-name=build-genomes
 #SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
 #SBATCH --partition=icelake-himem
@@ -28,6 +32,13 @@ CPUS=${SLURM_CPUS_PER_TASK:-8}
 RAM_GB=$(( CPUS * 6 ))   # shovill --ram, under the 6.76 GB/core the partition grants
 
 cd "$REPO"
+# $REPO's own code, even when $REPO is a worktree whose .venv is the shared env (its editable install points at the
+# main checkout): PYTHONPATH precedes site-packages
+export PYTHONPATH="$REPO/src${PYTHONPATH:+:$PYTHONPATH}"
+head=$(git rev-parse HEAD)
+if [[ -n "${EXPECT_SHA:-}" && "$head" != "$EXPECT_SHA"* ]]; then
+    echo "the checkout moved: HEAD ${head:0:7}, this array was submitted at $EXPECT_SHA"; exit 3
+fi
 # Normally resolved once at submit time (build_pa_genomes.sh exports it); fall back to resolving here.
 TOOLS_BIN=${TOOLS_BIN:-"$(cd src/bacpredict/engine/genomes && pixi run -- printenv CONDA_PREFIX)/bin"}
 

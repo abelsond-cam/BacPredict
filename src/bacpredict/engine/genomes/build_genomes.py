@@ -36,7 +36,8 @@ Usage::
         --chunk-size 40 --task-index $SLURM_ARRAY_TASK_ID --out-root $G --shard-dir $T/genomes/shards \
         --tools-bin $PIXI_ENV/bin --threads $SLURM_CPUS_PER_TASK --mlst-scheme paeruginosa
     python -m bacpredict.engine.genomes.build_genomes --manifest M --sources shovill --chunk-size 1 --count-chunks
-    # shovill tasks also take --genome-size (bp), e.g. 6.6e6 for P. aeruginosa
+    # shovill tasks also take --genome-size (bp), e.g. 6.6e6 for P. aeruginosa; a manifest genome_size column
+    # (multi-genus cohorts, from plan_genome_sources --genome-size-by-genus) overrides it per genome
 """
 
 from __future__ import annotations
@@ -299,7 +300,9 @@ def build_one(row: dict, out_root: Path, bin_dir: Path, tmp_root: Path, threads:
                 download(row["portal_url"], dest)
                 records = contigs_from_portal_gff(dest)
             elif row["source"] == "shovill":
-                records = shovill_contigs(pd.Series(row), work, bin_dir, threads, ram_gb, genome_size)
+                size = row.get("genome_size")  # the manifest's per-genome size (multi-genus cohorts) wins
+                size = float(size) if size is not None and pd.notna(size) and str(size) else genome_size
+                records = shovill_contigs(pd.Series(row), work, bin_dir, threads, ram_gb, size)
             else:
                 raise ValueError(f"source {row['source']!r} is not buildable")
             write_renamed_contigs(records, sample, contigs_gz, row["source"])
@@ -348,9 +351,11 @@ def main() -> None:
     if args.count_chunks:
         print(n_chunks(manifest, sources, args.chunk_size))
         return
-    if "shovill" in sources and not args.genome_size:
-        raise SystemExit("--genome-size is required for shovill: its own estimate fails on low-depth reads")
     chunk = select_chunk(manifest, sources, args.chunk_size, args.task_index)
+    sized = "genome_size" in chunk.columns and chunk["genome_size"].notna().all()
+    if "shovill" in sources and not args.genome_size and not sized:
+        raise SystemExit("--genome-size (or a manifest genome_size column) is required for shovill: its own "
+                         "estimate fails on low-depth reads")
     if chunk.empty:
         raise SystemExit(f"task {args.task_index} has no genomes ({len(sources)} sources, chunk {args.chunk_size})")
     for sub in ("contigs", "prodigal"):

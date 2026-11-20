@@ -24,6 +24,11 @@ Usage (CSD3 login node; ~2 min of ENA queries the first time, at 8 concurrent)::
     uv run python -m bacpredict.engine.genomes.plan_genome_sources \
         --cohort $T/cohort.csv --atb-index $ATB/*.csv.gz --genome-size 6.6e6 --min-depth 10 \
         --ena-cache $T/genomes/ena_filereport_cache.tsv --out $T/genomes/genome_manifest.csv
+
+A multi-genus cohort gives ``--genome-size-by-genus Escherichia=5.1e6,Salmonella=4.9e6,…`` (the genus is the first
+word of ``cohort.csv``'s ``species``); each genome's size then sets its read depth, and the manifest carries it as a
+``genome_size`` column that the shovill build uses as ``--gsize``. A genus missing from the map falls back to
+``--genome-size``; without the option the manifest is exactly as before.
 """
 
 from __future__ import annotations
@@ -132,8 +137,11 @@ def ena_runs(samples: list[str], cache_path: Path, threads: int = 8) -> pd.DataF
     return cached[cached["query"].isin(samples)]
 
 
-def summarise_reads(runs: pd.DataFrame, genome_size: float) -> pd.DataFrame:
-    """Per BioSample: usable paired Illumina WGS/WGA runs pooled → depth and fastq URLs, or why there are none."""
+def summarise_reads(runs: pd.DataFrame, genome_size: float | pd.Series) -> pd.DataFrame:
+    """Per BioSample: usable paired Illumina WGS/WGA runs pooled → depth and fastq URLs, or why there are none.
+
+    ``genome_size`` is one size (bp) for every genome, or a Series of sizes indexed by BioSample.
+    """
     r = runs[runs["run_accession"].notna() & ~runs["run_accession"].isin([QUERY_FAILED, NO_RUNS])].copy()
     files = r["fastq_ftp"].fillna("").str.split(";")
     r["n_files"] = files.map(lambda f: sum(1 for x in f if x))
@@ -157,7 +165,8 @@ def summarise_reads(runs: pd.DataFrame, genome_size: float) -> pd.DataFrame:
                     mds.append(m_all[i] if i < len(m_all) else "")
             out[sample] = {"runs": ";".join(u["run_accession"]), "fastq_urls": ";".join(urls),
                            "fastq_bytes": ";".join(byts), "fastq_md5": ";".join(mds),
-                           "reads_depth": round(u["base_count"].sum() / genome_size, 1), "no_reads_reason": pd.NA}
+                           "reads_depth": round(u["base_count"].sum() / _size(genome_size, sample), 1),
+                           "no_reads_reason": pd.NA}
             continue
         if g["library_strategy"].eq("RNA-Seq").all():
             why = "rna_seq_only"
@@ -172,14 +181,28 @@ def summarise_reads(runs: pd.DataFrame, genome_size: float) -> pd.DataFrame:
     return pd.DataFrame.from_dict(out, orient="index")
 
 
+def _size(genome_size: float | pd.Series, sample: str) -> float:
+    return float(genome_size[sample]) if isinstance(genome_size, pd.Series) else float(genome_size)
+
+
+def genome_sizes_by_genus(cohort: pd.DataFrame, by_genus: dict[str, float], default: float) -> pd.Series:
+    """Each BioSample's expected genome size from its genus (first word of ``species``), else ``default``."""
+    genus = cohort["species"].fillna("").str.split().str[0]
+    return genus.map(by_genus).fillna(default).set_axis(cohort["Sample"])
+
+
 def plan_genome_sources(
     cohort: pd.DataFrame,
     atb: pd.DataFrame,
     reads: pd.DataFrame,
     min_depth: float,
     prefer_reads: bool = False,
+    genome_size: pd.Series | None = None,
 ) -> pd.DataFrame:
-    """Assign one source per labelled genome (see the module docstring for the priority)."""
+    """Assign one source per labelled genome (see the module docstring for the priority).
+
+    ``genome_size`` (per BioSample, from :func:`genome_sizes_by_genus`) is written as a ``genome_size`` column.
+    """
     c = cohort[cohort["n_drugs_labelled"] > 0].copy()
     c = c.join(atb, on="Sample").join(reads, on="Sample")
     in_atb = c["atb_bytes"].notna()
@@ -200,6 +223,9 @@ def plan_genome_sources(
     keep = ["Sample", "n_drugs_labelled", "genome_route", "source", "drop_reason", "atb_url", "atb_md5", "atb_bytes",
             "portal_accession", "portal_url", "runs", "fastq_urls", "fastq_bytes", "fastq_md5", "reads_depth",
             "no_reads_reason", "assembly_genotype", "assembly_phenotype", "reads_accession"]
+    if genome_size is not None:
+        c["genome_size"] = c["Sample"].map(genome_size)
+        keep.append("genome_size")
     return c[keep].sort_values("Sample").reset_index(drop=True)
 
 
@@ -209,6 +235,9 @@ def main() -> None:
     ap.add_argument("--cohort", type=Path, required=True, help="cohort.csv from build_binary_ast_labels")
     ap.add_argument("--atb-index", type=Path, nargs="+", required=True, help="ATB S3 inventory csv.gz file(s)")
     ap.add_argument("--genome-size", type=float, required=True, help="expected genome size (bp), for read depth")
+    ap.add_argument("--genome-size-by-genus", default=None,
+                    help="Genus=bp,... for a multi-genus cohort (genus = first word of cohort.csv species); "
+                         "others fall back to --genome-size")
     ap.add_argument("--min-depth", type=float, default=10.0, help="minimum pooled read depth to assemble")
     ap.add_argument("--prefer-reads", action="store_true",
                     help="assemble reads with shovill instead of using a portal (submitter) assembly when possible")
@@ -226,8 +255,16 @@ def main() -> None:
     if failed:  # a failed query must never become a silent "no_runs" drop
         raise SystemExit(f"{len(failed)} ENA queries failed (first: {failed[:5]}); re-run plan to retry them — "
                          "no manifest written")
-    reads = summarise_reads(runs, args.genome_size)
-    plan = plan_genome_sources(cohort, atb, reads, args.min_depth, args.prefer_reads)
+    sizes = None
+    if args.genome_size_by_genus:
+        by_genus = {k.strip(): float(v) for k, v in (x.split("=") for x in args.genome_size_by_genus.split(","))}
+        sizes = genome_sizes_by_genus(cohort, by_genus, args.genome_size)
+        genus = cohort.loc[cohort["n_drugs_labelled"] > 0, "species"].fillna("").str.split().str[0]
+        unmapped = genus[~genus.isin(by_genus)].value_counts()
+        if len(unmapped):
+            print(f"genera without a size (use --genome-size {args.genome_size:.3g}): {unmapped.to_dict()}")
+    reads = summarise_reads(runs, sizes if sizes is not None else args.genome_size)
+    plan = plan_genome_sources(cohort, atb, reads, args.min_depth, args.prefer_reads, sizes)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     plan.to_csv(args.out, index=False)
 

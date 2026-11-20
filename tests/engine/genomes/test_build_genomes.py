@@ -180,3 +180,23 @@ def test_empty_shovill_assembly_is_an_error_with_its_log(tmp_path):
     _stub_shovill(bin_dir, "")
     with pytest.raises(RuntimeError, match="no contigs.*It contains 0 contigs"):
         shovill_contigs(pd.Series(_fastq_row(tmp_path)), work, bin_dir, threads=2, ram_gb=8, genome_size=6.6e6)
+
+
+def test_a_manifest_genome_size_overrides_the_task_size_for_shovill(tmp_path, monkeypatch):
+    """Multi-genus cohorts carry each genome's size in the manifest; a single --genome-size would misstate it."""
+    seen = []
+
+    def fake_shovill(row, work, bin_dir, threads, ram_gb, genome_size=None):
+        seen.append(genome_size)
+        return [("NODE_1", "ACGTACGTAC")]
+
+    monkeypatch.setattr("bacpredict.engine.genomes.build_genomes.shovill_contigs", fake_shovill)
+    bin_dir = tmp_path / "bin"
+    _stub_tools(bin_dir)
+    out_root, tmp = tmp_path / "store", tmp_path / "tmp"
+    for d in (out_root / "contigs", out_root / "prodigal", tmp):
+        d.mkdir(parents=True)
+    build_one({"Sample": "S1", "source": "shovill", "genome_size": "4.1e6"}, out_root, bin_dir, tmp, 1, 8, None, 6.6e6)
+    build_one({"Sample": "S2", "source": "shovill", "genome_size": float("nan")}, out_root, bin_dir, tmp, 1, 8, None,
+              6.6e6)
+    assert seen == [4.1e6, 6.6e6]
