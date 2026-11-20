@@ -96,12 +96,27 @@ def amr_calls(path: Path) -> set[tuple]:
             for f in feats for e in f.get("expert", []) if "amrfinder" in str(e.get("type", "")).lower()}
 
 
-def faa_check(ext: dict, faa: dict[str, str], tag: str, sample: str, diffs: list) -> dict:
-    """Compare extracted proteins with a Bakta ``.faa`` by locus tag."""
+def pseudo_tags(gff: pd.DataFrame) -> set[str]:
+    """Locus tags of the CDS a GFF3 marks ``pseudo=True``."""
+    cds = gff[(gff["type"] == "CDS") & gff["attributes"].str.contains("pseudo=True", regex=False)]
+    return {attrs(a).get("locus_tag") for a in cds["attributes"]}
+
+
+def faa_check(ext: dict, faa: dict[str, str], pseudo: set[str], tag: str, sample: str, diffs: list) -> dict:
+    """Compare extracted proteins with a Bakta ``.faa`` by locus tag.
+
+    Bakta 1.9.4 writes pseudogenes to its ``.faa`` (``io/fasta.py::write_faa`` filters on feature type only) while
+    the extractor drops them by design, so a pseudogene absent from the extraction is expected and counted on its
+    own; any other ``.faa`` protein the extractor did not produce is a failure, and so is a pseudogene it did.
+    """
     f = dict(flat(ext))
-    shared = f.keys() & faa.keys()
+    shared = (f.keys() & faa.keys()) - pseudo
     bad = sorted(k for k in shared if f[k] != faa[k])
-    only_ext, only_faa = sorted(f.keys() - faa.keys()), sorted(faa.keys() - f.keys())
+    only_ext = sorted(f.keys() - faa.keys())
+    only_faa = sorted(faa.keys() - f.keys() - pseudo)
+    pseudo_extracted = sorted(pseudo & f.keys())
+    for k in pseudo_extracted[:MAX_EXAMPLES]:
+        diffs.append({"sample": sample, "kind": f"pseudogene_extracted_{tag}", "detail": k})
     for k in bad[:MAX_EXAMPLES]:
         a, b = f[k], faa[k]
         i = next((j for j in range(min(len(a), len(b))) if a[j] != b[j]), min(len(a), len(b)))
@@ -111,8 +126,9 @@ def faa_check(ext: dict, faa: dict[str, str], tag: str, sample: str, diffs: list
         diffs.append({"sample": sample, "kind": f"extracted_not_in_faa_{tag}", "detail": k})
     for k in only_faa[:MAX_EXAMPLES]:
         diffs.append({"sample": sample, "kind": f"faa_not_extracted_{tag}", "detail": k})
-    return {f"prot_{tag}_n": len(f), f"faa_{tag}_n": len(faa), f"prot_{tag}_vs_faa_diff": len(bad),
-            f"prot_{tag}_not_in_faa": len(only_ext), f"faa_{tag}_not_extracted": len(only_faa)}
+    return {f"prot_{tag}_n": len(f), f"faa_{tag}_n": len(faa), f"faa_{tag}_pseudo_n": len(pseudo & faa.keys()),
+            f"prot_{tag}_vs_faa_diff": len(bad), f"prot_{tag}_not_in_faa": len(only_ext) + len(pseudo_extracted),
+            f"faa_{tag}_not_extracted": len(only_faa)}
 
 
 def compare_one(row: pd.Series, gate: Path) -> tuple[dict, list[dict]]:
@@ -134,7 +150,7 @@ def compare_one(row: pd.Series, gate: Path) -> tuple[dict, list[dict]]:
     g_ours, fa_ours = read_gff3(ours["gff3"])
     out["ours_fasta_equal_contigs"] = fa_ours == our_contigs
     ext_ours = extracted(ours["gff3"], contigs)
-    out.update(faa_check(ext_ours, read_faa(ours["faa"]), "ours", s, diffs))
+    out.update(faa_check(ext_ours, read_faa(ours["faa"]), pseudo_tags(g_ours), "ours", s, diffs))
     cds_o = g_ours[g_ours["type"] == "CDS"]
     out["cds_ours"] = len(cds_o)
     out["pseudo_ours"] = int(cds_o["attributes"].str.contains("pseudo=True", regex=False).sum())
@@ -183,7 +199,7 @@ def compare_one(row: pd.Series, gate: Path) -> tuple[dict, list[dict]]:
 
     # G4, G5
     ext_rep = extracted(rep["gff3"], contigs)
-    out.update(faa_check(ext_rep, read_faa(rep["faa"]), "bakrep", s, diffs))
+    out.update(faa_check(ext_rep, read_faa(rep["faa"]), pseudo_tags(g_rep), "bakrep", s, diffs))
     out["embedding_input_equal"] = ext_ours["protein_sequence"] == ext_rep["protein_sequence"]
     if not out["embedding_input_equal"]:
         a, b = [p for _, p in flat(ext_ours)], [p for _, p in flat(ext_rep)]

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import hashlib
 import json
 import os
 import resource
@@ -151,18 +152,32 @@ def run_bakta(contigs: Path, sample: str, out_dir: Path, tools_bin: Path, db: Pa
         shutil.rmtree(work, ignore_errors=True)
 
 
+def run_fingerprint(tools_bin: Path, db: Path) -> str:
+    """md5 over everything but the contigs that defines a run's output.
+
+    Bakta's flags, the tool environment's exact package set (conda-meta names carry name, version and build), the
+    database release and the AMRFinderPlus database.
+    """
+    pkgs = sorted(p.name for p in (tools_bin.parent / "conda-meta").glob("*.json"))
+    if not pkgs:
+        raise FileNotFoundError(f"no conda-meta beside {tools_bin}: not a pixi/conda env bin/")
+    parts = [*BAKTA_FLAGS, *pkgs, (db / "version.json").read_text(), (db / "amrfinderplus-db" / "latest").resolve().name]
+    return hashlib.md5("\n".join(parts).encode()).hexdigest()
+
+
 def run_record(out_dir: Path, sample: str) -> Path:
     """``<out_dir>/<sample>.bakta.run.json``: what a finished run was given (contigs md5) and what it cost."""
     return out_dir / f"{sample}.bakta.run.json"
 
 
-def is_current(out_dir: Path, sample: str, contigs: Path) -> bool:
-    """A finished run of ``sample`` exists and was made from these exact contigs."""
+def is_current(out_dir: Path, sample: str, contigs: Path, fingerprint: str) -> bool:
+    """A finished run of ``sample`` exists, made from these exact contigs with this exact tool env, flags and db."""
     rec, gff = run_record(out_dir, sample), out_dir / f"{sample}.bakta.gff3.gz"
     if not (rec.exists() and gff.exists()):
         return False
     try:
-        return json.loads(rec.read_text()).get("contigs_md5") == _md5(contigs)
+        r = json.loads(rec.read_text())
+        return r.get("fingerprint") == fingerprint and r.get("contigs_md5") == _md5(contigs)
     except (OSError, ValueError):
         return False
 
@@ -180,7 +195,7 @@ def main() -> None:
     r.add_argument("--threads", type=int, default=8)
     r.add_argument("--keep", default=",".join(DEFAULT_KEEP), help="Bakta output extensions to keep, gzipped")
     r.add_argument("--skip-existing", action="store_true",
-                   help="skip if a finished run of this sample was made from these exact contigs (md5)")
+                   help="skip if a finished run of this sample used these exact contigs, tools, flags and db")
     r.add_argument("--tmp-dir", type=Path, default=None, help="Bakta's working directory root (default $TMPDIR)")
     f = sub.add_parser("fetch", help="one sample's BakRep Bakta files")
     f.add_argument("--sample", required=True)
@@ -188,14 +203,18 @@ def main() -> None:
     f.add_argument("--filetypes", default="gff3", help="comma-separated BakRep filetypes, e.g. gff3,faa,json")
     a = ap.parse_args()
     if a.cmd == "run":
-        if a.skip_existing and is_current(a.out_dir, a.sample, a.contigs):
+        fingerprint = run_fingerprint(a.tools_bin, a.db)
+        if a.skip_existing and is_current(a.out_dir, a.sample, a.contigs, fingerprint):
             print(json.dumps({"sample": a.sample, "skipped": "current"}))
             return
         run_record(a.out_dir, a.sample).unlink(missing_ok=True)  # a run that dies leaves no record
         tmp_root = a.tmp_dir or (Path(os.environ["TMPDIR"]) if os.environ.get("TMPDIR") else None)
         stats = run_bakta(a.contigs, a.sample, a.out_dir, a.tools_bin, a.db, a.threads, tmp_root=tmp_root,
                           keep=tuple(a.keep.split(",")))
+        sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
         rec = {"sample": a.sample, "contigs": str(a.contigs), "contigs_md5": _md5(a.contigs),
+               "fingerprint": fingerprint, "flags": " ".join(BAKTA_FLAGS), "tools_bin": str(a.tools_bin.resolve()),
+               "db": str(a.db.resolve()), "code_sha": sha or None,
                "software": BAKTA_SOFTWARE, "database": BAKTA_DATABASE,
                "amrfinderplus_db": (a.db / "amrfinderplus-db" / "latest").resolve().name,
                "threads": a.threads, "host": os.uname().nodename, **stats}

@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # SLURM array: Bakta 1.9.4 (engine/genomes/bakta.py) on CHUNK genomes of a roster per task.
 #
-#   ROSTER     TSV, no header: Sample<TAB>contigs path. Task k takes rows k*CHUNK+1 … (k+1)*CHUNK.
+#   ROSTER     TSV, no header, absolute path: Sample<TAB>contigs path. Task k takes rows k*CHUNK+1 … (k+1)*CHUNK;
+#              a task whose slice is empty fails (the --array range does not match the roster).
 #   OUT_DIR    <Sample>.bakta.<ext>.gz (KEEP, default gff3,faa,json,txt), the log, and <Sample>.bakta.run.json
 #   TOOLS_BIN  bin/ of the engine/genomes `bakta` pixi env — resolve at submit time, never in a task
 #   DB         Bakta database v5.1 full ($ROOT/raw/bakta_db/v5.1_full)
 #   CHUNK      genomes per task (default 1); EXPECT_SHA: refuse to run if the shared checkout has moved
 #
-# A genome whose finished run was made from the same contigs (md5 in its run.json) is skipped, so a rerun of
-# the same indices only redoes what is missing. Sizing (icelake-himem, 6,760 MB per core): 10 cores and 64 GB per
-# task; nuna measured 543 s per Klebsiella genome at 8 threads on the same release and database.
+# A genome whose finished run used the same contigs, tool env, flags and database (its run.json) is skipped, so
+# a rerun of the same indices only redoes what is missing or stale. Sizing (icelake-himem, 6,760 MB per core):
+# 10 cores and 64 GB per task; nuna measured 543 s per Klebsiella genome at 8 threads on this release and database.
 #SBATCH --job-name=bakta
 #SBATCH --account=FLOTO-PROJECT-K-SL2-CPU
 #SBATCH --partition=icelake-himem
@@ -23,6 +24,7 @@
 set -euo pipefail
 
 : "${ROSTER:?}" "${OUT_DIR:?}" "${TOOLS_BIN:?}" "${DB:?}"
+[[ $ROSTER == /* && -r $ROSTER ]] || { echo "ROSTER must be a readable absolute path: $ROSTER"; exit 4; }
 REPO=${REPO:-$HOME/workspace/BacPredict}
 CHUNK=${CHUNK:-1}
 CPUS=${SLURM_CPUS_PER_TASK:-10}
@@ -40,14 +42,21 @@ mkdir -p "$WORK" "$OUT_DIR"
 trap 'rm -rf "$WORK"' EXIT
 
 echo "[$(date -Is)] host=$(hostname) task=$K chunk=$CHUNK cpus=$CPUS repo=$REPO@${head:0:7} db=$DB"
+# mapfile, not `while read < <(sed …)`: a process substitution's failure is invisible to set -e, and read drops a
+# final line with no newline
+mapfile -t rows < <(sed -n "$((K * CHUNK + 1)),$(((K + 1) * CHUNK))p" "$ROSTER")
+if (( ${#rows[@]} == 0 )); then
+    echo "task $K: no roster rows at CHUNK=$CHUNK — the array range does not match the roster"; exit 4
+fi
 fail=0
-while IFS=$'\t' read -r sample contigs; do
+for row in "${rows[@]}"; do
+    IFS=$'\t' read -r sample contigs <<<"$row"
     # --no-sync: concurrent tasks must not race to re-sync the shared venv
     if ! uv run --no-sync python -m bacpredict.engine.genomes.bakta run --contigs "$contigs" --sample "$sample" \
             --out-dir "$OUT_DIR" --tools-bin "$TOOLS_BIN" --db "$DB" --threads "$CPUS" --tmp-dir "$WORK" \
             --keep "${KEEP:-gff3,faa,json,txt}" --skip-existing; then
         echo "FAIL $sample"; fail=$((fail + 1))
     fi
-done < <(sed -n "$((K * CHUNK + 1)),$(((K + 1) * CHUNK))p" "$ROSTER")
+done
 echo "[$(date -Is)] done, $fail failed"
 [[ $fail -eq 0 ]]
