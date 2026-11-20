@@ -21,11 +21,16 @@ from bacpredict.engine.splits.load_splits import load_split_ids, load_splits
 
 DRUGS = ("ciprofloxacin", "meropenem")
 REPO = Path(__file__).resolve().parents[3]
+WRITER_ID = "phenotype-BioSample_ID"  # binary_ast.csv's key header, as build_binary_ast_labels writes it
 
 
 def _species(tmp_path: Path, name: str, *, n: int = 400, scheme: str = "paeruginosa", prefix: str = "P",
-             held_st: str = "235", n_held: int = 40, seed: int = 0) -> b.SpeciesInputs:
-    """A synthetic species: eligible genomes + 5 not eligible, an ST mix with ``n_held`` in ``held_st``."""
+             held_st: str = "235", n_held: int = 40, seed: int = 0, label_key: str = WRITER_ID) -> b.SpeciesInputs:
+    """A synthetic species: eligible genomes + 5 not eligible, an ST mix with ``n_held`` in ``held_st``.
+
+    The label sheet is written as the real writer writes it (index headed ``phenotype-BioSample_ID``), or keyed on
+    a ``Sample`` column with ``label_key="Sample"``.
+    """
     rng = np.random.default_rng(seed)
     d = tmp_path / name
     d.mkdir(parents=True, exist_ok=True)
@@ -41,7 +46,12 @@ def _species(tmp_path: Path, name: str, *, n: int = 400, scheme: str = "paerugin
                            "meropenem": np.where(rng.random(len(samples)) < 0.7, rng.integers(0, 2, len(samples)),
                                                  np.nan)})
     labels.loc[3, "ciprofloxacin"] = 0.5  # conflicting tests: a row, never scored
-    labels.to_csv(d / "binary_ast.csv", index=False)
+    if label_key == WRITER_ID:  # exactly build_binary_ast_labels: binary.index.name = ID_COL; binary.to_csv(path)
+        binary = labels.set_index("Sample")
+        binary.index.name = WRITER_ID
+        binary.to_csv(d / "binary_ast.csv")
+    else:
+        labels.rename(columns={"Sample": label_key}).to_csv(d / "binary_ast.csv", index=False)
     return b.SpeciesInputs(name, d / "binary_ast.csv", d / "bakta_annotation.csv", d / "genome_qc.csv")
 
 
@@ -178,7 +188,8 @@ def test_exclusions_are_not_eligible(pa: b.SpeciesInputs) -> None:
 def test_only_eligible_labelled_genomes_appear(pa: b.SpeciesInputs) -> None:
     """A drug's table = eligible ∩ labelled for that drug; the not-eligible genomes never appear."""
     tables, report = b.build_arm([pa], DRUGS, holdout_sts={"paeruginosa": ["paeruginosa:235"]})
-    labels = pd.read_csv(pa.labels).set_index("Sample")
+    labels = pd.read_csv(pa.labels, index_col=0)
+    assert labels.index.name == WRITER_ID  # the fixture's sheet is the real writer's format
     eligible = set(pd.read_csv(pa.eligible)["Sample"])
     for drug in DRUGS:
         assert set(tables[drug]["Sample"]) == {s for s in eligible if pd.notna(labels.at[s, drug])}
@@ -258,6 +269,58 @@ def test_fails_on_eligible_genome_without_qc_row(pa: b.SpeciesInputs) -> None:
         b.build_arm([pa], DRUGS)
 
 
+def test_label_sheet_key_alias_gives_identical_tables(tmp_path: Path) -> None:
+    """A sheet keyed phenotype-BioSample_ID (the writer's) and one keyed Sample give byte-identical tables."""
+    held = {"paeruginosa": ["paeruginosa:235"]}
+    writer = _species(tmp_path / "w", "paeruginosa", label_key=WRITER_ID)
+    sample = _species(tmp_path / "s", "paeruginosa", label_key="Sample")
+    t_w, _ = b.build_arm([writer], DRUGS, holdout_sts=held)
+    t_s, _ = b.build_arm([sample], DRUGS, holdout_sts=held)
+    assert {d: b.render_table(t) for d, t in t_w.items()} == {d: b.render_table(t) for d, t in t_s.items()}
+    assert len(t_w["ciprofloxacin"]) > 0
+
+
+def test_label_sheet_key_refusals(tmp_path: Path) -> None:
+    """Neither key column → refused; both, disagreeing → refused; both, agreeing → read as one key."""
+    path = tmp_path / "binary_ast.csv"
+    pd.DataFrame({"genome": ["a", "b"], "ciprofloxacin": [0.0, 1.0]}).to_csv(path, index=False)
+    with pytest.raises(ValueError, match="neither a Sample nor a phenotype-BioSample_ID"):
+        b.read_labels(path, ["ciprofloxacin"])
+    pd.DataFrame({WRITER_ID: ["a", "b"], "Sample": ["a", "c"], "ciprofloxacin": [0.0, 1.0]}).to_csv(path, index=False)
+    with pytest.raises(ValueError, match="disagree on 1 row"):
+        b.read_labels(path, ["ciprofloxacin"])
+    pd.DataFrame({WRITER_ID: ["a", "b"], "Sample": ["a", "b"], "ciprofloxacin": [0.0, 1.0]}).to_csv(path, index=False)
+    labels = b.read_labels(path, ["ciprofloxacin"])
+    assert labels.index.tolist() == ["a", "b"] and labels["ciprofloxacin"].tolist() == [0.0, 1.0]
+
+
+def test_species_filter_reads_union_arm_as_its_species_arm(tmp_path: Path, pa: b.SpeciesInputs,
+                                                           entero: b.SpeciesInputs) -> None:
+    """load_splits / load_split_ids with species=X on the union arm == X's own arm, every split, labels too.
+
+    Without the filter the union's splits pool both species, which is why the filter is in the one reader.
+    """
+    held = {"paeruginosa": ["paeruginosa:235"], "enterobacterales": ["klebsiella:235"]}
+    arms = {
+        "union": b.build_arm([pa, entero], DRUGS, holdout_sts=held)[0],
+        "paeruginosa": b.build_arm([pa], DRUGS, holdout_sts={"paeruginosa": held["paeruginosa"]})[0],
+        "enterobacterales": b.build_arm([entero], DRUGS,
+                                        holdout_sts={"enterobacterales": held["enterobacterales"]})[0],
+    }
+    for name, tables in arms.items():
+        b.write_arm(tmp_path / name, tables, {})
+    for drug in DRUGS:
+        union = tmp_path / "union" / f"{drug}_split.csv"
+        for sp in ("paeruginosa", "enterobacterales"):
+            own = tmp_path / sp / f"{drug}_split.csv"
+            assert load_splits(union, species=sp) == load_splits(own)  # label map + train/validate/holdout
+            for split in b.SPLIT_VALUES:
+                assert load_split_ids(union, split, species=sp) == load_split_ids(own, split)
+        pooled = load_splits(union)[3]
+        assert {s[0] for s in pooled} == {"P", "E"}  # unfiltered: both species in one holdout
+        assert load_splits(union, species="paeruginosa")[3] == [s for s in pooled if s.startswith("P")]
+
+
 def test_fails_on_label_outside_unit_interval(pa: b.SpeciesInputs) -> None:
     labels = pd.read_csv(pa.labels)
     labels.loc[5, "meropenem"] = 8.0  # an MIC, not a label
@@ -266,8 +329,14 @@ def test_fails_on_label_outside_unit_interval(pa: b.SpeciesInputs) -> None:
         b.build_arm([pa], DRUGS)
 
 
-def test_cli_writes_tables_that_load_splits_reads(tmp_path: Path, pa: b.SpeciesInputs) -> None:
-    """End to end: the CLI writes tables + manifest; load_splits / load_split_ids read every split back."""
+@pytest.mark.parametrize("label_key", [WRITER_ID, "Sample"])
+def test_cli_writes_tables_that_load_splits_reads(tmp_path: Path, label_key: str) -> None:
+    """End to end: the CLI writes tables + manifest; load_splits / load_split_ids read every split back.
+
+    Run on a label sheet written exactly as build_binary_ast_labels writes it, and on one keyed ``Sample``.
+    """
+    pa = _species(tmp_path, "paeruginosa", label_key=label_key)
+    assert (pa.labels.read_text().splitlines()[0]).startswith(f"{label_key},")
     out = tmp_path / "splits"
     excl = tmp_path / "excluded.tsv"
     excl.write_text("Sample\treason\nP0050\tlong-read\n")

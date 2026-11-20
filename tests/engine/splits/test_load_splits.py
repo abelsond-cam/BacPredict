@@ -88,3 +88,44 @@ def test_load_split_ids_rejects_an_unknown_split(tmp_path: Path) -> None:
     """A misspelt split is an error, not an empty list."""
     with pytest.raises(ValueError, match="not one of"):
         load_split_ids(_table_with_holdout_st(tmp_path), "holdout-st")
+
+
+def _two_species_table(tmp_path: Path) -> Path:
+    df = pd.DataFrame({
+        "Sample": ["e1", "e2", "e3", "p1", "p2", "p3", "p4"],
+        "species": ["enterobacterales"] * 3 + ["paeruginosa"] * 4,
+        "st_key": "x:1",
+        "ast_label": ["1", "0", "1", "0", "1", "0.5", "1"],   # 'p3' conflicting → never scored
+        "split": ["train", "holdout", "holdout", "train", "holdout", "holdout", "holdout_st"],
+    })
+    path = tmp_path / "meropenem_split.csv"
+    df.to_csv(path, index=False)
+    return path
+
+
+def test_species_filter_keeps_only_that_species(tmp_path: Path) -> None:
+    """species= restricts the map and every split to that species' clean rows; None is the pooled read."""
+    path = _two_species_table(tmp_path)
+    label_map, train, validate, holdout = load_splits(path, species="paeruginosa")
+    assert label_map == {"p1": 0, "p2": 1, "p4": 1}
+    assert train == ["p1"] and validate == [] and holdout == ["p2"]
+    assert load_split_ids(path, "holdout_st", species="paeruginosa") == ["p4"]
+    assert load_split_ids(path, "holdout", species="enterobacterales") == ["e2", "e3"]
+    assert load_splits(path)[3] == ["e2", "e3", "p2"]  # unfiltered: pooled, exactly as before
+
+
+def test_species_filter_is_refused_on_a_table_without_species_or_an_absent_species(tmp_path: Path) -> None:
+    """A TB/Kp table has no species column; a misspelt species is an error, not an empty read."""
+    for read in (lambda p, sp: load_splits(p, species=sp), lambda p, sp: load_split_ids(p, "holdout", species=sp)):
+        with pytest.raises(ValueError, match="no species column"):
+            read(_table_csv(tmp_path), "paeruginosa")
+        with pytest.raises(ValueError, match="has no rows"):
+            read(_two_species_table(tmp_path), "pseudomonas")
+
+
+def test_species_none_is_the_unfiltered_read(tmp_path: Path) -> None:
+    """species=None returns exactly what the call without it does, on single- and multi-species tables."""
+    for path in (_table_csv(tmp_path), _table_with_holdout_st(tmp_path), _two_species_table(tmp_path)):
+        assert load_splits(path, species=None) == load_splits(path)
+        for s in ("train", "validate", "holdout", "holdout_st"):
+            assert load_split_ids(path, s, species=None) == load_split_ids(path, s)

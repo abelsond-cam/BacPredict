@@ -17,6 +17,10 @@ by :func:`bacpredict.engine.splits.load_splits.load_splits` (``train``/``validat
 **Eligible** = listed in the species' eligible-genomes CSV (for PsA, ``genomes/bakta_annotation.csv``: annotated
 and embedded) and not in any ``--exclude`` file.
 
+**Label sheet** = ``binary_ast.csv`` as :mod:`bacpredict.engine.ast_labels.build_binary_ast_labels` writes it: the
+genome key is its index column, headed ``phenotype-BioSample_ID``, then one column per drug. A sheet keyed
+``Sample`` is accepted too. If it has both columns, they must agree on every row.
+
 **Assignment is per genome and per species, never per drug.** For each species:
 
 1. Genomes whose ``st_key`` is one of that species' ``--holdout-st`` → ``holdout_st``. Membership is the exact ST
@@ -38,8 +42,13 @@ arm's NAME rows must equal the NAME rows of the other arm's table, row for row a
 every drug, or nothing is written. Build the PsA-only arm first, then the PsA + Enterobacterales arm with
 ``--assert-same-as paeruginosa=<PsA-only dir>``.
 
+A cross-species table pools its species in every split. To score one species, read it with
+``load_splits(path, species=NAME)`` / ``load_split_ids(path, split, species=NAME)``, which return exactly that
+species' own arm. Never filter the ``species`` column outside the reader.
+
 **Fails loudly on:** a Sample duplicated in any input, or eligible in two species; an eligible genome missing from
-its QC table; a drug column missing from a label sheet, or a label outside 0–1; a held-out ST with no eligible
+its QC table; a label sheet with no key column, or with ``Sample`` and ``phenotype-BioSample_ID`` disagreeing; a
+drug column missing from a label sheet, or a label outside 0–1; a held-out ST with no eligible
 genomes, or an untyped one; a group spanning a held-out ST and not, or two species; an empty
 ``train``/``validate``/``holdout`` for a species; and output tables that already exist with different content
 (``--overwrite`` replaces them) or a ``*_split.csv`` in ``--out-dir`` for a drug not in ``--drugs``.
@@ -78,6 +87,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from bacpredict.engine.ast_labels.build_binary_ast_labels import ID_COL as LABEL_ID_ALIAS
 from bacpredict.engine.splits.load_splits import SPLIT_VALUES
 
 logger = logging.getLogger(__name__)
@@ -195,13 +205,29 @@ def read_sample_map(paths: Iterable[Path], value_column: str, *, sep: str, what:
 
 
 def read_labels(path: Path, drugs: Sequence[str]) -> pd.DataFrame:
-    """The label sheet's ``drugs`` columns as floats, indexed by ``Sample``; NaN = not labelled."""
-    df = pd.read_csv(path, dtype={"Sample": str}, low_memory=False)
-    if "Sample" not in df.columns:
-        raise ValueError(f"label sheet {path} has no Sample column; has {list(df.columns)[:20]}")
+    """The label sheet's ``drugs`` columns as floats, indexed by ``Sample``; NaN = not labelled.
+
+    The genome key is ``Sample`` or, as :mod:`~bacpredict.engine.ast_labels.build_binary_ast_labels` writes it,
+    ``phenotype-BioSample_ID`` (:data:`LABEL_ID_ALIAS`), the alias every other label reader accepts. A sheet with
+    neither is refused, and so is one with both whose values differ on any row.
+    """
+    df = pd.read_csv(path, dtype={"Sample": str, LABEL_ID_ALIAS: str}, low_memory=False)
+    has_sample, has_alias = "Sample" in df.columns, LABEL_ID_ALIAS in df.columns
+    if not has_sample and not has_alias:
+        raise ValueError(f"label sheet {path} has neither a Sample nor a {LABEL_ID_ALIAS} column; "
+                         f"has {list(df.columns)[:20]}")
     missing = [d for d in drugs if d not in df.columns]
     if missing:
         raise ValueError(f"label sheet {path} is missing drug column(s) {missing}")
+    if has_alias:
+        alias = df[LABEL_ID_ALIAS].astype(str).str.strip()
+        if has_sample:
+            differ = df["Sample"].astype(str).str.strip() != alias
+            if differ.any():
+                pairs = list(zip(df.loc[differ, "Sample"], alias[differ], strict=True))[:5]
+                raise ValueError(f"label sheet {path}: Sample and {LABEL_ID_ALIAS} disagree on {int(differ.sum())} "
+                                 f"row(s), e.g. {pairs}")
+        df["Sample"] = alias
     df["Sample"] = df["Sample"].astype(str).str.strip()
     dup = df.loc[df["Sample"].duplicated(), "Sample"].unique().tolist()
     if dup:
@@ -512,8 +538,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     """CLI: build one arm's split tables (see the module docstring)."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--species", action="append", required=True, metavar="NAME=LABELS,ELIGIBLE,QC",
-                    help="repeatable: label sheet (Sample + drug columns), eligible genomes (Sample), QC table "
-                         "(Sample, mlst_scheme, st)")
+                    help="repeatable: label sheet (Sample or phenotype-BioSample_ID, + drug columns), eligible "
+                         "genomes (Sample), QC table (Sample, mlst_scheme, st)")
     ap.add_argument("--holdout-st", action="append", default=[], metavar="NAME=SCHEME:ST[,…]",
                     help="repeatable: STs of species NAME held out whole (exact ST)")
     ap.add_argument("--exclude", action="append", type=Path, default=[], metavar="TSV",

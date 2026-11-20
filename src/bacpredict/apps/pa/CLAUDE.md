@@ -248,7 +248,7 @@ light: a CSD3 login node is enough. Everything downstream reads the tables throu
 
 | Input | Where |
 |---|---|
-| Labels | `processed/paeruginosa/binary_ast.csv` |
+| Labels | `processed/paeruginosa/binary_ast.csv`, keyed by its first column `phenotype-BioSample_ID` (the writer's index; the builder also accepts `Sample`) |
 | Eligible genomes | `processed/paeruginosa/genomes/bakta_annotation.csv`: the 3,677 annotated and embedded |
 | ST (`mlst_scheme`, `st`) | `processed/paeruginosa/genomes/genome_qc.csv`. Keyed `<scheme>:<st>`, never `st` alone |
 | Genomes left out | [`excluded_genomes.tsv`](excluded_genomes.tsv): the 15 Ecuador long-read portal assemblies |
@@ -278,6 +278,17 @@ light: a CSD3 login node is enough. Everything downstream reads the tables throu
 - The builder refuses the cross-species arm unless its PsA rows equal the PsA-only arm's, row for row, for every
   drug. That is what makes both arms score the same PsA holdouts.
 - Pass this folder's exclusion and group files to the cross-species run as well, or the check fails.
+
+**Reading one species from the cross-species arm.** That arm's `train`, `validate`, `holdout` and `holdout_st`
+each pool PsA and Enterobacterales genomes. To score PsA alone, ask the reader for it:
+`load_splits(path, species="paeruginosa")` and `load_split_ids(path, "holdout_st", species="paeruginosa")`.
+Both return exactly the PsA-only arm's lists and labels (tested). Never filter the table's `species` column
+yourself: that is a second reader. Without `species`, both read the whole table.
+
+⚠ **Open, for David:** which `validate` the cross-species arm uses for early stopping and model selection. It
+could be the pooled PsA + Enterobacterales set (`species` unset) or PsA only (`species="paeruginosa"`, the same
+set the baseline uses). The builder writes both into the one table, so this is the trainer's choice and is not
+decided yet.
 
 **Outputs:**
 - `<out-dir>/<drug>_split.csv` and `split_manifest.json`. The manifest records the arguments, input md5s, git
