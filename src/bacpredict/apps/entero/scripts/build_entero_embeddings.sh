@@ -3,26 +3,36 @@
 #
 #   bash src/bacpredict/apps/entero/scripts/build_entero_embeddings.sh proteins        # CPU job: genomes → parquets
 #   bash src/bacpredict/apps/entero/scripts/build_entero_embeddings.sh check-proteins  # CPU job: every parquet checked
+#   bash src/bacpredict/apps/entero/scripts/build_entero_embeddings.sh link-kp         # CPU job: Kp .pt linked in
 #   ARRAY_REPO=<worktree> bash …/build_entero_embeddings.sh smoke                    # GPU job: 10 genomes, every genus
 #   bash src/bacpredict/apps/entero/scripts/build_entero_embeddings.sh check-smoke     # login node, those 10
-#   ARRAY_REPO=<worktree> bash …/build_entero_embeddings.sh submit                   # GPU array: every genome → esm/
+#   ARRAY_REPO=<worktree> bash …/build_entero_embeddings.sh submit                   # GPU array: the rest → esm/
 #   bash src/bacpredict/apps/entero/scripts/build_entero_embeddings.sh check           # CPU job: end to end
 #
 # The PsA stage (apps/pa/scripts/build_pa_embeddings.sh; mechanics in apps/pa/CLAUDE.md) at ~68k genomes. The cohort
-# is genomes/bakta_annotation.csv (Bakta collate: the QC-passing genomes, each with its one Bakta 1.9.4 GFF3), and
-# every check counts against it, never against the files that exist. The checks are
+# is the Bakta collate table ANNOTATION (relative to processed/enterobacterales/, or absolute; default
+# genomes/bakta_annotation.csv: the QC-passing genomes, each with its one Bakta 1.9.4 GFF3), and every check counts
+# against it, never against the files that exist. David chose to embed every genome passing the non-species QC
+# (PROJECT_STATE §6, 2026-11-20): ANNOTATION=genomes/bakta_annotation_embedding_input_unfiltered.csv, written by
+# `COHORT=genomes/embedding_input_unfiltered.csv annotate_entero_genomes.sh collate`. The table the cohort must equal
+# (QC_COHORT) is the one the annotation was collated for: genomes/embedding_input.csv for bakta_annotation.csv,
+# genomes/<stem>.csv for bakta_annotation_<stem>.csv; set QC_COHORT for any other. The checks are
 # engine/embedding/check_cohort_store.py run as 32-core jobs (contigs md5, parquet protein counts and .pt reads over
 # ~68k genomes are too much for a login node); each prints PASS or FAIL last and writes every problem to a CSV.
 #
 # Parquets and embeddings go to the flat per-BioSample stores shared with PsA ($ROOT/processed/{protein_sequences,
-# esm}); the ESM-C array is therefore given a sample list, genomes/esm_samples.txt (the sorted Samples of
-# bakta_annotation.csv), pinned by its md5, and never the store's listing. The GPU jobs (smoke and submit) run from a
+# esm}); the ESM-C array is therefore given a sample list, genomes/esm_samples_to_embed.txt (the sorted cohort
+# Samples with no .pt in the store yet), pinned by its md5, and never the store's listing. link-kp first symlinks the
+# existing Klebsiella ESM-C embeddings (the Kp store, KP_ESM_DIR) into esm/ wherever one is, protein for protein and
+# contig for contig, what we would compute (engine/embedding/link_existing_embeddings.py; David, 2026-11-20), so the
+# array never embeds those. The GPU jobs (smoke and submit) run from a
 # pinned worktree (ARRAY_REPO, a detached worktree at the SHA to run with .venv symlinked to the shared env), because
 # array tasks otherwise run whatever the shared checkout's HEAD is when they start; both refuse unless ARRAY_REPO's
 # array script, generate_embeddings.py and sample_list.py are byte-identical to this checkout's (the export they are
 # handed is written for this driver's copies). submit also refuses unless the latest check-proteins passed on
-# bakta_annotation.csv as it is now (its problems.csv.pass holds the table's md5). Settings as for PsA:
-# --max-proteins 9000 and bf16 storage (PROJECT_STATE.md §6).
+# the cohort table as it is now (its problems.csv.pass holds the table's md5). Settings as for PsA:
+# --max-proteins 9000 and bf16 storage (PROJECT_STATE.md §6); linked Kp .pt stay fp32 (check_cohort_store allows
+# float32 for a symlink only).
 set -euo pipefail
 
 # the multi-species AMR root on project_k (PROJECT_STATE §3.6 *Data layout*): per-sample stores flat, keyed by
@@ -33,13 +43,29 @@ REPO=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 export REPO
 T=$ROOT/processed/enterobacterales
 GEN=$T/genomes
-COHORT=$GEN/bakta_annotation.csv
-QC_COHORT=$GEN/embedding_input.csv
-SAMPLES=$GEN/esm_samples.txt
+# the cohort: a Bakta collate table (see the header); relative paths are under $T
+COHORT=${ANNOTATION:-genomes/bakta_annotation.csv}
+[[ $COHORT == /* ]] || COHORT=$T/$COHORT
+# the QC table the cohort must equal: the one its annotation was collated for (annotate_entero_genomes.sh collate
+# names bakta_annotation_<COHORT stem>.csv), unless QC_COHORT says otherwise
+ann=$(basename -- "$COHORT" .csv)
+case $ann in
+    bakta_annotation) QC_COHORT=${QC_COHORT:-$GEN/embedding_input.csv} ;;
+    bakta_annotation_*) QC_COHORT=${QC_COHORT:-$GEN/${ann#bakta_annotation_}.csv} ;;
+    *) QC_COHORT=${QC_COHORT:-} ;;
+esac
+[[ -z $QC_COHORT || $QC_COHORT == /* ]] || QC_COHORT=$T/$QC_COHORT
+SAMPLES=$GEN/esm_samples_to_embed.txt
 SMOKE_SAMPLES=$GEN/esm_samples_smoke.txt
 PROT=$ROOT/processed/protein_sequences
 ESM=$ROOT/processed/esm
 ESM_SMOKE=$ROOT/processed/esm_smoke
+# link-kp: the Klebsiella ESM-C store (fp32, 960-dim, keyed by BioSample; PROJECT_STATE §3.6 Caveats), the genus whose
+# cohort genomes are looked up there (cohort.csv species), the list of those genomes and the link report
+KP_ESM=${KP_ESM_DIR:-/rds/project/rds-4k08a2yyQLw/david/bacformer_processed/esm/klebsiella}
+LINK_GENUS=Klebsiella
+LINK_SAMPLES=$GEN/esm_samples_kp_link.txt
+LINK_REPORT=$GEN/esm_linked_kp.tsv
 MAX_PROTEINS=9000
 SAVE_DTYPE=bfloat16
 # genomes per 4 h GPU task: ~13 s each (2.8 ms per protein measured on PsA, ~4,700 proteins per genome) ≈ 65 min,
@@ -87,7 +113,7 @@ same_array_code() {
     done
 }
 
-# proteins_passed: refuse unless the latest check-proteins run passed on bakta_annotation.csv as it is now. Its
+# proteins_passed: refuse unless the latest check-proteins run passed on the cohort table as it is now. Its
 # check_cohort_store writes problems.csv.pass (the md5 of the table it checked) only on PASS, so a later run that is
 # pending, running or failed has none, and a table rewritten since has another md5
 proteins_passed() {
@@ -102,23 +128,47 @@ proteins_passed() {
         echo "$COHORT has changed since the latest check-proteins ($last) passed: run check-proteins again"; exit 1; }
 }
 
-# write_list <out> <python printing the sorted, unique samples from the cohort table (argv 1) and cohort.csv (argv 2)>:
-# (re)write <out>, atomically and only if it changed; print its md5 (what the array's SAMPLES_MD5 pins). Called as
-# md5=$(write_list …), where bash drops set -e: hence the explicit return, or a failed write would hand on the md5
-# of a stale list. generate_embeddings re-checks the order and uniqueness before loading the model.
+# write_list <out> <python printing the sorted, unique samples from the cohort table (argv 1) and cohort.csv (argv 2);
+# further arguments follow as argv 3…>: (re)write <out>, atomically and only if it changed; print its md5 (what the
+# array's SAMPLES_MD5 pins). Called as md5=$(write_list …), where bash drops set -e: hence the explicit return, or a
+# failed write would hand on the md5 of a stale list. generate_embeddings re-checks the order and uniqueness before
+# loading the model.
 write_list() {
     local out=$1 tmp; tmp=$1.$$.part
-    uv run --no-sync python -I -c "$2" "$COHORT" "$T/cohort.csv" > "$tmp" || { rm -f "$tmp"; return 1; }
+    uv run --no-sync python -I -c "$2" "$COHORT" "$T/cohort.csv" "${@:3}" > "$tmp" || { rm -f "$tmp"; return 1; }
     if cmp -s "$tmp" "$out"; then rm -f "$tmp"; else mv "$tmp" "$out"; fi
     md5sum < "$out" | cut -d' ' -f1
 }
-ALL_SAMPLES='
+# the cohort genomes with no .pt in the ESM store (argv 3), from one directory read: a .pt counts whether it was
+# embedded or linked (link-kp), and whatever a link points at (check flags a broken one). Prints nothing if none
+TO_EMBED='
+import os
 import sys
 import pandas as pd
 s = pd.read_csv(sys.argv[1], dtype={"Sample": str})["Sample"]
 if s.isna().any() or not s.is_unique or s.str.strip().ne(s).any() or s.eq("").any():
     sys.exit(f"{sys.argv[1]}: Sample must be unique, non-empty and unpadded")
-print("\n".join(sorted(s)))'
+suffix = "_esm_embeddings.pt"
+with os.scandir(sys.argv[3]) as it:
+    have = {e.name[: -len(suffix)] for e in it if e.name.endswith(suffix)}
+todo = sorted(set(s) - have)
+print(f"cohort: {len(s)} genomes; {len(s) - len(todo)} already have a .pt in {sys.argv[3]} (embedded or linked); "
+      f"{len(todo)} to embed", file=sys.stderr)
+if todo:
+    print("\n".join(todo))'
+# the cohort genomes whose cohort.csv species is of genus argv 3 (link-kp)
+GENUS_SAMPLES='
+import sys
+import pandas as pd
+s = pd.read_csv(sys.argv[1], dtype={"Sample": str})["Sample"]
+if s.isna().any() or not s.is_unique or s.str.strip().ne(s).any() or s.eq("").any():
+    sys.exit(f"{sys.argv[1]}: Sample must be unique, non-empty and unpadded")
+genus = pd.read_csv(sys.argv[2], dtype={"Sample": str}).set_index("Sample")["species"].str.split().str[0]
+pick = sorted(s[s.map(genus).eq(sys.argv[3])])
+print(f"cohort: {len(s)} genomes; {len(pick)} labelled {sys.argv[3]} (cohort.csv species)", file=sys.stderr)
+if not pick:
+    sys.exit(f"no cohort genome is labelled {sys.argv[3]}")
+print("\n".join(pick))'
 # one genome of every genus (the first by Sample), plus the genome with the most proteins (the 9,000 cap and the
 # largest GPU batch), then genera in turn up to 10
 SMOKE_SAMPLES_PY='
@@ -140,6 +190,7 @@ print("\n".join(pick))'
 # check_job <stage> <args…>: check_cohort_store as a 32-core icelake job (CHECK_* override the shape)
 check_job() {
     local stage=$1 run_dir; shift
+    [[ -s $QC_COHORT ]] || { echo "no QC table at '$QC_COHORT' for $COHORT: set QC_COHORT"; exit 1; }
     run_dir=$LOGS/entero_esm_${stage}_$(date +%Y%m%d_%H%M%S); mkdir -p "$run_dir"
     # I/O-bound: per genome a contigs md5 (~1.5 MB), a parquet column (~1.5 MB) and a .pt zip check. ~190 GB over
     # ~68k genomes is minutes at Lustre rates and under 1 h at 100 MB/s; ~20 GB for 32 workers, so 48G
@@ -179,6 +230,31 @@ python -m bacpredict.engine.embedding.preprocess_assemblies_to_protein_sequences
 check-proteins)
     check_job check-proteins
     ;;
+link-kp)
+    [[ -s "$COHORT" ]] || { echo "no $COHORT"; exit 1; }
+    [[ -d $KP_ESM ]] || { echo "no Kp ESM-C store at $KP_ESM (set KP_ESM_DIR)"; exit 1; }
+    # the comparison reads our parquets, so they must be the checked ones
+    proteins_passed
+    # links made while an array runs only race its writes (nothing is overwritten either way, but the array has
+    # already been cut to embed those genomes); two link jobs would write one report
+    n=$(live '^entero-esm-(embeddings|link-kp)$')
+    (( n == 0 )) || { echo "an entero-esm-embeddings array or an entero-esm-link-kp job is queued or running"; exit 1; }
+    write_list "$LINK_SAMPLES" "$GENUS_SAMPLES" "$LINK_GENUS" > /dev/null
+    run_dir=$LOGS/entero_esm_link-kp_$(date +%Y%m%d_%H%M%S); mkdir -p "$run_dir"
+    # One job on icelake: per genome a parquet column (~1.5 MB), and the Kp .pt opened memory-mapped (its zip index
+    # and n contig ids, never the 960-wide tensor). ~9.5k genomes at ~0.1-0.2 s each over 16 workers is a few
+    # minutes, unmeasured, so 30 min; 16G is ~2x 16 workers importing torch. LINK_PARTITION/CPUS/MEM/TIME override.
+    # Loader paths unset and faulthandler on, as for the ESM-C array: this job imports torch.
+    cpus=${LINK_CPUS:-16}
+    submit --account=FLOTO-PROJECT-K-SL2-CPU --partition=${LINK_PARTITION:-icelake} --cpus-per-task=$cpus \
+        --mem=${LINK_MEM:-16G} --time=${LINK_TIME:-00:30:00} --job-name=entero-esm-link-kp --chdir="$run_dir" \
+        --output="$run_dir/%x_%j.out" --error="$run_dir/%x_%j.out" \
+        --wrap="$(sha_guard) unset LD_LIBRARY_PATH LIBRARY_PATH LD_PRELOAD; PYTHONUNBUFFERED=1 uv run --project $REPO \
+--no-sync python -X faulthandler -m bacpredict.engine.embedding.link_existing_embeddings \
+--samples-file $LINK_SAMPLES --protein-dir $PROT --src-dir $KP_ESM --esm-dir $ESM --max-proteins $MAX_PROTEINS \
+--workers $cpus --report $LINK_REPORT"
+    echo "genomes: $LINK_SAMPLES; report: $LINK_REPORT; logs: $run_dir"
+    ;;
 smoke)
     array_repo=${ARRAY_REPO:?set ARRAY_REPO to a detached worktree at the SHA to run (see the header)}
     same_array_code "$array_repo"
@@ -208,16 +284,19 @@ submit)
     (( n == 0 )) || { echo "an entero-esm-embeddings array is queued or running"; exit 1; }
     [[ -s "$COHORT" ]] || { echo "no $COHORT"; exit 1; }
     proteins_passed
-    md5=$(write_list "$SAMPLES" "$ALL_SAMPLES")
+    # only the genomes still to embed, so the array tiles nothing already there (linked by link-kp, or embedded by an
+    # earlier array) and a rerun after a partial array is just the remainder. The list is rewritten only here, and
+    # never while an array is live (above), so no queued task finds it changed
+    md5=$(write_list "$SAMPLES" "$TO_EMBED" "$ESM")
+    total=$(awk '{ gsub(/[[:space:]]/, "") } length($0) { n++ } END { print n + 0 }' "$SAMPLES")
+    (( total > 0 )) || { echo "every cohort genome has a .pt in $ESM: nothing to submit (run check)"; exit 0; }
     # every listed genome has a parquet (one directory read; the counts were check-proteins', required above)
     uv run --no-sync python -m bacpredict.engine.embedding.check_cohort_store --cohort "$COHORT" --protein-dir "$PROT" \
         --samples-file "$SAMPLES" --presence-only \
         || { echo "proteins incomplete: run proteins, then check-proteins"; exit 1; }
-    total=$(awk '{ gsub(/[[:space:]]/, "") } length($0) { n++ } END { print n + 0 }' "$SAMPLES")
     ntasks=$(( (total + PER_TASK - 1) / PER_TASK ))
     # 8 cores / 64 GB / 1 A100 per task (the array's defaults); ESM_CONCURRENT caps how many run at once.
-    # Re-running submit is safe: each task skips every genome whose .pt exists, and a task with none left exits
-    # before loading the model.
+    # The tasks also pass --skip-existing, so a requeued task resumes within its slice.
     sha=$(git -C "$array_repo" rev-parse HEAD)
     submit --array="0-$((ntasks - 1))%${ESM_CONCURRENT:-64}" --time=04:00:00 --job-name=entero-esm-embeddings \
         --export="ALL,REPO=$array_repo,EXPECT_SHA=$sha,INPUT_DIR=$PROT,ESM_DIR=$ESM,SAMPLES=$SAMPLES,SAMPLES_MD5=$md5,MAX_PROTEINS=$MAX_PROTEINS,SAVE_DTYPE=$SAVE_DTYPE,NTASKS=$ntasks" \
@@ -228,5 +307,5 @@ check)
     check_job check --esm-dir "$ESM"
     ;;
 *)
-    sed -n '2,9p' "$0"; exit 2 ;;
+    sed -n '2,10p' "$0"; exit 2 ;;
 esac

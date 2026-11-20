@@ -219,3 +219,82 @@ def test_cli_pass_marker_holds_the_md5_of_the_cohort_table_and_only_on_pass(stor
     (store.prot / "SAMN2_protein_sequences.parquet").unlink()
     assert ccs.main(base) == 1
     assert not marker.exists()
+
+
+# --- symlinked .pt (link_existing_embeddings: the Kp ESM-C store reused for Enterobacterales Klebsiella) ---
+
+
+def _link_pt(st: Store, s: str, n: int, dtype=torch.float32, width=960) -> Path:
+    """Replace ``s``'s .pt by a link to a source-store .pt that predates every parquet (as the Kp store does)."""
+    src_dir = st.root / "kp_esm"
+    src_dir.mkdir(exist_ok=True)
+    src = src_dir / f"{s}_esm_embeddings.pt"
+    torch.save({"protein_embeddings": torch.zeros(1, n, width, dtype=dtype), "contig_ids": torch.zeros(1, n),
+                "attention_mask": torch.ones(1, n)}, src)
+    os.utime(src, (T0 - 1000, T0 - 1000))
+    link = st.esm / f"{s}_esm_embeddings.pt"
+    link.unlink(missing_ok=True)
+    os.symlink(src.resolve(), link)  # its own mtime is now: made after the parquet was compared
+    return link
+
+
+def test_an_fp32_link_passes_and_is_counted(store):
+    _link_pt(store, "SAMN2", 3)
+    r = store.check(workers=2, batch_size=1)
+    assert r.ok, r.problems
+    assert (r.with_embedding, r.with_link) == (4, 1)
+    assert r.sampled_dtypes == {"file": {"bfloat16": 3}, "link": {"float32": 1}}
+    assert [line for line in r.sampled if " link " in line] == ["SAMN2: link (1, 3, 960) torch.float32 proteins=3 "
+                                                                 "contigs=1 ok"]
+
+
+def test_a_bf16_link_passes_too(store):
+    _link_pt(store, "SAMN2", 3, dtype=torch.bfloat16)
+    assert store.check().ok
+
+
+@pytest.mark.parametrize("break_it, problem", [
+    (lambda st: _link_pt(st, "SAMN2", 2), ccs.SAMPLED_MISMATCH),  # the Kp store's misaligned genome
+    (lambda st: _link_pt(st, "SAMN2", 3, width=480), ccs.SAMPLED_MISMATCH),
+    (lambda st: _link_pt(st, "SAMN2", 3, dtype=torch.float16), ccs.SAMPLED_MISMATCH),
+    (lambda st: _link_pt(st, "SAMN2", 3).resolve().unlink(), ccs.BROKEN_LINK),
+    (lambda st: _link_pt(st, "SAMN2", 3).resolve().write_bytes(b"truncated"), ccs.UNREADABLE_EMBEDDING),
+    (lambda st: os.utime(_link_pt(st, "SAMN2", 3), (T0 + 50, T0 + 50), follow_symlinks=False),
+     ccs.EMBEDDING_OLDER),  # a link made before its parquet was rewritten
+], ids=["proteins", "width", "fp16", "broken", "bad-target", "link-stale"])
+def test_each_link_problem_is_found_and_named(store, break_it, problem):
+    break_it(store)
+    r = store.check(workers=2, batch_size=1)
+    assert r.problems == {problem: ["SAMN2"]}
+
+
+def test_a_real_fp32_file_still_fails_beside_an_fp32_link(store):
+    _link_pt(store, "SAMN2", 3)
+    store.write_pt("SAMN3", 3, dtype=torch.float32)
+    assert store.check().problems == {ccs.SAMPLED_MISMATCH: ["SAMN3"]}
+
+
+def test_links_and_files_are_sampled_separately(store):
+    _link_pt(store, "SAMN4", 3)
+    r = store.check(n_sampled=1)
+    assert len(r.sampled) == 2 and sum(" link " in line for line in r.sampled) == 1
+
+
+def test_without_links_the_sample_is_the_one_drawn_before_links_existed(store):
+    import random
+
+    r = store.check(n_sampled=2)
+    want = random.Random(0).sample(["SAMN1", "SAMN2", "SAMN3", "SAMN4"], 2)
+    assert [line.split(":")[0] for line in r.sampled] == want
+    assert r.with_link == 0 and r.sampled_dtypes == {"file": {"bfloat16": 2}}
+
+
+def test_cli_reports_the_links(store, tmp_path, capsys):
+    _link_pt(store, "SAMN2", 3)
+    cohort = tmp_path / "bakta_annotation.csv"
+    store.cohort.to_csv(cohort, index=False)
+    assert ccs.main(["--cohort", str(cohort), "--protein-dir", str(store.prot), "--esm-dir", str(store.esm),
+                     "--workers", "1"]) == 0
+    out = capsys.readouterr().out
+    assert f"with an embedding in {store.esm}: 4 (1 of them symlinks)" in out
+    assert "sampled dtypes: file {'bfloat16': 3}; link {'float32': 1}" in out

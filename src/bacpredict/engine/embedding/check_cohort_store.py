@@ -14,9 +14,17 @@ genome, rather than silently skipping the check that column feeds. A listed geno
 - a protein count other than CDS minus pseudogenes. A contig-name mismatch between GFF3 and contigs drops
   proteins silently, and every other check passes it;
 - contigs changed (or gone) since annotation (``contigs_md5``);
-- with ``--esm-dir``: no ``.pt``, an unreadable one (not a zip archive), or one older than its parquet; and, on a
-  seeded sample of ``--n-sampled`` genomes, a ``protein_embeddings`` tensor whose protein axis is not
-  ``min(proteins, --max-proteins)``, whose width is not 960, whose dtype is not ``--save-dtype``, or holding NaN.
+- with ``--esm-dir``: no ``.pt``, a broken symlink, an unreadable one (not a zip archive), or one older than its
+  parquet; and, on a seeded sample of ``--n-sampled`` genomes, a ``protein_embeddings`` tensor whose protein axis is
+  not ``min(proteins, --max-proteins)``, whose width is not 960, whose dtype is not ``--save-dtype``, or holding NaN.
+
+A ``.pt`` may be a symlink into another store (``link_existing_embeddings``: the Kp ESM-C store reused for
+Enterobacterales *Klebsiella*, PROJECT_STATE §3.6). A link is dated by its own mtime, not its target's: it was made
+after its parquet was compared, while the target predates the parquet. Its zip check and sampled load read the
+target. A sampled link may hold float32 as well as ``--save-dtype`` (the Kp store is fp32); a real file must hold
+``--save-dtype``. Links and real files are sampled separately, ``--n-sampled`` of each, so the links are checked
+however few they are; with no links the sample is the one drawn before links existed. The result counts the links
+(``with_link``) and the sampled dtypes of each kind (``sampled_dtypes``).
 
 With ``--qc-cohort`` the table must also hold exactly the QC table's genomes. Per-genome checks (stat, parquet
 read, contigs md5, zip check) run in a process pool of ``--workers``; the sampled ``.pt`` loads run here after.
@@ -43,8 +51,10 @@ import hashlib
 import io
 import os
 import random
+import stat
 import sys
 import zipfile
+from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -58,6 +68,7 @@ from bacpredict.engine.genomes.build_genomes import _md5
 PARQUET_SUFFIX = "_protein_sequences.parquet"
 PT_SUFFIX = "_esm_embeddings.pt"
 ESM_DIM = 960  # the pinned ESM-C (ESM++ small) width
+LINK_DTYPE = "float32"  # what a symlinked .pt may hold besides --save-dtype (the Kp ESM-C store's dtype)
 
 DUPLICATE = "Sample duplicated in the cohort table"
 NOT_IN_COHORT = "listed sample not in the cohort table"
@@ -69,13 +80,15 @@ COUNT_MISMATCH = "protein count != CDS - pseudogenes"
 CONTIGS_UNREADABLE = "contigs unreadable"
 CONTIGS_CHANGED = "contigs changed since annotation"
 NO_EMBEDDING = "no embedding"
+BROKEN_LINK = "embedding is a broken symlink"
 UNREADABLE_EMBEDDING = "unreadable embedding"
 EMBEDDING_OLDER = "embedding older than its parquet"
 SAMPLED_MISMATCH = "sampled embedding mismatch"
 # the columns the per-genome checks need; outside --presence-only a missing one is a named failure, never a skip
 REQUIRED_COLUMNS = ("sr_gff_file", "sr_assembly_file", "n_cds", "n_pseudo", "contigs_md5")
 _ORDER = (DUPLICATE, NOT_IN_COHORT, NO_PARQUET, GFF_MISSING, PARQUET_OLDER, UNREADABLE_PARQUET, COUNT_MISMATCH,
-          CONTIGS_UNREADABLE, CONTIGS_CHANGED, NO_EMBEDDING, UNREADABLE_EMBEDDING, EMBEDDING_OLDER, SAMPLED_MISMATCH)
+          CONTIGS_UNREADABLE, CONTIGS_CHANGED, NO_EMBEDDING, BROKEN_LINK, UNREADABLE_EMBEDDING, EMBEDDING_OLDER,
+          SAMPLED_MISMATCH)
 
 
 @dataclass
@@ -92,10 +105,14 @@ class StoreCheck:
         Protein count of every readable parquet.
     with_parquet, with_embedding : int
         Genomes with a parquet, and with a ``.pt`` (0 without an ESM directory).
+    with_link : int
+        Of ``with_embedding``, the ``.pt`` that are symlinks.
     count_checked, md5_checked : int
         Genomes whose protein count, and whose contigs md5, could be compared.
     sampled : list of str
         One line per sampled ``.pt`` loaded.
+    sampled_dtypes : dict of str to dict of str to int
+        ``"file"`` / ``"link"`` → dtype → how many sampled ``.pt`` of that kind hold it (loadable ones only).
     """
 
     samples: list[str]
@@ -103,9 +120,11 @@ class StoreCheck:
     n_proteins: dict[str, int] = field(default_factory=dict)
     with_parquet: int = 0
     with_embedding: int = 0
+    with_link: int = 0
     count_checked: int = 0
     md5_checked: int = 0
     sampled: list[str] = field(default_factory=list)
+    sampled_dtypes: dict[str, dict[str, int]] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -123,12 +142,12 @@ def protein_count(parquet: Path) -> int:
     return sum(len(chunk.flatten().flatten()) for chunk in col.chunks)
 
 
-def _check_one(task: tuple) -> tuple[str, int | None, bool, list[str]]:
-    """One genome's file checks → ``(sample, protein count or None, has a .pt, problems)``."""
+def _check_one(task: tuple) -> tuple[str, int | None, bool, bool, list[str]]:
+    """One genome's file checks → ``(sample, protein count or None, has a .pt, the .pt is a symlink, problems)``."""
     sample, pq, gff, contigs, expect, contigs_md5, pt = task
     problems: list[str] = []
     n = None
-    has_pt = False
+    has_pt = is_link = False
     try:
         pq_mtime = pq.stat().st_mtime
     except FileNotFoundError:
@@ -158,36 +177,49 @@ def _check_one(task: tuple) -> tuple[str, int | None, bool, list[str]]:
             problems.append(CONTIGS_UNREADABLE)
     if pt is not None and pq_mtime is not None:
         try:
-            pt_mtime = pt.stat().st_mtime
+            st = pt.lstat()  # a link's own mtime: it was made after its parquet was compared (module docstring)
         except FileNotFoundError:
             problems.append(NO_EMBEDDING)
         else:
-            has_pt = True
-            if not zipfile.is_zipfile(pt):
-                problems.append(UNREADABLE_EMBEDDING)
-            if pt_mtime < pq_mtime:
-                problems.append(EMBEDDING_OLDER)
-    return sample, n, has_pt, problems
+            is_link = stat.S_ISLNK(st.st_mode)
+            if is_link and not pt.exists():
+                problems.append(BROKEN_LINK)
+            else:
+                has_pt = True
+                if not zipfile.is_zipfile(pt):
+                    problems.append(UNREADABLE_EMBEDDING)
+                if st.st_mtime < pq_mtime:
+                    problems.append(EMBEDDING_OLDER)
+    return sample, n, has_pt, is_link, problems
 
 
-def _check_batch(batch: list[tuple]) -> list[tuple[str, int | None, bool, list[str]]]:
+def _check_batch(batch: list[tuple]) -> list[tuple[str, int | None, bool, bool, list[str]]]:
     return [_check_one(t) for t in batch]
 
 
-def _sampled_embedding(sample: str, pt: Path, n_prot: int, max_proteins: int, save_dtype: str) -> tuple[bool, str]:
-    """Load one ``.pt`` and check its ``protein_embeddings`` shape, width, dtype and NaN → ``(ok, report line)``."""
+def _sampled_embedding(sample: str, pt: Path, n_prot: int, max_proteins: int, save_dtype: str,
+                       link: bool = False) -> tuple[bool, str, str | None]:
+    """Load one ``.pt`` and check its ``protein_embeddings`` shape, width, dtype and NaN.
+
+    A symlinked ``.pt`` (``link``) may hold :data:`LINK_DTYPE` as well as ``save_dtype``. Returns ``(ok, report
+    line, dtype name or None if unloadable)``.
+    """
     import torch  # here, not at import: the pool's workers never need it
 
+    dtypes = {getattr(torch, save_dtype)} | ({getattr(torch, LINK_DTYPE)} if link else set())
+    mark = " link" if link else ""
+    dtype = None
     try:
         d = torch.load(pt, map_location="cpu", weights_only=True)
         pe = d["protein_embeddings"]
+        dtype = str(pe.dtype).removeprefix("torch.")
         ok = (pe.ndim == 3 and pe.shape[1] == min(n_prot, max_proteins) and pe.shape[2] == ESM_DIM
-              and pe.dtype == getattr(torch, save_dtype) and not bool(torch.isnan(pe.float()).any()))
-        line = (f"{sample}: {tuple(pe.shape)} {pe.dtype} proteins={n_prot} "
+              and pe.dtype in dtypes and not bool(torch.isnan(pe.float()).any()))
+        line = (f"{sample}:{mark} {tuple(pe.shape)} {pe.dtype} proteins={n_prot} "
                 f"contigs={int(d['contig_ids'].max()) + 1} {'ok' if ok else 'MISMATCH'}")
     except Exception as e:  # noqa: BLE001 (an unloadable file is a mismatch, reported with its error)
-        ok, line = False, f"{sample}: unloadable ({type(e).__name__}: {e}) MISMATCH"
-    return ok, line
+        ok, line = False, f"{sample}:{mark} unloadable ({type(e).__name__}: {e}) MISMATCH"
+    return ok, line, dtype
 
 
 def missing_column(col: str) -> str:
@@ -288,12 +320,13 @@ def check_cohort_store(cohort: pd.DataFrame, protein_dir: Path, samples: list[st
     else:
         rows = [r for batch in batches for r in _check_batch(batch)]
 
-    for s, n, has_pt, problems in rows:
+    for s, n, has_pt, is_link, problems in rows:
         for p in problems:
             found.setdefault(p, []).append(s)
         if n is not None:
             result.n_proteins[s] = n
         result.with_embedding += has_pt
+        result.with_link += has_pt and is_link
     result.with_parquet = len(samples) - len(found.get(NO_PARQUET, []))
     result.count_checked = sum(1 for s, n in zip(samples, expect, strict=True)
                                if n is not None and s in result.n_proteins)
@@ -301,14 +334,22 @@ def check_cohort_store(cohort: pd.DataFrame, protein_dir: Path, samples: list[st
 
     if esm_dir is not None and n_sampled > 0:
         bad = set(found.get(UNREADABLE_EMBEDDING, []))
-        good = sorted(s for s, n, has_pt, _ in rows if has_pt and n is not None and s not in bad)
         found[SAMPLED_MISMATCH] = []
-        for s in random.Random(seed).sample(good, min(n_sampled, len(good))):
-            ok, line = _sampled_embedding(s, esm_dir / f"{s}{PT_SUFFIX}", result.n_proteins[s], max_proteins,
-                                          save_dtype)
-            result.sampled.append(line)
-            if not ok:
-                found[SAMPLED_MISMATCH].append(s)
+        # real files and links drawn separately, each with the same seed: with no links, the draw is unchanged
+        for kind, link in (("file", False), ("link", True)):
+            good = sorted(s for s, n, has_pt, is_link, _ in rows
+                          if has_pt and is_link == link and n is not None and s not in bad)
+            dtypes: Counter[str] = Counter()
+            for s in random.Random(seed).sample(good, min(n_sampled, len(good))):
+                ok, line, dtype = _sampled_embedding(s, esm_dir / f"{s}{PT_SUFFIX}", result.n_proteins[s],
+                                                     max_proteins, save_dtype, link=link)
+                result.sampled.append(line)
+                if dtype is not None:
+                    dtypes[dtype] += 1
+                if not ok:
+                    found[SAMPLED_MISMATCH].append(s)
+            if dtypes:
+                result.sampled_dtypes[kind] = dict(sorted(dtypes.items()))
     return _finish(result, found)
 
 
@@ -368,9 +409,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"protein count = CDS - pseudogenes: {r.count_checked - n_bad}/{r.count_checked}; "
               f"contigs unchanged since annotation: {r.md5_checked - n_changed}/{r.md5_checked}")
     if a.esm_dir is not None:
-        print(f"with an embedding in {a.esm_dir}: {r.with_embedding}")
+        links = f" ({r.with_link} of them symlinks)" if r.with_link else ""
+        print(f"with an embedding in {a.esm_dir}: {r.with_embedding}{links}")
         for line in r.sampled:
             print(f"  {line}")
+        if r.with_link:
+            print("sampled dtypes: " + "; ".join(f"{k} {v}" for k, v in r.sampled_dtypes.items()))
     for k, v in r.problems.items():
         print(f"FAIL {k}: {len(v)} {v[:10]}")
     if a.report is not None:
