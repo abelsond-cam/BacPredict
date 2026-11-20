@@ -13,7 +13,13 @@
 # protein extractor logs a failed genome and exits 0, so a parquet-based count would shrink with the cohort and
 # still read complete. check-proteins also requires each parquet to hold exactly the GFF3's non-pseudogene CDS: a
 # contig-name mismatch between GFF3 and contigs would otherwise drop proteins silently. smoke and submit refuse to
-# start until every cohort genome has a parquet, which also keeps the array's slices tiling a fixed list.
+# start until every cohort genome has a parquet.
+#
+# The protein and ESM-C stores are flat and shared with Enterobacterales, so the GPU array is given the cohort as a
+# sample list, esm_samples.txt (the sorted Samples of bakta_annotation.csv, rewritten by smoke and submit only when
+# it changes), pinned by its md5: a pending task whose list has since changed refuses to run. The smoke embeds the
+# list's first 10 genomes, and check-smoke checks those 10. submit refuses while a pa-esm-embeddings array is live:
+# two arrays writing one sample's .pt at once share its temporary file.
 #
 # Two settings are PsA-specific and deliberate: --max-proteins 9000 (a PsA genome has ~6,400 CDS;
 # generate_embeddings' default of 6,000 would cut the smallest contigs — plasmids — first) and bf16 storage
@@ -29,14 +35,14 @@ export REPO
 T=$ROOT/processed/paeruginosa
 GEN=$T/genomes
 COHORT=$GEN/bakta_annotation.csv
-# the per-sample stores are flat and shared across species. ⚠ esm_embeddings_array.sh tiles INPUT_DIR's whole
-# listing (and the smoke its first N files), so it needs a sample list before a second species writes here
+# the per-sample stores are flat and shared across species: the ESM array takes SAMPLES, never the store's listing
 PROT=$ROOT/processed/protein_sequences
 ESM=$ROOT/processed/esm
 ESM_SMOKE=$ROOT/processed/esm_smoke
 MAX_PROTEINS=9000
 SAVE_DTYPE=bfloat16
 NTASKS=16
+SAMPLES=$T/esm_samples.txt
 LOGS=/rds/user/dca36/hpc-work/logs
 ARRAY=$REPO/src/bacpredict/engine/embedding/scripts/esm_embeddings_array.sh
 cd "$REPO"
@@ -57,36 +63,60 @@ submit() {  # sbatch, then print the resource line the global rules require (rea
          "| $(grep -m1 -oE 'Account=[^ ]+' <<<"$job")"
 }
 
+# write_samples: (re)write $SAMPLES, the sorted Samples of the cohort table, atomically and only if it changed;
+# print its md5 (what the array's SAMPLES_MD5 pins). Called as md5=$(write_samples), where bash drops set -e:
+# hence the explicit return, or a failed write would hand on the md5 of a stale list
+write_samples() {
+    uv run --no-sync python -I - "$COHORT" "$SAMPLES" <<'EOF' || return 1
+import os, sys
+import pandas as pd
+cohort, out = sys.argv[1:3]
+s = pd.read_csv(cohort, dtype={"Sample": str})["Sample"]
+if s.isna().any() or not s.is_unique or s.str.strip().ne(s).any() or s.eq("").any():
+    sys.exit(f"{cohort}: Sample must be unique, non-empty and unpadded")
+text = "".join(f"{x}\n" for x in sorted(s))
+if not os.path.exists(out) or open(out).read() != text:
+    tmp = f"{out}.{os.getpid()}.part"
+    with open(tmp, "w") as fh:
+        fh.write(text)
+    os.replace(tmp, out)
+EOF
+    md5sum < "$SAMPLES" | cut -d' ' -f1
+}
+
+# a second array into the same store would share each sample's temporary .pt name with the first
+no_live_array() {
+    local live; live=$(squeue -u "$USER" -h -o '%j' | grep -c '^pa-esm-embeddings$' || true)
+    (( live == 0 )) || { echo "a pa-esm-embeddings array is queued or running: wait for it (or scancel it) first"; exit 1; }
+}
+
 # check_store <esm dir> <all|N> [proteins-only]
-#   all: the cohort is every Sample of bakta_annotation.csv; N: the first N sorted parquets (what the smoke embeds).
+#   all: the cohort is every Sample of bakta_annotation.csv; N: the first N of $SAMPLES (what the smoke embeds).
 #   Fails on: an empty cohort; a genome with no parquet, a parquet older than its GFF (built from a genome since
 #   rebuilt), or, at scope all, a parquet whose protein count is not the GFF3's CDS minus pseudogenes; with an
 #   embedding stage, a missing, unreadable or stale .pt, or a sampled file of the wrong shape, width or dtype, or
 #   holding NaN.
 check_store() {
-    uv run --no-sync python -I - "$COHORT" "$PROT" "$1" "$2" "${3:-}" "$MAX_PROTEINS" "$SAVE_DTYPE" <<'EOF'
+    uv run --no-sync python -I - "$COHORT" "$PROT" "$1" "$2" "${3:-}" "$MAX_PROTEINS" "$SAVE_DTYPE" "$SAMPLES" <<'EOF'
 import random, sys, zipfile
 from pathlib import Path
 import pandas as pd, torch
-cohort_csv, prot, esm, scope, proteins_only, cap, dtype = sys.argv[1:8]
+cohort_csv, prot, esm, scope, proteins_only, cap, dtype, samples_txt = sys.argv[1:9]
 prot, esm, cap, dtype = Path(prot), Path(esm), int(cap), getattr(torch, dtype)
 c = pd.read_csv(cohort_csv, dtype={"Sample": str}).set_index("Sample")
 if scope == "all":
     samples = sorted(c.index)
-else:
-    samples = sorted(f.name.removesuffix("_protein_sequences.parquet") for f in prot.glob("*_protein_sequences.parquet"))
-    samples = samples[: int(scope)]
+else:  # the first N of the ESM array's sample list: what the smoke embedded
+    samples = [x.strip() for x in Path(samples_txt).read_text().split("\n") if x.strip()][: int(scope)]
 pq = {s: prot / f"{s}_protein_sequences.parquet" for s in samples}
 pt = {s: esm / f"{s}_esm_embeddings.pt" for s in samples}
 problems = {}
 problems["no parquet"] = [s for s in samples if not pq[s].exists()]
-if scope == "all":  # the ESM array slices the store's whole listing, so the store must hold this cohort only
-    listed = {f.name.removesuffix("_protein_sequences.parquet") for f in prot.glob("*_protein_sequences.parquet")}
-    problems["parquets outside this cohort (the ESM array would embed them too)"] = sorted(listed - set(samples))
 have_pq = [s for s in samples if pq[s].exists()]
 problems["parquet older than its GFF"] = [
     s for s in have_pq if s in c.index and pq[s].stat().st_mtime < Path(c.at[s, "sr_gff_file"]).stat().st_mtime]
-print(f"cohort: {len(samples)} genomes ({Path(cohort_csv).name if scope == 'all' else f'first {scope} parquets'}); "
+print(f"cohort: {len(samples)} genomes "
+      f"({Path(cohort_csv).name if scope == 'all' else f'first {scope} of {Path(samples_txt).name}'}); "
       f"with a protein parquet: {len(have_pq)}")
 if scope == "all" and {"n_cds", "n_pseudo", "contigs_md5"} <= set(c.columns):
     import hashlib
@@ -164,18 +194,31 @@ check-proteins)
     ;;
 smoke)
     check_store "$ESM" all proteins-only >/dev/null || { echo "proteins incomplete: run check-proteins"; exit 1; }
+    md5=$(write_samples)
+    # the first 10 of the list (N=10), from this checkout at this SHA
+    sha=$(git rev-parse HEAD)
     submit --array=0 --time=00:20:00 --job-name=pa-esm-smoke \
-        --export=ALL,INPUT_DIR=$PROT,ESM_DIR=$ESM_SMOKE,MAX_PROTEINS=$MAX_PROTEINS,SAVE_DTYPE=$SAVE_DTYPE,NTASKS=1,N=10 \
+        --export="ALL,REPO=$REPO,EXPECT_SHA=$sha,INPUT_DIR=$PROT,ESM_DIR=$ESM_SMOKE,SAMPLES=$SAMPLES,SAMPLES_MD5=$md5,MAX_PROTEINS=$MAX_PROTEINS,SAVE_DTYPE=$SAVE_DTYPE,NTASKS=1,N=10" \
         "$ARRAY"
+    echo "samples: $SAMPLES (md5 $md5)"
     ;;
 check-smoke)
+    [[ -s $SAMPLES ]] || { echo "no $SAMPLES: run smoke first"; exit 1; }
     check_store "$ESM_SMOKE" 10
     ;;
 submit)
+    no_live_array
     check_store "$ESM" all proteins-only >/dev/null || { echo "proteins incomplete: run check-proteins"; exit 1; }
+    md5=$(write_samples)
+    # ARRAY_REPO: the checkout the tasks run (default this one); a detached worktree at the SHA to run keeps pending
+    # tasks immune to other agents' pulls of the shared checkout (EXPECT_SHA would otherwise stop them, exit 3).
+    # Re-running submit is safe: each task skips every genome whose .pt exists.
+    array_repo=${ARRAY_REPO:-$REPO}
+    sha=$(git -C "$array_repo" rev-parse HEAD)
     submit --array=0-$((NTASKS - 1)) --time=04:00:00 --job-name=pa-esm-embeddings \
-        --export=ALL,INPUT_DIR=$PROT,ESM_DIR=$ESM,MAX_PROTEINS=$MAX_PROTEINS,SAVE_DTYPE=$SAVE_DTYPE,NTASKS=$NTASKS \
-        "$ARRAY"
+        --export="ALL,REPO=$array_repo,EXPECT_SHA=$sha,INPUT_DIR=$PROT,ESM_DIR=$ESM,SAMPLES=$SAMPLES,SAMPLES_MD5=$md5,MAX_PROTEINS=$MAX_PROTEINS,SAVE_DTYPE=$SAVE_DTYPE,NTASKS=$NTASKS" \
+        "$array_repo/src/bacpredict/engine/embedding/scripts/esm_embeddings_array.sh"
+    echo "samples: $SAMPLES (md5 $md5)"
     ;;
 check)
     check_store "$ESM" all

@@ -12,15 +12,27 @@
 #                 SLURM_ARRAY_TASK_COUNT: re-running two failed tasks with --array=3,7 must redo slices 3 and 7
 #                 of 16, not cut the list in two and leave both tasks an empty range.
 #   N             optional: only the first N files (sorted) — the smoke test
+#   SAMPLES       optional, an absolute path: embed these samples only (one per non-blank line, sorted and unique;
+#                 engine/embedding/sample_list.py). The work list is then <INPUT_DIR>/<Sample>_protein_sequences.parquet
+#                 in list order, not the directory's listing: the protein store is flat and shared across species,
+#                 so a listing would embed every species at once and shift its slices whenever any species wrote a
+#                 parquet mid-array. A task exits before loading the model if a parquet of its slice is missing.
+#   SAMPLES_MD5   optional: refuse to run (exit 3) if SAMPLES' md5 is not this — the list a pending task would
+#                 slice must be the one its siblings sliced
+#   REPO          the checkout to run (default ~/workspace/BacPredict). For a long array, a detached worktree at
+#                 the submitting SHA with .venv symlinked to the shared env; its src/ goes first on PYTHONPATH.
+#   EXPECT_SHA    optional: refuse to run (exit 3) if REPO's HEAD is not it
 #
-# Each task takes [start, end) of the FULL sorted parquet list, and --skip-existing then filters within that
-# slice, so a requeued task resumes. The parquet directory must be complete before submission (the drivers
-# check it), or tasks would count different totals and their slices would not tile. Embeddings are written
-# atomically, so an existing file is a whole one. Per-genome failures do not fail the task: check completeness
-# against the cohort afterwards, never by exit code.
+# Each task takes [start, end) of the FULL sorted parquet list (or of SAMPLES), and --skip-existing then filters
+# within that slice, so a requeued task resumes. Without SAMPLES the parquet directory must be complete before
+# submission (the drivers check it), or tasks would count different totals and their slices would not tile.
+# Embeddings are written atomically, so an existing file is a whole one. Per-genome failures do not fail the task:
+# check completeness against the cohort afterwards, never by exit code. Never run two arrays into one ESM_DIR over
+# the same samples at once: their writers share a sample's temporary .part name.
 #
 #   sbatch --array=0-15 --export=ALL,INPUT_DIR=$T/protein_sequences,ESM_DIR=$T/esm,MAX_PROTEINS=9000,\
 #   SAVE_DTYPE=bfloat16,NTASKS=16 src/bacpredict/engine/embedding/scripts/esm_embeddings_array.sh
+#   (add SAMPLES=$T/esm_samples.txt,SAMPLES_MD5=$(md5sum <$T/esm_samples.txt | cut -d' ' -f1) for a shared store)
 #SBATCH --job-name=esm-embeddings
 #SBATCH --account=FLOTO-SL2-GPU
 #SBATCH --partition=ampere
@@ -37,8 +49,27 @@ set -euo pipefail
 : "${INPUT_DIR:?}" "${ESM_DIR:?}" "${MAX_PROTEINS:?}" "${SAVE_DTYPE:?}" "${NTASKS:?full array size}"
 REPO=${REPO:-$HOME/workspace/BacPredict}
 export PYTHONUNBUFFERED=1
+# $REPO's own code, even when $REPO is a worktree whose .venv is the shared env (its editable install points at the
+# main checkout): PYTHONPATH precedes site-packages
+export PYTHONPATH="$REPO/src${PYTHONPATH:+:$PYTHONPATH}"
+head=$(git -C "$REPO" rev-parse HEAD)
+if [[ -n "${EXPECT_SHA:-}" && "$head" != "$EXPECT_SHA"* ]]; then
+    echo "the checkout moved: HEAD ${head:0:7}, this array was submitted at $EXPECT_SHA"; exit 3
+fi
 
-TOTAL=$(find "$INPUT_DIR" -maxdepth 1 -name '*_protein_sequences.parquet' | wc -l)
+if [[ -n "${SAMPLES:-}" ]]; then
+    [[ $SAMPLES == /* && -r $SAMPLES ]] || { echo "SAMPLES must be a readable absolute path: $SAMPLES"; exit 4; }
+    SAMPLES_SUM=$(md5sum < "$SAMPLES" | cut -d' ' -f1)
+    if [[ -n "${SAMPLES_MD5:-}" && "$SAMPLES_SUM" != "$SAMPLES_MD5" ]]; then
+        echo "SAMPLES changed since submit: md5 $SAMPLES_SUM, submitted with $SAMPLES_MD5 ($SAMPLES)"; exit 3
+    fi
+    # awk, not grep -c (which exits 1 on a count of 0): the non-blank lines, exactly as sample_list.py reads them
+    TOTAL=$(awk '{ gsub(/[[:space:]]/, "") } length($0) { n++ } END { print n + 0 }' "$SAMPLES")
+elif [[ -n "${SAMPLES_MD5:-}" ]]; then
+    echo "SAMPLES_MD5 is set but SAMPLES is not"; exit 4
+else
+    TOTAL=$(find "$INPUT_DIR" -maxdepth 1 -name '*_protein_sequences.parquet' | wc -l)
+fi
 if [[ -n "${N:-}" && "$N" -lt "$TOTAL" ]]; then TOTAL=$N; fi
 NT=$NTASKS
 TASK=${SLURM_ARRAY_TASK_ID:-0}
@@ -52,10 +83,11 @@ RUN_DIR=/rds/user/dca36/hpc-work/logs/esm_embeddings_${SLURM_ARRAY_JOB_ID:-local
 mkdir -p "$RUN_DIR" "$ESM_DIR"
 cd "$RUN_DIR"
 echo "[$(date -Is)] host=$(hostname) gpu=${CUDA_VISIBLE_DEVICES:-none} task=$TASK/$NT files=[$START,$END) of $TOTAL" \
-     "max_proteins=$MAX_PROTEINS dtype=$SAVE_DTYPE repo=$REPO@$(git -C "$REPO" rev-parse --short HEAD)"
+     "max_proteins=$MAX_PROTEINS dtype=$SAVE_DTYPE repo=$REPO@${head:0:7}" \
+     "${SAMPLES:+samples=$SAMPLES md5=$SAMPLES_SUM}"
 if (( START >= END )); then echo "empty slice"; exit 0; fi
 
 uv run --project "$REPO" --no-sync python -m bacpredict.engine.embedding.generate_embeddings \
     --input-dir "$INPUT_DIR" --esm-dir "$ESM_DIR" --max-proteins "$MAX_PROTEINS" --save-dtype "$SAVE_DTYPE" \
-    --skip-existing --start-idx "$START" --end-idx "$END" ${N:+--n "$N"}
+    --skip-existing --start-idx "$START" --end-idx "$END" ${N:+--n "$N"} ${SAMPLES:+--samples-file "$SAMPLES"}
 echo "[$(date -Is)] done"

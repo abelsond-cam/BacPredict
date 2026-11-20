@@ -23,9 +23,9 @@ re-running PsA collate/plan into `$TMPDIR` and md5-ing against the live files).
 
 **Where it goes** (layout: `apps/pa/CLAUDE.md` *Where the data lives*): contigs, Bakta, protein parquets and ESM-C
 into the same flat per-BioSample stores as PsA (`raw/contigs/`, `raw/bakta/`, `processed/protein_sequences/`,
-`processed/esm/`); manifests, shards, QC and the annotation table under `processed/enterobacterales/`. ⚠ Before
-the first Enterobacterales protein parquet lands, give `esm_embeddings_array.sh` a sample list: it slices the
-store's whole listing, so it would otherwise embed PsA and Enterobacterales together.
+`processed/esm/`); manifests, shards, QC and the annotation table under `processed/enterobacterales/`. The ESM-C
+array takes a sample list, never the store's listing, so the two cohorts share the stores without embedding each
+other's genomes (*Embeddings* below).
 
 **Annotation is Bakta 1.9.4 + full DB v5.1, not Prodigal** (decision of record, PROJECT_STATE §6):
 - BakRep v2 (<https://bakrep.computational.bio>) serves ATB's own Bakta run for ATB release 0.2 + the 2024-08
@@ -65,7 +65,7 @@ exist):
    *S. enterica* subspecies and the *E. cloacae* complex need their own references. Stages 4–5: *QC* below.
 6. *Annotation*: BakRep GFF3 where held; our Bakta otherwise. Built: *Annotation (Bakta)* below.
 7. *Proteins* → *ESM-C* (bf16, `--max-proteins 9000`, FLOTO-SL2-GPU; ~250 A100-h at the measured 2.8 ms per
-   protein).
+   protein). Built: *Embeddings* below.
 
 ## QC: CheckM2, skani, collate
 
@@ -195,3 +195,29 @@ to the shared env (as for PsA). Each `--wrap` checks at start that the worktree 
 
 Ingest downloads every GFF3 from BakRep, including those for *Klebsiella* genomes whose BakRep files are already on
 project_k (`david/raw/klebsiella_gff3`).
+
+## Embeddings
+
+[`scripts/build_entero_embeddings.sh`](scripts/build_entero_embeddings.sh) runs the PsA embedding stage
+(`apps/pa/CLAUDE.md` *Embeddings*) at the scale of about 68k genomes. Run the stages in order from a login node; each
+is gated on the one before.
+
+| Stage | What it does |
+|---|---|
+| `proteins` | One CPU job on `icelake` (32 cores, 96G, 2 h): `preprocess_assemblies_to_protein_sequences` from `genomes/bakta_annotation.csv` into `processed/protein_sequences/`, with `--skip-existing`. Parquets are written atomically, so a job killed at the wall time is simply resubmitted |
+| `check-proteins` | `engine/embedding/check_cohort_store.py` as a 32-core `icelake` job (48G, 1 h). Every cohort genome must have a readable parquet, no older than its GFF3, holding CDS − pseudogenes proteins, with contigs unchanged since annotation; the table must equal `embedding_input.csv` |
+| `smoke` | Writes `genomes/esm_samples_smoke.txt` (one genome per genus, the genome with the most proteins, then genera in turn up to 10), checks those 10 parquets inline, and runs one GPU task (20 min) into `processed/esm_smoke/` |
+| `check-smoke` | `check_cohort_store` on the login node over the smoke list, including loading their `.pt` files |
+| `submit` | Needs `ARRAY_REPO`. Writes `genomes/esm_samples.txt` (sorted Samples of `bakta_annotation.csv`) and checks that every listed parquet exists (one directory read). Then submits the GPU array: `NTASKS = ceil(n / 300)` tasks of 4 h (~300 genomes at ~13 s each ≈ 65 min), at most `ESM_CONCURRENT` (64) running at once, pinned to `ARRAY_REPO`'s SHA and the list's md5 |
+| `check` | As `check-proteins`, plus every `.pt`: present, a readable zip, no older than its parquet; and 10 sampled `.pt` files loaded and checked for shape `min(proteins, 9000)` × 960, bf16, no NaN |
+
+- **Each check job prints `PASS` or `FAIL` as its last line** and writes every (Sample, problem) pair to
+  `problems.csv` in its log directory. `check_cohort_store` reports only the first 10 genomes of each problem.
+- **Overrides.** `PROT_*` and `CHECK_*` override the CPU job shapes (`_PARTITION`, `_MEM`, `_TIME`; also
+  `PROT_CPUS`). `ESM_PER_TASK` and `ESM_CONCURRENT` size the GPU array.
+- **`proteins` refuses while a PsA ESM-C job is queued or running.** A PsA array submitted before the sample list
+  slices the store's whole listing, so new parquets would shift its slices. Set `IGNORE_LIVE_PSA_ESM=1` once every
+  live PsA job was submitted with `SAMPLES` (its `.out` header shows `samples=…`).
+- **`submit` refuses while an `entero-esm-embeddings` array is queued or running.** Two arrays writing one sample
+  share its temporary `.part` file. Re-running `submit` afterwards is safe: tasks skip every genome whose `.pt`
+  exists, and a task with nothing left exits before loading the model.

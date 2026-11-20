@@ -27,6 +27,8 @@ from bacformer.pp import (
 from tqdm import tqdm
 from transformers import AutoModel
 
+from bacpredict.engine.embedding.sample_list import read_samples_file
+
 # The refreshed Bacformer complete-genomes model (not the MAG-trained one).
 BACFORMER_MODEL_ID = "macwiatrak/bacformer-large-masked-complete-genomes"
 
@@ -164,6 +166,38 @@ def find_protein_sequence_files(input_dir: Path, limit: int | None = None) -> li
         logger.info(f"Processing first {limit} files")
 
     return protein_files
+
+
+def protein_files_from_samples_file(input_dir: Path, samples_file: Path, limit: int | None = None) -> list[Path]:
+    """The parquets of a sample list, in list order: ``input_dir / f"{s}_protein_sequences.parquet"``.
+
+    Used instead of :func:`find_protein_sequence_files` when the parquet directory is a store shared across
+    cohorts (see :mod:`bacpredict.engine.embedding.sample_list`). The list must be sorted and unique; whether
+    each parquet exists is checked by the caller, after slicing, so an array task stats only its own slice.
+
+    Parameters
+    ----------
+    input_dir : Path
+        Directory holding ``<Sample>_protein_sequences.parquet``.
+    samples_file : Path
+        One sample per non-blank line, sorted and unique.
+    limit : int, optional
+        Take only the first ``limit`` samples (falsy: all, as for :func:`find_protein_sequence_files`).
+
+    Returns
+    -------
+    list of Path
+        One parquet path per listed sample, whether or not each exists.
+
+    Raises
+    ------
+    ValueError
+        If the list is empty, unsorted or holds a duplicate.
+    """
+    samples = read_samples_file(samples_file)
+    if limit:
+        samples = samples[:limit]
+    return [input_dir / f"{s}_protein_sequences.parquet" for s in samples]
 
 
 def extract_sample_id(filepath: Path) -> str:
@@ -397,6 +431,15 @@ def main():
         "$BACPREDICT_DATA_ROOT/processed/train_kleb_ast/protein_sequences; see docs/ISAMBARD_DATA.md).",
     )
     parser.add_argument(
+        "--samples-file",
+        type=Path,
+        default=None,
+        help="Embed these samples only: one per non-blank line, sorted and unique. The work list becomes "
+        "<input-dir>/<Sample>_protein_sequences.parquet in list order instead of the directory's whole listing "
+        "(needed where the directory is shared across cohorts); --n, --start-idx and --end-idx slice it, and a "
+        "listed parquet missing from the slice exits before the model loads.",
+    )
+    parser.add_argument(
         "--esm-dir",
         type=Path,
         default=None,
@@ -438,8 +481,16 @@ def main():
     else:
         logger.info("Bacformer stage disabled (pass --bacformer-embeddings to enable)")
 
-    # Find all protein sequence parquet files (takes first n if --n is set)
-    protein_files = find_protein_sequence_files(input_dir, limit=args.n)
+    # Find all protein sequence parquet files (takes first n if --n is set), or a sample list's.
+    # The new paths' errors go through sys.exit, not the logger: logging here is configured after bacformer's
+    # import has already configured the root logger, so its records can be lost.
+    if args.samples_file is not None:
+        try:
+            protein_files = protein_files_from_samples_file(input_dir, args.samples_file, limit=args.n)
+        except (OSError, ValueError) as e:
+            sys.exit(f"--samples-file: {e}")
+    else:
+        protein_files = find_protein_sequence_files(input_dir, limit=args.n)
 
     if not protein_files:
         logger.error(f"No protein sequence parquet files found in {input_dir}")
@@ -456,6 +507,15 @@ def main():
         protein_files = protein_files[args.start_idx:args.end_idx]
         logger.info(f"Array job slice: processing files {args.start_idx} to {args.end_idx} of {total_files}")
         logger.info(f"Files in this slice: {len(protein_files)}")
+
+    # A listed genome without its parquet would otherwise fail per genome, inside a task that still exits 0.
+    # Only this slice is checked: every listed sample is in exactly one task's slice, and a stat per sample of a
+    # ~68k list in every task would cost each GPU task minutes on cold Lustre metadata.
+    if args.samples_file is not None:
+        missing = [f.name for f in protein_files if not f.exists()]
+        if missing:
+            sys.exit(f"{len(missing)} listed samples have no parquet in {input_dir} (e.g. {missing[:5]}); "
+                     "run the protein stage for them first")
 
     # Filter out files that already have embeddings if requested (within slice)
     if args.skip_existing:

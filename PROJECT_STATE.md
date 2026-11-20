@@ -1761,10 +1761,11 @@ Later: the AMR-GNN-cut benchmark, ANI thinning, and causal attribution of the pr
   one is added (a shared-engine change).
 - **`engine/config.py` `PA` resolves under `$AMR`** (`0f5cc5d`): tables in `processed/paeruginosa/`, per-sample
   stores flat in `processed/{protein_sequences,esm}/`. The `pa_ast` trainer key, when added, should read it.
-- **The ESM-C array tiles the whole protein store.** `esm_embeddings_array.sh` slices the sorted listing of
-  `processed/protein_sequences/`, which is now shared across species; `build_pa_embeddings.sh` refuses to submit
-  while the store holds any parquet outside the PsA cohort. Give the array a sample list before Enterobacterales
-  writes its first parquet there.
+- **The ESM-C array takes a sample list** (`SAMPLES`, md5-pinned): PsA and Enterobacterales share
+  `processed/{protein_sequences,esm}/` without embedding each other's genomes (mechanics: `apps/pa/CLAUDE.md`
+  *Embeddings*; Entero driver `apps/entero/scripts/build_entero_embeddings.sh`). ⚠ A PsA array submitted before
+  this change still slices the store's whole listing, so no Enterobacterales parquet may land while one is live:
+  `build_entero_embeddings.sh proteins` refuses while any `pa-esm-*` job is queued or running.
 - The `bakrep_coverage_20261119/{join,cmp_pa,miss}.py` scripts are kept as they ran and still build pre-move paths.
 - **The QC-pass Prodigal GFFs and `n_cds` in `genome_qc.csv` are not the annotation of record**: Bakta is.
   `n_cds` and the CDS-per-Mbp figures above are Prodigal counts.
@@ -1809,6 +1810,7 @@ correct.**
 | `$AMR/raw/bakta_db/v5.1_full/` (+ `v5.1_full.md5`, `README.txt`) | copied from nuna's `refs/bakta/db` (job `41494699`); AMRFinderPlus DB `latest` → 2024-07-22.1 | every Bakta run of ours (`engine/genomes/bakta.py`) | Every our-run annotation (a run's fingerprint includes this DB's `version.json` and AMRFinderPlus DB) |
 | `$AMR/raw/bakta/<Sample>.bakta.gff3.gz` + `.ingest.json` (BakRep's) or `.run.json` (ours) | `engine/genomes/bakta.py` `ingest` / `run` (`annotate_pa_genomes.sh`) | `bakta.py collate` | Protein parquets and ESM-C embeddings of that genome |
 | `$AMR/processed/paeruginosa/genomes/bakta_annotation.csv` | `bakta.py collate` (`annotate_pa_genomes.sh collate`) | `build_pa_embeddings.sh` (its cohort) | PsA protein parquets and ESM-C embeddings |
+| ESM-C sample lists: `$AMR/processed/paeruginosa/esm_samples.txt`, `$AMR/processed/enterobacterales/genomes/esm_samples{,_smoke}.txt` | `build_pa_embeddings.sh` / `build_entero_embeddings.sh` `smoke`, `submit` (sorted Samples of `bakta_annotation.csv`) | `esm_embeddings_array.sh` (`SAMPLES`, md5-pinned) | Pending tasks of an array submitted with the old list: they refuse to run (exit 3) |
 | `$AMR/processed/bakta_vs_bakrep_validation/` | `engine/genomes/scripts/validate_bakta_against_bakrep.sh` | the decision to annotate BakRep-less genomes with our own run | — (evidence only) |
 
 **`catalogue_ceiling_panel.csv` is reproducible.** It was hand-assembled once, which was itself the
