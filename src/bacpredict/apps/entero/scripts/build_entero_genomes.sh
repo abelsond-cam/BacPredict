@@ -36,6 +36,8 @@ PSA_COHORT=$ROOT/processed/paeruginosa/genomes/embedding_input.csv
 GENOME_SIZES=Escherichia=5.1e6,Shigella=4.6e6,Salmonella=4.9e6,Klebsiella=5.6e6,Enterobacter=4.9e6,Serratia=5.2e6,Proteus=4.1e6,Morganella=3.9e6,Providencia=4.3e6
 GENOME_SIZE=5.0e6  # any other genus
 MIN_DEPTH=10
+# download tasks (one genome per core, Prodigal + mlst) need little memory, so they go to icelake (3,380 MB per core),
+# which had ~7,400 idle cores when icelake-himem had a 3 h queue (2026-11-20); shovill keeps himem's 52 GB
 ARRAY=src/bacpredict/engine/genomes/scripts/build_genomes_array.sh
 cd "$REPO"
 
@@ -100,8 +102,8 @@ EOF
     common="REPO=$REPO,EXPECT_SHA=$(git rev-parse HEAD),MANIFEST=$GEN/genome_manifest_smoke.csv,OUT_ROOT=$STORE"
     common+=",SHARD_DIR=$GEN/shards_smoke,GENOME_SIZE=$GENOME_SIZE,TOOLS_BIN=$(tools_bin)"
     n=$(chunks "$GEN/genome_manifest_smoke.csv" atb,portal_gff 100)
-    submit --array=0-$((n - 1)) --cpus-per-task=8 --mem=40G --time=00:45:00 \
-        --job-name=entero-build-genomes-smoke-download --export=ALL,$common,SOURCES=atb+portal_gff,CHUNK=100 "$ARRAY"
+    submit --array=0-$((n - 1)) --partition=${DL_PARTITION:-icelake} --cpus-per-task=8 --mem=${DL_MEM:-24G} \
+        --time=00:45:00 --job-name=entero-build-genomes-smoke-download --export=ALL,$common,SOURCES=atb+portal_gff,CHUNK=100 "$ARRAY"
     n=$(chunks "$GEN/genome_manifest_smoke.csv" shovill 1)
     (( n == 0 )) || submit --array=0-$((n - 1)) --cpus-per-task=8 --mem=52G --time=03:00:00 \
         --job-name=entero-build-genomes-smoke-shovill --export=ALL,$common,SOURCES=shovill,CHUNK=1 "$ARRAY"
@@ -115,13 +117,15 @@ submit)  # submit [atb|portal|shovill] [indices] — all three, all indices, by 
         # 100 genomes per 8-core task (one genome per core), from the frozen snapshot; wall and memory from the smoke
         snap=$GEN/genome_manifest_atb.csv
         n=$(chunks "$snap" atb 100)
-        submit --array="${3:-0-$((n - 1))%${ATB_CONCURRENT:-200}}" --cpus-per-task=8 --mem=${DL_MEM:-40G} \
+        submit --array="${3:-0-$((n - 1))%${ATB_CONCURRENT:-200}}" --partition=${DL_PARTITION:-icelake} \
+            --cpus-per-task=8 --mem=${DL_MEM:-24G} \
             --time=${DL_TIME:-01:30:00} --job-name=entero-build-genomes-atb \
             --export=ALL,$common,MANIFEST=$snap,SOURCES=atb,CHUNK=100 "$ARRAY"
     fi
     if [[ "${2:-all}" == all || "${2:-}" == portal ]]; then
         n=$(chunks "$M" portal_gff 40)
-        submit --array="${3:-0-$((n - 1))%60}" --cpus-per-task=8 --mem=40G --time=01:30:00 \
+        submit --array="${3:-0-$((n - 1))%60}" --partition=${DL_PARTITION:-icelake} --cpus-per-task=8 \
+            --mem=${DL_MEM:-24G} --time=01:30:00 \
             --job-name=entero-build-genomes-portal --export=ALL,$common,MANIFEST=$M,SOURCES=portal_gff,CHUNK=40 "$ARRAY"
     fi
     if [[ "${2:-all}" == all || "${2:-}" == shovill ]]; then
