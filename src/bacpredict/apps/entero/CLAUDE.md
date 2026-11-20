@@ -36,9 +36,14 @@ re-running PsA collate/plan into `$TMPDIR` and md5-ing against the live files).
   and the protein extractor filters on `pseudo` only.
 - Already on CSD3: BakRep GFF3s for 8,710 of the 9,478 *Klebsiella* (`$R/raw/klebsiella_gff3`, from the Kp
   pipeline; also Bakta 1.9.4 / DB v5.1).
-- Guard the protein step: every CDS contig must be found in the assembly and the protein count must roughly
-  equal the non-pseudo CDS count. A contig-name mismatch otherwise yields empty parquets that every existing
-  check passes.
+- Guard the protein step: every CDS contig must be found in the assembly and the protein count must equal the
+  non-pseudo CDS count. A contig-name mismatch otherwise yields empty parquets that every existing check passes.
+  (Built for PsA: `engine/genomes/bakta.py` `ingest`/`run`/`collate`, and the count check in
+  `apps/pa/scripts/build_pa_embeddings.sh`; mechanics in `apps/pa/CLAUDE.md` *Annotation*. Reuse them.)
+- ⚠ **ATB contig numbering can have gaps** (`contig00130`, `contig00132`, …) that our store renumbers
+  consecutively, so a BakRep GFF3 can carry our sequences under other names: ingest refuses it (the PsA count is
+  in PROJECT_STATE §3.6). The same applies to the 8,710 Kp files in `$R/raw/klebsiella_gff3`. Decide at Entero scale between our-run
+  fallback (~1.3 core-h each) and mapping seqids by sequence.
 
 **Stages** (each `sbatch` prints its resource line; checks count against the manifest, never against files that
 exist):

@@ -89,8 +89,9 @@ Where each one is (checked by HTTP against the whole cohort, 2026-11-18):
   - Shovill takes paired Illumina WGS only, so RNA-seq-only and ONT-only BioSamples are dropped.
   - Reads under 10× depth are not assembled.
 
-Every genome then gets **one Prodigal 2.6.3 run with Prokka's flags**, so gene calls are uniform. STs
-come from our own `mlst` run, never from the paper's `st_reported`, which is kept only for cross-checking.
+Gene calls are **Bakta 1.9.4 with the full DB v5.1** on every genome (see *Annotation* below); the build's own
+Prodigal 2.6.3 run is kept for provenance but is not the annotation of record. STs come from our own `mlst` run,
+never from the paper's `st_reported`, which is kept only for cross-checking.
 
 **How the build runs.** The organism-agnostic stage is `engine/genomes/`; tool binaries come from its
 pixi env (shovill 1.1.0 with SPAdes 3.15, Prodigal 2.6.3, mlst, skani, plus CheckM2 in its own env).
@@ -119,7 +120,7 @@ pixi env (shovill 1.1.0 with SPAdes 3.15, Prodigal 2.6.3, mlst, skani, plus Chec
 
 **Where the outputs go:**
 - Contigs are renamed `<Sample>.contig00001` and stored at `raw/ast_cohort_genomes/contigs/<Sample>.fna.gz`.
-- Prodigal GFFs are stored at `raw/ast_cohort_genomes/prodigal/<Sample>.gff.gz`.
+- Prodigal GFFs (superseded by Bakta) are stored at `raw/ast_cohort_genomes/prodigal/<Sample>.gff.gz`.
 - The store is keyed by BioSample and shared across organisms.
 - Each array task writes one row per genome to a shard under `genomes/shards/`. `collate` refuses to run
   if any genome is missing a row.
@@ -137,23 +138,56 @@ pixi env (shovill 1.1.0 with SPAdes 3.15, Prodigal 2.6.3, mlst, skani, plus Chec
   length-sorted, so the default would silently drop the smallest contigs first: plasmids and integrons,
   where acquired carbapenemases and aminoglycoside-modifying enzymes sit. The trainer's own default is
   already 9,000. `collate` reports how many genomes exceed each cap.
-- **Prodigal GFFs carry no gene names.** The extractor falls back to Prodigal's positional `ID`
-  (`1_1`, `1_2`, …), which repeats in every genome without meaning the same gene. Fine-tuning does not
-  care. Before any name-keyed arm (per-gene LR, attribution's named-gene flag, catalogue ceilings,
-  `locate_gene`) runs on this store, gene identity has to come from elsewhere, for example an
-  AMRFinder/CARD alignment or nuna families.
+- **Gene names come from Bakta**, as for TB and Kp: the extractor takes `gene=`, else the locus tag (a per-genome
+  random prefix, so it never means the same gene across genomes). Bakta under-annotates some acquired AMR
+  classes, so a name-keyed arm (per-gene LR, attribution's named-gene flag, catalogue ceilings, `locate_gene`)
+  should take AMR gene identity from an AMRFinder/CARD alignment, as Kp does.
+
+## Annotation (Bakta)
+
+Bakta 1.9.4 + full DB v5.1 is the annotation of record (PROJECT_STATE §6). The engine code is
+`engine/genomes/bakta.py`; [`scripts/annotate_pa_genomes.sh`](scripts/annotate_pa_genomes.sh) runs it:
+
+| Stage | What it does |
+|---|---|
+| `plan` | Splits `embedding_input.csv` into `genomes/bakta/bakrep_roster.tsv` (ATB-sourced and in BakRep) and `run_roster.tsv` (the rest) |
+| `ingest` | One CPU job, 8 BakRep streams: BakRep's GFF3 into `raw/ast_cohort_genomes/bakta/`, byte for byte, with a `.bakta.ingest.json` |
+| `submit` | The CPU array `engine/genomes/scripts/run_bakta_array.sh` (4 genomes per task, 8 cores, 52 GB) over the run roster plus every BakRep-roster genome ingest refused; each run writes a `.bakta.run.json` |
+| `collate` | Writes `genomes/bakta_annotation.csv` only if every cohort genome has exactly one current annotation |
+
+- **Why BakRep's files can be used at all:** our run reproduces BakRep's exactly (the gate,
+  `engine/genomes/scripts/validate_bakta_against_bakrep.sh`), so the two origins are one annotation.
+- **Ingest accepts a BakRep GFF3 only if** its header is `# Software: v1.9.4` / `# Database: v5.1, full` (a BakRep
+  re-run with a newer Bakta is being prepared upstream) **and** its embedded `##FASTA` equals our contigs name for
+  name and base for base. ⚠ Equal contig count, length and N50 do not imply equal names: where AllTheBacteria's
+  contig numbering has gaps (`contig00130`, `contig00132`, …) our store renumbers consecutively, so BakRep's seqids
+  name different contigs of ours. Such a genome is refused and annotated by us.
+- **"Current"** means: the record's contigs md5 equals the cohort's contigs now, and, for our runs, the record's
+  fingerprint (Bakta's flags, the tool env's exact package set, the DB's `version.json` and AMRFinderPlus DB)
+  equals the env and DB collate is given. A rebuilt genome or a changed env therefore shows up as a problem in
+  `bakta_annotation_problems.csv`, never as a silently stale GFF3.
+- **AMRFinderPlus DB is 2024-07-22.1**, not the 2023-11-15.1 that DB v5.1 ships: AMRFinderPlus 3.12.8 (what
+  Bakta 1.9.4 resolves to) refuses the older one. With it, AMR calls matched BakRep's on every gate genome.
+- **Long arrays run from a pinned worktree** (`ARRAY_REPO=…/worktrees/BacPredict-<sha>`, with `.venv` symlinked to
+  the shared env): other agents pull the shared checkout, and `EXPECT_SHA` would otherwise stop pending tasks.
+- **Memory:** size `--mem` from sacct (measured peaks: PROJECT_STATE §3.6), not from a run record's
+  `max_child_rss_gb`, which sees only the largest single child process.
 
 ## Embeddings
 
 [`scripts/build_pa_embeddings.sh`](scripts/build_pa_embeddings.sh) runs these stages in order:
 `proteins`, `check-proteins`, `smoke`, `check-smoke`, `submit`, `check`.
 
-- `proteins` is a CPU job that runs `preprocess_assemblies_to_protein_sequences` on `embedding_input.csv`.
+- `proteins` is a CPU job that runs `preprocess_assemblies_to_protein_sequences` on `genomes/bakta_annotation.csv`
+  (contigs + Bakta GFF3 per genome). It and `ingest` refuse to start if the shared checkout moved since submit.
 - `smoke` and `submit` run the generic GPU array `engine/embedding/scripts/esm_embeddings_array.sh`, with
   `MAX_PROTEINS=9000`, `SAVE_DTYPE=bfloat16` and `NTASKS=16`.
-- Every check counts against `embedding_input.csv`, not against the files that exist. The protein
+- Every check counts against `bakta_annotation.csv`, not against the files that exist. The protein
   extractor logs a failed genome and still exits 0, so a count of existing files would shrink with the
   cohort and still read as complete.
+- `check-proteins` also requires: each parquet's protein count = the GFF3's CDS − pseudogenes (a GFF3/contig
+  name mismatch would otherwise drop proteins silently); the annotation table's genomes = `embedding_input.csv`'s;
+  every genome's contigs unchanged since annotation (md5). Unreadable parquets are listed, not fatal to the check.
 - `smoke` and `submit` refuse to start until every cohort genome has a protein parquet.
 
 ESM-C in **bf16** on project_k, half the fp32 size. The trainer runs in bf16 already. Four consumers call

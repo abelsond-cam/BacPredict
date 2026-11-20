@@ -70,7 +70,11 @@ built by `apps/pa/scripts/build_pa_ast_labels.sh`, mechanics in `apps/pa/CLAUDE.
 
 **Genomes built for the AST cohorts** (`engine/genomes/`, organism-agnostic, keyed by BioSample):
 `$R/raw/ast_cohort_genomes/{contigs,prodigal}/<Sample>.{fna,gff}.gz` — contigs renamed
-`<Sample>.contig00001…`, one Prodigal 2.6.3 GFF per genome. Per-cohort manifests, shards and QC sit in
+`<Sample>.contig00001…`, one Prodigal 2.6.3 GFF per genome (superseded) — and
+`$R/raw/ast_cohort_genomes/bakta/<Sample>.bakta.gff3.gz`, the annotation of record (Bakta 1.9.4, DB v5.1 full):
+BakRep's file beside a `.bakta.ingest.json`, or our run's beside a `.bakta.run.json` (+ `.faa`, `.txt`, `.log`).
+Our Bakta DB: `$R/raw/bakta_db/v5.1_full/` (AMRFinderPlus DB `latest` → 2024-07-22.1; md5s in
+`v5.1_full.md5`). The ours-vs-BakRep gate: `processed/bakta_vs_bakrep_validation/`. Per-cohort manifests, shards and QC sit in
 `processed/train_<org>_ast/genomes/`. Inputs staged once: `$R/raw/allthebacteria/assemblies_list_<date>/`
 (the ATB S3 inventory used to plan) and `$R/raw/reference_genomes/<GCF>.fna.gz` (species-check
 references). CheckM2's DB: `$R/raw/CheckM2/Zenodo_db/CheckM2_database/uniref100.KO.1.dmnd`.
