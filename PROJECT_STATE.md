@@ -1,6 +1,13 @@
 # BacPredict — project state
 
-> **Last verified: 2026-11-20 @ `0f5cc5d`** (branch `refactor/consolidate-engine`).
+> **Last verified: 2026-11-20 @ `4ff29d7`** (branch `refactor/consolidate-engine`).
+> **Verification scope, this pass (2026-11-20, fourth): §3.6 Enterobacterales genome sources and build shape, PsA
+> proteins, and the ampere torch crash only.** Read on CSD3: `enterobacterales/genomes/genome_manifest.csv` (plan at
+> `6369d50`) joined to `bakrep_coverage_20261119/in_bakrep_ids.txt`; `shards_smoke/atb+portal_gff_00000.tsv`; sacct of
+> arrays `41519203` and job `41519198`; the `check-proteins` output at `4ff29d7`; the logs of jobs `41520932`,
+> `41525227`. **Nothing else was re-verified this pass.**
+>
+> **Stamp before this one: 2026-11-20 @ `0f5cc5d`.**
 > **Verification scope, this pass (2026-11-20, third): §3.6 PsA Bakta annotation completion and the move of every
 > §3.6 artifact to `$AMR` only.** Read on CSD3: sacct of array `41499745`; `bakta_annotation.csv` re-collated at
 > `0f5cc5d` (md5 `53bb2fa5…`); the migration log `/rds/user/dca36/hpc-work/logs/amr_data_migration/`
@@ -1505,11 +1512,13 @@ wrong long-term: target AMR genes are individually rare but collectively penetra
 
 **Status.** Scope is **PsA and Enterobacterales only** for now (David, 2026-11-19); the all-species
 cohort stays planned. *P. aeruginosa* (PsA) **labels are built** (`7e47486`) and its **genomes are built and
-QC'd**: 3,677 pass. **Enterobacterales labels are built** (`480ce9d`); its genomes are not.
+QC'd**: 3,677 pass. **Enterobacterales labels are built** (`480ce9d`) and **its genome build is running**
+(sources planned 2026-11-20; QC, annotation and embedding stages built, not yet run). David, 2026-11-20: start
+Enterobacterales as soon as possible — **a cross-species model is the aim**.
 **Annotation is Bakta 1.9.4 with the full DB v5.1, not Prodigal** (David, 2026-11-19: "Bakta as standard").
 Our run reproduces BakRep's exactly (the gate below), so a genome takes BakRep's GFF3 where BakRep holds it on
 our contigs, and our run otherwise. **PsA annotation is complete** (3,677 genomes: 1,781 BakRep, 1,896 ours);
-protein extraction and ESM-C are in flight. **All §3.6 data now lives under `$AMR` = `project_k/david/amr_prediction`**
+proteins are extracted and checked (3,677 of 3,677); ESM-C is in flight. **All §3.6 data now lives under `$AMR` = `project_k/david/amr_prediction`**
 (David, 2026-11-20; map of the old paths in §2). The Prodigal protein parquets (job
 `41397962`) and ESM-C smoke (`41399821`) are superseded and kept aside as `$AMR/processed/_superseded_prodigal/paeruginosa_protein_sequences/`
 and `paeruginosa_esm_smoke/`; the Prodigal ESM-C array (`41401432`) was cancelled before any task started. QC
@@ -1634,6 +1643,30 @@ shovill array `41326674` plus rerun `41335542`, QC job `41336261` (CheckM2 3 h 6
 - **6,919 of the 7,088 Kp AST samples (§3.1) are in this cohort.** Any comparison against the July Kp
   checkpoints must hold out none of their train/validate samples.
 
+**Numbers of record — Enterobacterales genome sources.** Read from
+`$AMR/processed/enterobacterales/genomes/genome_manifest.csv` (`build_entero_genomes.sh plan` at `6369d50`; per-genus
+genome sizes, `--prefer-reads`, min depth 10×, a fresh ENA cache):
+
+| Source | Genomes | In BakRep (`in_bakrep_ids.txt`) |
+|---|--:|--:|
+| AllTheBacteria | 65,363 | 63,700 |
+| Portal submitter assembly (`portal_gff`) | 2,049 | 0 |
+| Shovill on ENA reads | 214 | 0 |
+| Dropped (below 10× 55, no runs 31, other strategy 28, single-end 22, RNA-seq 1) | 137 | – |
+| **Total labelled** | **67,763** | **63,700** |
+
+- No `portal_gff` genome has usable reads at ≥ 10×, so `--prefer-reads` moved none. No genome is shared with the PsA
+  cohort (the contig store is). The ATB rows are frozen read-only as `genomes/genome_manifest_atb.csv`.
+- Our Bakta will run on 3,926 genomes (1,663 ATB not in BakRep + 2,049 portal + 214 shovill) plus every BakRep file
+  ingest refuses, less build/QC failures.
+- **Build smoke** (`shards_smoke/`, job `41518648` at `fbc500a`): 1 ATB genome per genus + 2 portal, 11 of 11 ok;
+  `mlst` autodetect chose `ecoli_achtman_4` (*E. coli*, *Shigella*), `salmonella`, `klebsiella`, `ecloacae`,
+  `serratia`, `proteus`, `providencia`, and no scheme for *Morganella* (none exists). One portal genome labelled
+  *Escherichia* typed as `salmonella` ST3529 — the kind of label/species conflict the species check is for.
+- **ATB task shape, measured** (array `41519203`, 100 genomes per 8-core task, first 248 tasks): 2.0–4.4 min per task
+  (median 2.7), MaxRSS 1.6 GB. The remaining tasks were cut from 45 min / 24 GB to 10 min / 6 GB, which made them
+  backfill again on a busy queue.
+
 **Numbers of record — BakRep coverage.** BakRep v2 serves AllTheBacteria's own Bakta run (Bakta 1.9.4, full
 DB v5.1, over ATB release 0.2 + the 2024-08 increment). Read from
 `$AMR/processed/bakrep_coverage_20261119/join_output.txt` (`join.py` beside it, re-run on CSD3): the BakRep export
@@ -1698,18 +1731,26 @@ faESM), bf16, `--max-proteins 9000`; log `pa-esm-smoke_41399821_0.err`. 34 of 3,
 than 1,000 contigs; Bacformer's input packing (`max_n_contigs=1000`) keeps all their proteins but gives every
 contig past the 1,000th the same contig id.
 
-**In flight.** PsA protein extraction, job `41516634` at `0f5cc5d` (32 cores, 128 GB, 45 min) from
-`bakta_annotation.csv` into `$AMR/processed/protein_sequences/`. Then, in order and each gated on the last:
-`check-proteins`, the ESM-C smoke (10 genomes, `$AMR/processed/esm_smoke/`), `check-smoke`, and the full ESM-C array
-(16 × A100, FLOTO-SL2-GPU) into `$AMR/processed/esm/`.
+**In flight.**
+- **PsA ESM-C.** Proteins done (job `41519198`, 11 min at 8 cores; `check-proteins` passes 3,677 of 3,677). The
+  smoke (job `41526046`) runs from the pinned worktree `/rds/user/dca36/hpc-work/worktrees/BacPredict-4ff29d7` over
+  `processed/paeruginosa/esm_samples_smoke.txt`; then `check-smoke` and the full array (16 × A100, FLOTO-SL2-GPU,
+  over `esm_samples.txt`) into `$AMR/processed/esm/`. The first smoke failed (below, *Caveats*).
+- **Enterobacterales build.** ATB array `41519203` (654 tasks), portal array `41526057` (52 × 40), shovill array
+  `41526058` (214), from pinned worktrees (`…/BacPredict-fbc500a` for ATB, `…-4ff29d7` for the rest). The 39-genome
+  skani panel (`apps/entero/species_reference_panel.tsv`, DRAFT) is on disk in `$AMR/raw/reference_genomes/`.
 
 **Next.** Agreed with David 2026-11-19 ("even annotation sorted before embedding and models lock us in"):
 1. **PsA:** finish ESM-C (in flight) and `build_pa_embeddings.sh check` against all 3,677.
-2. **Enterobacterales:** genome sources and contigs (ATB first; build design in `apps/entero/CLAUDE.md`),
-   CheckM2 on every genome (ours, uniform), skani species check (rule to be decided with data), our `mlst`,
-   BakRep GFF3 + our Bakta for the rest, then ESM-C (~250 A100-h at the measured rate, SL2-GPU). Expect ingest to
-   refuse every ATB genome whose contig numbering has gaps (11 of 1,792 in PsA); at this scale either let those
-   fall back to our run (~1.3 core-h each) or map BakRep's seqids to ours by sequence — decide when the count is known.
+2. **Enterobacterales** (stages in `apps/entero/CLAUDE.md`): when the builds finish, `status` (every genome built or
+   failed by cause); BakRep ingest pre-QC (`annotate_entero_genomes.sh plan`, `ingest`); CheckM2 (34 × 2,000) and
+   skani (`build_entero_genomes.sh qc`); collate in report mode → `species_crosstab.csv` and
+   `embedding_input_unfiltered.csv`; our Bakta on the rest; proteins; ESM-C (~250 A100-h, SL2-GPU).
+   **Decisions asked of David, 2026-11-20, unanswered** (recommendation first): (i) annotate and embed every genome
+   passing the non-species QC, with the species rule set from the crosstab and applied at splits — or wait for the rule;
+   (ii) BakRep files refused on contig names go to our Bakta run (~390 expected, ~430 core-h) — or map seqids by
+   sequence (~1 day of code); (iii) recompute ESM-C for the ~9,500 *Klebsiella* rather than reuse the Kp pipeline's
+   fp32 embeddings (other contigs and annotation).
 3. Splits (the ST holdout plus others, through `engine/splits`), then training. **PsA decisions deferred to
    here:** (a) the held-out ST and its membership rule; (b) the 20 long-read-only portal assemblies; (c) the
    low-depth Cortes-Lara 2021 genomes; (d) the minimum per-class count for a drug to be scored.
@@ -1767,6 +1808,11 @@ Later: the AMR-GNN-cut benchmark, ANI thinning, and causal attribution of the pr
   this change still slices the store's whole listing, so no Enterobacterales parquet may land while one is live:
   `build_entero_embeddings.sh proteins` refuses while any `pa-esm-*` job is queued or running.
 - The `bakrep_coverage_20261119/{join,cmp_pa,miss}.py` scripts are kept as they ran and still build pre-move paths.
+- **A GPU job submitted from a cclake login node crashed `import torch` on ampere** ("Fatal Python error: Illegal
+  instruction", exit 1, nothing on stderr): `sbatch --export=ALL` carried the login node's spack `LD_LIBRARY_PATH`
+  (cascadelake-built libraries) to ampere's AMD CPUs. Jobs `41520932` (the first PsA smoke) and `41525227` (the
+  diagnosis: a clean environment imports torch 2.10.0+cu128 with CUDA). `esm_embeddings_array.sh` now unsets the loader
+  paths and runs Python with `-X faulthandler` (`4ff29d7`). CPU jobs on icelake (Intel) were unaffected.
 - **The QC-pass Prodigal GFFs and `n_cds` in `genome_qc.csv` are not the annotation of record**: Bakta is.
   `n_cds` and the CDS-per-Mbp figures above are Prodigal counts.
 - **Bakta's memory is sacct's to measure.** A run record's `max_child_rss_gb` (getrusage, the largest single
