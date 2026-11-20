@@ -149,12 +149,14 @@ proteins)
     # runs $REPO's code (not whatever ~/workspace holds) and keeps the extractor's own logs out of the repo
     run_dir=$LOGS/pa_protein_sequences_$(date +%Y%m%d_%H%M%S)
     mkdir -p "$run_dir"
-    submit --account=FLOTO-PROJECT-K-SL2-CPU --partition=icelake-himem --cpus-per-task=32 --mem=128G \
-        --time=00:45:00 --job-name=pa-protein-sequences --chdir="$run_dir" \
+    # PROT_PARTITION/PROT_CPUS/PROT_MEM/PROT_TIME: a smaller shape backfills sooner on a busy queue
+    cpus=${PROT_CPUS:-32}
+    submit --account=FLOTO-PROJECT-K-SL2-CPU --partition=${PROT_PARTITION:-icelake-himem} --cpus-per-task=$cpus \
+        --mem=${PROT_MEM:-128G} --time=${PROT_TIME:-00:45:00} --job-name=pa-protein-sequences --chdir="$run_dir" \
         --output="$run_dir/%x_%j.out" --error="$run_dir/%x_%j.err" \
         --wrap="$(sha_guard) PYTHONUNBUFFERED=1 uv run --project $REPO --no-sync \
 python -m bacpredict.engine.embedding.preprocess_assemblies_to_protein_sequences --input-csv $COHORT \
---output-dir $PROT --workers 32 --skip-existing"
+--output-dir $PROT --workers $cpus --skip-existing"
     echo "logs: $run_dir"
     ;;
 check-proteins)
