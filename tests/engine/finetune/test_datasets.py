@@ -111,3 +111,24 @@ def test_dataloader_multiprocessing(tmp_path):
     batches = list(loader)
     assert len(batches) == 2
     assert batches[0]["labels"].shape == (2,)
+
+
+def test_bf16_and_fp32_stores_reach_the_model_as_the_same_fp32_tensor(tmp_path):
+    """A bf16 .pt (the multi-species AMR store) and an fp32 .pt (TB/Kp, or a symlinked Kp file in a cross-species
+    store) holding the same values give the same fp32 tensor, so a batch never mixes dtypes."""
+    values = torch.randn(1, 6, 8).to(torch.bfloat16).float()  # exactly representable in bf16
+    for sid, dtype in (("BF", torch.bfloat16), ("FP", torch.float32)):
+        torch.save({"protein_embeddings": values.to(dtype), "attention_mask": torch.ones(1, 6),
+                    "contig_ids": torch.zeros(1, 6, dtype=torch.long)}, tmp_path / f"{sid}_esm_embeddings.pt")
+    ds = LabelInjectingFileDataset(["BF", "FP"], tmp_path, {"BF": 1, "FP": 0}, "label")
+    bf, fp = ds[0]["protein_embeddings"], ds[1]["protein_embeddings"]
+    assert bf.dtype == fp.dtype == torch.float32
+    assert torch.equal(bf, fp) and torch.equal(fp, values)
+
+
+def test_fp32_store_is_returned_untouched(tmp_path):
+    """The TB/Kp path: an fp32 embedding comes back bit for bit (the dtype guard is a no-op on fp32)."""
+    _write_embedding(tmp_path / "S000_esm_embeddings.pt")
+    stored = torch.load(tmp_path / "S000_esm_embeddings.pt", weights_only=False)["prot_embeddings"]
+    out = LabelInjectingFileDataset(["S000"], tmp_path, {"S000": 0}, "label")[0]["protein_embeddings"]
+    assert out.dtype == torch.float32 and torch.equal(out.squeeze(0), stored)

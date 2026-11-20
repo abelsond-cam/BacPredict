@@ -122,6 +122,31 @@ def compute_full_metrics(
     }
 
 
+def per_class_metrics(
+    y_true: np.ndarray | list,
+    y_prob: np.ndarray | list,
+    threshold: float = 0.5,
+) -> dict[str, dict[str, Any]]:
+    """Per-class breakdown at ``threshold``, for class ``"0"`` (S) and class ``"1"`` (R).
+
+    Each class gets ``n``, ``n_predicted``, ``recall``, ``precision`` and ``f1``. Class 1's recall is ``sensitivity`` and class 0's is ``specificity``; their precisions are the PPV and NPV.
+    A ratio with a zero denominator is NaN, as in :func:`compute_full_metrics`; ``f1`` is 0 when the class has
+    no correct call but appears in the labels or the calls (sklearn's ``zero_division=0``), NaN when in neither.
+    """
+    y_true = np.asarray(y_true).astype(int).ravel()
+    y_pred = (np.asarray(y_prob).astype(float).ravel() >= threshold).astype(int)
+    nan = float("nan")
+    out: dict[str, dict[str, Any]] = {}
+    for cls in (0, 1):
+        actual, called = y_true == cls, y_pred == cls
+        hit, n, n_called = int((actual & called).sum()), int(actual.sum()), int(called.sum())
+        recall = hit / n if n else nan
+        precision = hit / n_called if n_called else nan
+        f1 = 2 * precision * recall / (precision + recall) if hit else (0.0 if n or n_called else nan)
+        out[str(cls)] = {"n": n, "n_predicted": n_called, "recall": recall, "precision": precision, "f1": f1}
+    return out
+
+
 def compute_metrics_binary_genome_pred(
     preds: EvalPrediction,
     ignore_index: int = -100,

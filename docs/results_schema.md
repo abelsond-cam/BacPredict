@@ -89,6 +89,27 @@ Written by the **evaluator** (`evaluate.py`), not by training. Holds metrics at 
 
 `auroc`/`auprc` are threshold-independent and live only in `metrics` (they are unchanged by tuning).
 
+### Split-table runs (`finetune_amr --split-table`)
+
+A run trained from a `<drug>_split.csv` (`engine/splits/build_amr_holdout_splits`, read by `load_splits`) adds to
+the fields above. `metrics` is still the holdout's, so v1 readers keep working.
+
+| Field | Type | Notes |
+|---|---|---|
+| `split.source` | string | `"split_table"`, or `"smoke"` for the 10-genome run. |
+| `split.table`, `split.table_md5` | string | The split table read, and its md5. |
+| `split.n_train`, `split.n_validate` | int | Genomes trained and validated on (0/1 labels only). |
+| `split.extra_holdouts` | string[] | The splits scored beside the holdout (default `["holdout_st"]`). |
+| `species` | string[] | Present when the table has a `species` column. |
+| `holdouts.<split>.n_samples` | int | Genomes scored, `holdout` first, then each extra holdout; 0 when the drug has none. |
+| `holdouts.<split>.metrics` | object | The metrics block above, plus `per_class`. `holdouts.holdout.metrics` equals `metrics`. |
+| `holdouts.<split>.metrics.per_class` | object | `"0"` (S) and `"1"` (R): `n`, `n_predicted`, `recall`, `precision`, `f1` at 0.5. |
+| `holdouts.<split>.by_species` | object | Only when the table holds more than one species: `{species: metrics block with per_class}`. |
+| `holdouts.<split>.scores` | string | The per-sample archive beside `results.json`: `eval_scores.npz` for `holdout`, `eval_scores_<split>.npz` otherwise. |
+
+Each archive holds `sample_ids`, `y_true`, `y_prob`, `drug`, and per row `split` and `species` (`""` when the table
+has none); `operating_threshold` is NaN (no threshold is tuned at training time).
+
 ## Forward compatibility
 
 v1 readers must tolerate (ignore) unknown top-level keys. The HGT-vs-vertical mechanism stratification milestone will add a `metrics_by_mechanism` block:

@@ -115,3 +115,16 @@ def load_split_ids(split_table_path: str | Path, split_value: str, *, species: s
         raise ValueError(f"split_value {split_value!r} is not one of {SPLIT_VALUES}")
     clean = _read_clean_rows(split_table_path, species)
     return clean.loc[clean["split"] == split_value, "Sample"].tolist()
+
+
+def load_split_species(split_table_path: str | Path, *, species: str | None = None) -> dict[str, str]:
+    """``Sample -> species`` over the table's clean rows (exactly the rows :func:`load_splits` reads), or ``{}``.
+
+    A cross-species model's per-species scores take each genome's species from its own split table through this
+    one reader, never from another file. ``species`` is the species folder name (``paeruginosa``,
+    ``enterobacterales``). TB/Kp tables have no ``species`` column and give ``{}``.
+    """
+    clean = _read_clean_rows(split_table_path, species)
+    if "species" not in clean.columns:
+        return {}
+    return dict(zip(clean["Sample"], clean["species"].astype(str), strict=True))

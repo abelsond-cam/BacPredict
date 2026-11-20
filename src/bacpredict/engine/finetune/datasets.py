@@ -57,6 +57,13 @@ class LabelInjectingFileDataset(torch.utils.data.Dataset):
         if prot_embeddings is None:
             raise KeyError(f"Sample {sample_id} is missing 'prot_embeddings'/'protein_embeddings'.")
 
+        # One input dtype whatever the store holds. The TB/Kp stores are fp32 (returned untouched: ``.float()``
+        # is a no-op on fp32), the multi-species AMR store is bf16, and a cross-species store mixes both through
+        # symlinked Kp files. bf16 -> fp32 is exact, so every genome reaches the model as the fp32 input the TB/Kp
+        # models were trained on, and a batch never mixes dtypes.
+        if prot_embeddings.is_floating_point() and prot_embeddings.dtype != torch.float32:
+            prot_embeddings = prot_embeddings.float()
+
         if prot_embeddings.dim() == 2:
             prot_embeddings = prot_embeddings.unsqueeze(0)
 

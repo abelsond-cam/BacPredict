@@ -314,3 +314,51 @@ uv run python -m bacpredict.engine.splits.build_amr_holdout_splits \
 ⚠ The builder stops if a group spans the held-out ST and not. One case would trigger it: a CDC strain whose two
 BioSamples type differently, with one of them ST235. That has not been checked against `genome_qc.csv`. If it
 happens, the call is David's.
+
+## Training
+
+One model per drug, trained by the shared trainer from that drug's split table (`<drug>_split.csv`, *Splits*).
+[`scripts/train_pa_models.sh`](scripts/train_pa_models.sh) runs the PsA-only arm from a CSD3 login node:
+
+| Stage | What it does |
+|---|---|
+| `splits` | Writes `splits/eligible_genomes.csv` (every `bakta_annotation.csv` genome; refuses if any lacks a `.pt`), then runs the builder with ST235, the exclusion file and the group file |
+| `check-splits` | Per drug, the trainer's own read of its table: genomes per split, % R, and any genome without a `.pt` |
+| `smoke` | Stage A: one drug (`SMOKE_DRUG`, default ciprofloxacin), `--n-samples 10`, one GPU, 1 h wall. Output `models/smoke/<stamp>/<drug>/`; `models/smoke/LATEST` names it |
+| `check-smoke` | Stage A passes if `results.json` holds `holdout` and `holdout_st`, both score files match them, and a checkpoint was saved |
+| `overfit` | Stage B, read from the same run: last logged train loss ≤ 0.1 (`OVERFIT_MAX_LOSS`) and train = holdout AUROC ≥ 0.99 |
+| `submit` | Stage C: a GPU array, one task per drug, into `models/<drug>/`. Refuses while a `pa-finetune` job is live or if any `models/<drug>/` exists |
+| `collect` | `models/holdout_metrics.csv`: a row per drug × holdout, with each run's `results.json` path. A drug without a `results.json` is a `missing` row |
+
+**Stage A and B are one run.** The trainer's 10-genome path takes a class-balanced 10 of `train` (seeded) and uses
+them as train, validate and holdout for 100 epochs; it also scores a balanced 10 of `holdout_st` so that path runs.
+
+**What `finetune_amr --split-table` does** (`--task pa_ast`, which requires a split table):
+- Train, validate, holdout and the labels come from the table alone, through `engine/splits` (`load_splits`,
+  `load_split_ids`, `load_split_species`). There is no AST sheet, no k-fold and no `train_val_eval`. Only 0/1 labels
+  are read, so a fractional (conflicting) label never trains or scores.
+- Every genome of every split must have a `.pt` in `--embeddings-dir` (default `processed/esm/`). A missing one
+  (a dangling symlink counts) stops the run before the model loads.
+- After training, the best model (early stopping on validation AUROC) scores `holdout` and each `--extra-holdouts`
+  split (default `holdout_st`). `results.json` keeps the holdout's metrics in `metrics` and adds `holdouts`, with
+  per-species blocks when the table holds more than one species. Per-sample scores go to `eval_scores.npz` and
+  `eval_scores_holdout_st.npz`. Field reference: `docs/results_schema.md`.
+- The dataset casts every embedding to fp32, so the bf16 PsA files and any fp32 file symlinked from the Kp store
+  reach the model as one dtype (bf16 → fp32 is exact). The model's master weights are bf16 either way.
+- A cross-species arm uses a free task label (e.g. `pa_entero_ast`), which the trainer accepts only with explicit
+  `--embeddings-dir` and `--split-table`.
+
+**The GPU array** is `engine/finetune/scripts/finetune_amr_array.sh` (its header lists every setting):
+- It runs `ARRAY_REPO`, a detached worktree at the SHA to run (`.venv` symlinked to the shared env), pinned by
+  `EXPECT_SHA`. The driver refuses unless that worktree's trainer files are byte-identical to its own.
+- Each task also checks `split_manifest.json`'s md5 against the one at submit: a rebuilt split stops pending tasks.
+- It unsets `LD_LIBRARY_PATH`, `LIBRARY_PATH` and `LD_PRELOAD` and runs Python with `-X faulthandler` (the cclake
+  login-node crash, PROJECT_STATE §3.6 *Caveats*). DataLoader workers = the allocation's cores.
+- Hyperparameters are the deployed TB/Kp ones: lr 1.5e-4, batch 1 × grad-accum 8, warmup 0.1, bf16, evaluation every
+  250 optimizer steps, early stopping after 15 evaluations without a 0.005 AUROC gain, at most 40 epochs.
+  Patience counts evaluations, not epochs.
+- Resources: 1 A100 on `ampere`, 32 cores, 250 GB (ampere's one-GPU ceiling), `FLOTO-SL2-GPU`, 35 h. A
+  ~2,500-genome drug at ~3 s per step is ~16 min per epoch, so the 40-epoch cap is ~11 h of training plus
+  validation passes; 35 h stays under the QOS's 36 h cap.
+- A task refuses if its `results.json` already exists. A run killed at the wall resumes with
+  `--resume-from-checkpoint <models>/<drug>/checkpoint-<step>`, not by resubmitting the array.

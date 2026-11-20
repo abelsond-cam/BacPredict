@@ -220,3 +220,28 @@ def test_provenance_fields_optional_and_backward_compatible(tmp_path: Path):
     assert payload["model"]["revision"] is None
     assert "run" not in payload
     assert "versions" not in payload
+
+
+def test_per_class_metrics_counts_recall_precision():
+    from bacpredict.engine.finetune.metrics import per_class_metrics
+
+    # R: 3 genomes, 2 called R; S: 2 genomes, 1 called R (a false positive)
+    y_true = [1, 1, 1, 0, 0]
+    y_prob = [0.9, 0.8, 0.2, 0.7, 0.1]
+    pc = per_class_metrics(y_true, y_prob)
+    full = compute_full_metrics(y_true, y_prob)
+    assert pc["1"]["n"] == 3 and pc["1"]["n_predicted"] == 3 and pc["0"]["n"] == 2 and pc["0"]["n_predicted"] == 2
+    assert pc["1"]["recall"] == pytest.approx(full["sensitivity"]) == pytest.approx(2 / 3)
+    assert pc["0"]["recall"] == pytest.approx(full["specificity"]) == pytest.approx(1 / 2)
+    assert pc["1"]["precision"] == pytest.approx(2 / 3) and pc["0"]["precision"] == pytest.approx(1 / 2)
+    assert pc["1"]["f1"] == pytest.approx(full["f1"])
+
+
+def test_per_class_metrics_empty_class_is_nan_not_an_error():
+    import math
+
+    from bacpredict.engine.finetune.metrics import per_class_metrics
+
+    pc = per_class_metrics([1, 1], [0.9, 0.4])
+    assert pc["0"]["n"] == 0 and math.isnan(pc["0"]["recall"]) and pc["0"]["f1"] == 0.0
+    assert per_class_metrics([], [])["1"]["n"] == 0 and math.isnan(per_class_metrics([], [])["1"]["f1"])
