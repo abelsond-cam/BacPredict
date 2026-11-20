@@ -412,9 +412,18 @@ def main() -> None:
         control = summarise_lineage_control(overall, within, "lineage")
         control.to_csv(args.out_dir / "lineage_control_summary.csv", index=False)
         if not control.empty:
-            survived = int(control["survives_stratification"].sum())
+            survivors = control[control["survives_stratification"]]
+            # The count alone is misleading and has to be reported with its scale. At n=98 a
+            # consistent shift of 0.006 logits reaches significance, so most "survivors" are
+            # effects far too small to mean anything: measured on TB rifampicin, 1,410 genes
+            # survived with a median |effect| of 0.0063 while exactly 3 exceeded 1 logit.
+            effect = survivors["pooled_delta"].abs()
             logger.info("Lineage control: %d of %d testable genes keep a same-signed significant "
-                        "effect inside at least one lineage", survived, len(control))
+                        "effect inside at least one lineage -- but significance is not effect "
+                        "size: median |effect| among them %.4f, %d exceed 0.1 and %d exceed 1.0 "
+                        "logit. Read this table by effect size, not by the flag.",
+                        len(survivors), len(control), float(effect.median()) if len(effect) else float("nan"),
+                        int((effect > 0.1).sum()), int((effect > 1.0).sum()))
     else:
         logger.warning("No lineage column — the control that licenses a causal reading was NOT run")
 

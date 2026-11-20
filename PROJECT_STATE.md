@@ -8,6 +8,13 @@
 > (job `41497655`), `train_pa_ast/genomes/bakta/*.tsv` and `raw/bakta_db/v5.1_full.md5`.
 > **Nothing else was re-verified this pass.**
 >
+> **Verification scope, this pass (2026-11-20, second): §3.1 the first cohort-scale attribution
+> result only**, at `23ebf7d`. Every number read from the four tables under
+> `$B/train_tb_ast/attribution/stats_ig_cohortmean/` written by that commit's
+> `explain.attribution_statistics` over `rifampin_ig_cohortmean_annotated.parquet` (399,691 rows,
+> 98 genomes), and from `attribution/rpoB_{ser450leu,wt}_substitution.csv`. A separate pass from the
+> §3.6 one above, by a different agent. **Nothing else was re-verified this pass.**
+>
 > **Stamp before this one: 2026-11-19 @ `480ce9d`.**
 > **Verification scope, that pass (2026-11-19, fourth): §3.6 Enterobacterales labels, BakRep coverage, the
 > CheckM2 scikit-learn check and the PsA ESM-C smoke only.** Read on CSD3 from
@@ -233,9 +240,122 @@ predate the fixes and need regenerating.
 
 **In flight.** **Gene-level attribution** of the two single-determinant fine-tunes — TB rifampin and
 Kp ciprofloxacin — to test whether the models read `rpoB` and `gyrA`/`parC` rather than lineage.
-Stages 1–5 written and unit-tested (51 tests under `tests/engine/explain/`). **No cohort-scale
-biological result has been read for either organism.** Plan:
+Stages 1–5 written and unit-tested (63 tests under `tests/engine/explain/`). **TB rifampicin has a
+cohort-scale result at n=98 and its lineage control is read** (below). **Kp ciprofloxacin has
+nothing** — no attribution value, no `gyrA` number, no test. Plan:
 `~/.claude/plans/i-want-to-run-polymorphic-oasis.md`.
+
+**★ First cohort-scale attribution result — TB rifampicin, 98 genomes, 2026-11-20.** IG against the
+cohort-mean baseline at `n_steps=200`, fp32, `checkpoint-31000`. All four tables under
+`$B/train_tb_ast/attribution/stats_ig_cohortmean/`, from
+`rifampin_ig_cohortmean_annotated.parquet` (399,691 rows). The cohort file asks for 100; **2 genomes
+are missing** — both their fill jobs died with `Illegal instruction` (exit 132) at process start on
+two different `ampere` nodes, before Python ran.
+
+**(a) Ranking — which genes the model attends to**, mean within-genome normalised |attribution|,
+one-sided Wilcoxon, BH-adjusted, `min_genomes=20`, 2,196 genes tested
+(`gene_attribution_ranking.csv`):
+
+| gene | n_genomes | mean z | median z | median copies | p_adj |
+|---|--:|--:|--:|--:|--:|
+| **rpoB** | 98 | **38.19** | 39.97 | 1 | 3.34e-15 |
+| pncA | 92 | 23.87 | 22.59 | 1 | 8.41e-15 |
+| ethA | 98 | 17.05 | 16.37 | 1 | 3.34e-15 |
+| rpoC | 98 | 6.57 | 5.14 | 2 | 3.34e-15 |
+| pirG | 93 | 5.62 | 3.56 | 3 | 9.20e-14 |
+| cobH | 93 | 4.47 | 3.48 | 1 | 6.32e-15 |
+| — negative controls — | | | | | |
+| rpoA | 98 | **−0.049** | | 1 | 1.00 |
+| katG | 96 | **−0.055** | | 1 | 1.00 |
+| gyrA | 98 | **−0.058** | | 1 | 1.00 |
+| inhA | 97 | **−0.070** | | 1 | 1.00 |
+
+`rpoB` sits ~38 SD above its genome's average gene. The four controls — the other polymerase
+subunit, and the determinants of three *other* drugs — sit at zero. **36.2% of total |attribution|
+is in genes Bakta could not name** (genome-specific locus tags, unpoolable across genomes); that
+share is the gap only an annotation-free gene family can reach.
+
+**(b) The resistant-vs-susceptible contrast must be run SIGNED. `|·|` inverts it.** Decision of
+record 2026-11-20, taken with David. Split on the **AST label**, never on variant carriage — the
+label is the only thing known for a phenotype without a catalogue. Signed scores are used **raw**:
+the cohort-mean baseline's `f(baseline)` is genome-independent to within 0.004 logits, so genomes
+already share an origin. From `gene_resistant_vs_susceptible_signed.csv` and
+`gene_resistant_vs_susceptible_abs_z.csv` (31 R / 67 S):
+
+| gene | median R | median S | **signed** Δmean | rank-biserial | signed p_adj | `\|·\|` Δ | `\|·\|` p_adj |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| **rpoB** | **+3.85** | **−10.17** | **+13.48** | **0.958** | <1e-15 | **−11.41** | 8e-4 |
+| pncA | +0.85 | −6.67 | +7.13 | 0.795 | <1e-15 | −9.88 | 0.024 |
+| ethA | −0.34 | −4.67 | +4.39 | 0.786 | <1e-15 | −6.76 | 0.004 |
+| rpoC | +0.99 | +1.24 | −0.33 | −0.274 | 0.043 | +3.19 | 0.001 |
+| katG | −0.004 | +0.009 | −0.013 | −0.869 | <1e-4 | −0.015 | 0.012 |
+| rpoA | −0.001 | −0.004 | +0.002 | 0.213 | 0.121 | +0.015 | 0.011 |
+
+Wild-type `rpoB` carries a **large negative** attribution and mutant `rpoB` a smaller positive one,
+so the absolute value ranks susceptible genomes higher and the contrast comes out **confidently
+backwards** on all three top genes. This is an inversion, not a weakened effect, and it is pinned by
+a regression test (`test_absolute_value_inverts_the_contrast_the_signed_score_recovers`). The
+ranking in (a) is unaffected and unchanged — direction is irrelevant there.
+
+**(c) The lineage control — read, and the signal survives it.** `gene_resistant_vs_susceptible_
+within_lineage_signed.csv`; only lineage2 and lineage4 have ≥5 genomes per class (lineage3 n=12 is
+not testable at that floor):
+
+| gene | lineage | n R / n S | median R | median S | Δ | disjoint | p_adj |
+|---|---|---|--:|--:|--:|---|--:|
+| **rpoB** | lineage2 | 14 / 13 | +4.08 | −8.37 | **+12.80** | **yes** | 1.0e-4 |
+| **rpoB** | lineage4 | 13 / 36 | +3.20 | −10.14 | **+12.81** | no | 1.0e-4 |
+| pncA | lineage2 | 11 / 13 | +0.75 | −3.99 | +4.31 | no | 1.9e-3 |
+| pncA | lineage4 | 11 / 35 | +1.04 | −9.86 | +10.24 | no | 2.0e-4 |
+| ethA | lineage2 | 14 / 13 | +0.07 | −3.91 | +4.10 | no | 7.0e-4 |
+| ethA | lineage4 | 13 / 36 | −0.53 | −6.06 | +5.01 | no | 1.0e-4 |
+
+`rpoB`'s pooled effect of +13.48 is reproduced almost exactly inside each lineage (+12.80, +12.81),
+and in lineage2 the two classes **do not overlap at all**. This is the control the whole analysis
+turns on, and it is the first time it has been run on anything in this programme's attribution arm.
+
+**⚠ Read `lineage_control_summary.csv` by effect size, never by the flag.** 1,410 of 2,191 testable
+genes carry `survives_stratification = True`, which sounds like a failure of specificity and is not:
+at n=98 a consistent shift of 0.006 logits reaches BH significance. Among those 1,410 the **median
+|effect| is 0.0063 logits**, only **13 exceed 0.1**, and **exactly 3 exceed 1.0** — `rpoB` (13.48),
+`pncA` (7.13), `ethA` (4.39). `katG` is the clean illustration: it "survives" in both lineages at an
+effect of **−0.013 logits**. `main()` now logs this distribution beside the count so the number
+cannot be quoted without its scale.
+
+**⚠ Multi-copy genes are collapsed to one value per genome before any test** (summed — IG
+attributions are additive; `--multi-copy max|mean` available). Counting rows had made `n_genomes`
+read 190 for `rpoC` and 331 for `pirG` across 98 genomes, and two annotated copies in one genome are
+not two independent observations. 26,267 (genome, gene) pairs were collapsed.
+
+**⚠ What this does NOT establish.** `pncA` and `ethA` are the determinants of *pyrazinamide* and
+*ethionamide*, and they were contrasted on the **rifampicin** label. Rifampicin resistance is
+usually MDR, so co-resistance and genuine reading are both live and untested; David's reading is
+that the model is still partly using population association. Distinguishing them needs the same
+signed contrast run against each gene's own drug label. Attribution remains **descriptive** — it
+says where the model's output is sensitive, not why.
+
+**WT-substitution counterfactual — `rpoB` Ser450Leu, measured 2026-11-20**, n=100 TB genomes,
+`$B/train_tb_ast/attribution/rpoB_{ser450leu,wt}_substitution.csv`. One protein embedding is
+replaced and the genome re-predicted; nothing else changes. The full 2×2:
+
+| donor | recipient | n | median donor distance | median Δlogit | flipped |
+|---|---|--:|--:|--:|--:|
+| **Ser450Leu** | **non-carrier** | 67 | 0.00719 | **+4.804** | **28/67** |
+| **wild-type** | **carrier** | 33 | 0.00713 | **−0.204** | **4/33** |
+| Ser450Leu | carrier (already has it) | 33 | 0.00370 | +0.018 | 1/33 |
+| wild-type | non-carrier (already WT) | 67 | 0.00026 | −0.008 | 0/67 |
+
+The two informative cells are the first two: **matched donor distance** (0.0072 vs 0.0071), opposite
+directions. The bottom two are null controls — substituting a protein for one the genome effectively
+already has — and both land at ~0, as they must. ⚠ **A previous note in this file claimed donor
+distance was constant at 0.00719 across both arms. It is not** (0.00026 for WT→non-carrier), and
+that cell's null result is near-tautological; the WT→carrier row is the real converse test.
+
+**⚠ The asymmetry is a hypothesis, not a result.** Adding the mutation flips 42% of susceptible
+genomes; removing it flips only 12% of resistant ones. Consistent with resistant genomes carrying
+further rifampicin determinants, or with the model reading other correlates — untested either way.
+Flippers and non-flippers occur in every lineage; what separates them is the genome's starting logit
+(p=1.7e-07) and its response magnitude (p=7.9e-10, rho=+0.49), **not** its lineage.
 
 **⛔ Input-space zero-baseline gradient attribution is INVALID on this architecture — measured
 2026-11-19, and 100 TB + ~600 Kp genomes of output were deleted because of it.** The checkpoints'
