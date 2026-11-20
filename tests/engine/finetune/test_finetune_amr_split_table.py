@@ -46,14 +46,20 @@ class _FakeTrainer:
         self.train_dataset, self.eval_dataset, self.args = train_dataset, eval_dataset, args
         self.predicted: list[list[str]] = []
         self.batch_dtypes: list[torch.dtype] = []
+        self.calls: list[str] = []
         _FakeTrainer.instances.append(self)
 
     def train(self, resume_from_checkpoint=None):
+        self.calls.append("train")
         n = min(len(self.train_dataset), 4)
         batch = self.collate([self.train_dataset[i] for i in range(n)])
         self.batch_dtypes.append(batch["protein_embeddings"].dtype)
 
+    def save_state(self):
+        self.calls.append("save_state")
+
     def predict(self, dataset):
+        self.calls.append("predict")
         labels = [int(dataset[i]["labels"].item()) for i in range(len(dataset))]
         self.predicted.append(list(dataset.sample_ids))
         logits = [[_logit(s, y)] for s, y in zip(dataset.sample_ids, labels, strict=True)]
@@ -129,6 +135,8 @@ def test_split_table_run_trains_on_the_tables_splits_and_scores_every_holdout(tm
     assert trainer.train_dataset.sample_ids == train and trainer.eval_dataset.sample_ids == validate
     assert "FRACTIONAL" not in train  # a conflicting label never trains
     assert trainer.predicted == [holdout, holdout_st]  # the best model scores both holdouts, holdout first
+    # the whole run's history (<run>/trainer_state.json, which Stage B reads), saved once training has ended
+    assert trainer.calls == ["train", "save_state", "predict", "predict"]
     assert trainer.batch_dtypes == [torch.float32]  # bf16 and fp32 .pt reach the model as one dtype
 
     res = json.loads((out / "results.json").read_text())
@@ -178,6 +186,7 @@ def test_smoke_with_a_split_table_is_train_equals_eval_on_a_balanced_ten(tmp_pat
     assert len(trainer.predicted[1]) == 10 and set(trainer.predicted[1]) <= set(load_split_ids(table, "holdout_st"))
     res = json.loads((out / "results.json").read_text())
     assert res["split"]["source"] == "smoke" and res["holdouts"]["holdout_st"]["n_samples"] == 10
+    assert trainer.calls[:2] == ["train", "save_state"]  # the overfit check reads that history
 
 
 def test_a_missing_embedding_fails_before_the_model_loads(tmp_path, fakes):
@@ -301,6 +310,7 @@ def test_kfold_path_unchanged(tmp_path, fakes):
     assert set(res["run"]) == {"precision", "pooling", "seed", "lr", "early_stopping_patience",
                                "early_stopping_threshold", "eval_steps", "warmup_proportion", "max_steps"}
     assert not list(run_dir.glob("eval_scores*.npz"))
+    assert "save_state" not in trainer.calls  # AST-sheet runs write nothing new
 
 
 def test_csv_and_smoke_paths_unchanged(tmp_path, fakes):
@@ -310,8 +320,10 @@ def test_csv_and_smoke_paths_unchanged(tmp_path, fakes):
     trainer = fakes.trainers[-1]
     assert trainer.train_dataset.sample_ids == df.loc[df.train_val_eval == "train", "Sample"].tolist()
     assert trainer.predicted == [df.loc[df.train_val_eval == "evaluate", "Sample"].tolist()]
+    assert "save_state" not in trainer.calls
 
     out = _run(tmp_path, None, ast_sheet_path=str(sheet), task="tb_ast", n_samples=10)
     trainer = fakes.trainers[-1]
     assert trainer.train_dataset.sample_ids == df.loc[df.train_val_eval == "train", "Sample"].tolist()[:10]
+    assert "save_state" not in trainer.calls
     assert json.loads((out / "results.json").read_text())["split"]["source"] == "smoke"

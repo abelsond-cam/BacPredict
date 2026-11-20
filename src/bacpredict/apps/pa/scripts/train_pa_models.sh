@@ -18,10 +18,12 @@
 #
 # Training is engine/finetune/scripts/finetune_amr_array.sh: finetune_amr --split-table, bf16, early stopping, the
 # deployed TB/Kp hyperparameters. Stage A and B are one run: the trainer's 10-genome path trains, validates and
-# scores on the same balanced 10 for 100 epochs, so `smoke` submits it, `check-smoke` checks its outputs (Stage A)
-# and `overfit` reads its loss and AUROC (Stage B). smoke and submit need ARRAY_REPO, a detached worktree at the SHA
-# to run (.venv symlinked to the shared env), whose trainer code must be byte-identical to this checkout's; the
-# array is pinned to its SHA (EXPECT_SHA) and to the split tables (split_manifest.json md5).
+# scores on the same balanced 10 for 100 optimizer steps, all of them (the smoke sets PATIENCE=1000: early stopping
+# off). `smoke` submits it, `check-smoke` checks its outputs (Stage A) and `overfit` reads its whole loss history
+# from <run>/trainer_state.json, never a checkpoint's (Stage B, engine/finetune/check_overfit). smoke and submit need
+# ARRAY_REPO, a detached worktree at the SHA to run (.venv symlinked to the shared env), whose trainer code must be
+# byte-identical to this checkout's; the array is pinned to its SHA (EXPECT_SHA) and to the split tables
+# (split_manifest.json md5).
 #
 # Settings: SMOKE_DRUG (default ciprofloxacin), ONLY (comma-separated subset of drugs for submit/collect),
 # ARRAY_CONCURRENT (a %N throttle on the array), SMOKE_TIME / TRAIN_TIME (walls), OVERWRITE=1 (let the builder replace
@@ -156,9 +158,11 @@ smoke)
     out_root=$MODELS/smoke/$(date +%Y%m%d_%H%M%S)
     md5=$(md5sum < "$SPLITS/split_manifest.json" | cut -d' ' -f1)
     sha=$(git -C "$array_repo" rev-parse HEAD)
-    # ~100 epochs of 10 genomes plus a checkpoint each epoch: well under an hour (short job: a tight wall)
+    # 100 optimizer steps (10 genomes at grad-accum 8 = 2 per epoch: 50 epochs) plus an evaluation and a checkpoint
+    # each epoch: well under an hour (short job: a tight wall). PATIENCE=1000 turns early stopping off: on train =
+    # validate the AUROC saturates within a few epochs, and patience 15 would end the run long before the loss falls
     submit --array=0 --time="${SMOKE_TIME:-01:00:00}" --job-name=pa-finetune-smoke \
-        --export="ALL,REPO=$array_repo,EXPECT_SHA=$sha,TASK=pa_ast,DRUGS=$SMOKE_DRUG,SPLIT_DIR=$SPLITS,SPLIT_MANIFEST_MD5=$md5,EMBEDDINGS_DIR=$ESM,OUT_ROOT=$out_root,N_SAMPLES=10" \
+        --export="ALL,REPO=$array_repo,EXPECT_SHA=$sha,TASK=pa_ast,DRUGS=$SMOKE_DRUG,SPLIT_DIR=$SPLITS,SPLIT_MANIFEST_MD5=$md5,EMBEDDINGS_DIR=$ESM,OUT_ROOT=$out_root,N_SAMPLES=10,PATIENCE=1000" \
         "$array_repo/$ARRAY"
     mkdir -p "$MODELS/smoke"
     echo "$out_root/$SMOKE_DRUG" > "$MODELS/smoke/LATEST"
@@ -193,6 +197,8 @@ for name, block in r.get("holdouts", {}).items():
           f"bal_acc={m['balanced_accuracy']:.3f} scores={npz.name}")
 if not list(run.glob("checkpoint-*/config.json")):
     problems.append("no checkpoint-*/config.json")
+if not (run / "trainer_state.json").exists():
+    problems.append("no trainer_state.json (the whole run's history, which overfit reads)")
 for p in problems:
     print(f"FAIL {p}")
 print("Stage A: PASS" if not problems else "Stage A: FAIL")
@@ -201,23 +207,9 @@ EOF
     ;;
 overfit)
     run=$(latest_smoke)
-    uv run --no-sync python -I - "$run" "${OVERFIT_MAX_LOSS:-0.1}" <<'EOF'
-import json, sys
-from pathlib import Path
-run, max_loss = Path(sys.argv[1]), float(sys.argv[2])
-states = sorted(run.glob("checkpoint-*/trainer_state.json"), key=lambda p: json.loads(p.read_text())["global_step"])
-if not states:
-    sys.exit(f"no checkpoint-*/trainer_state.json under {run}: has the smoke finished?")
-history = json.loads(states[-1].read_text())["log_history"]
-loss = [h["loss"] for h in history if "loss" in h]
-auroc = [h["eval_auroc"] for h in history if "eval_auroc" in h]
-holdout = json.loads((run / "results.json").read_text())["holdouts"]["holdout"]["metrics"]["auroc"]
-print(f"train loss: first {loss[0]:.4f}, min {min(loss):.4f}, last {loss[-1]:.4f} ({len(loss)} logged)")
-print(f"eval AUROC (validate = train): last {auroc[-1]:.3f}, max {max(auroc):.3f}; holdout (= train) AUROC {holdout:.3f}")
-ok = loss[-1] <= max_loss and holdout >= 0.99
-print(f"Stage B ({'PASS' if ok else 'FAIL'}): last train loss <= {max_loss} and train = holdout AUROC >= 0.99")
-sys.exit(0 if ok else 1)
-EOF
+    # engine/finetune/check_overfit: the whole run's history (<run>/trainer_state.json), the full schedule run, last
+    # train loss <= OVERFIT_MAX_LOSS, train = holdout AUROC >= 0.99
+    uv run --no-sync python -m bacpredict.engine.finetune.check_overfit "$run" --max-loss "${OVERFIT_MAX_LOSS:-0.1}"
     ;;
 submit)
     array_repo=${ARRAY_REPO:?set ARRAY_REPO to a detached worktree at the SHA to run (see the header)}

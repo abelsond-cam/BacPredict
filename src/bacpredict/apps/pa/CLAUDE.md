@@ -324,14 +324,21 @@ One model per drug, trained by the shared trainer from that drug's split table (
 |---|---|
 | `splits` | Writes `splits/eligible_genomes.csv` (every `bakta_annotation.csv` genome; refuses if any lacks a `.pt`), then runs the builder with ST235, the exclusion file and the group file |
 | `check-splits` | Per drug, the trainer's own read of its table: genomes per split, % R, and any genome without a `.pt` |
-| `smoke` | Stage A: one drug (`SMOKE_DRUG`, default ciprofloxacin), `--n-samples 10`, one GPU, 1 h wall. Output `models/smoke/<stamp>/<drug>/`; `models/smoke/LATEST` names it |
-| `check-smoke` | Stage A passes if `results.json` holds `holdout` and `holdout_st`, both score files match them, and a checkpoint was saved |
-| `overfit` | Stage B, read from the same run: last logged train loss ≤ 0.1 (`OVERFIT_MAX_LOSS`) and train = holdout AUROC ≥ 0.99 |
+| `smoke` | Stage A: one drug (`SMOKE_DRUG`, default ciprofloxacin), `--n-samples 10`, early stopping off (`PATIENCE=1000`), one GPU, 1 h wall. Output `models/smoke/<stamp>/<drug>/`; `models/smoke/LATEST` names it |
+| `check-smoke` | Stage A passes if `results.json` holds `holdout` and `holdout_st`, both score files match them, a checkpoint was saved and `trainer_state.json` was written |
+| `overfit` | Stage B, read from the same run by `engine/finetune/check_overfit`: the whole 100-step schedule ran, the logged loss reaches its end, the last logged train loss ≤ 0.1 (`OVERFIT_MAX_LOSS`) and train = holdout AUROC ≥ 0.99 |
 | `submit` | Stage C: a GPU array, one task per drug, into `models/<drug>/`. Refuses while a `pa-finetune` job is live or if any `models/<drug>/` exists |
 | `collect` | `models/holdout_metrics.csv`: a row per drug × holdout, with each run's `results.json` path. A drug without a `results.json` is a `missing` row |
 
 **Stage A and B are one run.** The trainer's 10-genome path takes a class-balanced 10 of `train` (seeded) and uses
-them as train, validate and holdout for 100 epochs; it also scores a balanced 10 of `holdout_st` so that path runs.
+them as train, validate and holdout for 100 optimizer steps (2 per epoch at grad-accum 8); it also scores a balanced
+10 of `holdout_st` so that path runs. The smoke turns early stopping off: on train = validate the AUROC saturates in a
+few epochs, and patience 15 would end the run before the loss has fallen.
+
+**Stage B reads `<run>/trainer_state.json`, never `checkpoint-*/trainer_state.json`.** With `save_total_limit=1` and
+`load_best_model_at_end`, HF deletes every checkpoint but the best when training ends. The best is the first
+evaluation to reach the top AUROC, so its history stops there, often at the first logged loss. Split-table mode
+therefore calls `Trainer.save_state()` after training, which writes the whole run's history beside `results.json`.
 
 **What `finetune_amr --split-table` does** (`--task pa_ast`, which requires a split table):
 - Train, validate, holdout and the labels come from the table alone, through `engine/splits` (`load_splits`,

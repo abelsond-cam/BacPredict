@@ -12,7 +12,8 @@ holdout and the labels all come from the one table, read through :mod:`bacpredic
 zero-shot held-out ST) is scored with the same best model as the holdout. ``results.json`` keeps the holdout's
 metrics in ``metrics`` and adds a ``holdouts`` block with every holdout's metrics, per-class counts and, when the
 table holds more than one species, per-species metrics. Per-sample scores go to ``eval_scores.npz`` (holdout)
-and ``eval_scores_<split>.npz`` (each extra holdout). Without ``--split-table`` the trainer is unchanged.
+and ``eval_scores_<split>.npz`` (each extra holdout), and the whole run's training history to ``trainer_state.json``
+(the surviving checkpoint's own copy stops at the best step). Without ``--split-table`` the trainer is unchanged.
 """
 import hashlib
 import json
@@ -706,6 +707,10 @@ def run(
         "max_steps": max_steps,
     }
     if splits is not None:
+        # The whole run's log history, as <output_dir>/trainer_state.json. No checkpoint holds it: with
+        # save_total_limit=1 and load_best_model_at_end, HF deletes all but the best checkpoint at the end of train(),
+        # and the best is the first evaluation to reach the top AUROC, so its history stops there (Stage B reads this).
+        trainer.save_state()
         write_split_table_results(
             trainer,
             make_dataset,

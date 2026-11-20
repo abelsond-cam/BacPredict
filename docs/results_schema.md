@@ -110,6 +110,10 @@ the fields above. `metrics` is still the holdout's, so v1 readers keep working.
 Each archive holds `sample_ids`, `y_true`, `y_prob`, `drug`, and per row `split` and `species` (`""` when the table
 has none); `operating_threshold` is NaN (no threshold is tuned at training time).
 
+A split-table run also writes `trainer_state.json` beside `results.json` (`Trainer.save_state()` after training): the
+whole run's `log_history`, `global_step` and `max_steps`. It is the only file holding the full history: the surviving
+`checkpoint-*` is the best one, and its own `trainer_state.json` stops at that step.
+
 ## Forward compatibility
 
 v1 readers must tolerate (ignore) unknown top-level keys. The HGT-vs-vertical mechanism stratification milestone will add a `metrics_by_mechanism` block:
