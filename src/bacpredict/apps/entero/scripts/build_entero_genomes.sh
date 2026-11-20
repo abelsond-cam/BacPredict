@@ -6,12 +6,19 @@
 #                                                                             #  source → shards_smoke/ (sizes the arrays)
 #   bash src/bacpredict/apps/entero/scripts/build_entero_genomes.sh submit   # the full arrays (or: submit atb|portal|shovill
 #                                                                             #  [indices], e.g. submit atb 17,240)
-#   bash src/bacpredict/apps/entero/scripts/build_entero_genomes.sh status   # shards written vs tasks, failures by cause
+#   bash src/bacpredict/apps/entero/scripts/build_entero_genomes.sh refs     # the skani panel's genomes (login node)
+#   bash src/bacpredict/apps/entero/scripts/build_entero_genomes.sh qc       # freeze qc/checkm2_list.tsv; CheckM2 array
+#                                                                             #  + skani job (or: qc checkm2 [indices] |
+#                                                                             #  qc skani, reruns from the frozen list)
+#   bash src/bacpredict/apps/entero/scripts/build_entero_genomes.sh collate  # genome_qc.csv, species_crosstab.csv, …
+#   bash src/bacpredict/apps/entero/scripts/build_entero_genomes.sh status   # build, CheckM2 and skani progress
 #
 # The same engine stage as P. aeruginosa (engine/genomes/; mechanics in apps/pa/CLAUDE.md), with what differs for a
 # multi-genus cohort: mlst picks its scheme per genome (no --scheme), and each genome's expected size comes from its
-# genus (read depth for the reads-only genomes, and shovill's --gsize). QC (CheckM2 sharded, a multi-reference skani
-# panel) and collate are the next stages and are not built yet (apps/entero/CLAUDE.md).
+# genus (read depth for the reads-only genomes, and shovill's --gsize). QC is sharded: CheckM2 as an array over a
+# frozen list (2,000 genomes per 32-core task), skani as one job against a multi-reference panel
+# (apps/entero/species_reference_panel.tsv, a DRAFT), and collate runs in report mode: no species rule, a label ×
+# called species crosstab to decide one from (apps/entero/CLAUDE.md).
 #
 # Contigs and Prodigal GFFs go to the flat per-BioSample stores shared with PsA ($ROOT/raw/{contigs,prodigal}); the
 # manifest, shards and QC under processed/enterobacterales/genomes/. The ATB array reads a frozen, read-only snapshot
@@ -32,6 +39,12 @@ GEN=$T/genomes
 STORE=$ROOT/raw  # build_genomes writes contigs/ and prodigal/ under it
 ATB_INDEX=$ROOT/raw/allthebacteria/assemblies_list_20261115
 PSA_COHORT=$ROOT/processed/paeruginosa/genomes/embedding_input.csv
+QCD=$GEN/qc
+REFDIR=$ROOT/raw/reference_genomes
+PANEL=src/bacpredict/apps/entero/species_reference_panel.tsv
+# CheckM2 task k takes rows k*2000+1 … of the frozen list: fixed here, never overridden between qc and its reruns
+CHECKM2_CHUNK=2000
+CHECKM2_DB=${CHECKM2_DB:-$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/raw/CheckM2/Zenodo_db/CheckM2_database/uniref100.KO.1.dmnd}
 # expected genome size (bp) per genus: typical complete-genome lengths, chromosome plus usual plasmid load
 GENOME_SIZES=Escherichia=5.1e6,Shigella=4.6e6,Salmonella=4.9e6,Klebsiella=5.6e6,Enterobacter=4.9e6,Serratia=5.2e6,Proteus=4.1e6,Morganella=3.9e6,Providencia=4.3e6
 GENOME_SIZE=5.0e6  # any other genus
@@ -51,6 +64,9 @@ submit() {  # sbatch, then print the resource line the global rules require (rea
 chunks() { uv run --no-sync python -m bacpredict.engine.genomes.build_genomes --manifest "$1" --sources "$2" \
                --chunk-size "$3" --count-chunks; }
 tools_bin() { echo "$(cd "$REPO/src/bacpredict/engine/genomes" && pixi run -- printenv CONDA_PREFIX)/bin"; }
+checkm2_bin() { echo "$(cd "$REPO/src/bacpredict/engine/genomes" && pixi run -e checkm2 -- printenv CONDA_PREFIX)/bin"; }
+panel() { grep -v '^#' "$PANEL" | tail -n +2 | cut -f1,2; }  # species<TAB>accession, the DRAFT panel's rows
+n_checkm2_tasks() { echo $(( ($(wc -l < "$QCD/checkm2_list.tsv") + CHECKM2_CHUNK - 1) / CHECKM2_CHUNK )); }
 # array tasks take manifest rows by position: never re-plan while any build array of this cohort is queued
 no_live_arrays() {
     local live; live=$(squeue -u "$USER" -h -o '%j' | grep -c '^entero-build-genomes' || true)
@@ -134,6 +150,106 @@ submit)  # submit [atb|portal|shovill] [indices] — all three, all indices, by 
             --job-name=entero-build-genomes-shovill --export=ALL,$common,MANIFEST=$M,SOURCES=shovill,CHUNK=1 "$ARRAY"
     fi
     ;;
+refs)
+    # the panel's reference genomes, as build_pa_genomes.sh setup fetches PsA's; skipped where already on disk
+    mkdir -p "$REFDIR"
+    panel | cut -f2 | sort -u | while read -r acc; do
+        [[ -s "$REFDIR/$acc.fna.gz" ]] && continue
+        tmp=$(mktemp -d)
+        curl -fsSL --retry 5 -o "$tmp/ds.zip" \
+            "https://api.ncbi.nlm.nih.gov/datasets/v2/genome/accession/$acc/download?include_annotation_type=GENOME_FASTA"
+        unzip -p "$tmp/ds.zip" '*.fna' | gzip > "$REFDIR/$acc.fna.gz.part"
+        mv "$REFDIR/$acc.fna.gz.part" "$REFDIR/$acc.fna.gz"
+        rm -rf "$tmp"
+        echo "$acc → $REFDIR/$acc.fna.gz"
+    done
+    n=$(panel | wc -l); have=0
+    while IFS=$'\t' read -r sp acc; do [[ -s "$REFDIR/$acc.fna.gz" ]] && have=$((have + 1)); done < <(panel)
+    echo "panel: $have of $n references on disk in $REFDIR"
+    (( have == n ))
+    ;;
+qc)  # qc — freeze the list, submit both; qc checkm2 [indices] | qc skani — rerun from the frozen list
+    LIST=$QCD/checkm2_list.tsv
+    what=${2:-all}
+    [[ $what == all || $what == checkm2 || $what == skani ]] || { echo "qc [checkm2 [indices] | skani]"; exit 2; }
+    if [[ ! -e $LIST ]]; then
+        [[ $what == all ]] || { echo "no frozen list yet: run qc with no arguments first"; exit 1; }
+        live=$(squeue -u "$USER" -h -o '%j' | grep -c '^entero-build-genomes' || true)
+        (( live == 0 )) || { echo "an entero-build-genomes job is queued or running: its genomes would miss CheckM2"; exit 1; }
+        mkdir -p "$QCD"
+        # every built genome (status ok), from the newest shard row per genome (as collate reads them), sorted; the
+        # build must be complete, so no genome can become ok after the list is frozen
+        uv run --no-sync python -I - "$GEN/genome_manifest.csv" "$GEN/shards" "$LIST" <<'EOF'
+import sys
+from pathlib import Path
+import pandas as pd
+from bacpredict.engine.genomes.collate_genomes import read_shards
+m = pd.read_csv(sys.argv[1], dtype=str)
+want = set(m.loc[m["source"].ne("drop"), "Sample"])
+s = read_shards(Path(sys.argv[2]))
+s = s[s["Sample"].isin(want)]
+if missing := want - set(s["Sample"]):
+    sys.exit(f"{len(missing)} of {len(want)} buildable genomes have no shard row yet, e.g. {sorted(missing)[:5]}: "
+             "finish the build (status) before freezing the CheckM2 list")
+ok = s[s["status"].eq("ok")].sort_values("Sample")
+if not ok["contigs_path"].str.startswith("/").all():
+    sys.exit("contigs paths must be absolute")
+ok[["Sample", "contigs_path"]].to_csv(sys.argv[3] + ".part", sep="\t", header=False, index=False)
+Path(sys.argv[3] + ".part").replace(sys.argv[3])
+print(f"CheckM2 list: {len(ok)} built genomes of {len(want)} buildable ({len(s) - len(ok)} failed to build) → {sys.argv[3]}")
+EOF
+        chmod a-w "$LIST"
+    elif [[ $what == all ]]; then
+        echo "$LIST is frozen (task k takes rows by position): rerun with qc checkm2 <indices>, or qc skani"; exit 1
+    fi
+    # tasks run here; it holds no code they use (they run CheckM2 / skani by absolute path), so the shared checkout
+    # is fine, but a pinned worktree (ARRAY_REPO, as for submit) keeps EXPECT_SHA from stopping pending tasks
+    array_repo=${ARRAY_REPO:-$REPO}
+    pin="REPO=$array_repo,EXPECT_SHA=$(git -C "$array_repo" rev-parse HEAD)"
+    if [[ $what == all || $what == checkm2 ]]; then
+        [[ -s $CHECKM2_DB ]] || { echo "no CheckM2 database at $CHECKM2_DB"; exit 1; }
+        cbin=$(checkm2_bin)
+        "$cbin/checkm2" --version  # runs from its bin without pixi, as the tasks will
+        n=$(n_checkm2_tasks)
+        submit --array="${3:-0-$((n - 1))%40}" --partition=${QC_PARTITION:-icelake} --cpus-per-task=32 \
+            --mem=${QC_MEM:-100G} --time=${QC_TIME:-04:00:00} --job-name=entero-checkm2 \
+            --export=ALL,$pin,LIST=$LIST,QC_DIR=$QCD,CHUNK=$CHECKM2_CHUNK,CHECKM2_BIN=$cbin,CHECKM2_DB=$CHECKM2_DB \
+            src/bacpredict/engine/genomes/scripts/run_checkm2_shard.sh
+        echo "  CheckM2: $n tasks × $CHECKM2_CHUNK genomes; ~1.7 h each at PsA's 1.6 core-min per genome, so 4 h;" \
+             "memory unmeasured, 100G fits icelake's 32 × 3,380 MB (QC_PARTITION=icelake-himem QC_MEM=200G if not)"
+    fi
+    if [[ $what == all || $what == skani ]]; then
+        # skani's references as it runs them; collate reads this file, not the panel, so the two cannot drift
+        panel | while IFS=$'\t' read -r sp acc; do
+            [[ -s "$REFDIR/$acc.fna.gz" ]] || { echo "reference $acc is not on disk: run refs" >&2; exit 1; }
+            printf '%s\t%s\n' "$sp" "$REFDIR/$acc.fna.gz"
+        done > "$QCD/skani_refs.tsv.part"
+        mv "$QCD/skani_refs.tsv.part" "$QCD/skani_refs.tsv"
+        submit --partition=${QC_PARTITION:-icelake} --cpus-per-task=32 --mem=64G --time=01:00:00 \
+            --job-name=entero-skani \
+            --export="ALL,$pin,LIST=$LIST,REFS_TSV=$QCD/skani_refs.tsv,QC_DIR=$QCD,TOOLS_BIN=$(tools_bin)" \
+            src/bacpredict/engine/genomes/scripts/run_skani.sh
+        echo "  skani: $(wc -l < "$LIST") genomes × $(wc -l < "$QCD/skani_refs.tsv") references in slices of 5,000;" \
+             "minutes expected (PsA: seconds for 3,773 × 2), so 1 h; 64G bounds 5,000 sketches"
+    fi
+    ;;
+collate)
+    LIST=$QCD/checkm2_list.tsv
+    [[ -s $LIST && -s $QCD/skani_dist.tsv && -s $QCD/skani_refs.tsv ]] || { echo "run qc first (status)"; exit 1; }
+    reports=(); missing=(); n=$(n_checkm2_tasks)
+    for ((k = 0; k < n; k++)); do
+        f=$(printf '%s/checkm2/checkm2_quality_report_%05d.tsv' "$QCD" "$k")
+        if [[ -s $f ]]; then reports+=("$f"); else missing+=("$k"); fi
+    done
+    (( ${#missing[@]} == 0 )) || { echo "CheckM2 tasks without a report: $(IFS=,; echo "${missing[*]}") (qc checkm2 <indices>)"; exit 1; }
+    refs=()
+    while IFS=$'\t' read -r sp path; do refs+=(--species-ref "$sp=$path"); done < "$QCD/skani_refs.tsv"
+    # report mode: no species rule yet — it is decided from species_crosstab.csv (label × call) with David
+    uv run --no-sync python -m bacpredict.engine.genomes.collate_genomes \
+        --manifest "$GEN/genome_manifest.csv" --shard-dir "$GEN/shards" \
+        --checkm2 "${reports[@]}" --skani "$QCD/skani_dist.tsv" "${refs[@]}" \
+        --species-mode report --cohort "$T/cohort.csv" --labels "$T/binary_ast.csv" --out-dir "$GEN"
+    ;;
 status)
     uv run --no-sync python -I - "$GEN/genome_manifest.csv" "$GEN/shards" <<'EOF'
 import sys
@@ -153,7 +269,34 @@ print(f"genomes: {int(ok.sum())} ok, {int((~ok).sum())} failed, of {int(m['sourc
 if (~ok).any():
     print(rows.loc[~ok, "status"].str.slice(0, 60).value_counts().head(10).to_string())
 EOF
+    uv run --no-sync python -I - "$QCD" "$CHECKM2_CHUNK" <<'EOF'
+import sys
+from pathlib import Path
+import pandas as pd
+qcd, chunk = Path(sys.argv[1]), int(sys.argv[2])
+lst = qcd / "checkm2_list.tsv"
+if not lst.exists():
+    print("QC: no frozen CheckM2 list yet (qc)")
+    sys.exit(0)
+want = pd.read_csv(lst, sep="\t", header=None, names=["Sample", "contigs"], dtype=str)["Sample"]
+n = -(-len(want) // chunk)
+reports = {int(p.stem.rsplit("_", 1)[1]): p for p in (qcd / "checkm2").glob("checkm2_quality_report_*.tsv")}
+missing = sorted(set(range(n)) - set(reports))
+got = pd.concat([pd.read_csv(p, sep="\t", usecols=["Name"], dtype=str) for p in reports.values()])["Name"] \
+    if reports else pd.Series(dtype=str)
+print(f"CheckM2: {len(reports)}/{n} tasks written; missing tasks: {','.join(map(str, missing))}; "
+      f"{int(want.isin(got).sum())} of {len(want)} listed genomes reported")
+sk = qcd / "skani_dist.tsv"
+if sk.exists():
+    hit = pd.read_csv(sk, sep="\t", usecols=["Query_file"])["Query_file"].map(lambda p: Path(p).name.split(".")[0])
+    print(f"skani: {hit.nunique()} of {len(want)} listed genomes within ~80 % ANI of a panel reference")
+else:
+    print("skani: skani_dist.tsv not written")
+xt = qcd.parent / "species_crosstab.csv"
+if xt.exists():
+    print(f"collate: {xt} written")
+EOF
     ;;
 *)
-    sed -n '2,10p' "$0"; exit 2 ;;
+    sed -n '2,15p' "$0"; exit 2 ;;
 esac

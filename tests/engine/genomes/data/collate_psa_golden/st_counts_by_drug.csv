@@ -1,0 +1,4 @@
+drug,st,n,n_R,n_S
+amikacin,235,2,0,2
+meropenem,235,2,2,0
+meropenem,-,1,0,1

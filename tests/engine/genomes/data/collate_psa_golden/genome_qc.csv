@@ -1,0 +1,9 @@
+Sample,source,n_drugs_labelled,status,n_contigs,total_length,n50,gc,n_cds,mlst_scheme,st,mlst_alleles,contigs_path,gff_path,seconds,checkm2_completeness,checkm2_contamination,ani_Pseudomonas aeruginosa,ani_Pseudomonas paraeruginosa,species_call,qc_fail,qc_pass
+S01,atb,3,ok,80.0,6500000.0,200000.0,66.2,6100.0,paeruginosa,235,acsA(1);aroE(2),/store/contigs/S01.fna.gz,/store/prodigal/S01.gff.gz,12.5,99.95,0.4,99.1,93.4,Pseudomonas aeruginosa,,True
+S02,atb,2,ok,80.0,6500000.0,200000.0,66.2,6100.0,paeruginosa,-,acsA(1);aroE(2),/store/contigs/S02.fna.gz,/store/prodigal/S02.gff.gz,12.5,99.1,0.8,99.3,,Pseudomonas aeruginosa,,True
+S03,portal_gff,2,ok,2500.0,6500000.0,1500.0,66.2,6100.0,paeruginosa,111,acsA(1);aroE(2),/store/contigs/S03.fna.gz,/store/prodigal/S03.gff.gz,12.5,98.0,1.0,98.9,,Pseudomonas aeruginosa,contigs;n50,False
+S04,shovill,1,fail:shovill exit 1 x,,,,,,,,,/store/contigs/S04.fna.gz,/store/prodigal/S04.gff.gz,12.5,,,,,,build,False
+S05,atb,2,ok,80.0,6500000.0,200000.0,66.2,6100.0,paeruginosa,235,acsA(1);aroE(2),/store/contigs/S05.fna.gz,/store/prodigal/S05.gff.gz,12.5,85.5,0.3,99.0,,Pseudomonas aeruginosa,completeness,False
+S06,portal_gff,2,ok,80.0,6500000.0,200000.0,66.2,6100.0,paeruginosa,621,acsA(1);aroE(2),/store/contigs/S06.fna.gz,/store/prodigal/S06.gff.gz,12.5,99.9,7.2,93.6,99.2,Pseudomonas paraeruginosa,contamination;species,False
+S07,shovill,1,ok,80.0,6500000.0,200000.0,66.2,6100.0,paeruginosa,235,acsA(1);aroE(2),/store/contigs/S07.fna.gz,/store/prodigal/S07.gff.gz,12.5,99.4,0.2,,,unknown,species,False
+S08,atb,2,ok,80.0,6500000.0,200000.0,66.2,9100.0,paeruginosa,235,acsA(1);aroE(2),/store/contigs/S08.fna.gz,/store/prodigal/S08.gff.gz,12.5,100.0,0.1,99.5,,Pseudomonas aeruginosa,,True

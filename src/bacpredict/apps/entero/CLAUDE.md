@@ -15,7 +15,7 @@ The genus list is every genus whose family maps to the order Enterobacterales in
 `engine/ast_labels/breakpoints.py`, so the label filter and breakpoint resolution cannot disagree. Of those 21
 genera, 9 have labelled genomes.
 
-## Genome build — design (agreed 2026-11-19, not yet built)
+## Genome build — design (agreed 2026-11-19)
 
 Scale: ~67.8k labelled genomes, 96.5 % of them in AllTheBacteria (ATB). The PsA engine
 (`engine/genomes/`) is reused; PsA outputs must stay byte-identical (regression-check every engine change by
@@ -62,10 +62,54 @@ exist):
    250-genome chunks and each genome is predicted independently, so concatenated shards equal one run.
 5. *Species check* with skani against a reference panel, then *collate*. The rule is a decision to make with
    the data (label × call crosstab): *Shigella* sits inside *E. coli* at species-level ANI, and the KpSC, the
-   *S. enterica* subspecies and the *E. cloacae* complex need their own references.
+   *S. enterica* subspecies and the *E. cloacae* complex need their own references. Stages 4–5: *QC* below.
 6. *Annotation*: BakRep GFF3 where held; our Bakta otherwise.
 7. *Proteins* → *ESM-C* (bf16, `--max-proteins 9000`, FLOTO-SL2-GPU; ~250 A100-h at the measured 2.8 ms per
    protein).
+
+## QC: CheckM2, skani, collate
+
+The stages of [`scripts/build_entero_genomes.sh`](scripts/build_entero_genomes.sh) after the build:
+
+| Stage | What it does |
+|---|---|
+| `refs` | Login node. Fetches every accession of [`species_reference_panel.tsv`](species_reference_panel.tsv) from NCBI Datasets into `raw/reference_genomes/<acc>.fna.gz` (as `build_pa_genomes.sh setup`); skips files already there; exits 1 unless every reference is on disk |
+| `qc` | Refuses while any `entero-build-genomes` job is queued or running, or while any buildable manifest genome has no shard row. Writes `genomes/qc/checkm2_list.tsv` (`Sample`, contigs path; every `ok` genome by its newest shard row, sorted, no header) and makes it read-only. Submits the CheckM2 array (`entero-checkm2`, `%40`) and the skani job (`entero-skani`), each with its resource line |
+| `qc checkm2 [indices]`, `qc skani` | Rerun from the frozen list, e.g. `qc checkm2 3,17`. `qc` alone refuses once the list exists: task k takes rows by position |
+| `collate` | Refuses unless every CheckM2 task wrote its report. Runs `collate_genomes --species-mode report --cohort cohort.csv` over every report, `qc/skani_dist.tsv`, and the references skani ran with (`qc/skani_refs.tsv`, written when `qc` submits skani; collate never re-reads the panel) |
+| `status` | Also: CheckM2 tasks written and missing indices, listed genomes reported, genomes with a skani hit |
+
+**The two engine scripts** (`engine/genomes/scripts/`; `run_genome_qc.sh` stays PsA's one-job QC):
+- `run_checkm2_shard.sh`: array task k takes rows k·2,000+1 … of the list (the 2,000 is fixed in the driver, never
+  overridden between `qc` and a rerun), links them as `<Sample>.fna.gz` on `/local`, and runs CheckM2 from
+  `CHECKM2_BIN` (the `checkm2` pixi env's `bin/`, resolved at submit: no pixi in a task). It writes
+  `qc/checkm2/checkm2_quality_report_<k, 5 digits>.tsv` atomically. Exits 3 if the checkout moved (`EXPECT_SHA`),
+  4 on an empty slice or a bad list, 5 on an unreadable contigs file, and 6 if CheckM2 reported fewer genomes
+  than it was given (that report is still written). Shape: 32 cores, 100 GB, 4 h on `icelake`, from PsA's
+  ~1.6 core-min per genome; `QC_PARTITION`, `QC_MEM`, `QC_TIME` override it. CheckM2's memory has never been
+  measured: read sacct MaxRSS on the first tasks.
+- `run_skani.sh`: one job, `skani dist` of every listed genome against every panel reference, in slices of
+  5,000 genomes (`QCHUNK`) so memory stays bounded, concatenated under one header into `qc/skani_dist.tsv`.
+- Both run under `ARRAY_REPO` if set (as `submit`), otherwise this checkout; neither runs repo code.
+
+**Collate in report mode** (`engine/genomes/collate_genomes.py`; PsA's target mode is unchanged):
+- No species rule: species never fails QC, so this `embedding_input.csv` is not species-filtered.
+- `genomes/species_crosstab.csv`: the label species (`cohort.csv` `species`) × the called species, over every
+  built genome: `n`, `n_qc_pass`, `n_species_conflict` (the portal's two tables disagree), `n_no_skani_hit`,
+  quantiles of the best ANI (`best_ani_min`, `_q01`, `_q05`, `_q25`, `_median`, `_q75`, `_max`), and
+  `gap_to_runner_up_median` (best species' ANI minus the next species').
+- `genome_qc.csv` gains `species`, `species_genotype`, `species_conflict` from `cohort.csv`, and one `ani_<name>`
+  column per panel species name, the best over that name's references (*E. coli* has two).
+- `st_counts_by_drug.csv` keys `st` as `<scheme>:<ST>` whenever more than one `mlst_scheme` is present; an untyped
+  genome is `<scheme>:-` (`-:-` where mlst found no scheme), never a holdout candidate.
+- A built genome with no CheckM2 row stops collate, naming it (`--allow-incomplete` to inspect).
+- ⚠ A genome that becomes `ok` after the list is frozen (a rerun build) has no CheckM2 row; there is no top-up
+  stage yet.
+
+**The panel** ([`species_reference_panel.tsv`](species_reference_panel.tsv)) is a **DRAFT for David to decide**:
+39 references, each an NCBI reference genome or, for subspecies (which NCBI does not give reference genomes),
+an NCBI type-material assembly. Its header holds the NCBI Datasets commands each row was verified with and the
+gaps it leaves.
 
 **Traps already found** (design review, 2026-11-19):
 - ST numbers collide across MLST schemes: count and hold out by scheme:ST. `mlst` 2.35.0 has schemes for every

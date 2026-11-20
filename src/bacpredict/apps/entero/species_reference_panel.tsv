@@ -1,0 +1,71 @@
+# DRAFT — Enterobacterales skani species-reference panel. David decides the panel; nothing here is a decision of record.
+#
+# Columns: species (the name the species call reports; a name may repeat: collate keeps the best ANI per name),
+# NCBI assembly accession, the NCBI taxid the accession must descend from (species, or subspecies for subspecies
+# rows), why the accession was chosen, strain. build_entero_genomes.sh reads columns 1-2 only.
+#
+# Chosen from the NCBI Datasets v2 REST API, never from memory (2026-11-20):
+#   reference genomes:  curl -s "https://api.ncbi.nlm.nih.gov/datasets/v2/genome/taxon/<species name>/dataset_report?filters.reference_only=true"
+#   subspecies (NCBI designates reference genomes per species only), type strains:
+#                       curl -s "https://api.ncbi.nlm.nih.gov/datasets/v2/genome/taxon/<taxid>/dataset_report?filters.is_type_material=true&filters.assembly_source=refseq"
+# Verified per row (every row must print current, and "reference genome" or TYPE_MATERIAL; no TAXON line):
+#   grep -v '^#' species_reference_panel.tsv | tail -n +2 | while IFS=$'\t' read -r sp acc taxid basis strain; do
+#     r=$(curl -s "https://api.ncbi.nlm.nih.gov/datasets/v2/genome/accession/$acc/dataset_report" | jq -c '.reports[0]')
+#     t=$(jq -r .organism.tax_id <<<"$r")
+#     curl -s "https://api.ncbi.nlm.nih.gov/datasets/v2/taxonomy/taxon/$t/dataset_report" \
+#       | jq -e --argjson want "$taxid" '.reports[0].taxonomy | (.parents + [.tax_id]) | index($want)' >/dev/null \
+#       || echo "TAXON $acc is not under $taxid"
+#     jq -r '[.accession, .assembly_info.assembly_status, (.assembly_info.refseq_category // "-"),
+#             (.type_material.type_label // "-"), .organism.organism_name] | @tsv' <<<"$r"
+#   done
+#
+# Not in the panel, for David to decide:
+# - Klebsiella variicola subsp. tropica (KpSC phylogroup Kp5): NCBI has no reference genome and no type-material
+#   assembly for it (taxon 2489014). A tropica genome will be called K. variicola, the reference below being subsp.
+#   variicola.
+# - Klebsiella quasipneumoniae's species reference genome (GCF_020099175.1, FDAARGOS_1503) names no subspecies, so
+#   the two subspecies' type strains stand in for it.
+# - Escherichia coli phylogroups B1, B2 and D have no reference here (K-12 is phylogroup A, Sakai E). Shigella sits
+#   inside E. coli at species-level ANI, so an E. coli genome may be called a Shigella: read the crosstab first.
+# - The S. enterica subsp. indica type assembly carries 9.35 % CheckM contamination in its NCBI report.
+# - Shigella boydii's reference genome is contig-level (ESBL-W3-2).
+species	accession	taxid	basis	strain
+Escherichia coli	GCF_000005845.2	562	reference genome	K-12 substr. MG1655
+Escherichia coli	GCF_000008865.2	562	reference genome	O157:H7 Sakai
+Escherichia albertii	GCF_028622335.1	208962	reference genome	BIA_5-2
+Shigella flexneri	GCF_000006925.2	623	reference genome	2a str. 301
+Shigella sonnei	GCF_002950395.1	624	reference genome	ATCC 29930
+Shigella boydii	GCF_002290485.1	621	reference genome	ESBL-W3-2
+Shigella dysenteriae	GCF_022354085.1	622	reference genome	SWHEFF_49
+Salmonella enterica subsp. enterica	GCF_000006945.2	59201	reference genome	serovar Typhimurium LT2
+Salmonella enterica subsp. salamae	GCF_008692775.1	59202	type material	CCUG 30039T
+Salmonella enterica subsp. arizonae	GCF_008692845.1	59203	type material	CCUG 6322T
+Salmonella enterica subsp. diarizonae	GCF_008692785.1	59204	type material	CCUG 30040T
+Salmonella enterica subsp. houtenae	GCF_008692755.1	59205	type material	CCUG 30041T
+Salmonella enterica subsp. indica	GCF_018033035.1	59207	type material	CCUG30038
+Salmonella bongori	GCF_000252995.1	54736	reference genome	NCTC 12419
+Klebsiella pneumoniae	GCF_000240185.1	573	reference genome	HS11286
+Klebsiella quasipneumoniae subsp. quasipneumoniae	GCF_020525925.1	1667327	type material	01A030T
+Klebsiella quasipneumoniae subsp. similipneumoniae	GCF_020525685.1	1463164	type material	07A044T
+Klebsiella variicola	GCF_020525545.1	244366	reference genome	subsp. variicola F2R9T
+Klebsiella quasivariicola	GCF_020525665.1	2026240	reference genome	08A119
+Klebsiella africana	GCF_020526085.1	2489010	reference genome	200023
+Klebsiella oxytoca	GCF_900636985.1	571	reference genome	NCTC13727
+Klebsiella michiganensis	GCF_015139575.1	1134687	reference genome	THO-011
+Klebsiella grimontii	GCF_042137965.1	2058152	reference genome	2750
+Klebsiella pasteurii	GCF_018139045.1	2587529	reference genome	Sb-24
+Klebsiella aerogenes	GCF_019048125.1	548	reference genome	FDAARGOS 1442
+Enterobacter cloacae	GCF_905331265.2	550	reference genome	-
+Enterobacter hormaechei	GCF_019048245.1	158836	reference genome	FDAARGOS 1433
+Enterobacter kobei	GCF_023023125.1	208224	reference genome	11778-yvys
+Enterobacter asburiae	GCF_007035805.1	61645	reference genome	17Nkhm-UP2
+Enterobacter ludwigii	GCF_001750725.1	299767	reference genome	EN-119
+Enterobacter roggenkampii	GCF_001729805.1	1812935	reference genome	DSM 16690
+Enterobacter bugandensis	GCF_900324475.1	881260	reference genome	-
+Serratia marcescens	GCF_030291735.1	615	reference genome	ELP1.10
+Proteus mirabilis	GCF_000069965.1	584	reference genome	HI4320
+Morganella morganii	GCF_006094455.1	582	reference genome	subsp. morganii ATCC 25830
+Providencia stuartii	GCF_035747985.1	588	reference genome	41
+Providencia rettgeri	GCF_019048105.1	587	reference genome	FDAARGOS 1450
+Citrobacter freundii	GCF_904859905.1	546	reference genome	MSB1_1H
+Raoultella ornithinolytica	GCF_030505655.1	54291	reference genome	NCBI name Klebsiella ornithinolytica; RoM27LC23

@@ -1,0 +1,4 @@
+Sample,sr_assembly_file,sr_gff_file
+S01,/store/contigs/S01.fna.gz,/store/prodigal/S01.gff.gz
+S02,/store/contigs/S02.fna.gz,/store/prodigal/S02.gff.gz
+S08,/store/contigs/S08.fna.gz,/store/prodigal/S08.gff.gz
