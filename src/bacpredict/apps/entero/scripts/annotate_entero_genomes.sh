@@ -7,6 +7,7 @@
 #   bash src/bacpredict/apps/entero/scripts/annotate_entero_genomes.sh submit [all|planned|refused]
 #                                                                                # CPU array: our Bakta on the rest
 #   bash src/bacpredict/apps/entero/scripts/annotate_entero_genomes.sh collate  # CPU job: genomes/bakta_annotation.csv
+#                                                                                #  (_<cohort>.csv for another COHORT)
 #   bash src/bacpredict/apps/entero/scripts/annotate_entero_genomes.sh status   # ingest outcomes, run records, rosters
 #
 # The PsA annotation (apps/pa/scripts/annotate_pa_genomes.sh; mechanics in apps/pa/CLAUDE.md *Annotation*) at
@@ -18,7 +19,11 @@
 # - each submit writes a new, dated, read-only run roster; `submit planned` runs the genomes BakRep cannot cover
 #   while ingest is still going;
 # - COHORT (default genomes/embedding_input.csv, Sample + sr_assembly_file) says which genomes submit and collate
-#   cover. Before species QC exists, COHORT=$GEN/bakta/built_genomes.csv (every built genome, written by plan).
+#   cover. Before species QC exists, COHORT=$GEN/bakta/built_genomes.csv (every built genome, written by plan). Only
+#   the default cohort's collate writes genomes/bakta_annotation.csv (the protein stage's input); any other COHORT's
+#   writes genomes/bakta_annotation_<COHORT file stem>.csv.
+# - submit refuses a run roster of more than MAX_RUN genomes (default 6000; raise it to mean it), and refuses while any
+#   roster genome's ingest ended error:* unless ALLOW_ERRORS=1, which runs ours on them (the same annotation of record).
 # ingest and the run array execute ARRAY_REPO, a detached worktree at the SHA to run with .venv symlinked to the shared
 # env (apps/pa/CLAUDE.md *Annotation*): the shared checkout moves under other agents.
 set -euo pipefail
@@ -33,7 +38,14 @@ T=$ROOT/processed/enterobacterales
 GEN=$T/genomes
 PLAN=$GEN/bakta
 STATUS=$PLAN/ingest_status.tsv
-COHORT=${COHORT:-$GEN/embedding_input.csv}
+# resolved once, to an absolute path, before the cd below: submit and collate refuse if it does not exist (the default
+# exists only once species QC has run)
+COHORT_ARG=${COHORT:-$GEN/embedding_input.csv}
+COHORT=$(realpath -e -- "$COHORT_ARG" 2>/dev/null) || COHORT=
+need_cohort() {
+    [[ -n $COHORT && -f $COHORT && -s $COHORT ]] || {
+        echo "no cohort at $COHORT_ARG (set COHORT; before QC, COHORT=$GEN/bakta/built_genomes.csv)"; exit 1; }
+}
 ANN=$ROOT/raw/bakta  # shared with PsA, keyed by BioSample
 DB=$ROOT/raw/bakta_db/v5.1_full
 IN_BAKREP=$ROOT/processed/bakrep_coverage_20261119/in_bakrep_ids.txt
@@ -138,14 +150,24 @@ submit)  # submit [all|planned|refused]: all = planned + refused (the default)
         *) echo "submit [all|planned|refused]"; exit 2 ;;
     esac
     ar=$(pinned)
-    for f in "$PLAN/built_genomes.csv" "$COHORT" "$DB/version.json" "$PSA_RUN_ROSTER"; do
-        [[ -s $f ]] || { echo "missing $f (built_genomes.csv: run plan; else set COHORT, or check the DB)"; exit 1; }
+    need_cohort
+    for f in "$PLAN/built_genomes.csv" "$DB/version.json" "$PSA_RUN_ROSTER"; do
+        [[ -s $f ]] || { echo "missing $f (built_genomes.csv: run plan; else check the DB)"; exit 1; }
     done
+    # a guard on cost: a roster this large is more likely a wrong COHORT or a failed ingest than the plan
+    max_run=${MAX_RUN:-6000}
+    [[ $max_run =~ ^[0-9]+$ ]] || { echo "MAX_RUN=$max_run: not a whole number"; exit 2; }
+    allow_errors=${ALLOW_ERRORS:-0}
+    [[ $allow_errors == [01] ]] || { echo "ALLOW_ERRORS=$allow_errors: 0 or 1"; exit 2; }
     # planned: cohort genomes BakRep cannot cover (not ATB, or ATB but not in BakRep); needs no ingest status, so it
-    #   can run while ingest does. refused: BakRep-roster genomes ingest did not take (absent, refused:*, skipped:run).
+    #   can run while ingest does. refused: BakRep-roster genomes ingest did not take (absent, refused:*, skipped:run;
+    #   error:* too under ALLOW_ERRORS=1).
     refuse_if_live "$clash" "an overlapping run array would run the same genomes twice"
     if [[ $mode != planned ]]; then
-        [[ -s $STATUS ]] || { echo "no $STATUS: run ingest first (or: submit planned)"; exit 1; }
+        [[ -s $STATUS ]] || {
+            echo "no $STATUS: run ingest first, or re-run it (a killed ingest leaves only $STATUS.part)," \
+                 "or: submit planned"
+            exit 1; }
         refuse_if_live entero-bakta-ingest "its status file is not final yet"
     fi
     # one annotation of record across species: our runs must use the tool env and database PsA's runs used
@@ -160,7 +182,7 @@ submit)  # submit [all|planned|refused]: all = planned + refused (the default)
         exit 1; }
     roster=$PLAN/run_roster_$(date +%Y%m%d_%H%M%S).tsv
     uv run --no-sync python -I - "$COHORT" "$PLAN/built_genomes.csv" "$IN_BAKREP" "$STATUS" "$ANN" "$fp" "$mode" \
-        "$roster" <<'EOF'
+        "$roster" "$max_run" "$allow_errors" <<'EOF'
 import json
 import os
 import sys
@@ -169,7 +191,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-cohort_csv, built_csv, in_bakrep, status_tsv, ann, fp, mode, out = sys.argv[1:9]
+cohort_csv, built_csv, in_bakrep, status_tsv, ann, fp, mode, out, max_run, allow_errors = sys.argv[1:11]
 ann = Path(ann)
 c = pd.read_csv(cohort_csv, dtype={"Sample": str}, usecols=["Sample", "sr_assembly_file"])
 if not c["Sample"].is_unique or c["sr_assembly_file"].isna().any():
@@ -189,10 +211,10 @@ else:
         sys.exit(f"{int(none.sum())} BakRep-roster cohort genomes have no ingest status "
                  f"(e.g. {c.loc[none, 'Sample'].head(3).tolist()}): re-run plan, then ingest")
     err = bakrep & status.str.startswith("error:", na=False)
-    if err.any():
-        sys.exit(f"ingest ended {status[err].value_counts().to_dict()}: re-run ingest (it resumes) until none do; "
-                 f"details in {status_tsv}")
-    rest = bakrep & status.ne("ingested")  # absent, refused:*, skipped:run
+    if err.any() and allow_errors != "1":
+        sys.exit(f"ingest ended {status[err].value_counts().to_dict()}: re-run ingest (it resumes) until none do, or "
+                 f"ALLOW_ERRORS=1 to run ours on them (the same annotation of record); details in {status_tsv}")
+    rest = bakrep & status.ne("ingested")  # absent, refused:*, skipped:run; error:* only under ALLOW_ERRORS=1
     take = rest if mode == "refused" else rest | ~bakrep
 why = pd.Series(np.where(bakrep, "BakRep " + status.fillna(""), "not in BakRep: " + source), index=c.index)
 want = c[take]
@@ -218,6 +240,9 @@ print(f"cohort {len(c)} ({cohort_csv}): {ingested}{mode}: {len(want)}, of which 
       f"our run → {len(todo)} to run")
 if len(todo):
     print(why[todo.index].value_counts().to_string())
+    if len(todo) > int(max_run):
+        sys.exit(f"{len(todo)} genomes to run is more than MAX_RUN={max_run}: no roster written. If the counts above "
+                 f"are meant, re-run with MAX_RUN={len(todo)}")
     with open(out, "x") as fh:  # dated, never overwritten
         todo[["Sample", "sr_assembly_file"]].to_csv(fh, sep="\t", header=False, index=False)
 EOF
@@ -235,8 +260,16 @@ EOF
     echo "roster: $roster"
     ;;
 collate)
-    # exit 1, and no table, unless every COHORT genome has exactly one current annotation (md5 of its contigs now)
-    [[ -s $COHORT ]] || { echo "no cohort at $COHORT (set COHORT)"; exit 1; }
+    # exit 1, and no table, unless every COHORT genome has exactly one current annotation (md5 of its contigs now).
+    # Only the canonical cohort may write bakta_annotation.csv, the protein stage's input: a pre-QC collate must
+    # neither replace it nor (failing) delete it
+    need_cohort
+    canon=$(realpath -e -- "$GEN/embedding_input.csv" 2>/dev/null) || canon=
+    if [[ $COHORT == "$canon" ]]; then
+        out=$GEN/bakta_annotation.csv
+    else
+        stem=$(basename -- "$COHORT"); out=$GEN/bakta_annotation_${stem%.*}.csv
+    fi
     cr=${ARRAY_REPO:-$REPO}
     run_dir=$LOGS/entero_bakta_collate_$(date +%Y%m%d_%H%M%S); mkdir -p "$run_dir"
     submit --account=$ACCOUNT --partition=icelake --cpus-per-task=16 --mem=32G --time=02:00:00 \
@@ -244,11 +277,12 @@ collate)
         --output="$run_dir/%x_%j.out" --error="$run_dir/%x_%j.out" \
         --wrap="$(pin_guard "$cr") PYTHONUNBUFFERED=1 uv run --project $cr --no-sync \
 python -m bacpredict.engine.genomes.bakta collate --cohort $COHORT --annotation-dir $ANN --tools-bin $(tools_bin) \
---db $DB --out $GEN/bakta_annotation.csv"
+--db $DB --out $out"
+    echo "cohort: $COHORT → $out"
     echo "logs: $run_dir"
     ;;
 status)
-    uv run --no-sync python -I - "$PLAN" "$ANN" "$COHORT" <<'EOF'
+    uv run --no-sync python -I - "$PLAN" "$ANN" "${COHORT:-$COHORT_ARG}" <<'EOF'
 import os
 import sys
 from pathlib import Path
@@ -257,13 +291,16 @@ import pandas as pd
 
 plan, ann, cohort_csv = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
 roster_tsv, status_tsv = plan / "bakrep_roster.tsv", plan / "ingest_status.tsv"
+part_tsv = status_tsv.with_name(status_tsv.name + ".part")  # appended as each genome completes; gone once final
 roster = (pd.read_csv(roster_tsv, sep="\t", header=None, names=["Sample", "contigs"], dtype=str)
           if roster_tsv.exists() else None)
-st = pd.read_csv(status_tsv, sep="\t", dtype=str) if status_tsv.exists() else None
+src = status_tsv if status_tsv.exists() else part_tsv if part_tsv.exists() else None
+st = pd.read_csv(src, sep="\t", dtype=str) if src is not None else None
 if st is None:
     print("no ingest status yet")
 else:
-    print(f"ingest status ({status_tsv}): {len(st)} genomes")
+    what = "final" if src == status_tsv else "NOT final: ingest is running, or was killed (re-run it)"
+    print(f"ingest status ({src}, {what}): {len(st)} genomes")
     print(st["status"].value_counts().to_string())
 if roster is not None:
     n = len(roster) if st is None else int((~roster["Sample"].isin(st["Sample"])).sum())
@@ -281,9 +318,10 @@ for r in sorted(plan.glob("run_roster_*.tsv")):
     with open(r) as fh:
         print(f"  {r.name}: {sum(1 for _ in fh)} genomes")
 EOF
-    squeue -u "$USER" -h -o '%.12i %.24j %.9T %.11M' | grep -E 'entero-bakta' \
-        || echo "no entero-bakta job queued or running"
+    q=$(squeue -u "$USER" -h -o '%.12i %.24j %.9T %.11M') \
+        || { echo "squeue failed: cannot tell which jobs are live"; exit 1; }
+    grep -E 'entero-bakta' <<<"$q" || echo "no entero-bakta job queued or running"
     ;;
 *)
-    sed -n '2,11p' "$0"; exit 2 ;;
+    sed -n '2,12p' "$0"; exit 2 ;;
 esac

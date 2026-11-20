@@ -184,7 +184,7 @@ class _Bakrep:
 
     def __init__(self, root: Path):
         self.root, self.files, self.api_down, self.dl_down = root, {}, set(), set()
-        self.asked, self.fetched = [], []
+        self.asked, self.fetched, self.curl_opts = [], [], set()
 
     def serve(self, sample: str, gff_text: str) -> None:
         self.files[sample] = _write(self.root / "served" / f"{sample}.gff3.gz", gff_text)
@@ -195,9 +195,10 @@ class _Bakrep:
             raise bakta.BakrepUnavailable(f"BakRep API {sample}: curl exit 0, HTTP 503")
         return {"gff3": f"https://x/{sample}.bakta.gff3.gz"} if sample in self.files or sample in self.dl_down else {}
 
-    def download(self, url: str, dest: Path, **_) -> None:
+    def download(self, url: str, dest: Path, **kw) -> None:
         sample = url.rsplit("/", 1)[1].split(".")[0]
         self.fetched.append(sample)
+        self.curl_opts.add(kw.get("curl_opts"))
         if sample in self.dl_down:
             raise subprocess.CalledProcessError(22, ["curl", "-fsSL", url])
         shutil.copyfile(self.files[sample], dest)
@@ -251,6 +252,7 @@ def test_ingest_gives_every_genome_one_outcome(tmp_path, bakrep):
     assert sorted(p.name for p in ann.glob("*.gff3.gz")) == ["OK.bakta.gff3.gz", "RUN.bakta.gff3.gz"]
     assert bakta._md5(ours_gff) == ours_md5 and "RUN" not in bakrep.asked
     assert not list(ann.glob(".*part"))
+    assert bakrep.curl_opts == {bakta.BAKREP_CURL_LIMITS}                     # every download has the stall limit
 
 
 def _ingest_cli(monkeypatch, roster: Path, ann: Path, *extra: str) -> int:
@@ -370,3 +372,143 @@ def test_rerunning_psa_ingest_changes_no_file(tmp_path, bakrep, monkeypatch):
     assert _ingest_cli(monkeypatch, roster, ann) == 0
     assert {p.name: (bakta._md5(p), p.stat().st_mtime_ns) for p in ann.iterdir()} == before
     assert bakrep.asked == [] and bakrep.fetched == []
+
+
+def _gz_variants(text: str) -> dict[str, bytes]:
+    """Bodies a failed transfer can leave with curl exit 0: none of them is whole gzip."""
+    gz = gzip.compress(text.encode())
+    crc = bytes(b ^ 0xFF for b in gz[-8:-4])
+    return {"CUT_IN_HEADER": gz[:15], "CUT_AFTER_HEADER": gz[: len(gz) - 40], "BAD_CRC": gz[:-8] + crc + gz[-4:],
+            "PLAIN": text.encode(), "HTML": b"<html><body>502 Bad Gateway</body></html>\n", "EMPTY": b""}
+
+
+def test_a_body_that_is_not_whole_gzip_is_transient_never_refused(tmp_path, bakrep):
+    """Checked whole before the header is read: a cut body of another release is a failed transfer, not a refusal."""
+    ann, contigs = tmp_path / "ann", _contigs(tmp_path, "S")
+    newer = _gff().replace("v1.9.4", "v1.12.0")                                # would be refused:release if whole
+    for name, body in {**_gz_variants(_gff()), **{f"NEW_{k}": v for k, v in _gz_variants(newer).items()}}.items():
+        bakrep.files[name] = tmp_path / "served" / f"{name}.gff3.gz"
+        bakrep.files[name].parent.mkdir(parents=True, exist_ok=True)
+        bakrep.files[name].write_bytes(body)
+        status, detail = bakta.ingest_one(name, contigs, ann)
+        assert status == "error:transient", (name, status, detail)
+        assert "BakrepUnavailable" in detail
+    assert not list(ann.glob("*")) and not list(ann.glob(".*"))               # nothing left behind, not even a .part
+    bakrep.serve("WHOLE_NEW", newer)                                          # the same body whole is a refusal
+    assert bakta.ingest_one("WHOLE_NEW", contigs, ann)[0] == "refused:release"
+
+
+def test_every_bakrep_request_carries_the_stall_limits(tmp_path, monkeypatch):
+    """curl gives up on a stalled stream (exit 28, then retried) instead of hanging the ingest job."""
+    bin_dir, calls, served = tmp_path / "bin", tmp_path / "calls", _write(tmp_path / "served.gff3.gz", _gff())
+    bin_dir.mkdir()
+    api = '{"results": [{"url": "https://x/S1.bakta.gff3.gz", "attributes": {"tool": "bakta", "filetype": "gff3"}}]}'
+    (bin_dir / "curl").write_text(
+        f'#!/bin/sh\n{{ printf "%s " "$@" | tr "\\n" " "; echo; }} >> "{calls}"\nout=; prev=\n'  # one line per call
+        'for a; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done\n'
+        f'if [ -n "$out" ]; then cat "{served}" > "$out"; else printf \'%s\\n200\' \'{api}\'; fi\n')
+    (bin_dir / "curl").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+    (tmp_path / "out").mkdir()
+    out = bakta.fetch_bakrep("S1", tmp_path / "out")
+    assert bakta._md5(out["gff3"]) == bakta._md5(served)
+    lines = calls.read_text().splitlines()
+    assert len(lines) == 2 and all(" ".join(bakta.BAKREP_CURL_LIMITS) in line for line in lines)
+
+
+def test_ingest_status_is_appended_as_each_genome_completes(tmp_path, bakrep, monkeypatch):
+    """A killed job leaves <status>.part with every outcome reached; no stale final file; a re-run resumes."""
+    ann, status_tsv = tmp_path / "ann", tmp_path / "ingest_status.tsv"
+    for s in ("A", "B"):
+        bakrep.serve(s, _gff())
+    roster = pd.DataFrame({"Sample": ["A", "B", "C"], "contigs": [str(_contigs(tmp_path, s)) for s in "ABC"]})
+    status_tsv.write_text("Sample\tstatus\tdetail\nA\tabsent\tstale\n")       # an earlier run's file
+    part = bakta.status_part(status_tsv)
+    assert part.name == "ingest_status.tsv.part"
+
+    class Killed(BaseException):
+        pass
+
+    real, seen = bakta.ingest_one, {}
+
+    def killed_at_c(sample, contigs, out_dir):
+        if sample == "C":
+            seen["part"] = pd.read_csv(part, sep="\t", dtype=str)                  # what a reader sees mid-run
+            seen["final_exists"] = status_tsv.exists()
+            raise Killed
+        return real(sample, contigs, out_dir)
+
+    monkeypatch.setattr(bakta, "ingest_one", killed_at_c)
+    with pytest.raises(Killed):
+        bakta.ingest_roster(roster, ann, workers=1, status_out=status_tsv)
+    assert seen["part"].set_index("Sample")["status"].to_dict() == {"A": "ingested", "B": "ingested"}
+    assert not seen["final_exists"] and not status_tsv.exists()                # the stale file went at the start
+    assert pd.read_csv(part, sep="\t", dtype=str)["Sample"].tolist() == ["A", "B"]
+
+    monkeypatch.setattr(bakta, "ingest_one", real)
+    bakrep.fetched.clear()
+    res = bakta.ingest_roster(roster.iloc[::-1], ann, workers=3, status_out=status_tsv)
+    assert bakrep.fetched == []                                                # A and B kept, C absent (no fetch)
+    st = pd.read_csv(status_tsv, sep="\t", dtype=str)
+    assert st["Sample"].tolist() == ["C", "B", "A"] == res["Sample"].tolist()  # roster order, not completion order
+    assert st.set_index("Sample")["status"].to_dict() == {"A": "ingested", "B": "ingested", "C": "absent"}
+    assert not part.exists() and not list(tmp_path.glob(".ingest_status.tsv.*"))
+
+
+def _env_db(tmp_path: Path) -> tuple[Path, Path]:
+    env, db = tmp_path / "env", tmp_path / "db"
+    (env / "bin").mkdir(parents=True)
+    (env / "conda-meta").mkdir()
+    (env / "conda-meta" / "bakta-1.9.4-pyhdfd78af_0.json").write_text("{}")
+    (db / "amrfinderplus-db" / "2024-07-22.1").mkdir(parents=True)
+    (db / "amrfinderplus-db" / "latest").symlink_to("2024-07-22.1")
+    (db / "version.json").write_text('{"major": 5, "minor": 1}')
+    return env / "bin", db
+
+
+def test_ingest_leaves_a_running_run_alone(tmp_path, bakrep, monkeypatch):
+    """``run`` marks the genome before it removes the old record; ingest honours the mark at both checks."""
+    ann, contigs = tmp_path / "ann", _contigs(tmp_path, "S1")
+    tools_bin, db = _env_db(tmp_path)
+    bakrep.serve("S1", _gff())
+    ann.mkdir()
+    bakta.run_record(ann, "S1").write_text("{}")                               # an earlier run of ours
+    seen = {}
+
+    def fake_run_bakta(contigs, sample, out_dir, *a, **k):
+        seen["old_record"] = bakta.run_record(out_dir, sample).exists()
+        seen["ingest"] = bakta.ingest_one(sample, contigs, out_dir)
+        _write(out_dir / f"{sample}.bakta.gff3.gz", _gff().replace("product=p1", "product=ours"))
+        return {"seconds": 1.0, "max_child_rss_gb": 0.1}
+
+    monkeypatch.setattr(bakta, "run_bakta", fake_run_bakta)
+    argv = ["bakta", "run", "--contigs", str(contigs), "--sample", "S1", "--out-dir", str(ann),
+            "--tools-bin", str(tools_bin), "--db", str(db), "--threads", "1"]
+    monkeypatch.setattr(sys, "argv", argv)
+    bakta.main()
+    assert not seen["old_record"] and seen["ingest"][0] == "skipped:run" and "in progress" in seen["ingest"][1]
+    assert bakrep.asked == [] and not bakta.running_marker(ann, "S1").exists()
+    assert json.loads(bakta.run_record(ann, "S1").read_text())["contigs_md5"] == bakta._md5(contigs)
+
+    # a run that fails takes its mark down (and leaves no record); a killed one leaves it, and ingest still skips
+    monkeypatch.setattr(bakta, "run_bakta", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("bakta exit 1")))
+    with pytest.raises(RuntimeError, match="bakta exit 1"):
+        bakta.main()
+    assert not bakta.running_marker(ann, "S1").exists() and not bakta.run_record(ann, "S1").exists()
+    bakta.running_marker(ann, "S1").touch()
+    assert bakta.ingest_one("S1", contigs, ann)[0] == "skipped:run" and bakrep.fetched == []
+
+    # our run starting while BakRep's file downloads: the second check sees the mark, nothing is put in place
+    bakta.running_marker(ann, "S1").unlink()
+    gff_md5 = bakta._md5(ann / "S1.bakta.gff3.gz")
+    served = bakrep.download
+
+    def download_while_our_run_starts(url, dest, **k):
+        served(url, dest, **k)
+        bakta.running_marker(ann, "S1").touch()
+
+    monkeypatch.setattr(bakta, "download", download_while_our_run_starts)
+    with pytest.raises(bakta.RunRecordExists, match="in progress"):
+        bakta.ingest_bakrep("S1", contigs, ann)
+    assert bakta._md5(ann / "S1.bakta.gff3.gz") == gff_md5 and not bakta.ingest_record(ann, "S1").exists()
+    assert not list(ann.glob(".*part"))

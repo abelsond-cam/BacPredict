@@ -181,15 +181,17 @@ def _md5(path: Path) -> str:
     return h.hexdigest()
 
 
-def download(url: str, dest: Path, md5: str | None = None, nbytes: str | None = None) -> None:
+def download(url: str, dest: Path, md5: str | None = None, nbytes: str | None = None,
+             curl_opts: tuple[str, ...] = ()) -> None:
     """Fetch with curl and verify md5 and/or size when the source publishes them, retrying any failure of either.
 
     Every failure is retried, because EBI refuses bursts of parallel requests with errors curl does not treat
     as transient. The loop is ours rather than curl's ``--retry-all-errors``, which needs curl >= 7.71: CSD3's
     Rocky 8 ships 7.61, where that flag exits 2 before fetching anything. A body of the wrong size or md5 is
-    retried too: ENA's fastq server has answered with a 797-byte or 4,096-byte body and exit 0.
+    retried too: ENA's fastq server has answered with a 797-byte or 4,096-byte body and exit 0. ``curl_opts`` are
+    extra curl options (e.g. a stall limit); the default adds none.
     """
-    cmd = ["curl", "-fsSL", "--retry", "2", "--connect-timeout", "60", "-o", str(dest), url]
+    cmd = ["curl", "-fsSL", "--retry", "2", "--connect-timeout", "60", *curl_opts, "-o", str(dest), url]
     for attempt in range(CURL_RETRIES + 1):
         try:
             subprocess.run(cmd, check=True, capture_output=True, text=True)

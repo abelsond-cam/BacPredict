@@ -140,10 +140,10 @@ reproduction gate and the AMRFinderPlus DB are in `apps/pa/CLAUDE.md` *Annotatio
 | Stage | What it does |
 |---|---|
 | `plan` | Reads the build shards, so it runs before QC. Writes `genomes/bakta/built_genomes.csv` (every built genome: `Sample`, `sr_assembly_file`, `source`; where a stale shard disagrees, the manifest's source wins) and `bakrep_roster.tsv` (built ATB genomes listed in `in_bakrep_ids.txt`). Re-run it as more shards land |
-| `ingest` | One CPU job (icelake, 8 cores, 16 GB, 24 h; 8 BakRep streams) from `ARRAY_REPO`. Puts BakRep's GFF3s in `raw/bakta/` and writes every roster genome's outcome to `genomes/bakta/ingest_status.tsv` (`Sample`, `status`, `detail`). Resumable: a current ingest record is kept, not re-fetched. Exits 1 only if any outcome is `error:*` |
-| `submit [all\|planned\|refused]` | Writes a new, dated, read-only `genomes/bakta/run_roster_<YYYYmmdd_HHMMSS>.tsv`, then runs the array `engine/genomes/scripts/run_bakta_array.sh` from `ARRAY_REPO`: 4 genomes per task, at most 100 tasks at once, 8 cores, 52 GB, icelake-himem, 3 h, keeping gff3, faa and txt |
-| `collate` | CPU job (icelake, 16 cores, 32 GB, 2 h). Writes `genomes/bakta_annotation.csv` for `COHORT`, but only if every genome has exactly one current annotation (checked by md5). Otherwise it writes `bakta_annotation_problems.csv` and exits 1 |
-| `status` | Counts by ingest outcome; roster genomes without an outcome; `COHORT` genomes that are ingested, have our run record, have both, or have neither; the dated rosters; any `entero-bakta*` job queued or running |
+| `ingest` | One CPU job (icelake, 8 cores, 16 GB, 24 h; 8 BakRep streams) from `ARRAY_REPO`. Puts BakRep's GFF3s in `raw/bakta/` and records every roster genome's outcome (`Sample`, `status`, `detail`). It removes any old `genomes/bakta/ingest_status.tsv` at the start, appends each outcome to `ingest_status.tsv.part` as the genome completes, and at the end writes `ingest_status.tsv` in roster order (atomically) and removes the `.part`. A killed job therefore leaves only the `.part`, which `status` reads and `submit` refuses. Resumable: a current ingest record is kept, not re-fetched. Every BakRep request is cut off if it stalls (curl `--max-time 600`, `--speed-limit 1024 --speed-time 120`) and then retried. Exits 1 only if any outcome is `error:*` |
+| `submit [all\|planned\|refused]` | Writes a new, dated, read-only `genomes/bakta/run_roster_<YYYYmmdd_HHMMSS>.tsv`, then runs the array `engine/genomes/scripts/run_bakta_array.sh` from `ARRAY_REPO`: 4 genomes per task, at most 100 tasks at once, 8 cores, 52 GB, icelake-himem, 3 h, keeping gff3, faa and txt. Refuses, writing no roster, if more than `MAX_RUN` genomes (default 6000) would run |
+| `collate` | CPU job (icelake, 16 cores, 32 GB, 2 h). For the canonical `COHORT` (`genomes/embedding_input.csv`) it writes `genomes/bakta_annotation.csv`; for any other it writes `genomes/bakta_annotation_<COHORT file stem>.csv` (e.g. `bakta_annotation_built_genomes.csv`), so a pre-QC collate can neither replace nor, by failing, delete the protein stage's input. It writes the table only if every genome has exactly one current annotation (checked by md5). Otherwise it writes `<table stem>_problems.csv` and exits 1 |
+| `status` | Counts by ingest outcome (from the `.part` if no final file exists, marked *not final*); roster genomes without an outcome; `COHORT` genomes that are ingested, have our run record, have both, or have neither; the dated rosters; any `entero-bakta*` job queued or running (exits 1 if `squeue` fails) |
 
 **Ingest outcomes** (`INGEST_STATUSES` in `bakta.py`; exactly one per roster genome):
 
@@ -154,8 +154,8 @@ reproduction gate and the AMRFinderPlus DB are in `apps/pa/CLAUDE.md` *Annotatio
 | `refused:release` | The GFF3 header is not `# Software: v1.9.4` / `# Database: v5.1, full` | our run |
 | `refused:names` | The embedded contigs are ours under other names (the same multiset of sequences). This is the ATB contig-numbering-gap case | our run, unless seqids are later mapped by sequence |
 | `refused:content` | The embedded sequences are not ours | our run |
-| `skipped:run` | Our own `.bakta.run.json` exists. Ingest never fetches over, or replaces, our run's GFF3 (it checks before the download and again before the file goes in place) | already ours |
-| `error:transient` | BakRep's API or the download failed after retries, or BakRep served a truncated or corrupt GFF3 | re-run ingest |
+| `skipped:run` | Our own run has started (`.bakta.running`) or finished (`.bakta.run.json`). Ingest checks both before the download and again before the file goes in place, so it neither fetches over nor replaces that run's GFF3. `bakta run` writes the marker before it removes the old record and removes it after writing the new one (or on failure). A killed run leaves the marker, so the genome stays with our run until a re-submitted run clears it. One race is left: our run starting in the instant between ingest's last check and its rename. That leaves two current records, which `collate` refuses | already ours |
+| `error:transient` | BakRep's API or the download failed or stalled after retries, or BakRep served a body that is not whole gzip (no gzip magic, truncated, failed CRC). The whole body is checked before its header is read, so a cut transfer is never `refused:release` | re-run ingest |
 | `error:other` | Anything else: our contigs missing or unreadable, contigs changed during ingest, a bug (a `KeyError` from a changed API shape lands here, not in `absent`) | investigate, re-run |
 
 The `refused:names` count is what decides between running our Bakta on those genomes (~1.3 core-h each) and mapping
@@ -165,21 +165,28 @@ BakRep's seqids to ours by sequence (PROJECT_STATE §3.6 *Next*).
 - `planned`: `COHORT` genomes BakRep cannot cover (not ATB-sourced, or ATB but not in `in_bakrep_ids.txt`). It does not
   read the ingest status, so it can run while ingest does.
 - `refused`: BakRep-roster genomes that ingest did not take (`absent`, `refused:*`, `skipped:run`). It refuses to
-  submit while ingest is queued or running; if any `COHORT` genome on the roster has no outcome (re-run `plan`, then
-  `ingest`); and if any outcome is `error:*` (re-run `ingest`).
+  submit while ingest is queued or running; if there is no final `ingest_status.tsv` (a killed ingest leaves only the
+  `.part`: re-run `ingest`); if any `COHORT` genome on the roster has no outcome (re-run `plan`, then `ingest`); and if
+  any outcome is `error:*` (re-run `ingest`), unless `ALLOW_ERRORS=1`. That opt-in puts the `error:*` genomes in the
+  run roster: our run is the same annotation of record, so a genome BakRep keeps failing on can be annotated by us.
 - `all` (the default): both sets.
+- `MAX_RUN` (default 6000) caps the roster. A larger one is more likely a wrong `COHORT` or a failed ingest than the
+  plan, so `submit` prints the counts and writes nothing; re-run with `MAX_RUN` raised if they are meant.
 - Every mode leaves out genomes whose run record has this env's fingerprint and is newer than their contigs. This
   costs one directory listing plus one JSON read per such genome, with no md5 pass on the login node; `collate`
   re-checks every genome by md5.
 - No mode submits unless `bakta fingerprint` of the env and database equals the fingerprint in a PsA run record (the
   first genome in PsA's `run_roster_with_refused.tsv`). The two species share one annotation of record.
 - Overlap guards: a submit refuses while an overlapping array is queued or running. `planned` and `refused` are
-  disjoint, so they may run together. `ingest` refuses while a `refused` or `all` array is live.
+  disjoint, so they may run together. `ingest` refuses while a `refused` or `all` array is live. Every guard reads
+  `squeue` on its own and stops if `squeue` fails, rather than reading a failure as "nothing live".
 
 **`COHORT`** (default `genomes/embedding_input.csv`; needs `Sample`, `sr_assembly_file`) says which genomes `submit`
-and `collate` cover. Before species QC exists, use `COHORT=$GEN/bakta/built_genomes.csv`. That spends Bakta on genomes
-QC will later fail (a few per cent in PsA: PROJECT_STATE §3.6 *genome QC*). Re-collate on `embedding_input.csv` once
-QC lands: `collate` overwrites `genomes/bakta_annotation.csv`, which is the protein stage's input.
+and `collate` cover. The script resolves it once, to an absolute path, before it changes directory; `submit` and
+`collate` refuse if it does not exist. Before species QC exists, use `COHORT=$GEN/bakta/built_genomes.csv`. That spends
+Bakta on genomes QC will later fail (a few per cent in PsA: PROJECT_STATE §3.6 *genome QC*), and its collate writes
+`genomes/bakta_annotation_built_genomes.csv`. Re-collate on `embedding_input.csv` once QC lands: only that collate
+writes `genomes/bakta_annotation.csv`, which is the protein stage's input.
 
 **`ARRAY_REPO`** is required for `ingest` and `submit`: a detached worktree at the SHA to run, with `.venv` symlinked
 to the shared env (as for PsA). Each `--wrap` checks at start that the worktree is still at the submitted SHA and puts
