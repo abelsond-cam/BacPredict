@@ -487,8 +487,12 @@ def main() -> None:
                              "LayerNorm makes the model scale-invariant, so it measures nothing. Never "
                              "set this for a run whose numbers will be reported.")
     parser.add_argument("--max-completeness-error", type=float, default=0.02,
-                        help="Gradient methods — fail a genome whose attributions miss the "
-                             "f(genome)-f(baseline) gap by more than this fraction.")
+                        help="Gradient methods — relative completeness tolerance. A genome fails only "
+                             "if it exceeds this AND --max-completeness-abs.")
+    parser.add_argument("--max-completeness-abs", type=float, default=0.05,
+                        help="Gradient methods — absolute completeness tolerance, in logits. Needed "
+                             "because a genome sitting near the baseline's logit has a near-zero gap, "
+                             "where an ordinary absolute error is a huge relative one.")
     parser.add_argument("--internal-batch-size", type=int, default=4,
                         help="integrated_gradients only — path steps per forward; lower it on OOM.")
     parser.add_argument("--shard-index", type=int, default=None, help="This array task's index.")
@@ -577,6 +581,7 @@ def main() -> None:
                 verify_protein_count(sample, n_proteins, Path(paths.parquet_dir), paths.parquet_suffix)
 
             completeness_rel_err = None
+            completeness_abs_err = None
             if args.method == "ablation":
                 attributions, base_logit = attribute_genome(
                     wrapped, inputs,
@@ -597,13 +602,22 @@ def main() -> None:
                 # attributions do not sum to the gap it claims to explain is not interpretable, and
                 # that failure is silent — it was how the zero-baseline degeneracy was caught at all.
                 gap = base_logit - baseline_logit
+                completeness_abs_err = abs(float(attributions.sum()) - gap)
                 if abs(gap) > 1e-9:
-                    completeness_rel_err = abs(float(attributions.sum()) - gap) / abs(gap)
-                    if completeness_rel_err > args.max_completeness_error:
+                    completeness_rel_err = completeness_abs_err / abs(gap)
+                    # A relative criterion alone is wrong here: a genome whose logit sits near the
+                    # baseline's has a near-zero gap, so an ordinary absolute error of ~0.01 logits
+                    # becomes a huge *relative* one. Measured on job 41409294: SAMEA7562747 failed at
+                    # 20.5% relative while its absolute error was 0.015, in line with every genome
+                    # that passed. Fail only when BOTH tolerances are exceeded — the degeneracy this
+                    # guard exists to catch missed by 15 logits, so nothing real slips through.
+                    if (completeness_rel_err > args.max_completeness_error
+                            and completeness_abs_err > args.max_completeness_abs):
                         raise ValueError(
                             f"{sample}: attributions sum to {attributions.sum():.4f} but the gap is "
-                            f"{gap:.4f} ({completeness_rel_err:.1%} error, limit "
-                            f"{args.max_completeness_error:.1%}). Raise --n-steps or check the baseline."
+                            f"{gap:.4f} ({completeness_rel_err:.1%} relative, {completeness_abs_err:.4f} "
+                            f"absolute; limits {args.max_completeness_error:.1%} and "
+                            f"{args.max_completeness_abs}). Raise --n-steps or check the baseline."
                         )
             first = False
             elapsed = time.perf_counter() - started
@@ -630,7 +644,8 @@ def main() -> None:
             manifest.append({"Sample": sample, "status": "failed", "error": f"{type(exc).__name__}: {exc}",
                              "dtype": args.dtype, "method": args.method,
                              "baseline_logit": baseline_logit,
-                             "completeness_rel_err": completeness_rel_err})
+                             "completeness_rel_err": completeness_rel_err,
+                             "completeness_abs_err": completeness_abs_err})
             continue
 
         manifest.append({
