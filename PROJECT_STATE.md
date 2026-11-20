@@ -1648,6 +1648,29 @@ shovill array `41326674` plus rerun `41335542`, QC job `41336261` (CheckM2 3 h 6
 - **6,919 of the 7,088 Kp AST samples (§3.1) are in this cohort.** Any comparison against the July Kp
   checkpoints must hold out none of their train/validate samples.
 
+**Numbers of record — PsA split tables (the baseline arm).** `$AMR/processed/paeruginosa/splits/<drug>_split.csv`
++ `split_manifest.json` (md5 `9e5e3063…`), `engine/splits/build_amr_holdout_splits` at `8b791d4` via
+`train_pa_models.sh splits`: eligible = the 3,677 of `bakta_annotation.csv` (each with a `.pt`), minus the 15
+Ecuador genomes (`apps/pa/excluded_genomes.tsv`); the 3 CDC duplicate pairs grouped. Genome level: train 2,159,
+validate 542, holdout (random 20 %) 675, holdout_st (`paeruginosa:235`, exact) 286. Per drug (`check-splits`, 0/1
+labels only):
+
+| Drug | Train | Validate | Holdout | %R | ST235 | %R |
+|---|--:|--:|--:|--:|--:|--:|
+| ciprofloxacin | 1,846 | 463 | 591 | 57.7 | 235 | 92.8 |
+| ceftazidime | 1,598 | 403 | 509 | 40.5 | 276 | 75.0 |
+| meropenem | 1,590 | 396 | 489 | 33.3 | 256 | 62.1 |
+| tobramycin | 1,482 | 381 | 491 | 33.0 | 224 | 68.3 |
+| amikacin | 1,442 | 370 | 457 | 11.6 | 209 | 34.0 |
+| imipenem | 1,271 | 338 | 420 | 58.3 | 156 | 78.2 |
+| piperacillin-tazobactam | 1,198 | 311 | 376 | 47.9 | 154 | 85.1 |
+| aztreonam | 1,100 | 280 | 347 | 35.4 | 161 | 65.8 |
+| levofloxacin | 874 | 230 | 283 | 57.2 | 152 | 90.1 |
+| cefepime | 679 | 190 | 221 | 44.8 | 105 | 76.2 |
+
+- ST235 is mostly resistant (62–93 % R for nine drugs), so its holdout has few susceptible genomes for some drugs
+  (ciprofloxacin ~17 S). That bounds how precisely a zero-shot AUROC can be read there.
+
 **Numbers of record — Enterobacterales genome sources.** Read from
 `$AMR/processed/enterobacterales/genomes/genome_manifest.csv` (`build_entero_genomes.sh plan` at `6369d50`; per-genus
 genome sizes, `--prefer-reads`, min depth 10×, a fresh ENA cache):
@@ -1757,7 +1780,12 @@ contig past the 1,000th the same contig id.
    (keyed scheme:ST, grouping the 3 two-BioSample CDC strains) beside a random holdout, restricted to QC-passing
    genomes with 0/1 labels — `engine/splits` today makes random k-fold holdouts only; and a trainer task that reads
    labels from several species folders and the shared ESM store (`finetune_amr` maps only `tb_ast`/`kleb_ast`).
-   PsA is ready to train once its split decisions (item 3) are made.
+   **Built** (`986813e`…`8b791d4`): the split builder (`engine/splits/build_amr_holdout_splits`; `load_splits`
+   gained `load_split_ids`, `load_split_species` and a `species` filter), `finetune_amr --split-table` (scores
+   `holdout` and `holdout_st`, per species when the table has several), `apps/pa/scripts/train_pa_models.sh`, and the
+   Kp ESM-C reuse stage. **PsA baseline:** split tables written; Stage A smoke (job `41545259`) → Stage B overfit →
+   Stage C array run gated in that order. **Open, for David:** which `validate` the cross-species arm uses for early
+   stopping and model selection — pooled PsA + Enterobacterales, or PsA only (the baseline's).
 2. **Enterobacterales** (stages in `apps/entero/CLAUDE.md`): when the builds finish, `status` (every genome built or
    failed by cause); BakRep ingest pre-QC (`annotate_entero_genomes.sh plan`, `ingest`); CheckM2 (34 × 2,000) and
    skani (`build_entero_genomes.sh qc`); collate in report mode → `species_crosstab.csv` and
@@ -1811,8 +1839,7 @@ Later: the AMR-GNN-cut benchmark, ANI thinning, and causal attribution of the pr
   subsamples only reads deeper than 150×, as its defaults intend.
 - **3 CDC strains each sit under two BioSamples** (isolates S54485, U2504, X24509). The splits must
   group them, or they leak across the holdout.
-- `finetune_amr` and `build_split_csv` have **no `pa_ast` task key yet**. Paths must be explicit until
-  one is added (a shared-engine change).
+- `finetune_amr` has a `pa_ast` task key and `--split-table` (`c56eca4`); `build_split_csv` still has none.
 - **`engine/config.py` `PA` resolves under `$AMR`** (`0f5cc5d`): tables in `processed/paeruginosa/`, per-sample
   stores flat in `processed/{protein_sequences,esm}/`. The `pa_ast` trainer key, when added, should read it.
 - **The ESM-C array takes a sample list** (`SAMPLES`, md5-pinned): PsA and Enterobacterales share
