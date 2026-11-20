@@ -152,6 +152,22 @@ def test_an_empty_sample_set_fails(store):
     assert not store.check(samples=[]).ok
 
 
+@pytest.mark.parametrize("col", ccs.REQUIRED_COLUMNS)
+def test_a_missing_column_is_a_named_failure_not_a_skipped_check(store, col):
+    samples = sorted(r["Sample"] for r in store.rows)
+    r = ccs.check_cohort_store(store.cohort.drop(columns=col), store.prot, samples, esm_dir=store.esm)
+    assert not r.ok
+    assert r.problems[ccs.missing_column(col)] == samples
+    extra = {ccs.CONTIGS_UNREADABLE: samples} if col == "sr_assembly_file" else {}  # nothing to hash
+    assert r.problems == {ccs.missing_column(col): samples, **extra}
+
+
+def test_presence_only_needs_no_annotation_columns(store):
+    samples = sorted(r["Sample"] for r in store.rows)
+    cohort = store.cohort[["Sample"]]
+    assert ccs.check_cohort_store(cohort, store.prot, samples, esm_dir=store.esm, presence_only=True).ok
+
+
 def test_presence_only_reads_the_listings(store):
     (store.prot / "SAMN2_protein_sequences.parquet").unlink()
     (store.esm / "SAMN3_esm_embeddings.pt").unlink()
@@ -187,3 +203,19 @@ def test_cli_refuses_an_unsorted_list(store, tmp_path):
     lst.write_text("SAMN2\nSAMN1\n")
     with pytest.raises(SystemExit):
         ccs.main(["--cohort", str(cohort), "--protein-dir", str(store.prot), "--samples-file", str(lst)])
+
+
+def test_cli_pass_marker_holds_the_md5_of_the_cohort_table_and_only_on_pass(store, tmp_path):
+    cohort = tmp_path / "bakta_annotation.csv"
+    store.cohort.to_csv(cohort, index=False)
+    report = tmp_path / "problems.csv"
+    marker = tmp_path / "problems.csv.pass"
+    base = ["--cohort", str(cohort), "--protein-dir", str(store.prot), "--workers", "1", "--report", str(report)]
+
+    assert ccs.main(base) == 0
+    assert marker.read_text() == hashlib.md5(cohort.read_bytes()).hexdigest() + "\n"
+
+    # a failing run removes the marker an earlier run left beside the same report
+    (store.prot / "SAMN2_protein_sequences.parquet").unlink()
+    assert ccs.main(base) == 1
+    assert not marker.exists()

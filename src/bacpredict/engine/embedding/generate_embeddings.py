@@ -168,7 +168,8 @@ def find_protein_sequence_files(input_dir: Path, limit: int | None = None) -> li
     return protein_files
 
 
-def protein_files_from_samples_file(input_dir: Path, samples_file: Path, limit: int | None = None) -> list[Path]:
+def protein_files_from_samples_file(input_dir: Path, samples_file: Path, limit: int | None = None,
+                                    md5: str | None = None) -> list[Path]:
     """The parquets of a sample list, in list order: ``input_dir / f"{s}_protein_sequences.parquet"``.
 
     Used instead of :func:`find_protein_sequence_files` when the parquet directory is a store shared across
@@ -183,6 +184,8 @@ def protein_files_from_samples_file(input_dir: Path, samples_file: Path, limit: 
         One sample per non-blank line, sorted and unique.
     limit : int, optional
         Take only the first ``limit`` samples (falsy: all, as for :func:`find_protein_sequence_files`).
+    md5 : str, optional
+        The md5 the list must have, checked against the bytes that are parsed (``--samples-md5``).
 
     Returns
     -------
@@ -192,9 +195,9 @@ def protein_files_from_samples_file(input_dir: Path, samples_file: Path, limit: 
     Raises
     ------
     ValueError
-        If the list is empty, unsorted or holds a duplicate.
+        If the list's md5 is not ``md5``, or it is empty, unsorted or holds a duplicate.
     """
-    samples = read_samples_file(samples_file)
+    samples = read_samples_file(samples_file, md5=md5)
     if limit:
         samples = samples[:limit]
     return [input_dir / f"{s}_protein_sequences.parquet" for s in samples]
@@ -440,6 +443,12 @@ def main():
         "listed parquet missing from the slice exits before the model loads.",
     )
     parser.add_argument(
+        "--samples-md5",
+        default=None,
+        help="With --samples-file: exit before the model loads unless the list's md5 is this. Checked against the "
+        "very bytes that are parsed, so a list rewritten after the array script's own md5 check is still caught.",
+    )
+    parser.add_argument(
         "--esm-dir",
         type=Path,
         default=None,
@@ -462,6 +471,8 @@ def main():
     )
 
     args = parser.parse_args()
+    if args.samples_md5 is not None and args.samples_file is None:
+        parser.error("--samples-md5 needs --samples-file")
 
     # Setup input directory path
     input_dir = args.input_dir
@@ -486,7 +497,8 @@ def main():
     # import has already configured the root logger, so its records can be lost.
     if args.samples_file is not None:
         try:
-            protein_files = protein_files_from_samples_file(input_dir, args.samples_file, limit=args.n)
+            protein_files = protein_files_from_samples_file(input_dir, args.samples_file, limit=args.n,
+                                                            md5=args.samples_md5)
         except (OSError, ValueError) as e:
             sys.exit(f"--samples-file: {e}")
     else:

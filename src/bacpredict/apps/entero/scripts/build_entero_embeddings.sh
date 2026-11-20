@@ -3,9 +3,9 @@
 #
 #   bash src/bacpredict/apps/entero/scripts/build_entero_embeddings.sh proteins        # CPU job: genomes → parquets
 #   bash src/bacpredict/apps/entero/scripts/build_entero_embeddings.sh check-proteins  # CPU job: every parquet checked
-#   bash src/bacpredict/apps/entero/scripts/build_entero_embeddings.sh smoke           # GPU job: 10 genomes, every genus
+#   ARRAY_REPO=<worktree> bash …/build_entero_embeddings.sh smoke                    # GPU job: 10 genomes, every genus
 #   bash src/bacpredict/apps/entero/scripts/build_entero_embeddings.sh check-smoke     # login node, those 10
-#   ARRAY_REPO=<worktree> bash …/build_entero_embeddings.sh submit                    # GPU array: every genome → esm/
+#   ARRAY_REPO=<worktree> bash …/build_entero_embeddings.sh submit                   # GPU array: every genome → esm/
 #   bash src/bacpredict/apps/entero/scripts/build_entero_embeddings.sh check           # CPU job: end to end
 #
 # The PsA stage (apps/pa/scripts/build_pa_embeddings.sh; mechanics in apps/pa/CLAUDE.md) at ~68k genomes. The cohort
@@ -16,10 +16,13 @@
 #
 # Parquets and embeddings go to the flat per-BioSample stores shared with PsA ($ROOT/processed/{protein_sequences,
 # esm}); the ESM-C array is therefore given a sample list, genomes/esm_samples.txt (the sorted Samples of
-# bakta_annotation.csv), pinned by its md5, and never the store's listing. The GPU array runs from a pinned worktree
-# (ARRAY_REPO, a detached worktree at the SHA to run with .venv symlinked to the shared env), because array tasks
-# otherwise run whatever the shared checkout's HEAD is when they start. Settings as for PsA: --max-proteins 9000
-# and bf16 storage (PROJECT_STATE.md §6).
+# bakta_annotation.csv), pinned by its md5, and never the store's listing. The GPU jobs (smoke and submit) run from a
+# pinned worktree (ARRAY_REPO, a detached worktree at the SHA to run with .venv symlinked to the shared env), because
+# array tasks otherwise run whatever the shared checkout's HEAD is when they start; both refuse unless ARRAY_REPO's
+# array script, generate_embeddings.py and sample_list.py are byte-identical to this checkout's (the export they are
+# handed is written for this driver's copies). submit also refuses unless the latest check-proteins passed on
+# bakta_annotation.csv as it is now (its problems.csv.pass holds the table's md5). Settings as for PsA:
+# --max-proteins 9000 and bf16 storage (PROJECT_STATE.md §6).
 set -euo pipefail
 
 # the multi-species AMR root on project_k (PROJECT_STATE §3.6 *Data layout*): per-sample stores flat, keyed by
@@ -44,6 +47,9 @@ SAVE_DTYPE=bfloat16
 PER_TASK=${ESM_PER_TASK:-300}
 LOGS=/rds/user/dca36/hpc-work/logs
 ARRAY=src/bacpredict/engine/embedding/scripts/esm_embeddings_array.sh
+# what the array runs in ARRAY_REPO: it must be this driver's own copy of each (same_array_code)
+ARRAY_CODE=("$ARRAY" src/bacpredict/engine/embedding/generate_embeddings.py
+            src/bacpredict/engine/embedding/sample_list.py)
 cd "$REPO"
 
 # The start of a --wrap job: the code it runs is the checkout's HEAD when it STARTS, so refuse to run if that is
@@ -62,7 +68,39 @@ submit() {  # sbatch, then print the resource line the global rules require (rea
          "| $(grep -m1 -oE 'Account=[^ ]+' <<<"$job")"
 }
 
-live() { squeue -u "$USER" -h -o '%j' | grep -cE "$1" || true; }  # queued or running jobs whose name matches
+# live <ERE>: how many of my queued or running jobs have a name matching it. A failed squeue is not "none live", so
+# it exits; call it as n=$(live …), an assignment, so that set -e stops the driver too
+live() {
+    local jobs
+    jobs=$(squeue -u "$USER" -h -o '%j') || {
+        echo "squeue failed: cannot tell whether a job matching $1 is live" >&2; exit 1; }
+    grep -cE "$1" <<<"$jobs" || true
+}
+
+# same_array_code <array repo>: refuse unless the array script and the modules it runs there are this checkout's
+same_array_code() {
+    local f
+    for f in "${ARRAY_CODE[@]}"; do
+        cmp -s "$REPO/$f" "$1/$f" || {
+            echo "ARRAY_REPO's $1/$f is not this driver's $REPO/$f (differs or missing):"
+            echo "check out this driver's SHA in ARRAY_REPO, or run the driver from ARRAY_REPO"; exit 1; }
+    done
+}
+
+# proteins_passed: refuse unless the latest check-proteins run passed on bakta_annotation.csv as it is now. Its
+# check_cohort_store writes problems.csv.pass (the md5 of the table it checked) only on PASS, so a later run that is
+# pending, running or failed has none, and a table rewritten since has another md5
+proteins_passed() {
+    local runs last have want
+    runs=("$LOGS"/entero_esm_check-proteins_*)  # timestamped names: glob order is time order
+    last=${runs[${#runs[@]}-1]}
+    [[ -d $last ]] || { echo "no check-proteins run in $LOGS: run check-proteins first"; exit 1; }
+    have=$(cat "$last/problems.csv.pass" 2>/dev/null) || {
+        echo "the latest check-proteins ($last) has not passed: read its .out (or wait for it)"; exit 1; }
+    want=$(md5sum < "$COHORT" | cut -d' ' -f1)
+    [[ $have == "$want" ]] || {
+        echo "$COHORT has changed since the latest check-proteins ($last) passed: run check-proteins again"; exit 1; }
+}
 
 # write_list <out> <python printing the sorted, unique samples from the cohort table (argv 1) and cohort.csv (argv 2)>:
 # (re)write <out>, atomically and only if it changed; print its md5 (what the array's SAMPLES_MD5 pins). Called as
@@ -126,11 +164,12 @@ proteins)
     fi
     run_dir=$LOGS/entero_protein_sequences_$(date +%Y%m%d_%H%M%S); mkdir -p "$run_dir"
     # one job: 32 cores (one genome per worker) on icelake, which has idle cores; 96G is under icelake's 3,380 MB per
-    # core × 32. ~2 h for ~68k genomes; resumable (--skip-existing, atomic parquets), so a wall kill only means
-    # resubmitting. PROT_PARTITION/PROT_CPUS/PROT_MEM/PROT_TIME override the shape.
+    # core × 32. ~2 h for ~68k genomes is an estimate, not a measurement, so the wall is ×3 (6 h); resumable
+    # (--skip-existing, atomic parquets), so a wall kill only means resubmitting. PROT_PARTITION/PROT_CPUS/PROT_MEM/
+    # PROT_TIME override the shape.
     cpus=${PROT_CPUS:-32}
     submit --account=FLOTO-PROJECT-K-SL2-CPU --partition=${PROT_PARTITION:-icelake} --cpus-per-task=$cpus \
-        --mem=${PROT_MEM:-96G} --time=${PROT_TIME:-02:00:00} --job-name=entero-protein-sequences --chdir="$run_dir" \
+        --mem=${PROT_MEM:-96G} --time=${PROT_TIME:-06:00:00} --job-name=entero-protein-sequences --chdir="$run_dir" \
         --output="$run_dir/%x_%j.out" --error="$run_dir/%x_%j.err" \
         --wrap="$(sha_guard) PYTHONUNBUFFERED=1 uv run --project $REPO --no-sync \
 python -m bacpredict.engine.embedding.preprocess_assemblies_to_protein_sequences --input-csv $COHORT \
@@ -141,16 +180,18 @@ check-proteins)
     check_job check-proteins
     ;;
 smoke)
+    array_repo=${ARRAY_REPO:?set ARRAY_REPO to a detached worktree at the SHA to run (see the header)}
+    same_array_code "$array_repo"
     [[ -s "$COHORT" ]] || { echo "no $COHORT"; exit 1; }
     md5=$(write_list "$SMOKE_SAMPLES" "$SMOKE_SAMPLES_PY")
     # those 10 parquets must exist and hold the GFF3's protein count (the full check is check-proteins)
     uv run --no-sync python -m bacpredict.engine.embedding.check_cohort_store --cohort "$COHORT" --protein-dir "$PROT" \
         --samples-file "$SMOKE_SAMPLES" --workers 4 \
         || { echo "smoke genomes lack proteins: run proteins and check-proteins"; exit 1; }
-    sha=$(git rev-parse HEAD)
+    sha=$(git -C "$array_repo" rev-parse HEAD)
     submit --array=0 --time=00:20:00 --job-name=entero-esm-smoke \
-        --export="ALL,REPO=$REPO,EXPECT_SHA=$sha,INPUT_DIR=$PROT,ESM_DIR=$ESM_SMOKE,SAMPLES=$SMOKE_SAMPLES,SAMPLES_MD5=$md5,MAX_PROTEINS=$MAX_PROTEINS,SAVE_DTYPE=$SAVE_DTYPE,NTASKS=1" \
-        "$ARRAY"
+        --export="ALL,REPO=$array_repo,EXPECT_SHA=$sha,INPUT_DIR=$PROT,ESM_DIR=$ESM_SMOKE,SAMPLES=$SMOKE_SAMPLES,SAMPLES_MD5=$md5,MAX_PROTEINS=$MAX_PROTEINS,SAVE_DTYPE=$SAVE_DTYPE,NTASKS=1" \
+        "$array_repo/$ARRAY"
     echo "samples: $SMOKE_SAMPLES (md5 $md5)"
     ;;
 check-smoke)
@@ -161,10 +202,14 @@ check-smoke)
     ;;
 submit)
     array_repo=${ARRAY_REPO:?set ARRAY_REPO to a detached worktree at the SHA to run (see the header)}
+    same_array_code "$array_repo"
     # a second array into the same store would share each sample's temporary .pt name with the first
-    (( $(live '^entero-esm-embeddings$') == 0 )) || { echo "an entero-esm-embeddings array is queued or running"; exit 1; }
+    n=$(live '^entero-esm-embeddings$')
+    (( n == 0 )) || { echo "an entero-esm-embeddings array is queued or running"; exit 1; }
+    [[ -s "$COHORT" ]] || { echo "no $COHORT"; exit 1; }
+    proteins_passed
     md5=$(write_list "$SAMPLES" "$ALL_SAMPLES")
-    # every listed genome has a parquet (one directory read; the counts are check-proteins' job, run it first)
+    # every listed genome has a parquet (one directory read; the counts were check-proteins', required above)
     uv run --no-sync python -m bacpredict.engine.embedding.check_cohort_store --cohort "$COHORT" --protein-dir "$PROT" \
         --samples-file "$SAMPLES" --presence-only \
         || { echo "proteins incomplete: run proteins, then check-proteins"; exit 1; }

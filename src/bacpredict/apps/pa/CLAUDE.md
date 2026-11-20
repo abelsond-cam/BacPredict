@@ -17,7 +17,7 @@ scratch, for SLURM logs and temporary files only.
 | Kind | Where |
 |---|---|
 | **Per-sample files**, keyed by BioSample. Flat, shared across species | `raw/contigs/`, `raw/prodigal/`, `raw/bakta/`, `processed/protein_sequences/`, `processed/esm/` (`processed/esm_smoke/` for the smoke test) |
-| **Per-species tables and batch outputs**, in a species folder | `processed/paeruginosa/` (labels, the ESM-C sample list `esm_samples.txt`, then `genomes/`: manifest, shards, CheckM2 + skani QC, Bakta rosters, `bakta_annotation.csv`; later splits and models); `processed/enterobacterales/`; `raw/paeruginosa/` (the AMR-GNN supplement) |
+| **Per-species tables and batch outputs**, in a species folder | `processed/paeruginosa/` (labels, the ESM-C sample lists `esm_samples{,_smoke}.txt`, then `genomes/`: manifest, shards, CheckM2 + skani QC, Bakta rosters, `bakta_annotation.csv`; later splits and models); `processed/enterobacterales/`; `raw/paeruginosa/` (the AMR-GNN supplement) |
 | **Multi-species inputs and evidence**, flat | `raw/{ebi_amr_portal,bakrep,bakta_db,allthebacteria,reference_genomes}/`; `processed/{ebi_amr_portal,bakrep_coverage_20261119,bakta_vs_bakrep_validation}/` |
 | Superseded, pending deletion | `processed/_superseded_prodigal/` (the Prodigal-based protein parquets and ESM-C smoke) |
 | Curated tables | `final/` (nothing yet) |
@@ -199,9 +199,14 @@ Bakta 1.9.4 + full DB v5.1 is the annotation of record (PROJECT_STATE §6). The 
 - `proteins` is a CPU job that runs `preprocess_assemblies_to_protein_sequences` on `genomes/bakta_annotation.csv`
   (contigs + Bakta GFF3 per genome). It and `ingest` refuse to start if the shared checkout moved since submit.
 - `smoke` and `submit` run the generic GPU array `engine/embedding/scripts/esm_embeddings_array.sh`, with
-  `MAX_PROTEINS=9000`, `SAVE_DTYPE=bfloat16`, `NTASKS=16` and the cohort's sample list (below). `submit` takes
-  `ARRAY_REPO` (default: this checkout) and pins the tasks to its SHA (`EXPECT_SHA`); it refuses while a
-  `pa-esm-embeddings` array is queued or running.
+  `MAX_PROTEINS=9000`, `SAVE_DTYPE=bfloat16`, `NTASKS=16` and a sample list (below).
+  - Both need `ARRAY_REPO`: a detached worktree at the SHA to run, `.venv` symlinked to the shared env. The tasks
+    run its code and are pinned to its SHA (`EXPECT_SHA`).
+  - Both refuse unless `ARRAY_REPO`'s `esm_embeddings_array.sh`, `generate_embeddings.py` and `sample_list.py`
+    are byte-identical (`cmp`) to the driver's own checkout. The array is handed an export written for those
+    copies.
+  - `submit` refuses while a `pa-esm-embeddings` array is queued or running, and also if `squeue` itself fails: a
+    failed `squeue` is not "none live".
 - Every check counts against `bakta_annotation.csv`, not against the files that exist. The protein
   extractor logs a failed genome and still exits 0, so a count of existing files would shrink with the
   cohort and still read as complete.
@@ -210,13 +215,15 @@ Bakta 1.9.4 + full DB v5.1 is the annotation of record (PROJECT_STATE §6). The 
   every genome's contigs unchanged since annotation (md5). Unreadable parquets are listed, not fatal to the check.
 - `smoke` and `submit` refuse to start until every cohort genome has a protein parquet.
 - **The ESM array takes a sample list, because the protein and ESM stores are shared across species.**
-  - `smoke` and `submit` write `processed/paeruginosa/esm_samples.txt`: the sorted Samples of
-    `bakta_annotation.csv`, one per line. The file is rewritten atomically, and only when it changes.
-  - The array gets it as `SAMPLES` plus its md5 as `SAMPLES_MD5`. Each task slices the list, never the store's
+  - `submit` writes `processed/paeruginosa/esm_samples.txt`: the sorted Samples of `bakta_annotation.csv`, one
+    per line. The file is rewritten atomically, and only when it changes.
+  - `smoke` writes its own list, `processed/paeruginosa/esm_samples_smoke.txt` (the first 10 of those Samples),
+    and never touches `esm_samples.txt`, which a live array may be pinned to. `check-smoke` checks those 10.
+  - The array gets a list as `SAMPLES` plus its md5 as `SAMPLES_MD5`. Each task slices the list, never the store's
     listing, so Enterobacterales parquets in the same store are neither embedded nor able to shift the slices.
-  - A task refuses to run (exit 3) if the list's md5 has changed since submit, and exits before loading the model
-    if a parquet in its slice is missing.
-  - The smoke embeds the list's first 10 genomes (`N=10`), and `check-smoke` checks those same 10.
+  - A task refuses to run (exit 3) if the list's md5 has changed since submit. `generate_embeddings` checks the
+    md5 again (`--samples-md5`) against the very bytes it parses, so a list rewritten between the two reads is
+    caught too. It exits before loading the model if a parquet in its slice is missing.
   - The list format (sorted, unique, blank lines ignored) is `engine/embedding/sample_list.py`.
     `generate_embeddings --samples-file` reads it the same way, and the array counts it with awk.
   - Re-running `submit` over a partly filled `processed/esm/` is safe: every task skips genomes whose `.pt`

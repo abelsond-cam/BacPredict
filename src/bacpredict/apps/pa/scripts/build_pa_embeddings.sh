@@ -3,9 +3,9 @@
 #
 #   bash src/bacpredict/apps/pa/scripts/build_pa_embeddings.sh proteins     # CPU job: genomes → protein parquets
 #   bash src/bacpredict/apps/pa/scripts/build_pa_embeddings.sh check-proteins  # every cohort genome has a parquet
-#   bash src/bacpredict/apps/pa/scripts/build_pa_embeddings.sh smoke        # GPU job: first 10 genomes → esm_smoke/
+#   ARRAY_REPO=<worktree> bash …/build_pa_embeddings.sh smoke               # GPU job: first 10 genomes → esm_smoke/
 #   bash src/bacpredict/apps/pa/scripts/build_pa_embeddings.sh check-smoke
-#   bash src/bacpredict/apps/pa/scripts/build_pa_embeddings.sh submit       # GPU array: every genome → esm/
+#   ARRAY_REPO=<worktree> bash …/build_pa_embeddings.sh submit              # GPU array: every genome → esm/
 #   bash src/bacpredict/apps/pa/scripts/build_pa_embeddings.sh check        # every cohort genome, end to end
 #
 # The cohort is genomes/bakta_annotation.csv from annotate_pa_genomes.sh collate (the QC-passing genomes, each with
@@ -16,10 +16,16 @@
 # start until every cohort genome has a parquet.
 #
 # The protein and ESM-C stores are flat and shared with Enterobacterales, so the GPU array is given the cohort as a
-# sample list, esm_samples.txt (the sorted Samples of bakta_annotation.csv, rewritten by smoke and submit only when
-# it changes), pinned by its md5: a pending task whose list has since changed refuses to run. The smoke embeds the
-# list's first 10 genomes, and check-smoke checks those 10. submit refuses while a pa-esm-embeddings array is live:
-# two arrays writing one sample's .pt at once share its temporary file.
+# sample list, esm_samples.txt (the sorted Samples of bakta_annotation.csv, rewritten by submit only when it
+# changes), pinned by its md5: a pending task whose list has since changed refuses to run. The smoke has its own
+# list, esm_samples_smoke.txt (the first 10 of those Samples), so it never rewrites the one a live array is pinned
+# to; check-smoke checks those 10. submit refuses while a pa-esm-embeddings array is live: two arrays writing one
+# sample's .pt at once share its temporary file.
+#
+# smoke and submit need ARRAY_REPO, a detached worktree at the SHA to run (.venv symlinked to the shared env): array
+# tasks otherwise run whatever the shared checkout's HEAD is when they start. Both refuse unless ARRAY_REPO's array
+# script, generate_embeddings.py and sample_list.py are byte-identical to this checkout's, since the export they are
+# handed is written for this driver's copies.
 #
 # Two settings are PsA-specific and deliberate: --max-proteins 9000 (a PsA genome has ~6,400 CDS;
 # generate_embeddings' default of 6,000 would cut the smallest contigs — plasmids — first) and bf16 storage
@@ -43,8 +49,12 @@ MAX_PROTEINS=9000
 SAVE_DTYPE=bfloat16
 NTASKS=16
 SAMPLES=$T/esm_samples.txt
+SMOKE_SAMPLES=$T/esm_samples_smoke.txt
 LOGS=/rds/user/dca36/hpc-work/logs
-ARRAY=$REPO/src/bacpredict/engine/embedding/scripts/esm_embeddings_array.sh
+ARRAY=src/bacpredict/engine/embedding/scripts/esm_embeddings_array.sh
+# what the array runs in ARRAY_REPO: it must be this driver's own copy of each (same_array_code)
+ARRAY_CODE=("$ARRAY" src/bacpredict/engine/embedding/generate_embeddings.py
+            src/bacpredict/engine/embedding/sample_list.py)
 cd "$REPO"
 
 # The start of a --wrap job: the code it runs is the checkout's HEAD when it STARTS, so refuse to run if that is
@@ -63,41 +73,59 @@ submit() {  # sbatch, then print the resource line the global rules require (rea
          "| $(grep -m1 -oE 'Account=[^ ]+' <<<"$job")"
 }
 
-# write_samples: (re)write $SAMPLES, the sorted Samples of the cohort table, atomically and only if it changed;
-# print its md5 (what the array's SAMPLES_MD5 pins). Called as md5=$(write_samples), where bash drops set -e:
-# hence the explicit return, or a failed write would hand on the md5 of a stale list
+# write_samples <out> [N]: (re)write <out>, the sorted Samples of the cohort table (the first N, if given),
+# atomically and only if it changed; print its md5 (what the array's SAMPLES_MD5 pins). Called as
+# md5=$(write_samples …), where bash drops set -e: hence the explicit return, or a failed write would hand on the
+# md5 of a stale list
 write_samples() {
-    uv run --no-sync python -I - "$COHORT" "$SAMPLES" <<'EOF' || return 1
+    local out=$1
+    uv run --no-sync python -I - "$COHORT" "$out" "${2:-}" <<'EOF' || return 1
 import os, sys
 import pandas as pd
-cohort, out = sys.argv[1:3]
+cohort, out, head = sys.argv[1:4]
 s = pd.read_csv(cohort, dtype={"Sample": str})["Sample"]
 if s.isna().any() or not s.is_unique or s.str.strip().ne(s).any() or s.eq("").any():
     sys.exit(f"{cohort}: Sample must be unique, non-empty and unpadded")
-text = "".join(f"{x}\n" for x in sorted(s))
+samples = sorted(s)[: int(head)] if head else sorted(s)
+text = "".join(f"{x}\n" for x in samples)
 if not os.path.exists(out) or open(out).read() != text:
     tmp = f"{out}.{os.getpid()}.part"
     with open(tmp, "w") as fh:
         fh.write(text)
     os.replace(tmp, out)
 EOF
-    md5sum < "$SAMPLES" | cut -d' ' -f1
+    md5sum < "$out" | cut -d' ' -f1
 }
 
-# a second array into the same store would share each sample's temporary .pt name with the first
+# a second array into the same store would share each sample's temporary .pt name with the first. A failed squeue
+# is not "none live": it exits
 no_live_array() {
-    local live; live=$(squeue -u "$USER" -h -o '%j' | grep -c '^pa-esm-embeddings$' || true)
+    local jobs live
+    jobs=$(squeue -u "$USER" -h -o '%j') || {
+        echo "squeue failed: cannot tell whether a pa-esm-embeddings array is live"; exit 1; }
+    live=$(grep -c '^pa-esm-embeddings$' <<<"$jobs" || true)
     (( live == 0 )) || { echo "a pa-esm-embeddings array is queued or running: wait for it (or scancel it) first"; exit 1; }
 }
 
+# same_array_code <array repo>: refuse unless the array script and the modules it runs there are this checkout's
+same_array_code() {
+    local f
+    for f in "${ARRAY_CODE[@]}"; do
+        cmp -s "$REPO/$f" "$1/$f" || {
+            echo "ARRAY_REPO's $1/$f is not this driver's $REPO/$f (differs or missing):"
+            echo "check out this driver's SHA in ARRAY_REPO, or run the driver from ARRAY_REPO"; exit 1; }
+    done
+}
+
 # check_store <esm dir> <all|N> [proteins-only]
-#   all: the cohort is every Sample of bakta_annotation.csv; N: the first N of $SAMPLES (what the smoke embeds).
+#   all: the cohort is every Sample of bakta_annotation.csv; N: the first N of $SMOKE_SAMPLES (what smoke embeds).
 #   Fails on: an empty cohort; a genome with no parquet, a parquet older than its GFF (built from a genome since
 #   rebuilt), or, at scope all, a parquet whose protein count is not the GFF3's CDS minus pseudogenes; with an
 #   embedding stage, a missing, unreadable or stale .pt, or a sampled file of the wrong shape, width or dtype, or
 #   holding NaN.
 check_store() {
-    uv run --no-sync python -I - "$COHORT" "$PROT" "$1" "$2" "${3:-}" "$MAX_PROTEINS" "$SAVE_DTYPE" "$SAMPLES" <<'EOF'
+    uv run --no-sync python -I - "$COHORT" "$PROT" "$1" "$2" "${3:-}" "$MAX_PROTEINS" "$SAVE_DTYPE" "$SMOKE_SAMPLES" \
+        <<'EOF'
 import random, sys, zipfile
 from pathlib import Path
 import pandas as pd, torch
@@ -106,7 +134,7 @@ prot, esm, cap, dtype = Path(prot), Path(esm), int(cap), getattr(torch, dtype)
 c = pd.read_csv(cohort_csv, dtype={"Sample": str}).set_index("Sample")
 if scope == "all":
     samples = sorted(c.index)
-else:  # the first N of the ESM array's sample list: what the smoke embedded
+else:  # the first N of the smoke's sample list: what the smoke embedded
     samples = [x.strip() for x in Path(samples_txt).read_text().split("\n") if x.strip()][: int(scope)]
 pq = {s: prot / f"{s}_protein_sequences.parquet" for s in samples}
 pt = {s: esm / f"{s}_esm_embeddings.pt" for s in samples}
@@ -193,31 +221,35 @@ check-proteins)
     check_store "$ESM" all proteins-only
     ;;
 smoke)
+    array_repo=${ARRAY_REPO:?set ARRAY_REPO to a detached worktree at the SHA to run (see the header)}
+    same_array_code "$array_repo"
     check_store "$ESM" all proteins-only >/dev/null || { echo "proteins incomplete: run check-proteins"; exit 1; }
-    md5=$(write_samples)
-    # the first 10 of the list (N=10), from this checkout at this SHA
-    sha=$(git rev-parse HEAD)
+    # its own list, the first 10 of the cohort's sorted Samples: esm_samples.txt, which a live array may be pinned
+    # to, is never touched here
+    md5=$(write_samples "$SMOKE_SAMPLES" 10)
+    sha=$(git -C "$array_repo" rev-parse HEAD)
     submit --array=0 --time=00:20:00 --job-name=pa-esm-smoke \
-        --export="ALL,REPO=$REPO,EXPECT_SHA=$sha,INPUT_DIR=$PROT,ESM_DIR=$ESM_SMOKE,SAMPLES=$SAMPLES,SAMPLES_MD5=$md5,MAX_PROTEINS=$MAX_PROTEINS,SAVE_DTYPE=$SAVE_DTYPE,NTASKS=1,N=10" \
-        "$ARRAY"
-    echo "samples: $SAMPLES (md5 $md5)"
+        --export="ALL,REPO=$array_repo,EXPECT_SHA=$sha,INPUT_DIR=$PROT,ESM_DIR=$ESM_SMOKE,SAMPLES=$SMOKE_SAMPLES,SAMPLES_MD5=$md5,MAX_PROTEINS=$MAX_PROTEINS,SAVE_DTYPE=$SAVE_DTYPE,NTASKS=1" \
+        "$array_repo/$ARRAY"
+    echo "samples: $SMOKE_SAMPLES (md5 $md5)"
     ;;
 check-smoke)
-    [[ -s $SAMPLES ]] || { echo "no $SAMPLES: run smoke first"; exit 1; }
+    [[ -s $SMOKE_SAMPLES ]] || { echo "no $SMOKE_SAMPLES: run smoke first"; exit 1; }
     check_store "$ESM_SMOKE" 10
     ;;
 submit)
+    # ARRAY_REPO: the checkout the tasks run, a detached worktree at the SHA to run, which keeps pending tasks immune
+    # to other agents' pulls of the shared checkout (EXPECT_SHA would otherwise stop them, exit 3).
+    # Re-running submit is safe: each task skips every genome whose .pt exists.
+    array_repo=${ARRAY_REPO:?set ARRAY_REPO to a detached worktree at the SHA to run (see the header)}
+    same_array_code "$array_repo"
     no_live_array
     check_store "$ESM" all proteins-only >/dev/null || { echo "proteins incomplete: run check-proteins"; exit 1; }
-    md5=$(write_samples)
-    # ARRAY_REPO: the checkout the tasks run (default this one); a detached worktree at the SHA to run keeps pending
-    # tasks immune to other agents' pulls of the shared checkout (EXPECT_SHA would otherwise stop them, exit 3).
-    # Re-running submit is safe: each task skips every genome whose .pt exists.
-    array_repo=${ARRAY_REPO:-$REPO}
+    md5=$(write_samples "$SAMPLES")
     sha=$(git -C "$array_repo" rev-parse HEAD)
     submit --array=0-$((NTASKS - 1)) --time=04:00:00 --job-name=pa-esm-embeddings \
         --export="ALL,REPO=$array_repo,EXPECT_SHA=$sha,INPUT_DIR=$PROT,ESM_DIR=$ESM,SAMPLES=$SAMPLES,SAMPLES_MD5=$md5,MAX_PROTEINS=$MAX_PROTEINS,SAVE_DTYPE=$SAVE_DTYPE,NTASKS=$NTASKS" \
-        "$array_repo/src/bacpredict/engine/embedding/scripts/esm_embeddings_array.sh"
+        "$array_repo/$ARRAY"
     echo "samples: $SAMPLES (md5 $md5)"
     ;;
 check)

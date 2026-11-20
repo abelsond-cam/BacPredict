@@ -6,13 +6,14 @@ the protein extractor logs a failed genome and exits 0, so a count of existing p
 cohort and still read complete.
 
 The cohort table is ``genomes/bakta_annotation.csv`` (``engine/genomes/bakta.py collate``): ``Sample``,
-``sr_assembly_file`` (contigs), ``sr_gff_file`` (the Bakta GFF3) and, when present, ``n_cds``, ``n_pseudo`` and
-``contigs_md5``. A listed genome fails on:
+``sr_assembly_file`` (contigs), ``sr_gff_file`` (the Bakta GFF3), ``n_cds``, ``n_pseudo`` and ``contigs_md5``. Each
+of those five columns is required (outside ``--presence-only``): a table without one fails, by name, for every
+genome, rather than silently skipping the check that column feeds. A listed genome fails on:
 
 - no parquet, an unreadable one, or one older than its GFF3 (built before the genome was re-annotated);
-- with ``n_cds``/``n_pseudo``: a protein count other than CDS minus pseudogenes. A contig-name mismatch between
-  GFF3 and contigs drops proteins silently, and every other check passes it;
-- with ``contigs_md5``: contigs changed (or gone) since annotation;
+- a protein count other than CDS minus pseudogenes. A contig-name mismatch between GFF3 and contigs drops
+  proteins silently, and every other check passes it;
+- contigs changed (or gone) since annotation (``contigs_md5``);
 - with ``--esm-dir``: no ``.pt``, an unreadable one (not a zip archive), or one older than its parquet; and, on a
   seeded sample of ``--n-sampled`` genomes, a ``protein_embeddings`` tensor whose protein axis is not
   ``min(proteins, --max-proteins)``, whose width is not 960, whose dtype is not ``--save-dtype``, or holding NaN.
@@ -22,7 +23,10 @@ read, contigs md5, zip check) run in a process pool of ``--workers``; the sample
 ``--presence-only`` instead reads each directory's listing once (no per-file stat) and checks only that every
 listed genome has its files: a cheap guard for a login node before an array is submitted.
 
-Exit status is 1 on any problem or an empty sample set. ``--report`` writes every (Sample, problem) pair.
+Exit status is 1 on any problem or an empty sample set. ``--report OUT`` writes every (Sample, problem) pair to
+OUT and, only on PASS, ``OUT.pass``: the md5 of the cohort table's bytes, the very bytes that were checked (a stale
+``OUT.pass`` is removed first). A driver can then refuse to go on unless the latest check passed on the table as it
+is now (``build_entero_embeddings.sh submit``).
 
 Usage::
 
@@ -35,6 +39,8 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import hashlib
+import io
 import os
 import random
 import sys
@@ -66,6 +72,8 @@ NO_EMBEDDING = "no embedding"
 UNREADABLE_EMBEDDING = "unreadable embedding"
 EMBEDDING_OLDER = "embedding older than its parquet"
 SAMPLED_MISMATCH = "sampled embedding mismatch"
+# the columns the per-genome checks need; outside --presence-only a missing one is a named failure, never a skip
+REQUIRED_COLUMNS = ("sr_gff_file", "sr_assembly_file", "n_cds", "n_pseudo", "contigs_md5")
 _ORDER = (DUPLICATE, NOT_IN_COHORT, NO_PARQUET, GFF_MISSING, PARQUET_OLDER, UNREADABLE_PARQUET, COUNT_MISMATCH,
           CONTIGS_UNREADABLE, CONTIGS_CHANGED, NO_EMBEDDING, UNREADABLE_EMBEDDING, EMBEDDING_OLDER, SAMPLED_MISMATCH)
 
@@ -140,7 +148,9 @@ def _check_one(task: tuple) -> tuple[str, int | None, bool, list[str]]:
         else:
             if expect is not None and n != expect:
                 problems.append(COUNT_MISMATCH)
-    if contigs_md5 is not None:
+    if contigs_md5 is not None and contigs is None:  # no contigs path to hash (e.g. no sr_assembly_file column)
+        problems.append(CONTIGS_UNREADABLE)
+    elif contigs_md5 is not None:
         try:
             if _md5(Path(contigs)) != contigs_md5:
                 problems.append(CONTIGS_CHANGED)
@@ -180,6 +190,11 @@ def _sampled_embedding(sample: str, pt: Path, n_prot: int, max_proteins: int, sa
     return ok, line
 
 
+def missing_column(col: str) -> str:
+    """The problem a cohort table without ``col`` is reported under."""
+    return f"cohort table has no {col} column"
+
+
 def _listing(directory: Path, suffix: str) -> set[str]:
     """Sample names of ``directory``'s ``<Sample><suffix>`` files, from one directory read (no per-file stat)."""
     with os.scandir(directory) as it:
@@ -201,8 +216,8 @@ def check_cohort_store(cohort: pd.DataFrame, protein_dir: Path, samples: list[st
     Parameters
     ----------
     cohort : pandas.DataFrame
-        The annotation table: ``Sample`` and, as available, ``sr_gff_file``, ``sr_assembly_file``, ``n_cds``,
-        ``n_pseudo``, ``contigs_md5`` (each column enables its check).
+        The annotation table: ``Sample`` and :data:`REQUIRED_COLUMNS`. Outside ``presence_only`` a missing column
+        is the problem ``"cohort table has no <column> column"`` for every genome (its check cannot run).
     protein_dir : Path
         Holds ``<Sample>_protein_sequences.parquet``.
     samples : list of str
@@ -247,6 +262,9 @@ def check_cohort_store(cohort: pd.DataFrame, protein_dir: Path, samples: list[st
             result.with_embedding = sum(s in have_pt for s in samples)
         return _finish(result, found)
 
+    for col in REQUIRED_COLUMNS:
+        if col not in c.columns:
+            found[missing_column(col)] = list(samples)
     sub = c.reindex(samples)
 
     def column(name: str) -> list:
@@ -311,10 +329,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--n-sampled", type=int, default=10, help=".pt files to load and check (default 10)")
     ap.add_argument("--presence-only", action="store_true",
                     help="only check every genome has its files, from one listing per directory")
-    ap.add_argument("--report", type=Path, default=None, help="CSV of every (Sample, problem); written even if empty")
+    ap.add_argument("--report", type=Path, default=None,
+                    help="CSV of every (Sample, problem), written even if empty; on PASS also <report>.pass, the "
+                    "md5 of the cohort table checked")
     a = ap.parse_args(argv)
 
-    cohort = pd.read_csv(a.cohort, dtype={"Sample": str})
+    marker = None
+    if a.report is not None:  # never leave a PASS marker from an earlier run beside this run's report
+        marker = a.report.with_name(a.report.name + ".pass")
+        marker.unlink(missing_ok=True)
+    # read once: the marker's md5 is of the bytes that were checked, not of a table rewritten mid-check
+    cohort_bytes = a.cohort.read_bytes()
+    cohort = pd.read_csv(io.BytesIO(cohort_bytes), dtype={"Sample": str})
     if a.samples_file is not None:
         try:
             samples = read_samples_file(a.samples_file)
@@ -351,6 +377,9 @@ def main(argv: list[str] | None = None) -> int:
         rows = [(s, k) for k, v in r.problems.items() for s in v]
         pd.DataFrame(rows, columns=["Sample", "problem"]).to_csv(a.report, index=False)
         print(f"report: {a.report} ({len(rows)} rows)")
+    if r.ok and marker is not None:
+        marker.write_text(hashlib.md5(cohort_bytes).hexdigest() + "\n")
+        print(f"pass marker: {marker}")
     print("PASS" if r.ok else "FAIL" + ("" if r.samples else ": no genomes to check"))
     return 0 if r.ok else 1
 

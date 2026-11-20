@@ -204,15 +204,23 @@ is gated on the one before.
 
 | Stage | What it does |
 |---|---|
-| `proteins` | One CPU job on `icelake` (32 cores, 96G, 2 h): `preprocess_assemblies_to_protein_sequences` from `genomes/bakta_annotation.csv` into `processed/protein_sequences/`, with `--skip-existing`. Parquets are written atomically, so a job killed at the wall time is simply resubmitted |
-| `check-proteins` | `engine/embedding/check_cohort_store.py` as a 32-core `icelake` job (48G, 1 h). Every cohort genome must have a readable parquet, no older than its GFF3, holding CDS − pseudogenes proteins, with contigs unchanged since annotation; the table must equal `embedding_input.csv` |
-| `smoke` | Writes `genomes/esm_samples_smoke.txt` (one genome per genus, the genome with the most proteins, then genera in turn up to 10), checks those 10 parquets inline, and runs one GPU task (20 min) into `processed/esm_smoke/` |
+| `proteins` | One CPU job on `icelake` (32 cores, 96G, 6 h: ×3 an unmeasured ~2 h estimate): `preprocess_assemblies_to_protein_sequences` from `genomes/bakta_annotation.csv` into `processed/protein_sequences/`, with `--skip-existing`. Parquets are written atomically, so a job killed at the wall time is simply resubmitted |
+| `check-proteins` | `engine/embedding/check_cohort_store.py` as a 32-core `icelake` job (48G, 1 h). Every cohort genome must have a readable parquet, no older than its GFF3, holding CDS − pseudogenes proteins, with contigs unchanged since annotation; the table must equal `embedding_input.csv`, and must have every column these checks need (`sr_gff_file`, `sr_assembly_file`, `n_cds`, `n_pseudo`, `contigs_md5`). On PASS it writes `problems.csv.pass`, the md5 of the table it checked |
+| `smoke` | Needs `ARRAY_REPO`. Writes `genomes/esm_samples_smoke.txt` (one genome per genus, the genome with the most proteins, then genera in turn up to 10), checks those 10 parquets inline, and runs one GPU task (20 min) into `processed/esm_smoke/` |
 | `check-smoke` | `check_cohort_store` on the login node over the smoke list, including loading their `.pt` files |
-| `submit` | Needs `ARRAY_REPO`. Writes `genomes/esm_samples.txt` (sorted Samples of `bakta_annotation.csv`) and checks that every listed parquet exists (one directory read). Then submits the GPU array: `NTASKS = ceil(n / 300)` tasks of 4 h (~300 genomes at ~13 s each ≈ 65 min), at most `ESM_CONCURRENT` (64) running at once, pinned to `ARRAY_REPO`'s SHA and the list's md5 |
+| `submit` | Needs `ARRAY_REPO`, and the latest `check-proteins` to have passed on `bakta_annotation.csv` as it is now. Writes `genomes/esm_samples.txt` (sorted Samples of `bakta_annotation.csv`) and checks that every listed parquet exists (one directory read). Then submits the GPU array: `NTASKS = ceil(n / 300)` tasks of 4 h (~300 genomes at ~13 s each ≈ 65 min), at most `ESM_CONCURRENT` (64) running at once, pinned to `ARRAY_REPO`'s SHA and the list's md5 |
 | `check` | As `check-proteins`, plus every `.pt`: present, a readable zip, no older than its parquet; and 10 sampled `.pt` files loaded and checked for shape `min(proteins, 9000)` × 960, bf16, no NaN |
 
 - **Each check job prints `PASS` or `FAIL` as its last line** and writes every (Sample, problem) pair to
   `problems.csv` in its log directory. `check_cohort_store` reports only the first 10 genomes of each problem.
+- **`submit` refuses unless the latest `check-proteins` passed on today's table.** It reads `problems.csv.pass` in
+  the newest `entero_esm_check-proteins_*` log directory and compares it with the md5 of `bakta_annotation.csv`.
+  A newer check that is still pending, or that failed, has no marker; a table rewritten since has another md5.
+  Either way, run `check-proteins` again.
+- **`smoke` and `submit` run `ARRAY_REPO`'s code, and refuse unless it is this driver's.** `ARRAY_REPO` is a
+  detached worktree at the SHA to run, with `.venv` symlinked to the shared env. Its `esm_embeddings_array.sh`,
+  `generate_embeddings.py` and `sample_list.py` must be byte-identical (`cmp`) to the driver's checkout.
+- **A failed `squeue` stops `proteins` and `submit`.** It is not read as "no job live".
 - **Overrides.** `PROT_*` and `CHECK_*` override the CPU job shapes (`_PARTITION`, `_MEM`, `_TIME`; also
   `PROT_CPUS`). `ESM_PER_TASK` and `ESM_CONCURRENT` size the GPU array.
 - **`proteins` refuses while a PsA ESM-C job is queued or running.** A PsA array submitted before the sample list

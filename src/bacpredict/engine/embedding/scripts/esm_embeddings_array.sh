@@ -18,7 +18,8 @@
 #                 so a listing would embed every species at once and shift its slices whenever any species wrote a
 #                 parquet mid-array. A task exits before loading the model if a parquet of its slice is missing.
 #   SAMPLES_MD5   optional: refuse to run (exit 3) if SAMPLES' md5 is not this — the list a pending task would
-#                 slice must be the one its siblings sliced
+#                 slice must be the one its siblings sliced. Also passed on as generate_embeddings --samples-md5,
+#                 which checks it against the very bytes it parses (the list could change between the two reads)
 #   REPO          the checkout to run (default ~/workspace/BacPredict). For a long array, a detached worktree at
 #                 the submitting SHA with .venv symlinked to the shared env; its src/ goes first on PYTHONPATH.
 #   EXPECT_SHA    optional: refuse to run (exit 3) if REPO's HEAD is not it
@@ -89,5 +90,6 @@ if (( START >= END )); then echo "empty slice"; exit 0; fi
 
 uv run --project "$REPO" --no-sync python -m bacpredict.engine.embedding.generate_embeddings \
     --input-dir "$INPUT_DIR" --esm-dir "$ESM_DIR" --max-proteins "$MAX_PROTEINS" --save-dtype "$SAVE_DTYPE" \
-    --skip-existing --start-idx "$START" --end-idx "$END" ${N:+--n "$N"} ${SAMPLES:+--samples-file "$SAMPLES"}
+    --skip-existing --start-idx "$START" --end-idx "$END" ${N:+--n "$N"} ${SAMPLES:+--samples-file "$SAMPLES"} \
+    ${SAMPLES_MD5:+--samples-md5 "$SAMPLES_MD5"}
 echo "[$(date -Is)] done"

@@ -6,6 +6,7 @@ parquets a task is given, in which order, and that a bad list stops the task bef
 
 from __future__ import annotations
 
+import hashlib
 import sys
 from pathlib import Path
 
@@ -63,6 +64,15 @@ def test_read_refuses_unsorted_duplicate_or_empty(tmp_path, text, what):
     f.write_text(text)
     with pytest.raises(ValueError, match=what):
         read_samples_file(f)
+
+
+def test_read_checks_the_md5_of_the_bytes_it_parses(tmp_path):
+    f = tmp_path / "s.txt"
+    f.write_bytes(b"A\r\nB\r\n")  # CRLF: the \r is stripped as whitespace, as awk's gsub does
+    md5 = hashlib.md5(f.read_bytes()).hexdigest()
+    assert read_samples_file(f, md5=md5) == ["A", "B"]
+    with pytest.raises(ValueError, match="changed since submit"):
+        read_samples_file(f, md5=hashlib.md5(b"A\nB\n").hexdigest())
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -166,3 +176,40 @@ def test_a_bad_list_exits_before_the_model_loads(tmp_path, monkeypatch, text):
     with pytest.raises(SystemExit) as e:
         ge.main()
     assert str(e.value.code).startswith("--samples-file:")
+
+
+def _md5(path: Path) -> str:
+    return hashlib.md5(path.read_bytes()).hexdigest()
+
+
+def test_samples_md5_that_matches_runs(tmp_path, monkeypatch):
+    d = _store(tmp_path)
+    lst = tmp_path / "esm_samples.txt"
+    lst.write_text("SAMN123\nSAMN2\n")
+    got = _run(monkeypatch, tmp_path, "--input-dir", str(d), "--samples-file", str(lst), "--samples-md5", _md5(lst))
+    assert got == ["SAMN123", "SAMN2"]
+
+
+def test_a_list_rewritten_after_submit_exits_before_the_model_loads(tmp_path, monkeypatch):
+    # the array checked SAMPLES_MD5 against the list it saw; the list is rewritten before the generator reads it
+    d = _store(tmp_path)
+    lst = tmp_path / "esm_samples.txt"
+    lst.write_text("SAMN123\nSAMN2\n")
+    submitted = _md5(lst)
+    lst.write_text("SAMN123\nSAMN2\nSAMN3\n")
+    _no_model(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["g", "--input-dir", str(d), "--esm-dir", str(tmp_path / "esm"),
+                                      "--samples-file", str(lst), "--samples-md5", submitted])
+    with pytest.raises(SystemExit) as e:
+        ge.main()
+    assert str(e.value.code).startswith("--samples-file:") and "changed since submit" in str(e.value.code)
+
+
+def test_samples_md5_needs_a_samples_file(tmp_path, monkeypatch):
+    d = _store(tmp_path)
+    _no_model(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["g", "--input-dir", str(d), "--esm-dir", str(tmp_path / "esm"),
+                                      "--samples-md5", "0" * 32])
+    with pytest.raises(SystemExit) as e:
+        ge.main()
+    assert e.value.code == 2  # argparse's usage error
