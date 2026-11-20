@@ -224,7 +224,7 @@ stage: `submit`'s gate compares the latest `check-proteins` pass with the md5 of
 | `link-kp` | Needs the latest `check-proteins` to have passed on the table as it is now; refuses while an `entero-esm-embeddings` array or another `entero-esm-link-kp` job is queued or running. Writes `genomes/esm_samples_kp_link.txt` (the cohort genomes whose `cohort.csv` species is *Klebsiella*), then one CPU job on `icelake` (16 cores, 16G, 30 min; `LINK_PARTITION`/`CPUS`/`MEM`/`TIME` override): `engine/embedding/link_existing_embeddings.py` symlinks each one's Kp ESM-C `.pt` into `processed/esm/` where it aligns with our parquet, and writes `genomes/esm_linked_kp.tsv`. See *Reusing the Kp ESM-C embeddings* below |
 | `smoke` | Needs `ARRAY_REPO`. Writes `genomes/esm_samples_smoke.txt` (one genome per genus, the genome with the most proteins, then genera in turn up to 10), checks those 10 parquets inline, and runs one GPU task (20 min) into `processed/esm_smoke/` |
 | `check-smoke` | `check_cohort_store` on the login node over the smoke list, including loading their `.pt` files |
-| `submit` | Needs `ARRAY_REPO`, and the latest `check-proteins` to have passed on the table as it is now. Writes `genomes/esm_samples_to_embed.txt`: the sorted cohort Samples with **no `.pt` in `processed/esm/` yet** (one directory read; a `.pt` counts whether embedded or linked). Exits 0 without submitting if that is none. Checks that every listed parquet exists (one directory read), then submits the GPU array: `NTASKS = ceil(n / 300)` tasks of 4 h (~300 genomes at ~13 s each ≈ 65 min), at most `ESM_CONCURRENT` (64) running at once, pinned to `ARRAY_REPO`'s SHA and the list's md5 |
+| `submit` | Needs `ARRAY_REPO`, the latest `check-proteins` to have passed on the table as it is now, and the latest `link-kp` to have finished (`done`) after that pass, with no `entero-esm-link-kp` job queued or running (`SKIP_LINK_KP=1` drops the finished-run requirement). Writes `genomes/esm_samples_to_embed.txt`: the sorted cohort Samples with **no `.pt` in `processed/esm/` yet** (one directory read; a `.pt` counts whether embedded or linked). Exits 0 without submitting if that is none. Checks that every listed parquet exists (one directory read), then submits the GPU array: `NTASKS = ceil(n / 300)` tasks of 4 h (~300 genomes at ~13 s each ≈ 65 min), at most `ESM_CONCURRENT` (64) running at once, pinned to `ARRAY_REPO`'s SHA and the list's md5 |
 | `check` | As `check-proteins`, plus every `.pt`: present (a symlink must resolve), a readable zip, no older than its parquet (a symlink by its own mtime); and 10 sampled real `.pt` files plus 10 sampled symlinks loaded and checked for shape `min(proteins, 9000)` × 960, no NaN, and bf16 (a symlink may also be fp32). Its `.out` counts the symlinks and the sampled dtypes of each kind |
 
 - **Each check job prints `PASS` or `FAIL` as its last line** and writes every (Sample, problem) pair to
@@ -233,17 +233,26 @@ stage: `submit`'s gate compares the latest `check-proteins` pass with the md5 of
   the newest `entero_esm_check-proteins_*` log directory and compares it with the md5 of `bakta_annotation.csv`.
   A newer check that is still pending, or that failed, has no marker; a table rewritten since has another md5.
   Either way, run `check-proteins` again.
+- **`submit` refuses unless the latest `link-kp` finished after that pass.** The newest `entero_esm_link-kp_*` log
+  directory's `.out` must hold the link job's success line, `done` (a run with a `no_parquet` or `error` genome ends
+  `FAIL:`), and it and `genomes/esm_linked_kp.tsv` must be newer than the `problems.csv.pass` `submit` just checked.
+  Without this, `submit` run before `link-kp` (or while it is pending) lists every *Klebsiella* genome the Kp store
+  holds, ~8.9k genomes or ~31 A100-h, and the later `link-kp` finds them embedded. A `check-proteins` pass after
+  `link-kp` means running `link-kp` again. `SKIP_LINK_KP=1` submits without a `link-kp` run (every *Klebsiella*
+  genome is then embedded), for instance for a cohort with none.
 - **`smoke` and `submit` run `ARRAY_REPO`'s code, and refuse unless it is this driver's.** `ARRAY_REPO` is a
   detached worktree at the SHA to run, with `.venv` symlinked to the shared env. Its `esm_embeddings_array.sh`,
   `generate_embeddings.py` and `sample_list.py` must be byte-identical (`cmp`) to the driver's checkout.
-- **A failed `squeue` stops `proteins` and `submit`.** It is not read as "no job live".
+- **A failed `squeue` stops `proteins`, `link-kp` and `submit`.** It is not read as "no job live".
 - **Overrides.** `PROT_*` and `CHECK_*` override the CPU job shapes (`_PARTITION`, `_MEM`, `_TIME`; also
-  `PROT_CPUS`). `ESM_PER_TASK` and `ESM_CONCURRENT` size the GPU array.
+  `PROT_CPUS`). `ESM_PER_TASK` and `ESM_CONCURRENT` size the GPU array. `SKIP_LINK_KP=1` lets `submit` run without
+  a finished `link-kp`.
 - **`proteins` refuses while a PsA ESM-C job is queued or running.** A PsA array submitted before the sample list
   slices the store's whole listing, so new parquets would shift its slices. Set `IGNORE_LIVE_PSA_ESM=1` once every
   live PsA job was submitted with `SAMPLES` (its `.out` header shows `samples=…`).
-- **`submit` refuses while an `entero-esm-embeddings` array is queued or running.** Two arrays writing one sample
-  share its temporary `.part` file. Re-running `submit` afterwards submits only the genomes still without a `.pt`, so
+- **`submit` refuses while an `entero-esm-embeddings` array or an `entero-esm-link-kp` job is queued or running.**
+  Two arrays writing one sample share its temporary `.part` file, and a pending `link-kp` has not yet linked the
+  genomes the list would hand the array. `link-kp` refuses in turn while an array is live. Re-running `submit` afterwards submits only the genomes still without a `.pt`, so
   a rerun after a partial array tiles just the remainder (with --skip-existing, the tasks also resume within a slice).
   The list is rewritten only by `submit`, and never while an array is live, so no queued task finds it changed.
 
@@ -270,7 +279,8 @@ symlinks and skip those when we have them". The Kp store is `/rds/project/rds-4k
   not be made). The job exits 1 on any `no_parquet` or `error`; every other genome without a link is embedded by the
   array. `python -m bacpredict.engine.embedding.link_existing_embeddings … --dry-run` decides without linking
   (`would_link`).
-- **Then `submit`** lists only the genomes with no `.pt`, so the array never embeds a linked genome.
+- **Then `submit`**, which refuses until a `link-kp` run has finished after the latest `check-proteins` pass (and
+  while one is queued or running), lists only the genomes with no `.pt`, so the array never embeds a linked genome.
 - ⚠ **A linked `.pt` is the Kp store's embedding, not ours.** Its three selenoproteins (fdnG ×2, fdhF) were embedded
   from `*` where our extractor writes `U`, and it is fp32 where ours are bf16: `processed/esm/` mixes dtypes by design.
   Whatever reads the store for training must not let dtype (or those three proteins) distinguish *Klebsiella* from the

@@ -30,7 +30,8 @@
 # array tasks otherwise run whatever the shared checkout's HEAD is when they start; both refuse unless ARRAY_REPO's
 # array script, generate_embeddings.py and sample_list.py are byte-identical to this checkout's (the export they are
 # handed is written for this driver's copies). submit also refuses unless the latest check-proteins passed on
-# the cohort table as it is now (its problems.csv.pass holds the table's md5). Settings as for PsA:
+# the cohort table as it is now (its problems.csv.pass holds the table's md5), and unless the latest link-kp finished
+# after that pass and none is queued or running (SKIP_LINK_KP=1 drops the first). Settings as for PsA:
 # --max-proteins 9000 and bf16 storage (PROJECT_STATE.md §6); linked Kp .pt stay fp32 (check_cohort_store allows
 # float32 for a symlink only).
 set -euo pipefail
@@ -126,6 +127,30 @@ proteins_passed() {
     want=$(md5sum < "$COHORT" | cut -d' ' -f1)
     [[ $have == "$want" ]] || {
         echo "$COHORT has changed since the latest check-proteins ($last) passed: run check-proteins again"; exit 1; }
+    PROTEINS_PASS=$last/problems.csv.pass  # kp_linked dates the link-kp run against it
+}
+
+# kp_linked (after proteins_passed): refuse unless the latest link-kp ran to completion after the check-proteins pass
+# just verified. Otherwise the list submit writes still holds every Klebsiella genome the Kp store has (~8.9k, ~31
+# A100-h), and a link-kp that runs later finds them embedded or loses the race to the array's writes. "done" is the
+# link job's last line only on success (FAIL: … and exit 1 on a no_parquet or error genome); a check-proteins pass
+# since then may have changed parquets the links were compared with. SKIP_LINK_KP=1 submits without a link-kp run
+# (every Klebsiella genome is then embedded); the live check in submit still applies.
+kp_linked() {
+    if [[ ${SKIP_LINK_KP:-0} == 1 ]]; then echo "SKIP_LINK_KP=1: not requiring a link-kp run"; return 0; fi
+    local runs last outs out
+    runs=("$LOGS"/entero_esm_link-kp_*)  # timestamped names: glob order is time order
+    last=${runs[${#runs[@]}-1]}
+    [[ -d $last ]] || {
+        echo "no link-kp run in $LOGS: run link-kp first (or SKIP_LINK_KP=1 to embed the Klebsiella genomes too)"; exit 1; }
+    outs=("$last"/entero-esm-link-kp_*.out); out=${outs[${#outs[@]}-1]}
+    [[ -f $out ]] && grep -qx done "$out" || {
+        echo "the latest link-kp ($last) did not finish with 'done': read its .out, then run link-kp again"
+        echo "(or SKIP_LINK_KP=1 to submit without it)"; exit 1; }
+    [[ $out -nt $PROTEINS_PASS && -s $LINK_REPORT && $LINK_REPORT -nt $PROTEINS_PASS ]] || {
+        echo "check-proteins passed again ($PROTEINS_PASS) after the latest link-kp ($last), or $LINK_REPORT is"
+        echo "missing or older: run link-kp again"; exit 1; }
+    echo "link-kp: $last ($LINK_REPORT)"
 }
 
 # write_list <out> <python printing the sorted, unique samples from the cohort table (argv 1) and cohort.csv (argv 2);
@@ -279,11 +304,13 @@ check-smoke)
 submit)
     array_repo=${ARRAY_REPO:?set ARRAY_REPO to a detached worktree at the SHA to run (see the header)}
     same_array_code "$array_repo"
-    # a second array into the same store would share each sample's temporary .pt name with the first
-    n=$(live '^entero-esm-embeddings$')
-    (( n == 0 )) || { echo "an entero-esm-embeddings array is queued or running"; exit 1; }
+    # a second array into the same store would share each sample's temporary .pt name with the first; a link-kp job
+    # still queued or running has not yet linked the genomes this list would otherwise hand the array
+    n=$(live '^entero-esm-(embeddings|link-kp)$')
+    (( n == 0 )) || { echo "an entero-esm-embeddings array or an entero-esm-link-kp job is queued or running"; exit 1; }
     [[ -s "$COHORT" ]] || { echo "no $COHORT"; exit 1; }
     proteins_passed
+    kp_linked
     # only the genomes still to embed, so the array tiles nothing already there (linked by link-kp, or embedded by an
     # earlier array) and a rerun after a partial array is just the remainder. The list is rewritten only here, and
     # never while an array is live (above), so no queued task finds it changed
