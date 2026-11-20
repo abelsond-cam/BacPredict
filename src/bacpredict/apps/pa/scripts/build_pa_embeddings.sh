@@ -34,6 +34,13 @@ LOGS=/rds/user/dca36/hpc-work/logs
 ARRAY=$REPO/src/bacpredict/engine/embedding/scripts/esm_embeddings_array.sh
 cd "$REPO"
 
+# The start of a --wrap job: the code it runs is the checkout's HEAD when it STARTS, so refuse to run if that is
+# no longer the SHA submitted (the shared checkout moves under other agents), and log the SHA it did run.
+sha_guard() {
+    local sha; sha=$(git -C "$REPO" rev-parse HEAD)
+    echo "h=\$(git -C $REPO rev-parse HEAD); [ \"\$h\" = $sha ] || { echo \"checkout moved: \$h, submitted at $sha\"; exit 3; }; echo repo=$REPO@\$h;"
+}
+
 submit() {  # sbatch, then print the resource line the global rules require (read back from SLURM)
     local id job kind; id=$(sbatch --parsable "$@"); id=${id%%;*}
     job=$(scontrol show job "$id")
@@ -135,7 +142,7 @@ proteins)
     submit --account=FLOTO-PROJECT-K-SL2-CPU --partition=icelake-himem --cpus-per-task=32 --mem=128G \
         --time=00:45:00 --job-name=pa-protein-sequences --chdir="$run_dir" \
         --output="$run_dir/%x_%j.out" --error="$run_dir/%x_%j.err" \
-        --wrap="echo repo=$REPO@$(git rev-parse --short HEAD); PYTHONUNBUFFERED=1 uv run --project $REPO --no-sync \
+        --wrap="$(sha_guard) PYTHONUNBUFFERED=1 uv run --project $REPO --no-sync \
 python -m bacpredict.engine.embedding.preprocess_assemblies_to_protein_sequences --input-csv $COHORT \
 --output-dir $PROT --workers 32 --skip-existing"
     echo "logs: $run_dir"
