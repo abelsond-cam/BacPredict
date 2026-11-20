@@ -331,8 +331,11 @@ One model per drug, trained by the shared trainer from that drug's split table (
 | `collect` | `models/holdout_metrics.csv`: a row per drug × holdout, with each run's `results.json` path. A drug without a `results.json` is a `missing` row |
 
 **Stage A and B are one run.** The trainer's 10-genome path takes a class-balanced 10 of `train` (seeded) and uses
-them as train, validate and holdout for 100 optimizer steps (2 per epoch at grad-accum 8); it also scores a balanced
-10 of `holdout_st` so that path runs. The smoke turns early stopping off: on train = validate the AUROC saturates in a
+them as train, validate and holdout for 200 optimizer steps (1 per epoch at grad-accum 8) at a **constant** learning
+rate, and scores the **final** model (no best-checkpoint reload); it also scores a balanced 10 of `holdout_st` so that
+path runs. The first smoke (job `41545259`) ran a linear decay to 0 over 100 steps, which stalled the loss at ~0.10, and
+reloaded the best checkpoint, which on train = validate was step 2 (AUROC 1.0 already), so it scored an untrained
+model (every probability ~0.99, balanced accuracy 0.5). The smoke turns early stopping off: on train = validate the AUROC saturates in a
 few epochs, and patience 15 would end the run before the loss has fallen.
 
 **Stage B reads `<run>/trainer_state.json`, never `checkpoint-*/trainer_state.json`.** With `save_total_limit=1` and

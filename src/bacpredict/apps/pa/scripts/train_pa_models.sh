@@ -18,7 +18,7 @@
 #
 # Training is engine/finetune/scripts/finetune_amr_array.sh: finetune_amr --split-table, bf16, early stopping, the
 # deployed TB/Kp hyperparameters. Stage A and B are one run: the trainer's 10-genome path trains, validates and
-# scores on the same balanced 10 for 100 optimizer steps, all of them (the smoke sets PATIENCE=1000: early stopping
+# scores on the same balanced 10 for 200 optimizer steps at a constant LR, all of them (the smoke sets PATIENCE=1000: early stopping
 # off). `smoke` submits it, `check-smoke` checks its outputs (Stage A) and `overfit` reads its whole loss history
 # from <run>/trainer_state.json, never a checkpoint's (Stage B, engine/finetune/check_overfit). smoke and submit need
 # ARRAY_REPO, a detached worktree at the SHA to run (.venv symlinked to the shared env), whose trainer code must be
@@ -158,7 +158,7 @@ smoke)
     out_root=$MODELS/smoke/$(date +%Y%m%d_%H%M%S)
     md5=$(md5sum < "$SPLITS/split_manifest.json" | cut -d' ' -f1)
     sha=$(git -C "$array_repo" rev-parse HEAD)
-    # 100 optimizer steps (10 genomes at grad-accum 8 = 2 per epoch: 50 epochs) plus an evaluation and a checkpoint
+    # 200 optimizer steps at a constant LR (10 genomes at grad-accum 8 = 1 per epoch) plus an evaluation and a checkpoint
     # each epoch: well under an hour (short job: a tight wall). PATIENCE=1000 turns early stopping off: on train =
     # validate the AUROC saturates within a few epochs, and patience 15 would end the run long before the loss falls
     submit --array=0 --time="${SMOKE_TIME:-01:00:00}" --job-name=pa-finetune-smoke \

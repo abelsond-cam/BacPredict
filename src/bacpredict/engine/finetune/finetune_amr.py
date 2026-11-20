@@ -455,7 +455,11 @@ def run(
             split_source = "smoke"
             eval_strategy = "epoch"
             use_epochs = True
-            num_train_epochs = 100
+            # Stage B must show the loss going to ~0 and score the model that got there: 200 epochs at a constant
+            # LR, and the final model scored (below). With load_best_model_at_end, train = validate AUROC hits 1.0
+            # within a few steps, so the best (first) checkpoint was scored; and the linear decay to 0 stalled the
+            # loss at ~0.10 (smoke job 41545259)
+            num_train_epochs = 200
         else:
             split_source = "split_table"
             eval_strategy = "steps"
@@ -680,6 +684,8 @@ def run(
         print(f"steps/epoch: {steps_per_epoch}, max_epochs cap: {max_epochs} -> effective max_steps: "
               f"{effective_max_steps} (of requested {max_steps}); warmup {warmup_steps}, eval_steps {eval_steps}")
 
+    if split_source == "smoke" and split_table:
+        training_args_dict.update(lr_scheduler_type="constant", load_best_model_at_end=False)
     training_args = TrainingArguments(**training_args_dict)
 
     trainer_cls = PanelBacformerLargeTrainer if use_panel else BacformerLargeTrainer
