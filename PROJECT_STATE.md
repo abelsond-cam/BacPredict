@@ -2252,11 +2252,46 @@ Checks against §3.6's labels (`checks_vs_2026-07/`, scripts alongside):
 - 345 labelled Enterobacterales genomes carry a genus-only species (*Salmonella* 132, *Escherichia* 131, …); they take
   the genus- and order-level breakpoints. 220 have a species conflict with the 2026-07 genotype table (PsA 3).
 
-**In flight.** Stage 2, genomes, from the pinned worktree `BacPredict-c66a737`: the re-plan of both cohorts with the NCBI
-fallback (jobs `41609928` PsA, `41609929` Enterobacterales); the first plans, which dropped every genome with no reads,
-are kept aside as `genomes/_plan_pre_ncbi_20261121/`. A second adversarial review of the stage code runs before the
-build arrays are submitted. Two PsA canary tasks built correctly at `bbdd7ed` (100 of 100 ATB genomes; one shovill
-assembly, ST773), all on `paeruginosa`.
+**Numbers of record — the v2 genome plans.** Read from `$AMR/processed/{paeruginosa,enterobacterales}_cabbage_v2/genomes/`
+(`genome_manifest.csv`, read-only; `reused_genomes.csv`; `by_scheme/genome_manifest_<scheme>.csv`, read-only), planned at
+`c66a737` (`build_{pa,entero}_genomes_cabbage_v2.sh plan`, jobs `41609928`, `41609929`; logs
+`/rds/user/dca36/hpc-work/logs/v2-{pa,entero}-plan_<job>.out`). Every labelled genome is either §3.6's (reused, with
+§3.6's build decision) or planned here, never both (`check-disjoint`).
+
+| | PsA | Enterobacterales |
+|---|--:|--:|
+| labelled genomes | 9,422 | 118,608 |
+| reused from §3.6 (§3.6 sources: atb / portal / shovill / drop) | 3,794 (2,186 / 1,234 / 353 / 21) | 67,628 (65,234 / 2,049 / 210 / 135) |
+| planned here | 5,628 | 50,980 |
+| – ATB | 3,304 | 33,779 |
+| – NCBI GenBank assembly (`ncbi_gca`) | 1,620 | 15,549 |
+| – shovill | 183 | 712 |
+| – portal assembly | 0 | 34 |
+| – dropped | 521 | 906 |
+
+- **Drops:** PsA `other_strategy` 487 (DNBSEQ paired runs; Illumina runs with no `_1`/`_2` fastq pair), single-end 21,
+  long-read 8, RNA-seq 3, < 10× 2. Enterobacterales `other_strategy` 644 (DNBSEQ/BGISEQ; Illumina `WCS`), single-end
+  172, long-read 75, < 10× 13, no runs and no assembly 2. **Whether DNBSEQ paired reads are assembled is asked of
+  David**; a yes is a re-plan (shovill rows shift, and `missing-tasks` reruns only the shifted tasks).
+- **NCBI listed every accession asked for** (1,620 of 1,620; 15,549 of 15,549; `ncbi_assembly_dirs.tsv`). Without the
+  fallback the same plans dropped 2,141 PsA (38 %) and 16,455 Enterobacterales (32 %) genomes, carrying on average more
+  labels than the kept (PsA 8.0 vs 6.4 drugs); those plans are kept as `genomes/_plan_pre_ncbi_20261121/`.
+- **Enterobacterales by pinned scheme** (atb / ncbi / shovill / portal): `ecoli_achtman_4` 9,152 / 6,849 / 178 / 0;
+  `klebsiella` 10,944 / 4,665 / 222 / 34; `salmonella` 11,515 / 2,716 / 75 / 0; `ecloacae` 671 / 501 / 191 / 0;
+  `koxytoca` 285 / 44 / 1; `kaerogenes` 390 / 3 / 3; `cfreundii` 314 / 83 / 2; `yersinia` 283 / 6 / 0; `providencia`
+  20 / 305 / 9; `serratia` 78 / 138 / 8; `proteus` 70 / 62 / 20; `cronobacter` 1 / 1 / 0; `auto` (no scheme) 56 / 176 / 3.
+- **Canaries, one task per new path, all `ok` on their pinned scheme** (`shards/<scheme>/*_00000.tsv`): PsA atb 100/100,
+  shovill 1/1 (ST773), ncbi 40/40; Enterobacterales ncbi (`ecoli_achtman_4`) 40/40, atb `koxytoca` 100/100,
+  `kaerogenes` 100/100, `auto` 56/56 (53 untyped, 2 `ecloacae`, 1 `providencia` — auto-detection on scheme-less
+  genera), portal (`klebsiella`) 34/34, shovill (`ecloacae`) 1/1. Peak memory 1.3–1.7 GB (download tasks), 4.1 GB
+  (shovill); an NCBI task of 40 genomes ran in ~1.5 min.
+
+**In flight.** Stage 2 build arrays, all from the pinned worktree `BacPredict-d6c3e05` (each task re-checks
+disjointness before it builds): PsA `41611827`–`41611829`; Enterobacterales `41611841`–`41612885` (one ATB array per
+scheme; the NCBI arrays and the shovill arrays each share one job name and run `--dependency=singleton`, 4 and 25
+tasks at a time across the cohort). Two adversarial reviews of the stage code ran first (16 and 6 findings survived,
+all fixed at `c66a737` / `d6c3e05`). Next in the stage: `qc checkm2` as genomes land, `qc skani` once the build is
+done, `collate`, then Bakta.
 
 **Next.** Agreed with David 2026-11-21, in this order, each stage §3.6's procedure:
 1. **Labels — done** (above). `cabbage_v2_phenotype.py` replaced the planned `cabbage_v2_tests.py` and the optional
@@ -2346,6 +2381,7 @@ correct.**
 | `$AMR/raw/ebi_amr_portal/cabbage_v2_20261121/cabbage_v2.csv` | external (given to the project as `cabbage_v2.csv.bz2`); staged and md5-checked 2026-11-21 | `engine/ast_labels/cabbage_v2_phenotype.py` (§3.7); the scoping in `processed/ebi_amr_portal/scoping_cabbage_v2_20261121/` | Every §3.7 label, genome manifest, split and model |
 | `$AMR/processed/ebi_amr_portal/cabbage_v2_20261121/phenotype.parquet` (+ `.json`) | `engine/ast_labels/cabbage_v2_phenotype` (run by either `*_cabbage_v2` label script if absent) | both §3.7 label builds | Every §3.7 label; delete it to rebuild from the CSV |
 | `$AMR/processed/{paeruginosa,enterobacterales}_cabbage_v2/{binary_ast,cohort,label_counts}.csv` | `build_binary_ast_labels` via `apps/{pa,entero}/scripts/build_*_ast_labels_cabbage_v2.sh` | §3.7 genome acquisition and splits | Every §3.7 genome manifest, split and model |
+| `$AMR/processed/{paeruginosa,enterobacterales}_cabbage_v2/genomes/{genome_manifest,reused_genomes}.csv`, `by_scheme/` | `engine/genomes/reuse_built_genomes` + `plan_genome_sources --ncbi-fallback` via `apps/{pa,entero}/scripts/build_*_genomes_cabbage_v2.sh plan` (read-only once written) | the §3.7 build arrays (by row position), QC and collate | Every §3.7 build shard (a re-plan moves `by_scheme/` aside; `missing-tasks` reruns any task whose rows moved) |
 | `$AMR/processed/enterobacterales/{binary_ast,cohort,label_counts}.csv` | `engine/ast_labels/build_binary_ast_labels` (via `apps/entero/scripts/build_entero_ast_labels.sh`) | Enterobacterales genome acquisition and splits | Every Enterobacterales genome manifest, split and model |
 | `$AMR/raw/bakrep/v2_export_20250612/bakrep-export.tsv.gz` + `$AMR/processed/bakrep_coverage_20261119/` | BakRep's published export; `join.py` | Which genomes take BakRep's Bakta annotation and which get our own Bakta run | The annotation source of every PsA and Enterobacterales genome |
 | `$AMR/raw/bakta_db/v5.1_full/` (+ `v5.1_full.md5`, `README.txt`) | copied from nuna's `refs/bakta/db` (job `41494699`); AMRFinderPlus DB `latest` → 2024-07-22.1 | every Bakta run of ours (`engine/genomes/bakta.py`) | Every our-run annotation (a run's fingerprint includes this DB's `version.json` and AMRFinderPlus DB) |
