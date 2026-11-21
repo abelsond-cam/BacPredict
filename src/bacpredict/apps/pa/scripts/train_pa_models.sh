@@ -9,8 +9,9 @@
 #   ARRAY_REPO=<worktree> bash …/train_pa_models.sh submit               # Stage C: GPU array, one task per drug
 #   bash src/bacpredict/apps/pa/scripts/train_pa_models.sh collect       # holdout + holdout_st metrics, every drug
 #
-# Splits are engine/splits/build_amr_holdout_splits (PROJECT_STATE §6, 2026-11-20): ST235 held out whole as
-# holdout_st (exact ST), a random 20 % holdout, 5 folds over the rest (fold 0 validates), the 15 Ecuador long-read
+# Splits are engine/splits/build_amr_holdout_splits (PROJECT_STATE §6, 2026-11-21): ST155 held out whole as
+# holdout_st (exact ST) — ST235 until 2026-11-21, dropped because at 8.6 % of a drug's labelled set it broke the
+# ≤ 5 % cap on the lineage holdout — a random 20 % holdout, 5 folds over the rest (fold 0 validates), the 15 Ecuador long-read
 # assemblies excluded (apps/pa/excluded_genomes.tsv), the 3 two-BioSample CDC strains grouped
 # (apps/pa/duplicate_isolate_groups.csv). Eligible = every genome of genomes/bakta_annotation.csv, and `splits`
 # refuses unless each has a .pt: the builder shuffles the eligible set as a whole, so a genome added later would move
@@ -50,7 +51,7 @@ ELIGIBLE=$SPLITS/eligible_genomes.csv
 MODELS=$T/models
 EXCLUDE_FILE=$HERE/src/bacpredict/apps/pa/excluded_genomes.tsv
 GROUP_FILE=$HERE/src/bacpredict/apps/pa/duplicate_isolate_groups.csv
-HOLDOUT_ST=paeruginosa:235
+HOLDOUT_ST=paeruginosa:155
 PA_DRUGS=(ciprofloxacin ceftazidime meropenem tobramycin amikacin imipenem piperacillin-tazobactam aztreonam
           levofloxacin cefepime)
 if [[ -n ${ONLY:-} ]]; then IFS=, read -r -a PA_DRUGS <<<"$ONLY"; fi

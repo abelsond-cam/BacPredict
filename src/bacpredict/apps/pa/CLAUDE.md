@@ -255,8 +255,10 @@ light: a CSD3 login node is enough. Everything downstream reads the tables throu
 | One isolate under two BioSamples | [`duplicate_isolate_groups.csv`](duplicate_isolate_groups.csv): the CDC strains S54485, U2504 and X24509. Each pair always shares a split |
 
 **What it implements** (PROJECT_STATE §6, 2026-11-20):
-- ST235 (`paeruginosa:235`) is held out whole as `holdout_st`. Membership is the exact ST, so a single-locus
-  variant or an untyped genome stays in the random pool.
+- ST155 (`paeruginosa:155`) is held out whole as `holdout_st`. Membership is the exact ST, so a single-locus
+  variant or an untyped genome stays in the random pool. **It was ST235 until 2026-11-21** (PROJECT_STATE §6):
+  ST235 is 7.1–9.9 % of each drug's labelled set, which with the random 20 % put 26–28 % of genomes out of reach of
+  training. The lineage holdout is now capped at 5 %; ST155 is 2.1–3.9 % and scores the same 8 of 10 drugs.
 - A random 20 % of the remaining genomes is `holdout`.
 - The rest is cut into 5 folds: fold 0 is `validate`, folds 1–4 are `train`. Seed 1.
 - There is no per-class minimum.
@@ -303,7 +305,7 @@ AMR=${BACPREDICT_AMR_ROOT:-$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/amr_p
 P=$AMR/processed/paeruginosa
 uv run python -m bacpredict.engine.splits.build_amr_holdout_splits \
   --species paeruginosa=$P/binary_ast.csv,$P/genomes/bakta_annotation.csv,$P/genomes/genome_qc.csv \
-  --holdout-st paeruginosa=paeruginosa:235 \
+  --holdout-st paeruginosa=paeruginosa:155 \
   --exclude src/bacpredict/apps/pa/excluded_genomes.tsv \
   --groups src/bacpredict/apps/pa/duplicate_isolate_groups.csv \
   --drugs ciprofloxacin ceftazidime meropenem tobramycin amikacin imipenem piperacillin-tazobactam \
@@ -311,9 +313,9 @@ uv run python -m bacpredict.engine.splits.build_amr_holdout_splits \
   --out-dir $P/splits
 ```
 
-⚠ The builder stops if a group spans the held-out ST and not. One case would trigger it: a CDC strain whose two
-BioSamples type differently, with one of them ST235. That has not been checked against `genome_qc.csv`. If it
-happens, the call is David's.
+⚠ The builder stops if a group spans the held-out ST and not — a CDC strain whose two BioSamples type
+differently, with one of them the held-out ST. **Checked for ST155 against `genome_qc.csv`: no group spans it**, so
+the builder does not stop. It was never checked for ST235, which grouped U2504's two BioSamples inside the ST.
 
 ## Training
 
@@ -322,7 +324,7 @@ One model per drug, trained by the shared trainer from that drug's split table (
 
 | Stage | What it does |
 |---|---|
-| `splits` | Writes `splits/eligible_genomes.csv` (every `bakta_annotation.csv` genome; refuses if any lacks a `.pt`), then runs the builder with ST235, the exclusion file and the group file |
+| `splits` | Writes `splits/eligible_genomes.csv` (every `bakta_annotation.csv` genome; refuses if any lacks a `.pt`), then runs the builder with `HOLDOUT_ST` (ST155), the exclusion file and the group file |
 | `check-splits` | Per drug, the trainer's own read of its table: genomes per split, % R, and any genome without a `.pt` |
 | `smoke` | Stage A: one drug (`SMOKE_DRUG`, default ciprofloxacin), `--n-samples 10`, early stopping off (`PATIENCE=1000`), one GPU, 1 h wall. Output `models/smoke/<stamp>/<drug>/`; `models/smoke/LATEST` names it |
 | `check-smoke` | Stage A passes if `results.json` holds `holdout` and `holdout_st`, both score files match them, a checkpoint was saved and `trainer_state.json` was written |

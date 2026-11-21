@@ -1669,7 +1669,17 @@ shovill array `41326674` plus rerun `41335542`, QC job `41336261` (CheckM2 3 h 6
 - **6,919 of the 7,088 Kp AST samples (§3.1) are in this cohort.** Any comparison against the July Kp
   checkpoints must hold out none of their train/validate samples.
 
-**Numbers of record — PsA split tables (the baseline arm).** `$AMR/processed/paeruginosa/splits/<drug>_split.csv`
+> **⚠ SUPERSEDED 2026-11-21 — both PsA panels below are the ST235 arm, and are being replaced.** David capped the
+> lineage holdout at **5 % of a drug's labelled set**; ST235 is 7.1–9.9 % (mean 8.6 %), which with the random 20 %
+> put **26–28 % of genomes out of reach of training**. The held-out ST is now **ST155** (2.1–3.9 %, the same 8 of 10
+> drugs scoreable). ⛔ **Every number in both panels is superseded, not just the ST column**: the builder permutes
+> the whole non-held-out pool, so returning ST235 to it and removing ST155 re-draws train, validate *and* the random
+> holdout. Of the 675 old random-holdout genomes only 136 stay in it (418 → train, 102 → validate, 19 → holdout_st),
+> so the old and new random-holdout AUROCs are **on different genomes and cannot be paired**. The ST235 artifacts are
+> preserved at `$AMR/processed/paeruginosa/_superseded_st235/` and stay quotable *as the ST235 arm*. Decision row in
+> §6, 2026-11-21.
+
+**Numbers of record — PsA split tables (the ST235 arm, superseded).** `$AMR/processed/paeruginosa/_superseded_st235/splits/<drug>_split.csv`
 + `split_manifest.json` (md5 `9e5e3063…`), `engine/splits/build_amr_holdout_splits` at `8b791d4` via
 `train_pa_models.sh splits`: eligible = the 3,677 of `bakta_annotation.csv` (each with a `.pt`), minus the 15
 Ecuador genomes (`apps/pa/excluded_genomes.tsv`); the 3 CDC duplicate pairs grouped. Genome level: train 2,159,
@@ -1692,8 +1702,9 @@ labels only):
 - ST235 is mostly resistant (62–93 % R for nine drugs), so its holdout has few susceptible genomes for some drugs
   (ciprofloxacin ~17 S). That bounds how precisely a zero-shot AUROC can be read there.
 
-**Numbers of record — PsA baseline models (one per drug).** `$AMR/processed/paeruginosa/models/<drug>/results.json`,
-collected in `models/holdout_metrics.csv` (md5 `4af2fc6f…`): array `41548353` at `9a813f0` (`finetune_amr
+**Numbers of record — PsA baseline models, the ST235 arm (superseded).**
+`$AMR/processed/paeruginosa/_superseded_st235/models/<drug>/results.json`,
+collected in `_superseded_st235/models/holdout_metrics.csv` (md5 `4af2fc6f…`): array `41548353` at `9a813f0` (`finetune_amr
 --split-table`, bf16, deployed TB/Kp hyperparameters, early stopping on validate AUROC; 4.0–7.2 h per drug on one
 A100), on the split tables above. AUROC (balanced accuracy at 0.5 in brackets):
 
@@ -1711,6 +1722,8 @@ A100), on the split tables above. AUROC (balanced accuracy at 0.5 in brackets):
 | cefepime | 221, 99 | 0.671 (0.625) | 105, 80 | 0.476 (0.466) | 0.681 |
 
 - No confidence intervals yet; ST235 has few susceptible genomes for several drugs (ciprofloxacin 17, levofloxacin 15).
+- ⚠ `results.json` records `split.table` as an **absolute path** into `splits/`, which now resolves to the ST155
+  table. `split.table_md5` is the only field that ties a result to the table it was actually scored on.
 - The best validate checkpoint came early (step 500–2,250, of 3,360–6,000 run); validate AUROC then fell 0.01–0.05.
 - Not yet scored: mechanism-stratified metrics (§0.4: HGT/acquired vs chromosomal), calibration read-out.
 
@@ -2295,6 +2308,8 @@ directory was consolidated. Several of these existed nowhere else.
 | 2026-11-21 | **A v2 MIC with no sign is read as "="** (David). Where v1 holds the same test, its sign was "=" for 94,642 of 94,657 Enterobacterales and 4,529 of 4,529 PsA pairs. |
 | 2026-11-21 | **puffin is labelled under the same rule as every source**, with each test keeping its `database` so that a puffin-free label set is a filter (agreed with the §3.7 label stage). What puffin is remains to be asked of the CABBAGE side. |
 | 2026-11-21 | **One branch for both experiments** (David: "if either of you … change shared code then the two experiments differ"). v2 work stays on `refactor/consolidate-engine`; changes to shared code are additive and communicated between the two agents. This overrides root `CLAUDE.md` §0.5 "one branch per agent" for this pair. |
+| 2026-11-21 | **The lineage holdout is capped at 5 % of a drug's labelled set, and is additional to the random 20 %** (David). The random holdout is taken *after* the ST is removed, so the two are disjoint and both are scored — that part of the 2026-11-20 design was already right. What was wrong was the size: **PsA's ST235 is 7.1–9.9 % (mean 8.6 %)**, so 26–28 % of genomes were held out of training — "close to 30 % of genomes. Worth nothing." **PsA switches to ST155** (2.1–3.9 %, 8 of 10 drugs scoreable, as ST235 was) and **all ten models are retrained now** — "Switch now. Better to do it now." ⛔ Because the builder permutes the whole non-held-out pool, this re-draws train, validate and the random holdout too, so the entire ST235 baseline is superseded rather than just its ST column; the old artifacts are preserved under `_superseded_st235/`. **Enterobacterales under the same cap:** ST131 is out (22.3 % of a drug's labels, and 30.4 % at worst, after the MLST re-type doubled it to 3,029 genomes); **ST37 for *Klebsiella*** (2.2 %); ***E. coli* ST10 or ST38** still to confirm — there is no *E. coli* ST37. *Salmonella* ST32 and *Enterobacter* ST171 stand (each scores only 2 drugs either way). **No ST holdout for *S. sonnei* or *S. flexneri*** — one clone is 97 % and 84 % of them, so holding it out is a species holdout. |
+| 2026-11-21 | **MLST is typed with the scheme pinned per species** (David: "Just do it per species. I don't want to spend more time on this."). Auto-detection mis-typed 5,164 of 67,326 QC-pass Enterobacterales genomes (7.7 %), which would have put genomes of a held-out clone into train under a bogus `st_key`. Fixed by re-typing those genomes, not by changing `engine/genomes` — the CABBAGE v2 experiment (§3.7) runs the same code, so a behaviour change there would make the two experiments differ. v2 pins the scheme at submission the same way. |
 
 ### Invasion / lab collection
 
