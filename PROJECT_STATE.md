@@ -2102,7 +2102,8 @@ Later: the AMR-GNN-cut benchmark, ANI thinning, and causal attribution of the pr
 
 ### 3.7 Multi-species AMR — CABBAGE v2 (the second experiment, same procedures at ~2× the data)
 
-**Status.** **Labels built** (stage 1 of 4) for PsA and Enterobacterales; genomes not started. CABBAGE v2 is an extension of the data behind the EBI AMR
+**Status.** **Labels built** (stage 1 of 4) for PsA and Enterobacterales, and reviewed by David (§6, 2026-11-21). **Genomes
+(stage 2) planned and being built** — see *In flight*. CABBAGE v2 is an extension of the data behind the EBI AMR
 Portal, given to the project as one CSV, with about twice the BioSamples. **It is a second experiment, not an
 update of §3.6** (David, 2026-11-21: "second test, same procedures"): v2 labels are neither merged with nor
 substituted for §3.6's, which continues on the portal's 2026-07 release ("v1"). Every stage repeats §3.6's procedure —
@@ -2197,33 +2198,47 @@ Checks against §3.6's labels (`checks_vs_2026-07/`, scripts alongside):
 - 345 labelled Enterobacterales genomes carry a genus-only species (*Salmonella* 132, *Escherichia* 131, …); they take
   the genus- and order-level breakpoints. 220 have a species conflict with the 2026-07 genotype table (PsA 3).
 
-**In flight.** Nothing.
+**In flight.** Stage 2, genomes, from the pinned worktree `BacPredict-c66a737`: the re-plan of both cohorts with the NCBI
+fallback (jobs `41609928` PsA, `41609929` Enterobacterales); the first plans, which dropped every genome with no reads,
+are kept aside as `genomes/_plan_pre_ncbi_20261121/`. A second adversarial review of the stage code runs before the
+build arrays are submitted. Two PsA canary tasks built correctly at `bbdd7ed` (100 of 100 ATB genomes; one shovill
+assembly, ST773), all on `paeruginosa`.
 
 **Next.** Agreed with David 2026-11-21, in this order, each stage §3.6's procedure:
 1. **Labels — done** (above). `cabbage_v2_phenotype.py` replaced the planned `cabbage_v2_tests.py` and the optional
    `--phenotype`: writing v2 in the portal schema needed no change to any existing engine file.
-2. **Genomes** — only BioSamples absent from every §3.6 genome manifest: the per-sample stores are keyed by BioSample
-   and shared, so v2 reuses every §3.6 genome and the two agents never build the same one. ATB → portal GFF → shovill;
-   CheckM2 + skani; MLST; Bakta (BakRep ingest or our run). Agreed with the §3.6 agent 2026-11-21:
-   - **The disjointness is an assertion, not a convention:** the v2 plan step refuses to write a manifest that names any
-     BioSample in a §3.6 manifest. `build_genomes.build_one` deletes and rebuilds a genome's contigs when the stored
-     `src=` header differs from the manifest row's source (`build_genomes.py:293-295`), so an overlapping row would
-     destroy a §3.6 genome rather than skip it.
-   - **MLST pinned per species, by submission, not code:** one build array per scheme over its own subset manifest with
-     `MLST_SCHEME` set (`ecoli_achtman_4` for *E. coli* and every *Shigella*; `salmonella`, `klebsiella`, `ecloacae`,
-     `serratia`, `proteus`, `cfreundii`). `build_entero_genomes.sh` as it stands leaves it unset, and `mlst`'s
-     auto-detection mis-typed 7.7 % of §3.6's genomes (§3.6 *Numbers of record*). PsA's script already pins
-     `paeruginosa`. The code stays as it is so that both experiments run the same code; a per-row scheme would be a
-     behaviour change to `engine/genomes`, landed once for both, before either re-runs genomes.
+2. **Genomes — in flight.** Only BioSamples absent from every §3.6 genome manifest: the per-sample stores are keyed by
+   BioSample and shared, so v2 reuses every §3.6 genome with its shard, CheckM2, skani and `genome_qc.csv` rows, and the
+   two agents never build the same one. ATB → portal GFF → shovill → **NCBI GenBank assembly** (§6, 2026-11-21);
+   CheckM2 + skani; MLST; then Bakta (BakRep ingest or our run). Machinery: `engine/genomes/reuse_built_genomes.py`,
+   `engine/genomes/scripts/build_genomes_reusing_built.sh` (+ `build_genomes_array_disjoint.sh`), configured by
+   `apps/{pa,entero}/scripts/build_{pa,entero}_genomes_cabbage_v2.sh`. Agreed with the §3.6 agent 2026-11-21:
+   - **The disjointness is an assertion, not a convention:** checked at plan, at every submission, by every array task
+     before it builds, and at collate; §3.6's two manifests are now read-only. `build_genomes.build_one` deletes and
+     rebuilds a genome's contigs when the stored `src=` header differs from the manifest row's source, so an
+     overlapping row would destroy a §3.6 genome rather than skip it.
+   - **MLST pinned at submission, one array per scheme:** per genus, the scheme each genus ended on in §3.6's re-typed
+     `genome_qc.csv` (*Escherichia*, *Shigella* → `ecoli_achtman_4`; `salmonella`, `klebsiella`, `ecloacae`, `serratia`,
+     `proteus`, `providencia`; *Morganella* and other scheme-less genera auto), plus genera §3.6 did not have
+     (*Citrobacter* `cfreundii`, *Yersinia* `yersinia`, *Cronobacter* `cronobacter`). Per species, over the genus:
+     aerogenes on `kaerogenes` under both names (§3.6 *Enterobacter aerogenes*, v2 *Klebsiella aerogenes*; the §3.6
+     agent's correction) and the *K. oxytoca* complex on `koxytoca`. After collate, a genome built here must be on its
+     pin and a reused genome must carry exactly its owner's scheme and ST — the check that catches §3.6's re-typed
+     shards losing their mtime order.
+   - **Aerogenes is sized as §3.6 sized it** (4.9 Mbp) under its v2 name, so its read depth is computed the same way.
 3. **ESM-C** (bf16) into the shared `$AMR/processed/esm/` through a sample list.
 4. **Splits and training** — new split tables, retrained models, a second PsA baseline, every holdout read through
    `engine.splits.load_splits` only. **The lineage holdout is §3.6's, under the same ≤ 5 % cap:** PsA **ST155**
-   (replacing ST235 — David, 2026-11-21, relayed by the §3.6 agent; §3.6 records it), Enterobacterales as §3.6 settles
-   it. **Open, for David, before the splits:** a fair v1-vs-v2 comparison needs v2's holdout to contain §3.6's (the
-   same ST plus the random 20 %); proposed, not decided. If agreed, v2's PsA arm builds with `--assert-same-as
-   paeruginosa=$AMR/processed/paeruginosa/splits` against the ST155 tables (`split_manifest.json` md5 `908fc0af…`; the
-   §3.6 agent, 2026-11-21). **Compare v2 only with §3.6's ST155 arm:** the ST swap re-drew train, validate and the random
-   holdout too, so an ST235-era number (`_superseded_st235/`) is on different genomes.
+   (replacing ST235 — David, 2026-11-21, relayed by the §3.6 agent; §3.6 records it); Enterobacterales *E. coli* ST10,
+   *Klebsiella* ST37, *Salmonella* ST32, *Enterobacter* ST171, none for *S. sonnei* or *S. flexneri* (§6). **v2's
+   held-out set contains §3.6's** — the same held-out ST plus §3.6's random holdout (David, 2026-11-21, §6): v2's PsA arm
+   builds with `--assert-same-as paeruginosa=$AMR/processed/paeruginosa/splits` against the ST155 tables
+   (`split_manifest.json` md5 `908fc0af…`), and the Enterobacterales arm against §3.6's once they exist. **Compare v2
+   only with §3.6's ST155 arm:** the ST swap re-drew train, validate and the random holdout too, so an ST235-era number
+   (`_superseded_st235/`) is on different genomes. The §3.6 agent is adding a **Klebsiella-only arm** (KpSC unit,
+   held-out `klebsiella:37`) at David's request: its Klebsiella rows must be the same in v2 (a third place for
+   `--assert-same-as`). Species units name the KpSC species explicitly, never a "Klebsiella" prefix (v2's 424
+   *K. aerogenes* are not KpSC); E. coli/Shigella skani calls do not decide any unit (the panel cannot separate them).
 
 **Caveats.**
 - **puffin** — above. A puffin-free label set is a filter on `database`, not a rebuild.
@@ -2233,7 +2248,9 @@ Checks against §3.6's labels (`checks_vs_2026-07/`, scripts alongside):
 - **CABBAGE's `Updated_phenotype_EUCAST` mixes ECOFF calls with clinical ones** — where `used_ECOFF` = yes it calls
   15,481 of 17,838 Enterobacterales tests R that clinical breakpoints call S (`cabbage_eucast_vs_our_eucast_v15.csv`).
   Never a label; the rule recomputes from the MIC. Not carried for disk tests either, where v2's `phenotype` is
-  sometimes empty (the 74 *Salmonella* above) — whether to take `Updated_phenotype_*` there is a method question, open.
+  sometimes empty (the 74 *Salmonella* above): those tests give no label (David, 2026-11-21, §6).
+- **Labels within one dilution of the breakpoint** (PsA 19.8–42.3 % by drug) — David: "important… maybe a reason the
+  model is so hard for Bacformer". An open question (§6), not yet analysed.
 - Phenotypes beyond R/S (intermediate, less susceptible, non-susceptible, SDD) give no call to a test with no MIC, as
   in §3.6. 3,334 (BioSample, drug) pairs are duplicated within v2 (314 with differing phenotypes); averaging handles
   them (155 conflicts in the dry run).
@@ -2242,7 +2259,10 @@ Checks against §3.6's labels (`checks_vs_2026-07/`, scripts alongside):
 - Shared code, one branch: each build's `manifest.json` records the git SHA, so an engine change between the two
   experiments' runs stays traceable.
 
-**Owns.** `engine/ast_labels/cabbage_v2_phenotype.py` (+ its test), the `*_cabbage_v2` run scripts,
+**Owns.** `engine/ast_labels/cabbage_v2_phenotype.py` (+ its test), `engine/genomes/reuse_built_genomes.py` (+ its
+test), `engine/genomes/scripts/build_genomes_{reusing_built,array_disjoint}.sh`, the `ncbi_gca` source and
+`--genome-size-by-species` in `engine/genomes/{plan_genome_sources,build_genomes}.py` (opt-in; §3.6's path unchanged),
+the `*_cabbage_v2` run scripts,
 `$AMR/raw/ebi_amr_portal/cabbage_v2_20261121/`, `$AMR/processed/ebi_amr_portal/scoping_cabbage_v2_20261121/`,
 `$AMR/processed/{paeruginosa,enterobacterales}_cabbage_v2/`.
 
@@ -2417,6 +2437,9 @@ directory was consolidated. Several of these existed nowhere else.
 | 2026-11-21 | **One branch for both experiments** (David: "if either of you … change shared code then the two experiments differ"). v2 work stays on `refactor/consolidate-engine`; changes to shared code are additive and communicated between the two agents. This overrides root `CLAUDE.md` §0.5 "one branch per agent" for this pair. |
 | 2026-11-21 | **The lineage holdout is capped at 5 % of a drug's labelled set, and is additional to the random 20 %** (David). The random holdout is taken *after* the ST is removed, so the two are disjoint and both are scored — that part of the 2026-11-20 design was already right. What was wrong was the size: **PsA's ST235 is 7.1–9.9 % (mean 8.6 %)**, so 26–28 % of genomes were held out of training — "close to 30 % of genomes. Worth nothing." **PsA switches to ST155** (2.1–3.9 %, 8 of 10 drugs scoreable, as ST235 was) and **all ten models are retrained now** — "Switch now. Better to do it now." ⛔ Because the builder permutes the whole non-held-out pool, this re-draws train, validate and the random holdout too, so the entire ST235 baseline is superseded rather than just its ST column; the old artifacts are preserved under `_superseded_st235/`. **Enterobacterales under the same cap:** ST131 is out (22.3 % of a drug's labels, and 30.4 % at worst, after the MLST re-type doubled it to 3,029 genomes); **ST37 for *Klebsiella*** (2.2 %); ***E. coli* ST10** (756 genomes, 2.4 % mean / 3.7 % max, 7 of 10 drugs scoreable; David chose it over ST38 2026-11-21 — he had written "ST37" for *E. coli*, and there is no *E. coli* ST37 under any scheme). *Salmonella* ST32 and *Enterobacter* ST171 stand (each scores only 2 drugs either way). **No ST holdout for *S. sonnei* or *S. flexneri*** — one clone is 97 % and 84 % of them, so holding it out is a species holdout. |
 | 2026-11-21 | **MLST is typed with the scheme pinned per species** (David: "Just do it per species. I don't want to spend more time on this."). Auto-detection mis-typed 5,164 of 67,326 QC-pass Enterobacterales genomes (7.7 %), which would have put genomes of a held-out clone into train under a bogus `st_key`. Fixed by re-typing those genomes, not by changing `engine/genomes` — the CABBAGE v2 experiment (§3.7) runs the same code, so a behaviour change there would make the two experiments differ. v2 pins the scheme at submission the same way. |
+| 2026-11-21 | **CABBAGE v2 labels accepted as built** (David, on the §3.7 checks). Where v2 and §3.6 disagree on a label, v2's EUCAST v15 re-call of its own MIC stands — "a consistent MIC call to label any with EUCAST", as §3.6 did. The 273 §3.6-labelled genomes v2 does not label are ignored ("tiny … not going to change any results"). v2 disk tests with no R/S call give no label: CABBAGE's `Updated_phenotype_*` is not used ("I'd just drop them"). |
+| 2026-11-21 | **v2 genomes with no reads take the submitter's NCBI GenBank assembly** (David: "An NCBI assembly is adequate … use NCBI when no reads exist … better than throwing out that much data"). Source `ncbi_gca`, last in the order ATB → portal assembly → shovill → NCBI, so the even surface stays first wherever it is attainable; like `portal_gff` it is a submitter assembly. §3.6's planner had no such route because every §3.6 genome had reads or a portal assembly; ~17,500 v2 genomes (15,135 Enterobacterales, 1,392 PsA) have neither — no runs in ENA, and none in SRA for 12 of 12 checked. |
+| 2026-11-21 | **v2's held-out set contains §3.6's** (David: "v2 held out should include v1 and same sublineage. Yes."): the same held-out ST per species plus §3.6's random holdout, enforced with `--assert-same-as`, so v1 and v2 models are scored on common genomes. |
 
 ### Invasion / lab collection
 
@@ -2439,6 +2462,10 @@ directory was consolidated. Several of these existed nowhere else.
 
 ### Open questions — not decisions
 
+- **Near-breakpoint labels and the PsA ceiling** (David, 2026-11-21: "Labels within 1 dilution of breakpoint is
+  important. That is a huge number in PsA and maybe a reason the model is so hard for Bacformer"). 19.8–42.3 % of v2
+  PsA labels by drug (18.1–54.4 % in §3.6) rest on an `=` MIC within one dilution of R; Enterobacterales 3.9–10.2 %.
+  A hypothesis to test — e.g. score each model's holdout stratified by MIC distance from the breakpoint — not a result.
 - **Head vs mean, across all drugs.** One point measured (rifampin: 0.958 vs 0.964); a full column and
   scatter were wanted.
 - **Does the chromosomal-blindness hypothesis survive?** It was motivated by a TB rifampicin gap that
