@@ -6,7 +6,8 @@ into ``--chunk-size`` chunks; task ``k`` takes chunk ``k``):
 1. **Contigs** → ``<out-root>/contigs/<Sample>.fna.gz``, renamed ``<Sample>.contig00001`` … in input order
    so every source has the same naming (the original name is kept as a header comment):
    ``atb`` downloads the ATB object (md5-checked against the S3 etag where it is one); ``portal_gff`` takes
-   the ``##FASTA`` section of the portal's annotation file; ``shovill`` downloads the paired fastq
+   the ``##FASTA`` section of the portal's annotation file; ``ncbi_gca`` downloads the GenBank assembly's
+   ``_genomic.fna.gz`` (md5-checked against that directory's ``md5checksums.txt``); ``shovill`` downloads the paired fastq
    (size-checked against ENA), pools runs, and runs **shovill 1.1.0 with its defaults** — the same
    assembler and version as AllTheBacteria (``sw=shovill-spades/1.1.0`` in ATB headers) — except two
    settings that only decide whether the defaults work at all:
@@ -206,6 +207,16 @@ def download(url: str, dest: Path, md5: str | None = None, nbytes: str | None = 
             time.sleep(CURL_RETRY_DELAY_S)
 
 
+def ncbi_md5(md5_file: Path, url: str) -> str:
+    """The md5 NCBI's ``md5checksums.txt`` gives for the file ``url`` names; an error if it gives none."""
+    name = url.rsplit("/", 1)[1]
+    for line in md5_file.read_text().splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1].removeprefix("./") == name:
+            return parts[0]
+    raise ValueError(f"{md5_file.name} lists no md5 for {name}")
+
+
 def _split(field) -> list[str]:
     return [x for x in str(field).split(";") if x and x != "nan"] if pd.notna(field) else []
 
@@ -301,6 +312,14 @@ def build_one(row: dict, out_root: Path, bin_dir: Path, tmp_root: Path, threads:
                 dest = work / "annotations.gff.gz"
                 download(row["portal_url"], dest)
                 records = contigs_from_portal_gff(dest)
+            elif row["source"] == "ncbi_gca":
+                dest = work / "genomic.fna.gz"
+                md5s = work / "md5checksums.txt"
+                download(row["ncbi_md5_url"], md5s)
+                download(row["ncbi_url"], dest, md5=ncbi_md5(md5s, row["ncbi_url"]))
+                records = read_fasta(dest)
+                if not records:
+                    raise ValueError("NCBI assembly has no sequences")
             elif row["source"] == "shovill":
                 size = row.get("genome_size")  # the manifest's per-genome size (multi-genus cohorts) wins
                 size = float(size) if size is not None and pd.notna(size) and str(size) else genome_size
@@ -332,7 +351,7 @@ def main() -> None:
     """CLI entry point."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--manifest", type=Path, required=True)
-    ap.add_argument("--sources", required=True, help="atb, portal_gff, shovill; joined by ',' or '+'")
+    ap.add_argument("--sources", required=True, help="atb, portal_gff, ncbi_gca, shovill; joined by ',' or '+'")
     ap.add_argument("--chunk-size", type=int, required=True)
     ap.add_argument("--task-index", type=int, default=None)
     ap.add_argument("--count-chunks", action="store_true", help="print the number of array tasks and exit")

@@ -17,6 +17,7 @@ from bacpredict.engine.genomes.build_genomes import (
     download,
     gff_contigs_md5,
     n_chunks,
+    ncbi_md5,
     read_fasta,
     select_chunk,
     shovill_contigs,
@@ -200,3 +201,31 @@ def test_a_manifest_genome_size_overrides_the_task_size_for_shovill(tmp_path, mo
     build_one({"Sample": "S2", "source": "shovill", "genome_size": float("nan")}, out_root, bin_dir, tmp, 1, 8, None,
               6.6e6)
     assert seen == [4.1e6, 6.6e6]
+
+
+def test_build_one_ncbi_assembly_md5_checked(tmp_path, monkeypatch):
+    monkeypatch.setattr("bacpredict.engine.genomes.build_genomes.CURL_RETRIES", 0)
+    d = tmp_path / "GCA_000000001.1_A"
+    d.mkdir()
+    fna = d / "GCA_000000001.1_A_genomic.fna.gz"
+    with gzip.open(fna, "wt") as fh:
+        fh.write(">CP1.1 chromosome\nACGTACGTGG\n>CP2.1 plasmid\nGGCC\n")
+    import hashlib
+    md5 = hashlib.md5(fna.read_bytes()).hexdigest()
+    (d / "md5checksums.txt").write_text(f"{'0' * 32}  ./GCA_000000001.1_A_cds_from_genomic.fna.gz\n"
+                                        f"{md5}  ./GCA_000000001.1_A_genomic.fna.gz\n")
+    assert ncbi_md5(d / "md5checksums.txt", fna.as_uri()) == md5
+    bin_dir = tmp_path / "bin"
+    _stub_tools(bin_dir)
+    out_root, tmp = tmp_path / "store", tmp_path / "tmp"
+    for x in (out_root / "contigs", out_root / "prodigal", tmp):
+        x.mkdir(parents=True)
+    row = {"Sample": "S1", "source": "ncbi_gca", "ncbi_url": fna.as_uri(), "ncbi_md5_url": (d / "md5checksums.txt").as_uri()}
+    res = build_one(row, out_root, bin_dir, tmp, 1, 8, "klebsiella")
+    assert res["status"] == "ok", res["status"]
+    assert res["n_contigs"] == 2 and contigs_source(out_root / "contigs" / "S1.fna.gz") == "ncbi_gca"
+    (d / "md5checksums.txt").write_text(f"{'f' * 32}  ./GCA_000000001.1_A_genomic.fna.gz\n")
+    bad = build_one(row | {"Sample": "S2"}, out_root, bin_dir, tmp, 1, 8, "klebsiella")
+    assert bad["status"].startswith("fail:") and "md5 mismatch" in bad["status"]
+    with pytest.raises(ValueError, match="lists no md5"):
+        ncbi_md5(d / "md5checksums.txt", "https://x/y/other_genomic.fna.gz")

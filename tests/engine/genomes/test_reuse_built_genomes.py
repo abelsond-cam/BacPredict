@@ -10,8 +10,10 @@ import pytest
 
 from bacpredict.engine.genomes.reuse_built_genomes import (
     AUTO,
+    array_list,
     collate_inputs,
     main,
+    missing_tasks,
     next_qc_list,
     overlap,
     partition,
@@ -178,15 +180,55 @@ def test_a_species_pin_wins_over_its_genus(cohort):
     assert {k: list(v["Sample"]) for k, v in by.items()} == {"ecoli_achtman_4": ["N1"], "kaerogenes": ["KA"]}
 
 
-def test_scheme_mismatches():
+def test_scheme_mismatches_judges_built_genomes_by_pin_and_reused_by_their_owner():
     qc = pd.DataFrame({
-        "species": ["Klebsiella aerogenes", "Klebsiella aerogenes", "Escherichia coli", "Escherichia coli",
-                    "Kluyvera ascorbata", "Kluyvera ascorbata", "Escherichia coli"],
-        "mlst_scheme": ["kaerogenes", "klebsiella", "ecoli_achtman_4", "salmonella", "ecloacae", None, "salmonella"],
-        "qc_pass": [True, True, True, True, True, True, False],
+        "Sample": ["B1", "B2", "R1", "R2", "R3", "U1", "U2", "F1"],
+        "species": ["Klebsiella aerogenes", "Escherichia coli", "Enterobacter hormaechei", "Escherichia coli",
+                    "Escherichia coli", "Kluyvera ascorbata", "Kluyvera ascorbata", "Escherichia coli"],
+        "mlst_scheme": ["klebsiella", "ecoli_achtman_4", "kaerogenes", "ecoli_achtman_4", "ecoli_achtman_4",
+                        "ecloacae", None, "salmonella"],
+        "st": ["-", "10", "4", "131", "73", "5", "-", "1"],
+        "status": ["ok"] * 8, "qc_pass": [True] * 7 + [False],
     })
-    off, several = scheme_mismatches(qc, {"Klebsiella": "klebsiella", "Escherichia": "ecoli_achtman_4"},
-                                     {"Klebsiella aerogenes": "kaerogenes"})
-    assert off[["species", "mlst_scheme", "n"]].values.tolist() == [
-        ["Escherichia coli", "salmonella", 1], ["Klebsiella aerogenes", "klebsiella", 1]]  # the QC-fail row is not counted
-    assert sorted(several["mlst_scheme"]) == ["-", "ecloacae"]
+    owner = pd.DataFrame({"Sample": ["R1", "R2", "R3"], "mlst_scheme": ["kaerogenes", "ecoli_achtman_4", "ecoli_achtman_4"],
+                          "st": ["4", "131", "1193"]})
+    t = scheme_mismatches(qc, {"R1", "R2", "R3"}, owner, {"Klebsiella": "klebsiella", "Escherichia": "ecoli_achtman_4",
+                                                         "Enterobacter": "ecloacae"},
+                          {"Klebsiella aerogenes": "kaerogenes"})
+    assert t["built_off_pin"][["species", "mlst_scheme", "n"]].values.tolist() == [["Klebsiella aerogenes", "klebsiella", 1]]
+    assert t["reused_changed"]["Sample"].tolist() == ["R3"]          # the owner records ST1193: an mtime-lost re-type
+    assert t["reused_relabelled"][["species", "mlst_scheme"]].values.tolist() == [["Enterobacter hormaechei", "kaerogenes"]]
+    assert sorted(t["unpinned_several"]["mlst_scheme"]) == ["-", "ecloacae"]  # QC-fail F1 is never counted
+
+
+def test_a_reused_genome_missing_from_the_owners_table_fails():
+    qc = pd.DataFrame({"Sample": ["R1"], "species": ["Escherichia coli"], "mlst_scheme": ["ecoli_achtman_4"],
+                       "st": ["10"], "status": ["ok"], "qc_pass": [True]})
+    owner = pd.DataFrame({"Sample": ["X"], "mlst_scheme": ["ecoli_achtman_4"], "st": ["10"]})
+    assert scheme_mismatches(qc, {"R1"}, owner, {"Escherichia": "ecoli_achtman_4"})["reused_changed"]["Sample"].tolist() == ["R1"]
+
+
+def test_array_list_and_missing_tasks(tmp_path):
+    assert array_list([7, 0, 1, 2, 4, 8]) == "0-2,4,7-8" and array_list([]) == ""
+    m = pd.DataFrame({"Sample": [f"S{i:03d}" for i in range(250)], "source": ["atb"] * 230 + ["shovill"] * 20})
+    d = tmp_path / "shards"
+    d.mkdir()
+    for k in (0, 2):
+        (d / f"atb_{k:05d}.tsv").write_text("Sample\tstatus\n")
+    (d / "shovill_00003.tsv").write_text("Sample\tstatus\n")
+    assert missing_tasks(m, "atb", 100, d) == [1]
+    assert array_list(missing_tasks(m, "shovill", 1, d)) == "0-2,4-19"
+
+
+def test_collate_inputs_refuses_a_stale_skani_and_a_different_panel(cohort):
+    args = _collate_args(cohort)
+    reuse_skani = args[6][args[6]["Query_file"].ne("/l/N1.fna.gz")]
+    args[6] = args[6][args[6]["Query_file"].eq("/l/N1.fna.gz")]
+    with pytest.raises(ValueError, match="rerun qc skani"):
+        collate_inputs(*args, reuse_skani=reuse_skani, refs=["/x/K12.fna.gz"], skani_list={"N1"}, listed={"N1", "N9"})
+    with pytest.raises(ValueError, match="only here"):
+        collate_inputs(*args, reuse_skani=reuse_skani, refs=["/x/K12.fna.gz", "/x/B2.fna.gz"], skani_list={"N1"},
+                       listed={"N1"})
+    m, sh, q, s = collate_inputs(*args, reuse_skani=reuse_skani, refs=["/elsewhere/K12.fna.gz"], skani_list={"N1"},
+                                 listed={"N1"})
+    assert sorted(s["Query_file"]) == ["/l/E2.fna.gz", "/l/N1.fna.gz"]

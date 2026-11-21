@@ -11,6 +11,12 @@ import pytest
 
 import bacpredict.engine.genomes.plan_genome_sources as pgs
 from bacpredict.engine.genomes.plan_genome_sources import (
+    NO_RUNS,
+    QUERY_FAILED,
+    apply_ncbi_fallback,
+    genome_sizes_by_genus,
+    ncbi_dir_from_listing,
+    ncbi_listing_url,
     plan_genome_sources,
     portal_gff_url,
     read_atb_index,
@@ -130,3 +136,51 @@ def test_genome_size_by_genus_sets_depth_and_a_manifest_column():
     assert plan["genome_size"].eq(5.0e6).all()
     assert "genome_size" not in plan_genome_sources(c, atb, pd.DataFrame(columns=["runs", "fastq_urls", "fastq_bytes",
                                                     "fastq_md5", "reads_depth", "no_reads_reason"]), 10).columns
+
+
+LISTING = """<a href="/genomes/all/GCA/025/835/">Parent</a>
+<a href="GCA_025835955.1_ASM2583595v1/">GCA_025835955.1_ASM2583595v1/</a>
+<a href="GCA_025835955.10_ASMother/">GCA_025835955.10_ASMother/</a>
+<a href="GCA_025835955.2_ASM2583595v2/">GCA_025835955.2_ASM2583595v2/</a>"""
+
+
+def test_ncbi_directory_of_one_exact_accession_version():
+    assert ncbi_listing_url("GCA_025835955.1") == "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCA/025/835/955/"
+    assert ncbi_dir_from_listing(LISTING, "GCA_025835955.1") == "GCA_025835955.1_ASM2583595v1"  # never .10
+    assert ncbi_dir_from_listing(LISTING, "GCA_025835955.2") == "GCA_025835955.2_ASM2583595v2"
+    assert ncbi_dir_from_listing(LISTING, "GCA_025835955.3") is None
+    with pytest.raises(ValueError):
+        ncbi_listing_url("ERZ123")
+
+
+def test_ncbi_fallback_only_rescues_drops_whose_assembly_ncbi_lists():
+    plan = pd.DataFrame({
+        "Sample": ["a", "b", "c", "d"], "source": ["drop", "drop", "atb", "drop"],
+        "drop_reason": ["no_runs", "other_strategy", None, "no_runs"],
+        "assembly_phenotype": ["GCA_000000001.1", "GCA_000000002.1", "GCA_000000003.1", None]})
+    dirs = pd.Series({"GCA_000000001.1": "GCA_000000001.1_A", "GCA_000000002.1": NO_RUNS})
+    p = apply_ncbi_fallback(plan, dirs).set_index("Sample")
+    assert p.loc["a", "source"] == "ncbi_gca" and pd.isna(p.loc["a", "drop_reason"])
+    assert p.loc["a", "ncbi_url"] == ("https://ftp.ncbi.nlm.nih.gov/genomes/all/GCA/000/000/001/GCA_000000001.1_A/"
+                                      "GCA_000000001.1_A_genomic.fna.gz")
+    assert p.loc["a", "ncbi_md5_url"].endswith("/GCA_000000001.1_A/md5checksums.txt")
+    assert p.loc["b", "source"] == "drop" and p.loc["b", "ncbi_status"] == "not_found"
+    assert p.loc["c", "source"] == "atb" and pd.isna(p.loc["c", "ncbi_url"])   # a buildable genome is never moved
+    assert p.loc["d", "source"] == "drop" and pd.isna(p.loc["d", "ncbi_status"])
+    with pytest.raises(ValueError, match="re-run the plan"):
+        apply_ncbi_fallback(plan, pd.Series({"GCA_000000001.1": QUERY_FAILED}))
+
+
+def test_ncbi_dirs_are_cached(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(pgs, "_ncbi_query", lambda a, **kw: calls.append(a) or (a, f"{a}_X"))
+    cache = tmp_path / "ncbi.tsv"
+    assert pgs.ncbi_assembly_dirs(["GCA_000000001.1"], cache)["GCA_000000001.1"] == "GCA_000000001.1_X"
+    assert pgs.ncbi_assembly_dirs(["GCA_000000001.1"], cache)["GCA_000000001.1"] == "GCA_000000001.1_X"
+    assert calls == ["GCA_000000001.1"]
+
+
+def test_a_species_size_wins_over_its_genus():
+    c = pd.DataFrame({"Sample": ["a", "b", "c"], "species": ["Klebsiella aerogenes", "Klebsiella pneumoniae", "Hafnia alvei"]})
+    s = genome_sizes_by_genus(c, {"Klebsiella": 5.6e6}, 5.0e6, {"Klebsiella aerogenes": 4.9e6})
+    assert s.to_dict() == {"a": 4.9e6, "b": 5.6e6, "c": 5.0e6}

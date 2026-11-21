@@ -11,7 +11,15 @@ genome should be a shovill assembly wherever that is attainable.
    genome so that choice can be made with numbers.
 3. ``shovill`` — no assembly we use exists: assemble the ENA reads. Only paired Illumina WGS/WGA runs are
    usable, pooled per BioSample, at ``>= --min-depth`` (``sum(base_count) / --genome-size``).
-4. ``drop`` — none of the above; ``drop_reason`` says why (``rna_seq_only``, ``long_read_only``,
+4. ``ncbi_gca`` — only with ``--ncbi-fallback``: a genome that would otherwise drop, whose AST record names a GenBank
+   assembly (``assembly_phenotype``, e.g. ``GCA_025835955.1``), takes that assembly from NCBI's FTP
+   (``genomes/all/GCA/…/<accession>_<name>/<accession>_<name>_genomic.fna.gz``). Like ``portal_gff`` it is a submitter
+   assembly, so it is the last resort: below ATB, the portal's assembly and shovill. Added for CABBAGE v2
+   (``PROJECT_STATE.md`` §3.7, David 2026-11-21: "use NCBI when no reads exist"), where ~17,500 genomes have no reads in
+   ENA or SRA at all; without the flag the manifest is exactly as before. Each accession's FTP directory is resolved
+   once from NCBI's directory listing and cached in ``--ncbi-cache`` (an accession NCBI does not list keeps its drop,
+   ``ncbi_status`` = ``not_found``).
+5. ``drop`` — none of the above; ``drop_reason`` says why (``rna_seq_only``, ``long_read_only``,
    ``single_end_only``, ``below_min_depth``, ``other_strategy``, ``no_runs``).
 
 ENA is queried **by BioSample** (the portal API's ``filereport`` accepts sample accessions and returns every
@@ -28,7 +36,9 @@ Usage (CSD3 login node; ~2 min of ENA queries the first time, at 8 concurrent)::
 A multi-genus cohort gives ``--genome-size-by-genus Escherichia=5.1e6,Salmonella=4.9e6,…`` (the genus is the first
 word of ``cohort.csv``'s ``species``); each genome's size then sets its read depth, and the manifest carries it as a
 ``genome_size`` column that the shovill build uses as ``--gsize``. A genus missing from the map falls back to
-``--genome-size``; without the option the manifest is exactly as before.
+``--genome-size``; without the option the manifest is exactly as before. ``--genome-size-by-species "Genus epithet=bp,…"``
+overrides the genus for a named species — for a species two label sources file under different genera (v2's
+*Klebsiella aerogenes* is §3.6's *Enterobacter aerogenes*, sized as *Enterobacter*).
 """
 
 from __future__ import annotations
@@ -38,6 +48,7 @@ import io
 import re
 import ssl
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -50,6 +61,7 @@ ATB_URL = "https://allthebacteria-assemblies.s3.eu-west-2.amazonaws.com/{sample}
 PORTAL_GFF_URL = ("https://ftp.ebi.ac.uk/pub/databases/amr_portal/genomes/{prefix}/{d1}/{d2}/{acc}/"
                   "{acc}_annotations.gff.gz")
 ENA_FILEREPORT = "https://www.ebi.ac.uk/ena/portal/api/filereport"
+NCBI_GCA_DIR = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCA/{d1}/{d2}/{d3}/"
 ENA_FIELDS = ["run_accession", "sample_accession", "instrument_platform", "instrument_model", "library_layout",
               "library_strategy", "library_source", "read_count", "base_count", "fastq_ftp", "fastq_bytes",
               "fastq_md5"]
@@ -65,6 +77,82 @@ def portal_gff_url(accession: str) -> str:
         raise ValueError(f"not a GCA/ERZ accession: {accession!r}")
     prefix, digits = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
     return PORTAL_GFF_URL.format(prefix=prefix, d1=digits[:3], d2=digits[3:6], acc=accession)
+
+
+def ncbi_listing_url(accession: str) -> str:
+    """``GCA_025835955.1`` → ``https://ftp.ncbi.nlm.nih.gov/genomes/all/GCA/025/835/955/`` (the accession's parent)."""
+    m = re.fullmatch(r"GCA_(\d{3})(\d{3})(\d{3})\.\d+", accession)
+    if not m:
+        raise ValueError(f"not a versioned GCA accession: {accession!r}")
+    return NCBI_GCA_DIR.format(d1=m.group(1), d2=m.group(2), d3=m.group(3))
+
+
+def ncbi_dir_from_listing(html: str, accession: str) -> str | None:
+    """The ``<accession>_<assembly name>`` directory an NCBI FTP listing names for this exact accession.version."""
+    found = sorted(set(re.findall(rf'href="({re.escape(accession)}_[^"/]+)/"', html)))
+    if len(found) > 1:
+        raise ValueError(f"{accession}: {len(found)} directories in the NCBI listing: {found}")
+    return found[0] if found else None
+
+
+def _ncbi_query(accession: str, retries: int = 4, raise_on_fail: bool = False) -> tuple[str, str]:
+    url = ncbi_listing_url(accession)
+    for attempt in range(retries):
+        try:
+            with urllib.request.urlopen(url, timeout=60, context=_tls_context()) as r:
+                html = r.read().decode(errors="replace")
+            return accession, ncbi_dir_from_listing(html, accession) or NO_RUNS
+        except urllib.error.HTTPError as e:
+            if e.code == 404:  # no directory for these digits at all
+                return accession, NO_RUNS
+            err = e
+        except Exception as e:  # noqa: BLE001 — network: retry, then record (or raise) the failure
+            err = e
+        if attempt == retries - 1:
+            if raise_on_fail:
+                raise RuntimeError(f"NCBI listing failed for {accession} after {retries} attempts: {err!r}") from err
+            return accession, QUERY_FAILED
+        time.sleep(5 * (attempt + 1))
+    raise AssertionError("unreachable")
+
+
+def ncbi_assembly_dirs(accessions: list[str], cache_path: Path, threads: int = 4) -> pd.Series:
+    """Each accession's NCBI FTP directory name (``NO_RUNS`` where NCBI lists none), cached like the ENA answers."""
+    cached = (pd.read_csv(cache_path, sep="\t", dtype=str) if cache_path.exists()
+              else pd.DataFrame(columns=["accession", "ncbi_dir"]))
+    cached = cached[cached["ncbi_dir"] != QUERY_FAILED]
+    todo = sorted(set(accessions) - set(cached["accession"]))
+    if todo:
+        first = _ncbi_query(todo[0], raise_on_fail=True)
+        with ThreadPoolExecutor(max_workers=threads) as ex:
+            new = [first, *ex.map(_ncbi_query, todo[1:])]
+        cached = pd.concat([cached, pd.DataFrame(new, columns=["accession", "ncbi_dir"])], ignore_index=True)
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cached.to_csv(cache_path, sep="\t", index=False)
+    return cached.set_index("accession")["ncbi_dir"].reindex(accessions)
+
+
+def apply_ncbi_fallback(plan: pd.DataFrame, ncbi_dirs: pd.Series) -> pd.DataFrame:
+    """Give every ``drop`` genome whose ``assembly_phenotype`` NCBI lists the source ``ncbi_gca`` (module docstring, 4).
+
+    Adds ``ncbi_accession``, ``ncbi_url`` (the ``_genomic.fna.gz``), ``ncbi_md5_url`` (that directory's
+    ``md5checksums.txt``) and ``ncbi_status`` (``found`` / ``not_found`` for drops naming an assembly). A genome that
+    takes the fallback keeps nothing of its drop but ``no_reads_reason``.
+    """
+    p = plan.copy()
+    acc = p["assembly_phenotype"].where(p["source"].eq("drop") & p["assembly_phenotype"].notna())
+    d = acc.map(ncbi_dirs)
+    found = d.notna() & d.ne(NO_RUNS) & d.ne(QUERY_FAILED)
+    if (failed := acc[d.eq(QUERY_FAILED)]).size:
+        raise ValueError(f"{failed.size} NCBI listings failed (first: {failed.head(5).tolist()}); re-run the plan")
+    base = acc[found].map(ncbi_listing_url) + d[found]
+    p["ncbi_status"] = np.where(found, "found", np.where(acc.notna(), "not_found", None))
+    p["ncbi_accession"] = acc.where(found)
+    p["ncbi_url"] = (base + "/" + d[found] + "_genomic.fna.gz").reindex(p.index)
+    p["ncbi_md5_url"] = (base + "/md5checksums.txt").reindex(p.index)
+    p.loc[found, "source"] = "ncbi_gca"
+    p.loc[found, "drop_reason"] = pd.NA
+    return p
 
 
 def read_atb_index(paths: list[Path]) -> pd.DataFrame:
@@ -185,10 +273,15 @@ def _size(genome_size: float | pd.Series, sample: str) -> float:
     return float(genome_size[sample]) if isinstance(genome_size, pd.Series) else float(genome_size)
 
 
-def genome_sizes_by_genus(cohort: pd.DataFrame, by_genus: dict[str, float], default: float) -> pd.Series:
-    """Each BioSample's expected genome size from its genus (first word of ``species``), else ``default``."""
-    genus = cohort["species"].fillna("").str.split().str[0]
-    return genus.map(by_genus).fillna(default).set_axis(cohort["Sample"])
+def genome_sizes_by_genus(cohort: pd.DataFrame, by_genus: dict[str, float], default: float,
+                          by_species: dict[str, float] | None = None) -> pd.Series:
+    """Each BioSample's expected genome size: its species' entry, else its genus' (first word of ``species``).
+
+    A BioSample with neither takes ``default``.
+    """
+    species = cohort["species"].fillna("").astype(str).str.strip()
+    size = species.map(by_species or {}).fillna(species.str.split().str[0].map(by_genus))
+    return size.fillna(default).set_axis(cohort["Sample"])
 
 
 def plan_genome_sources(
@@ -238,14 +331,21 @@ def main() -> None:
     ap.add_argument("--genome-size-by-genus", default=None,
                     help="Genus=bp,... for a multi-genus cohort (genus = first word of cohort.csv species); "
                          "others fall back to --genome-size")
+    ap.add_argument("--genome-size-by-species", default=None,
+                    help="'Genus epithet=bp,...': a named species' size, over its genus'; needs --genome-size-by-genus")
     ap.add_argument("--min-depth", type=float, default=10.0, help="minimum pooled read depth to assemble")
     ap.add_argument("--prefer-reads", action="store_true",
                     help="assemble reads with shovill instead of using a portal (submitter) assembly when possible")
     ap.add_argument("--ena-cache", type=Path, required=True)
     ap.add_argument("--threads", type=int, default=8, help="concurrent ENA queries")
+    ap.add_argument("--ncbi-fallback", action="store_true",
+                    help="a genome that would drop takes its AST record's GenBank assembly from NCBI (source ncbi_gca)")
+    ap.add_argument("--ncbi-cache", type=Path, default=None, help="NCBI FTP directory cache; required with --ncbi-fallback")
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
 
+    if args.genome_size_by_species and not args.genome_size_by_genus:
+        raise SystemExit("--genome-size-by-species needs --genome-size-by-genus")
     cohort = pd.read_csv(args.cohort, dtype={"Sample": str, "assembly_genotype": str, "reads_accession": str})
     atb = read_atb_index(args.atb_index)
     labelled = cohort[cohort["n_drugs_labelled"] > 0]
@@ -258,13 +358,29 @@ def main() -> None:
     sizes = None
     if args.genome_size_by_genus:
         by_genus = {k.strip(): float(v) for k, v in (x.split("=") for x in args.genome_size_by_genus.split(","))}
-        sizes = genome_sizes_by_genus(cohort, by_genus, args.genome_size)
+        by_species = ({k.strip(): float(v) for k, v in (x.split("=") for x in args.genome_size_by_species.split(","))}
+                      if args.genome_size_by_species else None)
+        sizes = genome_sizes_by_genus(cohort, by_genus, args.genome_size, by_species)
         genus = cohort.loc[cohort["n_drugs_labelled"] > 0, "species"].fillna("").str.split().str[0]
         unmapped = genus[~genus.isin(by_genus)].value_counts()
         if len(unmapped):
             print(f"genera without a size (use --genome-size {args.genome_size:.3g}): {unmapped.to_dict()}")
     reads = summarise_reads(runs, sizes if sizes is not None else args.genome_size)
     plan = plan_genome_sources(cohort, atb, reads, args.min_depth, args.prefer_reads, sizes)
+    if args.ncbi_fallback:
+        if args.ncbi_cache is None:
+            raise SystemExit("--ncbi-fallback needs --ncbi-cache")
+        accs = sorted(plan.loc[plan["source"].eq("drop"), "assembly_phenotype"].dropna().unique())
+        bad = [a for a in accs if not re.fullmatch(r"GCA_\d{9}\.\d+", a)]
+        if bad:
+            raise SystemExit(f"{len(bad)} assembly accessions are not one versioned GCA (first: {bad[:5]}); "
+                             "no manifest written")
+        try:
+            plan = apply_ncbi_fallback(plan, ncbi_assembly_dirs(accs, args.ncbi_cache))
+        except ValueError as e:
+            raise SystemExit(f"{e}; no manifest written") from e
+        print(f"NCBI fallback: {int(plan['ncbi_status'].eq('found').sum())} of {len(accs)} dropped genomes' "
+              f"assemblies listed by NCBI → ncbi_gca; {int(plan['ncbi_status'].eq('not_found').sum())} not listed")
     args.out.parent.mkdir(parents=True, exist_ok=True)
     plan.to_csv(args.out, index=False)
 
