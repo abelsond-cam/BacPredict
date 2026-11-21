@@ -1903,6 +1903,17 @@ staged at `$AMR/raw/bakrep/v2_export_20250612/bakrep-export.tsv.gz` joined to ea
 - For all 1,843 PsA genomes BakRep holds, its contig count, total length and N50 equal ours exactly
   (`cmp_pa.py`); sequence-level checks on 4 genomes match byte for byte (BakRep ran Bakta with
   `--keep-contig-headers`), so BakRep GFF3 coordinates sit on our ATB contigs.
+- **⚠ The PsA species evidence has no published reference panel beside it.** `paeruginosa/genomes/qc/` holds
+  `skani_dist.tsv` and nothing else: PsA's skani ran inside `run_genome_qc.sh` (`build_pa_genomes.sh qc`), which
+  writes only the result, not through `run_skani.sh`, which publishes `skani_dist.refs.tsv` beside it (and, since
+  `d6c3e05`, `skani_dist.list.tsv`). Enterobacterales has the refs file; PsA does not, and neither cohort has the
+  list file, both having run before it existed. **The panel is recoverable but not published:** the only two
+  `Ref_file` values in `skani_dist.tsv` are `$AMR/raw/reference_genomes/GCF_000006765.1.fna.gz` (PAO1,
+  *P. aeruginosa*) and `GCF_000017205.1.fna.gz` (PA7, *P. paraeruginosa*), which are the two `--species-ref`
+  arguments `build_pa_genomes.sh collate` passes. **No refs file has been written after the fact** — provenance
+  reconstructed from a script is not provenance, and the result's own `Ref_file` column is the better evidence.
+  Any consumer (CABBAGE v2 §3.7 reuses these results) must read the panel from those paths and tolerate both files'
+  absence for a pre-`d6c3e05` run.
 - **BakRep's MLST is not used.** It leaves 464 of the 1,843 PsA genomes untyped where ours leaves 132, and
   never disagrees where both type (`cmp_pa.py`). Our own `mlst` 2.35.0 runs on every genome.
 - ⚠ Equal contig count, length and N50 did **not** guarantee equal contig *names*: see the ingest refusals below.
