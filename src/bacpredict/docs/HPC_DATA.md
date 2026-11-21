@@ -77,7 +77,9 @@ latest) and md5-checked against its `md5sums`:
   experiment at about twice the genomes (`PROJECT_STATE.md` §3.7). Not a portal release: one CSV with its own columns
   (`genus` + epithet `species`, `Antibiotic_name` with "/", `measurement_value`, `database` "|"-separated, `Pubmed_ID`).
   `.bz2` as received, `md5sums` and `README.md` alongside; its scoping against 2026-07 is in
-  `$AMR/processed/ebi_amr_portal/scoping_cabbage_v2_20261121/`.
+  `$AMR/processed/ebi_amr_portal/scoping_cabbage_v2_20261121/`. Written in the portal's own columns (by
+  `engine/ast_labels/cabbage_v2_phenotype.py`) at `$AMR/processed/ebi_amr_portal/cabbage_v2_20261121/phenotype.parquet`;
+  its labels are in `$AMR/processed/{paeruginosa,enterobacterales}_cabbage_v2/`, never in the 2026-07 folders.
 
 **Labels built from it**, one folder per species: `$AMR/processed/paeruginosa/` (*P. aeruginosa*:
 `binary_ast.csv`, `cohort.csv`, …; built by `apps/pa/scripts/build_pa_ast_labels.sh`, mechanics in

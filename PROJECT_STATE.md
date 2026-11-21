@@ -1,7 +1,11 @@
 # BacPredict — project state
 
-> **Last verified: 2026-11-21 @ `f595f0d`** (branch `refactor/consolidate-engine`).
-> **Verification scope, this pass (2026-11-21, sixth): §3.6 the PsA ST155 switch only** — the ten new split tables
+> **Last verified: 2026-11-21 @ `20ad6f3`** (branch `refactor/consolidate-engine`).
+> **Verification scope, this pass (2026-11-21, seventh): §3.7 the CABBAGE v2 labels only** — a pass by the v2 agent.
+> Read on CSD3: `$AMR/processed/{paeruginosa,enterobacterales}_cabbage_v2/{manifest.json,label_counts.csv,cohort.csv}`
+> and their `checks_vs_2026-07/`. **Nothing else was re-verified this pass.**
+>
+> **Verification scope, the pass before (2026-11-21, sixth): §3.6 the PsA ST155 switch only** — the ten new split tables
 > and `check-splits` read live on CSD3, the preserve-move of the ST235 arm verified by md5 and a per-drug file
 > listing, and the retrain array submitted (no results yet). **Nothing else was re-verified this pass.**
 >
@@ -2062,7 +2066,7 @@ Later: the AMR-GNN-cut benchmark, ANI thinning, and causal attribution of the pr
 
 ### 3.7 Multi-species AMR — CABBAGE v2 (the second experiment, same procedures at ~2× the data)
 
-**Status.** Staged and scoped; **nothing built yet.** CABBAGE v2 is an extension of the data behind the EBI AMR
+**Status.** **Labels built** (stage 1 of 4) for PsA and Enterobacterales; genomes not started. CABBAGE v2 is an extension of the data behind the EBI AMR
 Portal, given to the project as one CSV, with about twice the BioSamples. **It is a second experiment, not an
 update of §3.6** (David, 2026-11-21: "second test, same procedures"): v2 labels are neither merged with nor
 substituted for §3.6's, which continues on the portal's 2026-07 release ("v1"). Every stage repeats §3.6's procedure —
@@ -2120,24 +2124,48 @@ and CSVs).
   7,527 bare-call pairs); Enterobacterales 53,420 of 123,926 genomes (145,687 MIC, 89,551 bare call). The rule
   recomputes MIC tests from the MIC, so puffin's interpretation reaches a label only through bare calls.
 
+**Numbers of record — the v2 labels** (built at `20ad6f3`, the SHA in each `manifest.json`). CABBAGE v2 is first
+written in the portal's `phenotype.parquet` columns by `engine/ast_labels/cabbage_v2_phenotype.py`
+(`$AMR/processed/ebi_amr_portal/cabbage_v2_20261121/phenotype.parquet`, md5 `98a46302…`, counts in the `.json` beside it:
+all 3,345,275 rows kept, 918,370 empty signs read as "=", 19,804 rows genus-only), then labelled by the **unchanged**
+`build_binary_ast_labels` (`--phenotype` that table, `--portal-source cabbage_v2`, `--genotype` the 2026-07 table,
+`--unitless-mic-as-mg-l` as in §3.6 — v2 has no unitless MIC, so it changes nothing). PsA's `amr_gnn_tests.csv` is
+byte-identical to §3.6's (md5 `89be6150…`).
+
+| `label_counts.csv` / `cohort.csv` | PsA (`paeruginosa_cabbage_v2/`) | Enterobacterales (`enterobacterales_cabbage_v2/`) |
+|---|--:|--:|
+| genomes in `binary_ast.csv` | 9,422 | 118,619 |
+| genomes with a clean (0/1) label | 9,422 (assembly 6,046 · reads 3,376) | 118,608 (assembly 102,095 · reads 16,513) |
+| clean labels, ten drugs | 64,281 | 493,801 |
+| §3.6 at the same stage | 3,932 genomes | 67,763 genomes |
+
+Checks against §3.6's labels (`checks_vs_2026-07/`, scripts alongside):
+- **Agreement where both hold a clean label:** PsA 23,529 of 23,529; Enterobacterales 241,378 of 241,853 — the
+  dry run exactly (`pair_agreement_by_drug.csv`). The 475 disagreements: 374 are ciprofloxacin where §3.6 has a
+  PATRIC MIC of 1 (R, > 0.5) and v2 holds only a puffin row at 0.5 (one at 0.25; S) for the same genome — *E. coli*
+  190, *K. pneumoniae* 157 (`discordant_pairs_mic_detail.csv`); 96 are labels §3.6 took from a bare call and v2 from an
+  MIC; 5 are PATRIC against puffin-only MICs the other way (S → R). **Hypothesis, not checked:** puffin re-extracted the
+  value from the paper, one dilution from PATRIC's.
+- **§3.6 genomes v2 does not label** (`v1_labelled_genomes_not_labelled_in_v2.csv`): PsA 138 — study 27216077 (135,
+  absent from v2; already lost in §3.6) and 3 re-speciated *P. paraeruginosa*. Enterobacterales 135, all present in v2:
+  74 *Salmonella* (+2 *Shigella*) whose disk tests v2 carries with **no R/S call** (`PATRIC;puffin`, zone in mm), so no
+  label; 17 *Salmonella* whose ten-drug tests (PATRIC disk + E-test in §3.6) v2 does not carry at all; 39
+  *K. pneumoniae* that v2 calls "mixed sample"; 3 given non-bacterial species (*Macaca* ×2, *Saccharomyces*).
+- **Labels resting on puffin alone** (every called test's `database` is exactly `puffin`; `puffin_alone_by_drug.csv`):
+  PsA 39,091 of 64,281 (31,367 from an MIC, 7,722 from a bare call); Enterobacterales 245,085 of 493,801 (146,871 MIC,
+  97,795 bare call). Where a puffin-only test carries both an MIC and its own R/S, that call matches the EUCAST v15
+  re-call on 95.5–99.7 % of tests by stated standard (Enterobacterales CLSI 95.5 %, EUCAST 99.7 %, none 97.4 %; PsA
+  98.5–99.5 %) (`source_call_agreement_by_database.csv`) — the closest available check on the bare calls, not a check of them.
+- **Within one dilution of the breakpoint** (an `=` MIC with R/2 ≤ MIC ≤ 2R; `near_breakpoint_by_drug.csv`), reported not
+  changed: PsA 19.8–42.3 % of labels by drug (§3.6 18.1–54.4 %); Enterobacterales 3.9–10.2 % (§3.6 2.0–12.0 %).
+- 345 labelled Enterobacterales genomes carry a genus-only species (*Salmonella* 132, *Escherichia* 131, …); they take
+  the genus- and order-level breakpoints. 220 have a species conflict with the 2026-07 genotype table (PsA 3).
+
 **In flight.** Nothing.
 
 **Next.** Agreed with David 2026-11-21, in this order, each stage §3.6's procedure:
-1. **Labels.**
-   - `engine/ast_labels/cabbage_v2_tests.py`: the v2 CSV → `ast_tests.TEST_COLUMNS`. Species = `genus` + `species`
-     (epithet); drug lowercased with "/" → "-"; **a value with no sign → "="**; `database` kept ("|"-separated) so
-     puffin can be filtered; `study` ← `Pubmed_ID`, `assembly_phenotype` ← `Assembly_ID`, `reads_accession` ←
-     `SRA_run`, `method` ← `laboratory_typing_method`, `ast_standard` ← `testing_standard`, `source_call` ←
-     `phenotype`; `Updated_phenotype_*` and `used_ECOFF` ignored. Read the CSV with `quote='"', escape='"'` (duckdb's
-     sniffer fails at line 129,193).
-   - `build_binary_ast_labels`: `--phenotype` becomes optional (additive; §3.6 builds unchanged), with tests.
-     `--genotype` stays the 2026-07 table (the only source of portal annotation-file accessions).
-   - Run scripts `apps/{pa,entero}/scripts/build_*_ast_labels_cabbage_v2.sh` → `$AMR/processed/{paeruginosa,enterobacterales}_cabbage_v2/`;
-     PsA adds `--extra-tests` AMR-GNN.
-   - Checks: agreement with §3.6 labels on shared genomes ≈ the dry run; puffin-alone counts; labels within one
-     dilution of a breakpoint reported, not changed (the rule does not snap MICs to the dilution series — puffin
-     reports both 0.06 and 0.064, against *Salmonella* ciprofloxacin's R > 0.06).
-   - Checkpoint: commit, this section and §4, then `/compact`.
+1. **Labels — done** (above). `cabbage_v2_phenotype.py` replaced the planned `cabbage_v2_tests.py` and the optional
+   `--phenotype`: writing v2 in the portal schema needed no change to any existing engine file.
 2. **Genomes** — only BioSamples absent from every §3.6 genome manifest: the per-sample stores are keyed by BioSample
    and shared, so v2 reuses every §3.6 genome and the two agents never build the same one. ATB → portal GFF → shovill;
    CheckM2 + skani; MLST; Bakta (BakRep ingest or our run). Agreed with the §3.6 agent 2026-11-21:
@@ -2156,7 +2184,10 @@ and CSVs).
    `engine.splits.load_splits` only. **The lineage holdout is §3.6's, under the same ≤ 5 % cap:** PsA **ST155**
    (replacing ST235 — David, 2026-11-21, relayed by the §3.6 agent; §3.6 records it), Enterobacterales as §3.6 settles
    it. **Open, for David, before the splits:** a fair v1-vs-v2 comparison needs v2's holdout to contain §3.6's (the
-   same ST plus the random 20 %); proposed, not decided.
+   same ST plus the random 20 %); proposed, not decided. If agreed, v2's PsA arm builds with `--assert-same-as
+   paeruginosa=$AMR/processed/paeruginosa/splits` against the ST155 tables (`split_manifest.json` md5 `908fc0af…`; the
+   §3.6 agent, 2026-11-21). **Compare v2 only with §3.6's ST155 arm:** the ST swap re-drew train, validate and the random
+   holdout too, so an ST235-era number (`_superseded_st235/`) is on different genomes.
 
 **Caveats.**
 - **puffin** — above. A puffin-free label set is a filter on `database`, not a rebuild.
@@ -2165,7 +2196,8 @@ and CSVs).
   taxonomy's 21 (*Lelliottia* 12, *Plesiomonas* 10, …) and are excluded, as in §3.6.
 - **CABBAGE's `Updated_phenotype_EUCAST` mixes ECOFF calls with clinical ones** — where `used_ECOFF` = yes it calls
   15,481 of 17,838 Enterobacterales tests R that clinical breakpoints call S (`cabbage_eucast_vs_our_eucast_v15.csv`).
-  Never a label; the rule recomputes from the MIC.
+  Never a label; the rule recomputes from the MIC. Not carried for disk tests either, where v2's `phenotype` is
+  sometimes empty (the 74 *Salmonella* above) — whether to take `Updated_phenotype_*` there is a method question, open.
 - Phenotypes beyond R/S (intermediate, less susceptible, non-susceptible, SDD) give no call to a test with no MIC, as
   in §3.6. 3,334 (BioSample, drug) pairs are duplicated within v2 (314 with differing phenotypes); averaging handles
   them (155 conflicts in the dry run).
@@ -2174,7 +2206,7 @@ and CSVs).
 - Shared code, one branch: each build's `manifest.json` records the git SHA, so an engine change between the two
   experiments' runs stays traceable.
 
-**Owns.** `engine/ast_labels/cabbage_v2_tests.py` (to write), the `*_cabbage_v2` run scripts,
+**Owns.** `engine/ast_labels/cabbage_v2_phenotype.py` (+ its test), the `*_cabbage_v2` run scripts,
 `$AMR/raw/ebi_amr_portal/cabbage_v2_20261121/`, `$AMR/processed/ebi_amr_portal/scoping_cabbage_v2_20261121/`,
 `$AMR/processed/{paeruginosa,enterobacterales}_cabbage_v2/`.
 
@@ -2201,7 +2233,9 @@ correct.**
 | `$AMR/processed/paeruginosa/genomes/genome_manifest.csv` (+ `ena_filereport_cache.tsv`) | `engine/genomes/plan_genome_sources` (`build_pa_genomes.sh plan`) | the build arrays, `collate` | Every PsA genome built from it; a re-plan that changes a genome's source rebuilds it in place |
 | `$AMR/raw/{contigs,prodigal}/<Sample>.{fna,gff}.gz` (keyed by BioSample, shared across organisms) | `engine/genomes/build_genomes` arrays | QC, `collate`, the protein extractor | Protein parquets and ESM-C embeddings of that genome (the PsA `check` stage flags a parquet older than its GFF) |
 | `$AMR/processed/paeruginosa/genomes/{genome_qc,embedding_input,st_counts_by_drug}.csv` | `engine/genomes/collate_genomes` | Bakta annotation (`embedding_input.csv` is the cohort annotated and embedded); the held-out-ST choice | The PsA annotation table and embeddings' cohort, the ST holdout, every PsA split |
-| `$AMR/raw/ebi_amr_portal/cabbage_v2_20261121/cabbage_v2.csv` | external (given to the project as `cabbage_v2.csv.bz2`); staged and md5-checked 2026-11-21 | `engine/ast_labels/cabbage_v2_tests.py` (§3.7, to write); the scoping in `processed/ebi_amr_portal/scoping_cabbage_v2_20261121/` | Every §3.7 label, genome manifest, split and model |
+| `$AMR/raw/ebi_amr_portal/cabbage_v2_20261121/cabbage_v2.csv` | external (given to the project as `cabbage_v2.csv.bz2`); staged and md5-checked 2026-11-21 | `engine/ast_labels/cabbage_v2_phenotype.py` (§3.7); the scoping in `processed/ebi_amr_portal/scoping_cabbage_v2_20261121/` | Every §3.7 label, genome manifest, split and model |
+| `$AMR/processed/ebi_amr_portal/cabbage_v2_20261121/phenotype.parquet` (+ `.json`) | `engine/ast_labels/cabbage_v2_phenotype` (run by either `*_cabbage_v2` label script if absent) | both §3.7 label builds | Every §3.7 label; delete it to rebuild from the CSV |
+| `$AMR/processed/{paeruginosa,enterobacterales}_cabbage_v2/{binary_ast,cohort,label_counts}.csv` | `build_binary_ast_labels` via `apps/{pa,entero}/scripts/build_*_ast_labels_cabbage_v2.sh` | §3.7 genome acquisition and splits | Every §3.7 genome manifest, split and model |
 | `$AMR/processed/enterobacterales/{binary_ast,cohort,label_counts}.csv` | `engine/ast_labels/build_binary_ast_labels` (via `apps/entero/scripts/build_entero_ast_labels.sh`) | Enterobacterales genome acquisition and splits | Every Enterobacterales genome manifest, split and model |
 | `$AMR/raw/bakrep/v2_export_20250612/bakrep-export.tsv.gz` + `$AMR/processed/bakrep_coverage_20261119/` | BakRep's published export; `join.py` | Which genomes take BakRep's Bakta annotation and which get our own Bakta run | The annotation source of every PsA and Enterobacterales genome |
 | `$AMR/raw/bakta_db/v5.1_full/` (+ `v5.1_full.md5`, `README.txt`) | copied from nuna's `refs/bakta/db` (job `41494699`); AMRFinderPlus DB `latest` → 2024-07-22.1 | every Bakta run of ours (`engine/genomes/bakta.py`) | Every our-run annotation (a run's fingerprint includes this DB's `version.json` and AMRFinderPlus DB) |
