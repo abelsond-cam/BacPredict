@@ -19,11 +19,16 @@ Subcommands:
     well as at plan: an earlier cohort's manifest can grow after this one was planned.
 ``split-by-scheme``
     The manifest's buildable rows, one file per MLST scheme (``<out-dir>/genome_manifest_<scheme>.csv``), the scheme
-    taken from the genome's label genus (``--scheme-by-genus Escherichia=ecoli_achtman_4,…``; the genus is the first
-    word of ``cohort.csv``'s ``species``). A genus with no scheme goes to ``genome_manifest_auto.csv``, built without
-    ``--scheme`` (mlst picks). Each build array then runs with its scheme pinned: auto-detection typed 7.7 % of the
+    taken from the genome's label species (``--scheme-by-species "Klebsiella aerogenes=kaerogenes,…"``), else its
+    genus (``--scheme-by-genus Escherichia=ecoli_achtman_4,…``; the genus is the first word of ``cohort.csv``'s
+    ``species``). A genome matching neither goes to ``genome_manifest_auto.csv``, built without ``--scheme`` (mlst
+    picks). Each build array then runs with its scheme pinned: auto-detection typed 7.7 % of the
     2026-07 Enterobacterales genomes on another genus's scheme. Written read-only, since array tasks take rows by
     position.
+``check-schemes``
+    After collate: exit 1 if any QC-passing genome of a pinned species or genus carries a scheme other than its pin
+    — whether built here or reused, since a species typed on two schemes puts one clone under two ``st`` keys in a
+    split table. Unpinned species typed on more than one scheme are listed, not failed.
 ``qc-list``
     Freeze the next CheckM2 list: every genome built ``ok`` under ``--shard-root`` that no ``--listed`` list holds, as
     ``Sample<TAB>contigs path``, sorted, read-only. ``--require-complete`` refuses while any buildable genome of
@@ -102,20 +107,44 @@ def parse_mapping(text: str) -> dict[str, str]:
     return {k.strip(): v.strip() for k, v in pairs}
 
 
-def split_by_scheme(manifest: pd.DataFrame, species: pd.Series, by_genus: dict[str, str]) -> dict[str, pd.DataFrame]:
-    """The manifest's buildable rows grouped by MLST scheme, from each genome's label genus (``AUTO`` if unmapped).
+def pinned_scheme(species: pd.Series, by_genus: dict[str, str], by_species: dict[str, str] | None = None) -> pd.Series:
+    """Each label species' pinned MLST scheme: its species entry, else its genus entry, else ``AUTO``."""
+    by_species = by_species or {}
+    if AUTO in {*by_genus.values(), *by_species.values()}:
+        raise ValueError(f"{AUTO!r} names the unpinned group and cannot be a scheme")
+    s = species.fillna("").astype(str).str.strip()
+    return s.map(by_species).fillna(s.str.split().str[0].map(by_genus)).fillna(AUTO)
+
+
+def split_by_scheme(manifest: pd.DataFrame, species: pd.Series, by_genus: dict[str, str],
+                    by_species: dict[str, str] | None = None) -> dict[str, pd.DataFrame]:
+    """The manifest's buildable rows grouped by pinned MLST scheme (:func:`pinned_scheme`).
 
     ``species`` is the label species per Sample (``cohort.csv``); a buildable genome with no species is an error.
     """
-    if AUTO in by_genus.values():
-        raise ValueError(f"{AUTO!r} names the unpinned group and cannot be a scheme")
     m = manifest[manifest["source"].ne("drop")]
     sp = m["Sample"].map(species)
     if sp.isna().any():
         raise ValueError(f"{int(sp.isna().sum())} buildable genomes have no species in the cohort, e.g. "
                          f"{m.loc[sp.isna(), 'Sample'].head(5).tolist()}")
-    scheme = sp.str.split().str[0].map(by_genus).fillna(AUTO)
+    scheme = pinned_scheme(sp, by_genus, by_species)
     return {k: g.reset_index(drop=True) for k, g in m.groupby(scheme, sort=True)}
+
+
+def scheme_mismatches(qc: pd.DataFrame, by_genus: dict[str, str],
+                      by_species: dict[str, str] | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """``(pinned species typed off their pin, unpinned species typed on several schemes)`` among QC-passing genomes.
+
+    Both are counts per (label ``species``, ``mlst_scheme``). ``qc`` is ``genome_qc.csv``.
+    """
+    q = qc[qc["qc_pass"].astype(str).str.lower().eq("true")].copy()
+    q["mlst_scheme"] = q["mlst_scheme"].fillna("-").astype(str)
+    q["pin"] = pinned_scheme(q["species"], by_genus, by_species)
+    counts = q.groupby(["species", "pin", "mlst_scheme"]).size().rename("n").reset_index()
+    off = counts[counts["pin"].ne(AUTO) & counts["mlst_scheme"].ne(counts["pin"])]
+    auto = counts[counts["pin"].eq(AUTO)]
+    several = auto[auto.groupby("species")["mlst_scheme"].transform("nunique") > 1]
+    return off.reset_index(drop=True), several.reset_index(drop=True)
 
 
 def read_shard_dirs(dirs: Sequence[Path]) -> pd.DataFrame:
@@ -252,7 +281,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     p.add_argument("--manifest", type=Path, required=True)
     p.add_argument("--cohort", type=Path, required=True)
     p.add_argument("--scheme-by-genus", required=True, help="Genus=scheme,…")
+    p.add_argument("--scheme-by-species", default="", help="Genus epithet=scheme,…; wins over the genus")
     p.add_argument("--out-dir", type=Path, required=True)
+    p = sub.add_parser("check-schemes")
+    p.add_argument("--genome-qc", type=Path, required=True)
+    p.add_argument("--scheme-by-genus", required=True)
+    p.add_argument("--scheme-by-species", default="")
     p = sub.add_parser("qc-list")
     p.add_argument("--manifest", type=Path, required=True)
     p.add_argument("--shard-root", type=Path, required=True, help="the per-scheme shard directories' parent")
@@ -297,13 +331,21 @@ def main(argv: Sequence[str] | None = None) -> None:
     elif a.cmd == "split-by-scheme":
         manifest = pd.read_csv(a.manifest, dtype=str)
         species = pd.read_csv(a.cohort, dtype=str, usecols=["Sample", "species"]).set_index("Sample")["species"]
-        by = split_by_scheme(manifest, species, parse_mapping(a.scheme_by_genus))
+        by = split_by_scheme(manifest, species, parse_mapping(a.scheme_by_genus), parse_mapping(a.scheme_by_species))
         for scheme, g in by.items():
             if not re.fullmatch(r"[A-Za-z0-9_]+", scheme):
                 raise SystemExit(f"scheme name {scheme!r} is not a plain identifier")
             _write_frozen(g, a.out_dir / f"genome_manifest_{scheme}.csv", index=False)
         print(pd.DataFrame({s: g["source"].value_counts() for s, g in by.items()}).fillna(0).astype(int).T
               .to_string())
+    elif a.cmd == "check-schemes":
+        qc = pd.read_csv(a.genome_qc, dtype={"Sample": str, "st": str})
+        off, several = scheme_mismatches(qc, parse_mapping(a.scheme_by_genus), parse_mapping(a.scheme_by_species))
+        if len(several):
+            print("unpinned species typed on more than one scheme (QC pass; not an error):\n" + several.to_string(index=False))
+        if len(off):
+            sys.exit("QC-passing genomes typed off their pinned scheme:\n" + off.to_string(index=False))
+        print(f"every QC-passing genome of a pinned species or genus is on its pinned scheme ({len(qc)} genomes)")
     elif a.cmd == "qc-list":
         manifest = pd.read_csv(a.manifest, dtype=str)
         listed: set[str] = set()

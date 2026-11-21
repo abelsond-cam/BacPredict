@@ -8,7 +8,9 @@
 # The one difference from §3.6's first build is the fix §3.6 then applied: the MLST scheme is pinned per genus at
 # submission (one array per scheme), not auto-detected (PROJECT_STATE §6, 2026-11-21). The map is the scheme each
 # genus ended on in §3.6's re-typed genome_qc.csv, plus the v2 genera §3.6 did not have (Citrobacter, Yersinia,
-# Cronobacter); a genus with no scheme (Morganella, Kluyvera, Hafnia, …) is built without one, as in §3.6.
+# Cronobacter); a genus with no scheme (Morganella, Kluyvera, Hafnia, …) is built without one, as in §3.6. One species
+# is pinned apart from its genus: aerogenes, which §3.6 labels Enterobacter and v2 Klebsiella, takes `kaerogenes`
+# under either name — §3.6's are on it (the §3.6 agent, 2026-11-21), and a genus pin would split it across two.
 #
 #   ARRAY_REPO=<detached worktree> bash src/bacpredict/apps/entero/scripts/build_entero_genomes_cabbage_v2.sh <stage> …
 set -euo pipefail
@@ -24,6 +26,7 @@ export REUSE_SHARD_DIRS=$E/shards  # holds the MLST re-type's shards too: collat
 REUSE_CHECKM2=$(compgen -G "$E/qc/checkm2/checkm2_quality_report_*.tsv"; compgen -G "$E/qc/topup/checkm2/checkm2_quality_report_*.tsv")
 export REUSE_CHECKM2=${REUSE_CHECKM2//$'\n'/ }
 export REUSE_SKANI=$E/qc/skani_dist.tsv
+export SCHEME_BY_SPECIES="Klebsiella aerogenes=kaerogenes,Enterobacter aerogenes=kaerogenes"
 export SCHEME_BY_GENUS=Escherichia=ecoli_achtman_4,Shigella=ecoli_achtman_4,Salmonella=salmonella,Klebsiella=klebsiella,Enterobacter=ecloacae,Serratia=serratia,Proteus=proteus,Providencia=providencia,Citrobacter=cfreundii,Yersinia=yersinia,Cronobacter=cronobacter
 # §3.6's: typical complete-genome lengths per genus; any other genus 5.0 Mbp
 export GENOME_SIZE=5.0e6

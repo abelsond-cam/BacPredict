@@ -27,7 +27,9 @@
 #   OWNER_MANIFESTS    every other cohort's genome_manifest.csv that writes into the store (all must exist)
 #   REUSE_SHARD_DIRS, REUSE_CHECKM2, REUSE_SKANI
 #                      the owning cohort's build shards and QC reports, for the genomes this cohort reuses
-#   SCHEME_BY_GENUS    Genus=mlst scheme,…; any other genus is built without --scheme (`auto`)
+#   SCHEME_BY_GENUS    Genus=mlst scheme,…; SCHEME_BY_SPECIES (optional) "Genus epithet=scheme,…" wins over it.
+#                      Any other genome is built without --scheme (`auto`). The pins must be the owner's: collate
+#                      fails if a QC-passing genome of a pinned species, reused or not, is on another scheme
 #   GENOME_SIZE        bp, any genus not in GENOME_SIZES (optional Genus=bp,…); MIN_DEPTH (default 10)
 #   REFS               species<TAB>reference path, one per line (the skani panel; must be the owner's, so the reused
 #                      skani rows and this cohort's share one reference list)
@@ -115,7 +117,7 @@ plan)
         --ena-cache "$GEN/ena_filereport_cache.tsv" --out "$GEN/genome_manifest.csv"
     reuse check-disjoint --manifest "$GEN/genome_manifest.csv" --built $OWNER_MANIFESTS
     reuse split-by-scheme --manifest "$GEN/genome_manifest.csv" --cohort "$T/cohort.csv" \
-        --scheme-by-genus "$SCHEME_BY_GENUS" --out-dir "$BYS"
+        --scheme-by-genus "$SCHEME_BY_GENUS" ${SCHEME_BY_SPECIES:+--scheme-by-species "$SCHEME_BY_SPECIES"} --out-dir "$BYS"
     chmod a-w "$GEN/genome_manifest.csv"
     ;;
 submit)  # submit [scheme|all] [atb|portal|shovill|all] [indices]
@@ -215,6 +217,11 @@ collate)
         --manifest "$CI/genome_manifest.csv" --shard-dir "$CI/shards" --checkm2 "$CI/checkm2_quality_report.tsv" \
         --skani "$CI/skani_dist.tsv" "${refs[@]}" "${mode[@]}" --cohort "$T/cohort.csv" --labels "$T/binary_ast.csv" \
         --out-dir "$GEN"
+    # one scheme per pinned species across built and reused genomes. The owner's re-typed STs win in its shard
+    # directory only by file mtime (collate_genomes.read_shards), so a copy or restore that loses mtimes would bring
+    # back pre-re-type STs silently: this is the check that catches it
+    reuse check-schemes --genome-qc "$GEN/genome_qc.csv" --scheme-by-genus "$SCHEME_BY_GENUS" \
+        ${SCHEME_BY_SPECIES:+--scheme-by-species "$SCHEME_BY_SPECIES"}
     ;;
 status)
     reuse status --by-scheme "$BYS" --shard-root "$SHARDS" --qc-dir "$QCD"

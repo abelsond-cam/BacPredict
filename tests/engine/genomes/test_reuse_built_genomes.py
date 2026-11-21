@@ -17,6 +17,7 @@ from bacpredict.engine.genomes.reuse_built_genomes import (
     partition,
     read_built,
     read_shard_dirs,
+    scheme_mismatches,
     split_by_scheme,
 )
 
@@ -167,3 +168,25 @@ def test_qc_list_cli_freezes_then_checks(tmp_path):
     main([*base, "--out", str(tmp_path / "qc/checkm2_list_01.tsv")])
     assert (tmp_path / "qc/checkm2_list_01.tsv").read_text() == "A\t/c/A\nB\t/c/B\n"
     main([*base, "--listed", str(tmp_path / "qc/checkm2_list_01.tsv")])  # nothing left: exits 0
+
+
+def test_a_species_pin_wins_over_its_genus(cohort):
+    c = pd.concat([cohort, pd.DataFrame({"Sample": ["KA"], "species": ["Klebsiella aerogenes"], "n_drugs_labelled": [2]})])
+    m = pd.DataFrame({"Sample": ["KA", "N1"], "source": ["atb", "atb"]})
+    by = split_by_scheme(m, c.set_index("Sample")["species"], {"Klebsiella": "klebsiella", "Escherichia": "ecoli_achtman_4"},
+                         {"Klebsiella aerogenes": "kaerogenes"})
+    assert {k: list(v["Sample"]) for k, v in by.items()} == {"ecoli_achtman_4": ["N1"], "kaerogenes": ["KA"]}
+
+
+def test_scheme_mismatches():
+    qc = pd.DataFrame({
+        "species": ["Klebsiella aerogenes", "Klebsiella aerogenes", "Escherichia coli", "Escherichia coli",
+                    "Kluyvera ascorbata", "Kluyvera ascorbata", "Escherichia coli"],
+        "mlst_scheme": ["kaerogenes", "klebsiella", "ecoli_achtman_4", "salmonella", "ecloacae", None, "salmonella"],
+        "qc_pass": [True, True, True, True, True, True, False],
+    })
+    off, several = scheme_mismatches(qc, {"Klebsiella": "klebsiella", "Escherichia": "ecoli_achtman_4"},
+                                     {"Klebsiella aerogenes": "kaerogenes"})
+    assert off[["species", "mlst_scheme", "n"]].values.tolist() == [
+        ["Escherichia coli", "salmonella", 1], ["Klebsiella aerogenes", "klebsiella", 1]]  # the QC-fail row is not counted
+    assert sorted(several["mlst_scheme"]) == ["-", "ecloacae"]
