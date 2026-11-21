@@ -5,7 +5,16 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from bacpredict.apps.entero.species_units import UNIT_GENERA, UNITS, assign_units, unit_samples
+from bacpredict.apps.entero.species_units import (
+    UNDECIDED,
+    UNDECIDED_GENERA,
+    UNDECIDED_GENERA_V2,
+    UNDECIDED_KOSC,
+    UNIT_GENERA,
+    UNITS,
+    assign_units,
+    unit_samples,
+)
 
 
 def _qc(rows: list[tuple[str, str, str]]) -> pd.DataFrame:
@@ -62,6 +71,19 @@ def test_undecided_genera_get_no_unit() -> None:
     """Genera with no unit yet are NA, never quietly folded into a neighbour."""
     s = pd.Series(["Serratia marcescens", "Proteus mirabilis", "Morganella morganii", "Providencia stuartii"])
     assert assign_units(s).isna().all()
+
+
+@pytest.mark.parametrize("genus", UNDECIDED_GENERA_V2)
+def test_v2_only_genera_get_no_unit(genus: str) -> None:
+    """Genera only CABBAGE v2 has. Reading this rule against the 2026-07 cohort can never exercise them, which is
+    why they are listed: a later edit must not absorb them into a neighbouring unit unnoticed."""
+    assert assign_units(pd.Series([f"{genus} somespecies"])).isna().all()
+
+
+def test_undecided_is_the_union() -> None:
+    """UNDECIDED is what a caller reports as "this arm would drop these"; it must not fall out of step."""
+    assert set(UNDECIDED) == {*UNDECIDED_GENERA, *UNDECIDED_GENERA_V2, *UNDECIDED_KOSC}
+    assert len(UNDECIDED) == len(set(UNDECIDED))
 
 
 def test_blank_and_missing_species_get_no_unit() -> None:

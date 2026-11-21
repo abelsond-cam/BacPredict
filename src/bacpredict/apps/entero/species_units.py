@@ -63,15 +63,26 @@ UNIT_GENERA: dict[str, tuple[str, ...]] = {
 
 #: ⚠ Genera with no unit yet. They are Enterobacterales and the cross-species arm is "PsA + all Enterobacterales",
 #: so they need a decision before that arm is built — one unit each, one pooled unit, or left out. They do not
-#: affect any single-species arm. Counts in the 2026-07 QC-pass cohort: Serratia 329, Proteus 104, Morganella 60,
-#: Providencia 25 (518 genomes in all).
+#: affect any single-species arm. Counts as 2026-07 QC-pass + CABBAGE v2 new (§3.7): Serratia 329 + 224,
+#: Providencia 25 + 338, Morganella 60 + 201, Proteus 104 + 153. 518 genomes here, ~1,435 across both cohorts.
 UNDECIDED_GENERA = ("Serratia", "Proteus", "Morganella", "Providencia")
+
+#: ⚠ Genera that only CABBAGE v2 has, so reading this rule against the 2026-07 cohort alone can never show them.
+#: They are listed for exactly that reason: unlisted, they fall to ``NA`` silently, which is the failure this
+#: module exists to prevent. v2 labelled counts: Citrobacter 399, Yersinia 296, Kluyvera 12, Pluralibacter 9,
+#: Hafnia 8, Leclercia 3, Cronobacter 2, Erwinia 1, Pantoea 1.
+UNDECIDED_GENERA_V2 = ("Citrobacter", "Yersinia", "Kluyvera", "Pluralibacter", "Hafnia", "Leclercia",
+                       "Cronobacter", "Erwinia", "Pantoea")
 
 #: ⚠ The *K. oxytoca* complex is Klebsiella but NOT KpSC, so it falls in no unit and would be dropped from a
 #: cross-species arm. The 2026-07 cohort has none; **CABBAGE v2 (§3.7) does** — it pins a `koxytoca` MLST scheme —
-#: so this needs a unit before the two cohorts are built together. Listed, not assigned, so the gap is visible
+#: so this needs a unit before the two cohorts are built together. v2 labelled counts, all new: K. oxytoca 173,
+#: K. michiganensis 131, K. grimontii 15, K. pasteurii 11 (~330). Listed, not assigned, so the gap is visible
 #: rather than silent.
 UNDECIDED_KOSC = ("Klebsiella oxytoca", "Klebsiella michiganensis", "Klebsiella grimontii", "Klebsiella pasteurii")
+
+#: Everything awaiting a unit decision, for a caller that wants to report what an arm would drop.
+UNDECIDED = (*UNDECIDED_GENERA, *UNDECIDED_GENERA_V2, *UNDECIDED_KOSC)
 
 
 def assign_units(species: pd.Series) -> pd.Series:
