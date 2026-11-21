@@ -1,7 +1,15 @@
 # BacPredict — project state
 
-> **Last verified: 2026-11-21 @ `aee27ec`** (branch `refactor/consolidate-engine`).
-> **Verification scope, this pass (2026-11-21, eighth): §3.6 the *E. aerogenes* MLST correction only.**
+> **Last verified: 2026-11-21 @ `ba55740`** (branch `refactor/consolidate-engine`).
+> **Verification scope, this pass (2026-11-21, ninth): §3.6 the species units and the Klebsiella-only arm.**
+> `apps/entero/species_units.py` run against `genomes/genome_qc.csv` on CSD3 (the seven-way unit table, and the
+> 9,370 `kpsc` genomes); ST37's per-drug counts read from `genome_qc.csv` × `binary_ast.csv`; the fp32-vs-bf16
+> question settled by loading one genome (`SAMD00497419`) from both the linked store and the ESM-C smoke output and
+> finding all 5,330 protein rows bit-identical after a bf16 cast; 25 tests pass. **The Kp arm has not been built or
+> trained**, and the per-drug split figures quoted for it are an in-memory preview, not tables of record.
+> **Nothing else was re-verified this pass.**
+>
+> **Verification scope, the pass before (2026-11-21, eighth): §3.6 the *E. aerogenes* MLST correction only.**
 > `genome_qc.csv` re-collated on CSD3 after job `41608859` and checked species by species for a single MLST scheme
 > (1 trips it, *E. chengduensis*, 7 typed + 1 untyped — no species carries two real schemes).
 > **Nothing else was re-verified this pass.**
