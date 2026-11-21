@@ -2090,11 +2090,23 @@ and CSVs).
    - Checkpoint: commit, this section and §4, then `/compact`.
 2. **Genomes** — only BioSamples absent from every §3.6 genome manifest: the per-sample stores are keyed by BioSample
    and shared, so v2 reuses every §3.6 genome and the two agents never build the same one. ATB → portal GFF → shovill;
-   CheckM2 + skani; MLST pinned per species; Bakta (BakRep ingest or our run).
+   CheckM2 + skani; MLST; Bakta (BakRep ingest or our run). Agreed with the §3.6 agent 2026-11-21:
+   - **The disjointness is an assertion, not a convention:** the v2 plan step refuses to write a manifest that names any
+     BioSample in a §3.6 manifest. `build_genomes.build_one` deletes and rebuilds a genome's contigs when the stored
+     `src=` header differs from the manifest row's source (`build_genomes.py:293-295`), so an overlapping row would
+     destroy a §3.6 genome rather than skip it.
+   - **MLST pinned per species, by submission, not code:** one build array per scheme over its own subset manifest with
+     `MLST_SCHEME` set (`ecoli_achtman_4` for *E. coli* and every *Shigella*; `salmonella`, `klebsiella`, `ecloacae`,
+     `serratia`, `proteus`, `cfreundii`). `build_entero_genomes.sh` as it stands leaves it unset, and `mlst`'s
+     auto-detection mis-typed 7.7 % of §3.6's genomes (§3.6 *Numbers of record*). PsA's script already pins
+     `paeruginosa`. The code stays as it is so that both experiments run the same code; a per-row scheme would be a
+     behaviour change to `engine/genomes`, landed once for both, before either re-runs genomes.
 3. **ESM-C** (bf16) into the shared `$AMR/processed/esm/` through a sample list.
-4. **Splits and training** — new split tables, retrained models, a second PsA baseline. **Open, for David, before the
-   splits:** a fair v1-vs-v2 comparison needs v2's holdout to contain §3.6's (ST235 + the random 20 %); proposed, not
-   decided.
+4. **Splits and training** — new split tables, retrained models, a second PsA baseline, every holdout read through
+   `engine.splits.load_splits` only. **The lineage holdout is §3.6's, under the same ≤ 5 % cap:** PsA **ST155**
+   (replacing ST235 — David, 2026-11-21, relayed by the §3.6 agent; §3.6 records it), Enterobacterales as §3.6 settles
+   it. **Open, for David, before the splits:** a fair v1-vs-v2 comparison needs v2's holdout to contain §3.6's (the
+   same ST plus the random 20 %); proposed, not decided.
 
 **Caveats.**
 - **puffin** — above. A puffin-free label set is a filter on `database`, not a rebuild.
