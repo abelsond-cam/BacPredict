@@ -92,8 +92,11 @@ owners_exist() {
     for f in $OWNER_MANIFESTS; do [[ -s $f ]] || { echo "owner manifest missing: $f"; exit 1; }; done
 }
 pin() {  # REPO/EXPECT_SHA for --export, from ARRAY_REPO. Call as p=$(pin) || exit 1, never inside an argument
+    local sha
     [[ -n ${ARRAY_REPO:-} ]] || { echo "set ARRAY_REPO to a detached worktree at the SHA to run (see the header)" >&2; return 1; }
-    echo "REPO=$ARRAY_REPO,EXPECT_SHA=$(git -C "$ARRAY_REPO" rev-parse HEAD)"
+    sha=$(git -C "$ARRAY_REPO" rev-parse HEAD) || { echo "ARRAY_REPO=$ARRAY_REPO is not a git checkout" >&2; return 1; }
+    [[ -x $ARRAY_REPO/.venv/bin/python ]] || { echo "ARRAY_REPO=$ARRAY_REPO has no .venv (symlink the shared one)" >&2; return 1; }
+    echo "REPO=$ARRAY_REPO,EXPECT_SHA=$sha"
 }
 lists() { compgen -G "$QCD/checkm2_list_*.tsv" | sort || true; }
 n_tasks() { echo $(( ($(wc -l < "$1") + CHECKM2_CHUNK - 1) / CHECKM2_CHUNK )); }
@@ -150,6 +153,8 @@ submit)  # submit [scheme|all] [atb|portal|ncbi|shovill|all] [indices]
     p=$(pin) || exit 1
     tb=$(tools_bin)
     for t in shovill prodigal mlst; do [[ -x $tb/$t ]] || { echo "no $t in $tb"; exit 1; }; done
+    # what is queued now, read once: an array submitted by this run must not make the next scheme's look queued
+    queued=$(squeue -u "$USER" -h -o '%j') || { echo "squeue failed: cannot tell what is queued"; exit 1; }
     for f in "$BYS"/genome_manifest_*.csv; do
         scheme=${f##*/genome_manifest_}; scheme=${scheme%.csv}
         [[ $want_scheme == all || $want_scheme == "$scheme" ]] || continue
@@ -163,15 +168,21 @@ submit)  # submit [scheme|all] [atb|portal|ncbi|shovill|all] [indices]
                  res=(--partition=${DL_PARTITION:-icelake} --cpus-per-task=8 --mem=${DL_MEM:-6G} --time=${DL_TIME:-00:15:00}) ;;
             portal) s=portal_gff; chunk=40; conc=${PORTAL_CONCURRENT:-20}
                  res=(--partition=${DL_PARTITION:-icelake} --cpus-per-task=8 --mem=24G --time=01:30:00) ;;
-            # 40 NCBI assemblies per 8-core task, as portal; few concurrent tasks so NCBI's FTP is not flooded
+            # 40 NCBI assemblies per 8-core task, as portal. Every scheme's ncbi array shares one job name and runs
+            # --dependency=singleton, one array after another, so NCBI_CONCURRENT caps the whole cohort's load on NCBI's
+            # FTP (4 tasks × 8 workers), not each scheme's
             ncbi) s=ncbi_gca; chunk=40; conc=${NCBI_CONCURRENT:-4}
-                 res=(--partition=${DL_PARTITION:-icelake} --cpus-per-task=8 --mem=${DL_MEM:-6G} --time=${NCBI_TIME:-00:45:00}) ;;
-            # one genome per task on icelake-himem's 6,760 MB per core (shovill --ram 48 of 52G)
+                 res=(--partition=${DL_PARTITION:-icelake} --cpus-per-task=8 --mem=${DL_MEM:-6G} --time=${NCBI_TIME:-00:45:00}
+                      --dependency=singleton) ;;
+            # one genome per task on icelake-himem's 6,760 MB per core (shovill --ram 48 of 52G). Like ncbi, one job name
+            # and singleton across schemes, so SHOVILL_CONCURRENT caps the cohort's load on ENA's fastq server (§3.6 lost
+            # 45 of 214 shovill builds to EBI refusing connections at 100 concurrent)
             shovill) s=shovill; chunk=1; conc=${SHOVILL_CONCURRENT:-25}
-                 res=(--partition=icelake-himem --cpus-per-task=8 --mem=52G --time=03:00:00) ;;
+                 res=(--partition=icelake-himem --cpus-per-task=8 --mem=52G --time=03:00:00 --dependency=singleton) ;;
             esac
             name="$JOB-build-$scheme-$src"
-            nq=$(n_queued "$name") || exit 1
+            [[ $src == ncbi || $src == shovill ]] && name="$JOB-build-$src"
+            nq=$(awk -v p="$name" '$0 == p {n++} END {print n + 0}' <<<"$queued")
             if (( nq > 0 )); then
                 [[ -z $idx ]] || { echo "$name is still queued or running: wait for it, or scancel it, before rerunning tasks"; exit 1; }
                 echo "$name: still queued or running — skipped (submit again once it is done to fill any gaps)"; continue
@@ -212,6 +223,7 @@ qc)  # qc checkm2 | qc checkm2-rerun <list number> <indices> | qc skani
         (( ${#L[@]} )) || { echo "no CheckM2 list yet: qc checkm2 first"; exit 1; }
         p=$(pin) || exit 1
         tb=$(tools_bin)
+        [[ -x $tb/skani ]] || { echo "no skani in $tb"; exit 1; }
         reuse qc-list --manifest "$GEN/genome_manifest.csv" --shard-root "$SHARDS" --listed "${L[@]}" --require-complete
         mkdir -p "$QCD/skani"
         while IFS=$'\t' read -r sp path; do
@@ -243,14 +255,16 @@ collate)
         done
     done
     (( ${#missing[@]} == 0 )) || { echo "CheckM2 reports missing: ${missing[*]} (qc checkm2-rerun)"; exit 1; }
-    for f in "$QCD/skani/skani_dist.tsv" "$QCD/skani/skani_dist.refs.tsv" "$QCD/skani/skani_list.tsv"; do
-        [[ -s $f ]] || { echo "no $f: qc skani first"; exit 1; }
+    # the result and the two lists the skani job published beside it (run_skani.sh): never skani_list.tsv, which the
+    # next qc skani rewrites before its job has produced anything
+    for f in "$QCD/skani/skani_dist.tsv" "$QCD/skani/skani_dist.refs.tsv" "$QCD/skani/skani_dist.list.tsv"; do
+        [[ -s $f ]] || { echo "no $f: qc skani first (or its job did not finish)"; exit 1; }
     done
     CI=$GEN/collate_inputs
     reuse collate-inputs --cohort "$T/cohort.csv" --manifest "$GEN/genome_manifest.csv" --shard-root "$SHARDS" \
         --reused "$GEN/reused_genomes.csv" --reuse-shard-dir $REUSE_SHARD_DIRS --checkm2 "${reports[@]}" $REUSE_CHECKM2 \
         --skani "$QCD/skani/skani_dist.tsv" --reuse-skani $REUSE_SKANI --refs-tsv "$QCD/skani/skani_dist.refs.tsv" \
-        --skani-list "$QCD/skani/skani_list.tsv" --lists "${L[@]}" --out-dir "$CI"
+        --skani-list "$QCD/skani/skani_dist.list.tsv" --lists "${L[@]}" --out-dir "$CI"
     # the references the skani job ran with (it publishes them beside its result)
     refs=()
     while IFS=$'\t' read -r sp path; do refs+=(--species-ref "$sp=$path"); done < "$QCD/skani/skani_dist.refs.tsv"

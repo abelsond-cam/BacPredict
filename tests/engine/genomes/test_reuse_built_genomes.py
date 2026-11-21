@@ -213,11 +213,17 @@ def test_array_list_and_missing_tasks(tmp_path):
     m = pd.DataFrame({"Sample": [f"S{i:03d}" for i in range(250)], "source": ["atb"] * 230 + ["shovill"] * 20})
     d = tmp_path / "shards"
     d.mkdir()
-    for k in (0, 2):
-        (d / f"atb_{k:05d}.tsv").write_text("Sample\tstatus\n")
-    (d / "shovill_00003.tsv").write_text("Sample\tstatus\n")
+
+    def shard(name, samples):
+        (d / name).write_text("Sample\tstatus\n" + "".join(f"{s}\tok\n" for s in samples))
+
+    shard("atb_00000.tsv", [f"S{i:03d}" for i in range(100)])
+    shard("atb_00002.tsv", [f"S{i:03d}" for i in range(200, 230)])
+    shard("shovill_00003.tsv", ["S233"])
     assert missing_tasks(m, "atb", 100, d) == [1]
     assert array_list(missing_tasks(m, "shovill", 1, d)) == "0-2,4-19"
+    shard("atb_00000.tsv", [f"S{i:03d}" for i in range(1, 101)])  # written under a plan whose rows have since shifted
+    assert missing_tasks(m, "atb", 100, d) == [0, 1]
 
 
 def test_collate_inputs_refuses_a_stale_skani_and_a_different_panel(cohort):

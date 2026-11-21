@@ -58,6 +58,8 @@ from pathlib import Path
 import pandas as pd
 
 PRODIGAL_PROKKA_FLAGS = ["-c", "-m", "-g", "11", "-p", "single", "-q"]
+# an NCBI transfer that stalls is abandoned (and retried) rather than holding its worker to the task's wall
+NCBI_CURL_LIMITS = ("--max-time", "600", "--speed-limit", "1024", "--speed-time", "120")
 CURL_RETRIES, CURL_RETRY_DELAY_S = 6, 15
 SHARD_COLUMNS = ["Sample", "source", "status", "n_contigs", "total_length", "n50", "gc", "n_cds", "mlst_scheme",
                  "st", "mlst_alleles", "contigs_path", "gff_path", "seconds"]
@@ -315,8 +317,8 @@ def build_one(row: dict, out_root: Path, bin_dir: Path, tmp_root: Path, threads:
             elif row["source"] == "ncbi_gca":
                 dest = work / "genomic.fna.gz"
                 md5s = work / "md5checksums.txt"
-                download(row["ncbi_md5_url"], md5s)
-                download(row["ncbi_url"], dest, md5=ncbi_md5(md5s, row["ncbi_url"]))
+                download(row["ncbi_md5_url"], md5s, curl_opts=NCBI_CURL_LIMITS)
+                download(row["ncbi_url"], dest, md5=ncbi_md5(md5s, row["ncbi_url"]), curl_opts=NCBI_CURL_LIMITS)
                 records = read_fasta(dest)
                 if not records:
                     raise ValueError("NCBI assembly has no sequences")

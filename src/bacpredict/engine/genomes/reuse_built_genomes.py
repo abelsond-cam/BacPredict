@@ -48,9 +48,10 @@ Subcommands:
     the owner's skani rows name (``--refs-tsv`` against ``--reuse-skani``): reused and new genomes must be called
     against one panel.
 ``missing-tasks``
-    The array indices of one scheme × source with no shard file yet, as a SLURM ``--array`` list (``0-4,7``); empty
-    when every task has written. ``submit`` sends only these, so running it again fills gaps and never duplicates a
-    task that finished.
+    The array indices of one scheme × source with no shard file holding exactly the task's genomes, as a SLURM
+    ``--array`` list (``0-4,7``); empty when every task has written. ``submit`` sends only these, so running it again
+    fills gaps and never duplicates a task that finished, and a shard left by an earlier plan whose rows shifted is not
+    mistaken for done.
 ``status``
     Per scheme and source: array tasks written against those expected (names as ``submit`` takes them), the tasks
     holding a failed genome, genomes ok and failed; then CheckM2 lists, their reports, and the skani result.
@@ -69,6 +70,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from bacpredict.engine.genomes.build_genomes import select_chunk
 from bacpredict.engine.genomes.collate_genomes import read_shards
 
 AUTO = "auto"  # the scheme name for genomes of a genus with no pinned scheme: built without --scheme
@@ -209,9 +211,20 @@ def task_files(shard_dir: Path, source: str) -> dict[int, Path]:
 
 
 def missing_tasks(manifest: pd.DataFrame, source: str, chunk: int, shard_dir: Path) -> list[int]:
-    """Indices of the tasks covering ``source`` that have written no shard file."""
+    """Indices of the tasks covering ``source`` that have no shard file holding exactly their genomes.
+
+    A shard that holds other genomes than its task now covers was written under an earlier plan whose rows have since
+    shifted: its task counts as not done.
+    """
     n = -(-int(manifest["source"].eq(source).sum()) // chunk)
-    return sorted(set(range(n)) - set(task_files(shard_dir, source)))
+    files = task_files(shard_dir, source)
+    todo = []
+    for k in range(n):
+        want = set(select_chunk(manifest, [source], chunk, k)["Sample"])
+        f = files.get(k)
+        if f is None or set(pd.read_csv(f, sep="\t", dtype=str, usecols=["Sample"])["Sample"]) != want:
+            todo.append(k)
+    return todo
 
 
 def read_shard_dirs(dirs: Sequence[Path]) -> pd.DataFrame:

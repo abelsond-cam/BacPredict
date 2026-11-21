@@ -184,3 +184,26 @@ def test_a_species_size_wins_over_its_genus():
     c = pd.DataFrame({"Sample": ["a", "b", "c"], "species": ["Klebsiella aerogenes", "Klebsiella pneumoniae", "Hafnia alvei"]})
     s = genome_sizes_by_genus(c, {"Klebsiella": 5.6e6}, 5.0e6, {"Klebsiella aerogenes": 4.9e6})
     assert s.to_dict() == {"a": 4.9e6, "b": 5.6e6, "c": 5.0e6}
+
+
+def test_a_200_that_is_not_the_ncbi_index_is_a_failure_not_a_not_listed(monkeypatch):
+    class Page:
+        def __init__(self, body):
+            self.body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return self.body.encode()
+
+    monkeypatch.setattr(pgs.time, "sleep", lambda s: None)
+    monkeypatch.setattr(pgs.urllib.request, "urlopen", lambda *a, **kw: Page("<html>Service maintenance</html>"))
+    assert pgs._ncbi_query("GCA_025835955.1") == ("GCA_025835955.1", QUERY_FAILED)
+    index = "<title>Index of /genomes/all/GCA/025/835/955</title>" + LISTING
+    monkeypatch.setattr(pgs.urllib.request, "urlopen", lambda *a, **kw: Page(index))
+    assert pgs._ncbi_query("GCA_025835955.1") == ("GCA_025835955.1", "GCA_025835955.1_ASM2583595v1")
+    assert pgs._ncbi_query("GCA_025835955.3") == ("GCA_025835955.3", NO_RUNS)

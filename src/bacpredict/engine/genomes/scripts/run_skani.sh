@@ -2,7 +2,9 @@
 # One job: skani dist of every genome in a list against a reference panel → $QC_DIR/skani_dist.tsv, the species
 # evidence collate_genomes reads (run_genome_qc.sh does the same for a two-reference cohort inside its CheckM2 job).
 #
-#   LIST       TSV, no header, absolute path: Sample<TAB>contigs path (absolute) — the CheckM2 list
+#   LIST       TSV, no header, absolute path: Sample<TAB>contigs path (absolute) — the CheckM2 list. Read once, at the
+#              start, and published beside the result as $QC_DIR/skani_dist.list.tsv, like the references: a later
+#              submit may rewrite LIST before this job's result exists, or after a job that never produced one
 #   REFS_TSV   TSV, no header, absolute path: species<TAB>reference genome path (absolute); a species may repeat.
 #              Read once, at the start: the copy the job runs with is the one it publishes
 #   QC_DIR     writes $QC_DIR/skani_dist.tsv and, in the same step, $QC_DIR/skani_dist.refs.tsv (the REFS_TSV it
@@ -51,11 +53,12 @@ trap 'rm -rf "$WORK"' EXIT
 echo "[$(date -Is)] host=$(hostname) cpus=$CPUS qchunk=$QCHUNK repo=$REPO@${head:0:7} skani=$("$TOOLS_BIN/skani" --version)"
 
 cp "$REFS_TSV" "$WORK/refs.tsv"  # the list this job runs with, and publishes
+cp "$LIST" "$WORK/list.tsv"      # likewise the genomes
 cut -f2 "$WORK/refs.tsv" > "$WORK/refs.txt"
 while read -r ref; do
     [[ $ref == /* && -r $ref ]] || { echo "reference not readable: $ref"; exit 4; }
 done < "$WORK/refs.txt"
-awk -F'\t' -v d="$WORK/links" '{print $1 "\t" $2 "\t" d "/" $1 ".fna.gz"}' "$LIST" > "$WORK/plan.tsv"
+awk -F'\t' -v d="$WORK/links" '{print $1 "\t" $2 "\t" d "/" $1 ".fna.gz"}' "$WORK/list.tsv" > "$WORK/plan.tsv"
 while IFS=$'\t' read -r _ contigs link; do ln -s "$contigs" "$link"; done < "$WORK/plan.tsv"
 cut -f3 "$WORK/plan.tsv" > "$WORK/queries.txt"
 N=$(wc -l < "$WORK/queries.txt")
@@ -69,11 +72,13 @@ done
 # one header: the first file's, then every file without its own
 awk 'FNR == 1 && NR != 1 {next} {print}' "$WORK"/q_*.tsv > "$QC_DIR/skani_dist.tsv.part"
 cp "$WORK/refs.tsv" "$QC_DIR/skani_dist.refs.tsv.part"
-# result and reference list move in together; the old list goes first, so no moment pairs a result with a list
-# it was not run with
-rm -f "$QC_DIR/skani_dist.refs.tsv"
+cp "$WORK/list.tsv" "$QC_DIR/skani_dist.list.tsv.part"
+# result and its two lists move in together; the old lists go first, so no moment pairs a result with a list it was
+# not run with
+rm -f "$QC_DIR/skani_dist.refs.tsv" "$QC_DIR/skani_dist.list.tsv"
 mv "$QC_DIR/skani_dist.tsv.part" "$QC_DIR/skani_dist.tsv"
 mv "$QC_DIR/skani_dist.refs.tsv.part" "$QC_DIR/skani_dist.refs.tsv"
+mv "$QC_DIR/skani_dist.list.tsv.part" "$QC_DIR/skani_dist.list.tsv"
 hit=$(tail -n +2 "$QC_DIR/skani_dist.tsv" | cut -f2 | sort -u | wc -l)
 echo "[$(date -Is)] skani done → $QC_DIR/skani_dist.tsv (references: $QC_DIR/skani_dist.refs.tsv):" \
      "$hit of $N genomes within ~80 % ANI of a reference"

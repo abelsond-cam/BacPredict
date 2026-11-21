@@ -101,6 +101,10 @@ def _ncbi_query(accession: str, retries: int = 4, raise_on_fail: bool = False) -
         try:
             with urllib.request.urlopen(url, timeout=60, context=_tls_context()) as r:
                 html = r.read().decode(errors="replace")
+            # a 200 that is not this directory's index (a maintenance or throttling page) must not be cached as
+            # "not listed": it is retried, then fails the plan
+            if f"Index of {urllib.parse.urlparse(url).path.rstrip('/')}" not in html:
+                raise ValueError(f"not the NCBI index of {url}")
             return accession, ncbi_dir_from_listing(html, accession) or NO_RUNS
         except urllib.error.HTTPError as e:
             if e.code == 404:  # no directory for these digits at all
