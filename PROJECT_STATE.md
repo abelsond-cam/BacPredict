@@ -1827,8 +1827,24 @@ genome sizes, `--prefer-reads`, min depth 10×, a fresh ENA cache):
   5,020 (97.6 %) carry a real ST. **QC-pass genomes whose scheme genus disagrees with the label: 0** — was 5,164
   (7.7 %) (`genomes/genome_qc.csv`, re-collated 2026-11-21). The four largest artefacts are all at zero:
   `ecoli_achtman_4:102` 1,540 → 0, `salmonella:3529` 1,270 → 0, `ecoli_achtman_4:14464` 955 → 0,
-  `ecoli_achtman_4:11307` 434 → 0. Untyped (`st` = `-`) among QC-pass: 600, nearly all of genera with no PubMLST
-  scheme (*Morganella*, *Providencia*).
+  `ecoli_achtman_4:11307` 434 → 0.
+- **⚠ That "0" first had a blind spot, since closed.** The check mapped scheme names to genera and had no entry for
+  `kaerogenes`, so rows carrying it were skipped rather than tested. Underneath it, *Enterobacter aerogenes* — 28
+  QC-pass genomes — was still split three ways by autodetect (21 `kaerogenes`, 4 `cronobacter`, 3 `ecloacae`): one
+  species, three `st_key` namespaces. *E. aerogenes* was reclassified as *Klebsiella aerogenes* and has its own
+  PubMLST scheme, so `kaerogenes` is correct, and our own skani call agrees (25 of the 28 are called
+  *K. aerogenes*). The 7 stragglers were re-typed (job `41608859`, 49 s) and re-collated.
+  **The check is now "no species carries more than one scheme", which needs no genus map**: 1 species trips it,
+  *Enterobacter chengduensis* (7 `ecloacae`, 1 untyped), and an untyped genome is a failure to type, not a competing
+  scheme — so **0 species carry two real schemes**. Untyped (`st` = `-`) among QC-pass: 603, nearly all of genera
+  with no PubMLST scheme (*Morganella*: 0 of 60 type, and no Morganella scheme ships in our pixi db). The rise from
+  600 is the 3 of those 7 that have no `kaerogenes` ST — no ST is better than a wrong-scheme one.
+- **⛔ Which shard row wins is decided by FILE MTIME, and nothing encodes it in the filenames.**
+  `collate_genomes.read_shards` sorts `shards/*.tsv` by mtime and keeps the last row per `Sample`
+  (`collate_genomes.py:60-66`). The re-typed STs win only because the `retype-*` copies were `touch`ed after being
+  copied in. Anything that rewrites mtimes in `genomes/shards/` — a restore, a copy without `-p`, an `rsync` without
+  `-t` — would silently resurrect the pre-re-type STs, with no error anywhere. **Assert after every collate that no
+  species carries more than one real scheme**; it is one `groupby` and it catches this immediately.
 - **Nothing but the typing changed.** The re-run took per-scheme subsets of the *unchanged* `genome_manifest.csv`
   (`genomes/retype_mlst/genome_manifest_<scheme>.csv`), so each genome's contigs were reused on their matching
   `src=` header and the Prodigal GFF on its `contigs_md5=`. Diffing `genomes/genome_qc.csv` against
@@ -2058,6 +2074,21 @@ Later: the AMR-GNN-cut benchmark, ANI thinning, and causal attribution of the pr
   genome, so a genome with no embedding would fail mid-run. PsA has 2 fractional cells and 255 labelled
   genomes without an embedding; Enterobacterales 25 and thousands. Splits must restrict to QC-passing genomes
   with 0/1 labels.
+- **⛔ A species unit must name its species, never prefix-match the genus.** *K. aerogenes* is **not** in the KpSC
+  (which is *pneumoniae*, *variicola*, *quasipneumoniae*, *africana*, *tropica*), so a unit written as
+  `species.startswith("Klebsiella")` wrongly absorbs it. It is invisible in §3.6 alone — this cohort spells the
+  organism *Enterobacter aerogenes* (28 genomes) and has no *Klebsiella aerogenes* row — but CABBAGE v2 (§3.7)
+  spells the same organism *Klebsiella aerogenes* (424 genomes), so a prefix rule puts one organism in two
+  different units depending only on which label source the row came from. **The KpSC unit names its five species
+  explicitly; *K./E. aerogenes* goes in the *Enterobacter* unit under both spellings**, and §3.7 takes the same
+  rule.
+- **⚠ The skani call cannot adjudicate the *E. coli* / *Shigella* boundary, so the species rule there rests on the
+  submitter label.** Of the 21,699 QC-pass genomes labelled *E. coli*, skani calls 13,010 *E. coli* and **5,199
+  *Shigella boydii***; of the 12 labelled *S. boydii*, 8 come back *S. sonnei*. *Shigella* is phylogenetically
+  embedded within *E. coli*, so ANI against `species_reference_panel.tsv` (a DRAFT) has little room to separate
+  them, and it evidently cannot separate the *Shigella* species from one another either. **Read as a limit of the
+  panel, not as evidence about any genome** — hypothesis, not a finding; raised with David 2026-11-21, not acted on.
+  The panel is also thin for the smaller genera: *E. cloacae* 608 of 739 call `unknown`, *S. marcescens* 263 of 307.
 - **ST numbers collide across MLST schemes** (ST11 is *Salmonella*, *K. pneumoniae* and *E. coli*). Any
   multi-genus ST count or ST holdout must key on scheme:ST, never `st` alone.
 
