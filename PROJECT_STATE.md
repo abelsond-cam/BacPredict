@@ -1,8 +1,13 @@
 # BacPredict — project state
 
-> **Last verified: 2026-11-21 @ `9a813f0`** (branch `refactor/consolidate-engine`).
-> **Verification scope, this pass (2026-11-21): §3.6 the Enterobacterales build, QC, species calls and BakRep ingest
-> only.** Read on CSD3: `build_entero_genomes.sh status`, `genomes/{genome_qc,embedding_input_unfiltered,
+> **Last verified: 2026-11-21 @ `bbbd03a`** (branch `refactor/consolidate-engine`).
+> **Verification scope, this pass (2026-11-21, third): §3.6 Enterobacterales annotation, proteins, the Kp ESM-C link
+> and the ESM-C submission only.** Read on CSD3: `genomes/{bakta_annotation_embedding_input_unfiltered.csv,
+> esm_linked_kp.tsv,esm_samples_to_embed.txt}`, the collate / check-proteins / link-kp / smoke / check-smoke logs,
+> sacct of the Bakta, protein, link and smoke jobs. **Nothing else was re-verified this pass.**
+>
+> **Verification scope, the pass before (2026-11-21, at `9a813f0`): §3.6 the Enterobacterales build, QC, species
+> calls and BakRep ingest only.** Read on CSD3: `build_entero_genomes.sh status`, `genomes/{genome_qc,embedding_input_unfiltered,
 > species_crosstab}.csv`, `genomes/bakta/ingest_status.tsv`, sacct of the CheckM2/skani/Bakta jobs.
 > **Nothing else was re-verified this pass.**
 >
@@ -1523,8 +1528,8 @@ wrong long-term: target AMR genes are individually rare but collectively penetra
 
 **Status.** Scope is **PsA and Enterobacterales only** for now (David, 2026-11-19); the all-species
 cohort stays planned. *P. aeruginosa* (PsA) **labels are built** (`7e47486`) and its **genomes are built and
-QC'd**: 3,677 pass. **Enterobacterales labels are built** (`480ce9d`) and **its genome build is running**
-(sources planned 2026-11-20; QC, annotation and embedding stages built, not yet run). David, 2026-11-20: start
+QC'd**: 3,677 pass. **Enterobacterales labels are built** (`480ce9d`); **its genomes are built, QC'd and annotated
+(67,326 pass the non-species QC, all with Bakta), and their ESM-C array is queued** (2026-11-21). David, 2026-11-20: start
 Enterobacterales as soon as possible — **a cross-species model is the aim**.
 **Annotation is Bakta 1.9.4 with the full DB v5.1, not Prodigal** (David, 2026-11-19: "Bakta as standard").
 Our run reproduces BakRep's exactly (the gate below), so a genome takes BakRep's GFF3 where BakRep holds it on
@@ -1740,8 +1745,24 @@ genome sizes, `--prefer-reads`, min depth 10×, a fresh ENA cache):
   the *Enterobacter*/*Serratia* clinical lineages lack references. The species rule is David's (asked 2026-11-21).
 - **BakRep ingest** (job `41530416`, 2 h 4 min, 8 streams; `genomes/bakta/ingest_status.tsv` md5 `ef3731b2…`):
   63,552 of 63,700 ingested, **148 refused:names** (0.23 %; PsA 0.61 %), no errors. Our Bakta: 2,903 (array
-  `41530989`, all 726 tasks COMPLETED), the 148 refused (array `41541891`) and the 972 genomes built after the plan
-  (array `41561033`).
+  `41530989`, all 726 tasks COMPLETED), the 148 refused (array `41541891`, 37 tasks COMPLETED) and the 972 genomes
+  built after the plan (array `41561033`, 243 tasks COMPLETED).
+- **Annotation of record** (`annotate_entero_genomes.sh collate`, `COHORT=embedding_input_unfiltered.csv`, job
+  `41581536` at `9a813f0`; `genomes/bakta_annotation_embedding_input_unfiltered.csv` md5 `5f701793…`): **67,326 of
+  67,326** QC-pass genomes have one current Bakta annotation — 63,323 BakRep, 4,003 our run. (63,552 were ingested;
+  the other 229 failed QC.)
+- **Proteins** (`build_entero_embeddings.sh proteins`, job `41582191`, 26 min, 32 cores): 67,326 parquets;
+  `check-proteins` (job `41592749`) PASS, 0 problems (protein count = CDS − pseudogenes; contigs unchanged since
+  annotation).
+- **Kp ESM-C reuse** (`build_entero_embeddings.sh link-kp`, job `41594725`; `genomes/esm_linked_kp.tsv` md5
+  `67d6351f…`): of the 9,370 cohort genomes labelled *Klebsiella*, **8,651 linked** (all fp32), 203 refused for a
+  protein-count mismatch, 516 with no Kp `.pt`. The 719 unlinked are embedded by the array like any other genome.
+- **ESM-C smoke** (job `41595953`, 8 min on one A100): 10 genomes, one per genus (*Salmonella, Escherichia, Klebsiella,
+  Enterobacter, Proteus, Morganella, Providencia, Serratia, Shigella*), each bf16 `(1, n, 960)` with n equal to its
+  parquet's protein count; `check-smoke` PASS. Written to `$AMR/processed/esm_smoke/`, not the store.
+- **ESM-C array** (job `41596846`, submitted 2026-11-21): 58,675 genomes (`genomes/esm_samples_to_embed.txt`, md5
+  `a5bd7804…`; the cohort minus the 8,651 linked), 196 tasks of ≤ 300, 4 h wall each, bf16, `--max-proteins 9000`.
+  Expected ~13 s per genome at PsA's 2.8 ms per protein and ~4,800 proteins, so ~70 min per task and ~210 A100-h.
 
 **Numbers of record — BakRep coverage.** BakRep v2 serves AllTheBacteria's own Bakta run (Bakta 1.9.4, full
 DB v5.1, over ATB release 0.2 + the 2024-08 increment). Read from
@@ -1815,13 +1836,9 @@ than 1,000 contigs; Bacformer's input packing (`max_n_contigs=1000`) keeps all t
 contig past the 1,000th the same contig id.
 
 **In flight.**
-- **Enterobacterales.** Built: all 65,363 ATB genomes (array `41519203`, 0 failed) and the 2,049 portal assemblies
-  (array `41526057`); the 214 shovill genomes are building (array `41526058`). Running, pre-QC and label-free:
-  BakRep ingest of the 63,700 (job `41530416`, 8 streams), CheckM2 on the 66,603 built at freeze time (array
-  `41530887`, 34 × 2,000, `ALLOW_PARTIAL`; the rest via `qc topup`), and our Bakta on the 2,903 built genomes BakRep
-  lacks (array `41530989`, 24 cores / 72 GB on icelake). All from the pinned worktree
-  `/rds/user/dca36/hpc-work/worktrees/BacPredict-4ff29d7` (ATB from `…-fbc500a`). The 39-genome skani panel
-  (`apps/entero/species_reference_panel.tsv`, DRAFT) is on disk in `$AMR/raw/reference_genomes/`.
+- **Enterobacterales ESM-C**: array `41596846` (58,675 genomes, 196 tasks), from the pinned worktree
+  `/rds/user/dca36/hpc-work/worktrees/BacPredict-8b791d4` at `9a813f0`. When it ends: `build_entero_embeddings.sh
+  check` (every cohort genome has a `.pt` whose protein count is its parquet's; fp32 allowed only for the Kp links).
 
 **Next.** Agreed with David 2026-11-19 ("even annotation sorted before embedding and models lock us in"):
 1. **A cross-species model as soon as possible** (David, 2026-11-20). Needs: a split builder that holds out STs
@@ -1831,13 +1848,17 @@ contig past the 1,000th the same contig id.
    **Built** (`986813e`…`8b791d4`): the split builder (`engine/splits/build_amr_holdout_splits`; `load_splits`
    gained `load_split_ids`, `load_split_species` and a `species` filter), `finetune_amr --split-table` (scores
    `holdout` and `holdout_st`, per species when the table has several), `apps/pa/scripts/train_pa_models.sh`, and the
-   Kp ESM-C reuse stage. **PsA baseline:** split tables written; Stage A smoke (job `41545259`) → Stage B overfit →
-   Stage C array run gated in that order. **Open, for David:** which `validate` the cross-species arm uses for early
-   stopping and model selection — pooled PsA + Enterobacterales, or PsA only (the baseline's).
+   Kp ESM-C reuse stage. **PsA baseline: done** — Stage A smoke, Stage B overfit and the Stage C array
+   (`41548353`) all ran; the ten models' metrics are the numbers of record above. Reported to David 2026-11-21 with
+   hypotheses only; confidence intervals and the §0.4 mechanism split are not yet computed. **Open, for David:**
+   which `validate` the cross-species arm uses for early stopping and model selection — pooled PsA + Enterobacterales, or PsA only (the baseline's).
 2. **Enterobacterales** (stages in `apps/entero/CLAUDE.md`): when the builds finish, `status` (every genome built or
    failed by cause); BakRep ingest pre-QC (`annotate_entero_genomes.sh plan`, `ingest`); CheckM2 (34 × 2,000) and
    skani (`build_entero_genomes.sh qc`); collate in report mode → `species_crosstab.csv` and
    `embedding_input_unfiltered.csv`; our Bakta on the rest; proteins; ESM-C (~250 A100-h, SL2-GPU).
+   **Done through the ESM-C submission (2026-11-21); the array is in flight.** Left before training: the species
+   rule (David's), an Enterobacterales holdout ST per species, the cross-species split tables (`--assert-same-as` the
+   PsA tables, so the PsA rows are identical across arms), and the cross-species `validate` choice.
    Decided 2026-11-20 (§6): embed every genome passing the non-species QC; BakRep-refused genomes get our Bakta;
    existing Kp ESM-C embeddings are reused by symlink where they align (*Caveats*).
 3. Splits (the ST holdout plus others, through `engine/splits`), then training. **PsA decisions made 2026-11-20**
@@ -1952,7 +1973,9 @@ correct.**
 | `$AMR/raw/bakta_db/v5.1_full/` (+ `v5.1_full.md5`, `README.txt`) | copied from nuna's `refs/bakta/db` (job `41494699`); AMRFinderPlus DB `latest` → 2024-07-22.1 | every Bakta run of ours (`engine/genomes/bakta.py`) | Every our-run annotation (a run's fingerprint includes this DB's `version.json` and AMRFinderPlus DB) |
 | `$AMR/raw/bakta/<Sample>.bakta.gff3.gz` + `.ingest.json` (BakRep's) or `.run.json` (ours) | `engine/genomes/bakta.py` `ingest` / `run` (`annotate_pa_genomes.sh`) | `bakta.py collate` | Protein parquets and ESM-C embeddings of that genome |
 | `$AMR/processed/paeruginosa/genomes/bakta_annotation.csv` | `bakta.py collate` (`annotate_pa_genomes.sh collate`) | `build_pa_embeddings.sh` (its cohort) | PsA protein parquets and ESM-C embeddings |
-| ESM-C sample lists: `$AMR/processed/paeruginosa/esm_samples{,_smoke}.txt`, `$AMR/processed/enterobacterales/genomes/esm_samples{,_smoke}.txt` | `build_pa_embeddings.sh` / `build_entero_embeddings.sh`: `submit` writes `esm_samples.txt` (sorted Samples of `bakta_annotation.csv`), `smoke` its own `_smoke` list | `esm_embeddings_array.sh` (`SAMPLES`, md5-pinned) | Pending tasks of an array submitted with the old list: they refuse to run (exit 3) |
+| `$AMR/processed/enterobacterales/genomes/bakta_annotation_embedding_input_unfiltered.csv` | `bakta.py collate` (`annotate_entero_genomes.sh collate`, `COHORT=embedding_input_unfiltered.csv`) | `build_entero_embeddings.sh` (its cohort, via `ANNOTATION`) | Enterobacterales protein parquets, the Kp link and ESM-C embeddings |
+| `$AMR/processed/enterobacterales/genomes/esm_linked_kp.tsv` + the symlinks in `$AMR/processed/esm/` | `build_entero_embeddings.sh link-kp` (`engine/embedding/link_existing_embeddings.py`) over `david/bacformer_processed/esm/klebsiella/` | `build_entero_embeddings.sh submit` (skips genomes with a `.pt`), `check_cohort_store` | `esm_samples_to_embed.txt`; a Kp source `.pt` that changes silently changes our store |
+| ESM-C sample lists: `$AMR/processed/paeruginosa/esm_samples{,_smoke}.txt`, `$AMR/processed/enterobacterales/genomes/esm_samples_{to_embed,smoke}.txt` | `build_pa_embeddings.sh` `submit` writes `esm_samples.txt` (sorted Samples of `bakta_annotation.csv`); `build_entero_embeddings.sh` `submit` writes `esm_samples_to_embed.txt` (sorted cohort Samples with no `.pt` in the store yet); `smoke` its own `_smoke` list | `esm_embeddings_array.sh` (`SAMPLES`, md5-pinned) | Pending tasks of an array submitted with the old list: they refuse to run (exit 3) |
 | `$AMR/processed/bakta_vs_bakrep_validation/` | `engine/genomes/scripts/validate_bakta_against_bakrep.sh` | the decision to annotate BakRep-less genomes with our own run | — (evidence only) |
 
 **`catalogue_ceiling_panel.csv` is reproducible.** It was hand-assembled once, which was itself the
