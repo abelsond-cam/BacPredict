@@ -1953,11 +1953,46 @@ faESM), bf16, `--max-proteins 9000`; log `pa-esm-smoke_41399821_0.err`. 34 of 3,
 than 1,000 contigs; Bacformer's input packing (`max_n_contigs=1000`) keeps all their proteins but gives every
 contig past the 1,000th the same contig id.
 
+**Numbers of record — the Enterobacterales species units.** `apps/entero/species_units.py` (`assign_units`,
+`unit_samples`), read against `genomes/genome_qc.csv` 2026-11-21. A unit is only a `--species NAME` in the splits
+builder, which **does not filter by species**: a unit's eligible CSV is its whole membership
+(`build_amr_holdout_splits.py:390`) and the NAME seeds its shuffle, so this rule is the single definition every arm
+reads — the single-species arms, the cross-species arm and CABBAGE v2 (§3.7).
+
+| Unit | QC-pass genomes | Holds |
+|---|--:|---|
+| `salmonella` | 32,149 | genus *Salmonella* (serovar labels too: `Salmonella Infantis`, `Salmonella sp.`) |
+| `ecoli` | 21,720 | *E. coli*, plus *S. boydii* 12, *S. dysenteriae* 6 and a bare `Shigella` 3 |
+| `kpsc` | 9,370 | the 5 KpSC species named explicitly (here: *K. pneumoniae* 9,350, *K. quasipneumoniae* 20) |
+| `ssonnei` | 1,851 | *S. sonnei* |
+| `enterobacter` | 1,323 | genus *Enterobacter*, plus *K. aerogenes* under **both** spellings |
+| `sflexneri` | 395 | *S. flexneri* |
+| *no unit* | 518 | *Serratia* 329, *Proteus* 104, *Morganella* 60, *Providencia* 25 |
+
+- **⛔ A unit NAMES its species; it never prefix-matches the genus.** *K. aerogenes* is not KpSC, and the two label
+  sheets spell it differently (2026-07 `Enterobacter aerogenes` 28; v2 `Klebsiella aerogenes` 424), so a prefix rule
+  puts one organism in two units depending only on which sheet a row came from. Pinned by a test.
+- **⚠ Awaiting David's decision, and invisible from this cohort alone.** The *K. oxytoca* complex is *Klebsiella* but
+  not KpSC, so it falls in no unit: none here, ~330 in v2 (`UNDECIDED_KOSC`). Nine genera exist only in v2
+  (`UNDECIDED_GENERA_V2`): *Citrobacter* 399, *Yersinia* 296, *Kluyvera* 12, *Pluralibacter* 9, *Hafnia* 8,
+  *Leclercia* 3, *Cronobacter* 2, *Erwinia* 1, *Pantoea* 1. With the four undecided genera (518 here, ~1,435 across
+  both cohorts) that is three groups needing one unit decision for both cohorts.
+- **⛔ The lists are documentation; nothing refuses yet.** An arm that filters to the units it knows still drops every
+  unassigned genome silently. The guard belongs at the call site — assert that every QC-pass genome is in a used
+  unit, an arm's explicit exclusion, or `UNDECIDED`, and print the counts. Agreed with the v2 agent as one shared
+  helper, to be written once the units are settled; **not written yet**.
+
 **In flight.**
 - **PsA fine-tunes on the ST155 tables**: array `41605929` at `f595f0d` (10 tasks, one A100 each, 32 cores, 250 G,
   28 h wall, `ampere`/FLOTO-SL2-GPU), split tables md5-pinned to `908fc0af…`. The ST235 run took 4.0–7.2 h per drug
   and ~60 A100-h; ~9 % more training genomes here, so expect up to ~8 h per drug. It shares the `gpu1` QOS with the
   Enterobacterales ESM-C array, so the two interleave.
+- **The Klebsiella-only arm** (`apps/entero/scripts/train_kpsc_models.sh`, `52e1311`): unit `kpsc`, 9,370 genomes,
+  held-out ST `klebsiella:37` (211 genomes, **1.8–2.5 % of each drug's labelled set**), random 20 % of the rest,
+  seed 1 / fraction 0.2 / 5 folds / fold 0, **no `--exclude` and no `--groups`** (neither file exists for this
+  cohort). Per drug 3,601–7,817 labelled, against PsA's 1,195–3,136; ST37 scores 7 of 10 drugs (meropenem 12 R,
+  imipenem 11 R and amikacin 15 R fall under 20). Outputs under `processed/kpsc/`. **Blocked on embeddings:**
+  8,794 of 9,370 have a `.pt`, and `splits` refuses until all do.
 - **Enterobacterales ESM-C**: array `41596846` (58,675 genomes, 196 tasks), from the pinned worktree
   `/rds/user/dca36/hpc-work/worktrees/BacPredict-8b791d4` at `9a813f0`. When it ends: `build_entero_embeddings.sh
   check` (every cohort genome has a `.pt` whose protein count is its parquet's; fp32 allowed only for the Kp links).
@@ -2436,6 +2471,7 @@ directory was consolidated. Several of these existed nowhere else.
 | 2026-11-21 | **puffin is labelled under the same rule as every source**, with each test keeping its `database` so that a puffin-free label set is a filter (agreed with the §3.7 label stage). What puffin is remains to be asked of the CABBAGE side. |
 | 2026-11-21 | **One branch for both experiments** (David: "if either of you … change shared code then the two experiments differ"). v2 work stays on `refactor/consolidate-engine`; changes to shared code are additive and communicated between the two agents. This overrides root `CLAUDE.md` §0.5 "one branch per agent" for this pair. |
 | 2026-11-21 | **The lineage holdout is capped at 5 % of a drug's labelled set, and is additional to the random 20 %** (David). The random holdout is taken *after* the ST is removed, so the two are disjoint and both are scored — that part of the 2026-11-20 design was already right. What was wrong was the size: **PsA's ST235 is 7.1–9.9 % (mean 8.6 %)**, so 26–28 % of genomes were held out of training — "close to 30 % of genomes. Worth nothing." **PsA switches to ST155** (2.1–3.9 %, 8 of 10 drugs scoreable, as ST235 was) and **all ten models are retrained now** — "Switch now. Better to do it now." ⛔ Because the builder permutes the whole non-held-out pool, this re-draws train, validate and the random holdout too, so the entire ST235 baseline is superseded rather than just its ST column; the old artifacts are preserved under `_superseded_st235/`. **Enterobacterales under the same cap:** ST131 is out (22.3 % of a drug's labels, and 30.4 % at worst, after the MLST re-type doubled it to 3,029 genomes); **ST37 for *Klebsiella*** (2.2 %); ***E. coli* ST10** (756 genomes, 2.4 % mean / 3.7 % max, 7 of 10 drugs scoreable; David chose it over ST38 2026-11-21 — he had written "ST37" for *E. coli*, and there is no *E. coli* ST37 under any scheme). *Salmonella* ST32 and *Enterobacter* ST171 stand (each scores only 2 drugs either way). **No ST holdout for *S. sonnei* or *S. flexneri*** — one clone is 97 % and 84 % of them, so holding it out is a species holdout. |
+| 2026-11-21 | **Klebsiella is a single-species arm too, built exactly like PsA** (David: "Can we run Klebsiella as a single species with hold out, like PsA… We have run klebsiella already, but didn't have any holdouts. A major drawback of what we did. And we need this consistent so we can check if Kleb improves with cross species too."). Unit `kpsc` (the five KpSC species, named — *K. aerogenes* excluded), held-out ST `klebsiella:37`, a random 20 % of the rest, and the PsA driver's stages, guards and hyperparameters unchanged, so the two baselines differ in organism alone. **This makes three single-species baselines to keep aligned, not two**, and gives `--assert-same-as` a second job: the Klebsiella rows must be identical across the Kp-only arm, the cross-species arm and v2. **Structural consequence:** in the cross-species arm KpSC and PsA are each their own `--species` unit and the other Enterobacterales unit excludes them, because the builder refuses a genome eligible in two units and a shared unit would shuffle the Kp rows differently. |
 | 2026-11-21 | **MLST is typed with the scheme pinned per species** (David: "Just do it per species. I don't want to spend more time on this."). Auto-detection mis-typed 5,164 of 67,326 QC-pass Enterobacterales genomes (7.7 %), which would have put genomes of a held-out clone into train under a bogus `st_key`. Fixed by re-typing those genomes, not by changing `engine/genomes` — the CABBAGE v2 experiment (§3.7) runs the same code, so a behaviour change there would make the two experiments differ. v2 pins the scheme at submission the same way. |
 | 2026-11-21 | **CABBAGE v2 labels accepted as built** (David, on the §3.7 checks). Where v2 and §3.6 disagree on a label, v2's EUCAST v15 re-call of its own MIC stands — "a consistent MIC call to label any with EUCAST", as §3.6 did. The 273 §3.6-labelled genomes v2 does not label are ignored ("tiny … not going to change any results"). v2 disk tests with no R/S call give no label: CABBAGE's `Updated_phenotype_*` is not used ("I'd just drop them"). |
 | 2026-11-21 | **v2 genomes with no reads take the submitter's NCBI GenBank assembly** (David: "An NCBI assembly is adequate … use NCBI when no reads exist … better than throwing out that much data"). Source `ncbi_gca`, last in the order ATB → portal assembly → shovill → NCBI, so the even surface stays first wherever it is attainable; like `portal_gff` it is a submitter assembly. §3.6's planner had no such route because every §3.6 genome had reads or a portal assembly; ~17,500 v2 genomes (15,135 Enterobacterales, 1,392 PsA) have neither — no runs in ENA, and none in SRA for 12 of 12 checked. |
