@@ -1,7 +1,12 @@
 # BacPredict — project state
 
-> **Last verified: 2026-11-21 @ `bbbd03a`** (branch `refactor/consolidate-engine`).
-> **Verification scope, this pass (2026-11-21, third): §3.6 Enterobacterales annotation, proteins, the Kp ESM-C
+> **Last verified: 2026-11-21 @ `0474612`** (branch `refactor/consolidate-engine`).
+> **Verification scope, this pass (2026-11-21, fourth): §3.6 the per-species MLST re-type and re-collate, and the
+> re-typed held-out-ST candidates, only.** Read on CSD3: sacct of jobs `41604641`/`41604643`/`41604644`/`41604645`,
+> `genomes/retype_mlst/shards/*/`, and `genomes/genome_qc.csv` diffed against `genomes/_pre_retype/genome_qc.csv`.
+> **Nothing else was re-verified this pass.**
+>
+> **Verification scope, the pass before (2026-11-21, third): §3.6 Enterobacterales annotation, proteins, the Kp ESM-C
 > link, the ESM-C submission, and the MLST scheme audit only.** Read on CSD3: `genomes/{bakta_annotation_embedding_input_unfiltered.csv,
 > esm_linked_kp.tsv,esm_samples_to_embed.txt}`, the collate / check-proteins / link-kp / smoke / check-smoke logs,
 > sacct of the Bakta, protein, link and smoke jobs. **Nothing else was re-verified this pass.**
@@ -1760,21 +1765,43 @@ genome sizes, `--prefer-reads`, min depth 10×, a fresh ENA cache):
 - **ESM-C smoke** (job `41595953`, 8 min on one A100): 10 genomes, one per genus (*Salmonella, Escherichia, Klebsiella,
   Enterobacter, Proteus, Morganella, Providencia, Serratia, Shigella*), each bf16 `(1, n, 960)` with n equal to its
   parquet's protein count; `check-smoke` PASS. Written to `$AMR/processed/esm_smoke/`, not the store.
-- **⛔ MLST scheme is wrong for 5,164 of the 67,326 QC-pass genomes (7.7 %)** (`genomes/genome_qc.csv`
-  `mlst_scheme` vs the labelled species, read 2026-11-21): the recorded scheme's genus is not the labelled
-  genus. **It is the scheme that is wrong, not the label** — for 5,015 of the 5,164 the submitter's species and our
-  independent skani `species_call` agree with each other against the scheme (97 %); only 38 have the call siding
-  with the scheme. The largest artefacts: `ecoli_achtman_4:14464` = 954 genomes both labelled and called
-  *K. pneumoniae*; `ecoli_achtman_4:102` = 1,537 both labelled and called *Salmonella*;
-  `salmonella:3529` = 1,264 labelled *E. coli* (called *E. coli* 936, *S. boydii* 230, *S. dysenteriae* 95).
-  **Cause:** `build_entero_genomes.sh` leaves `MLST_SCHEME` unset, so `run_mlst` omits `--scheme` and `mlst`
-  auto-detects per genome (`engine/genomes/build_genomes.py:272-277, 340`). **PsA is unaffected** —
-  `build_pa_genomes.sh` pins `SCHEME=paeruginosa`, and all 3,677 QC-pass PsA genomes carry it (ST235 = 286).
-  Share of each species unit whose true ST is therefore unknown: *Salmonella* 1,735 of 32,149 (5.4 %),
-  *E. coli* 1,792 of 21,699 (8.3 %), KpSC 1,462 of 9,370 (15.6 %), *Enterobacter* 136 of 1,323 (10.3 %),
-  *S. sonnei* 3 of 1,851, *S. flexneri* 0 of 395. Untyped (`st` = `-`) besides: 516 cohort-wide.
-  **Consequence: no Enterobacterales ST holdout is sound until the scheme is pinned per species** — genomes truly
-  in the held-out clone would sit in train under a bogus key, which is what the ST holdout exists to prevent.
+- **MLST re-typed with the scheme pinned per species — the 7.7 % artefact is gone** (jobs `41604641`,
+  `41604643`, `41604644`, `41604645`, 2026-11-21; 88 tasks, every one COMPLETED). **5,142 of the 67,326 QC-pass
+  genomes were on the wrong scheme** and were re-typed: 1,807 → `ecoli_achtman_4`, 1,751 → `salmonella`,
+  1,472 → `klebsiella`, 112 → `ecloacae`. All 5,142 came back on the pinned scheme, **5,104 changed ST**, and
+  5,020 (97.6 %) carry a real ST. **QC-pass genomes whose scheme genus disagrees with the label: 0** — was 5,164
+  (7.7 %) (`genomes/genome_qc.csv`, re-collated 2026-11-21). The four largest artefacts are all at zero:
+  `ecoli_achtman_4:102` 1,540 → 0, `salmonella:3529` 1,270 → 0, `ecoli_achtman_4:14464` 955 → 0,
+  `ecoli_achtman_4:11307` 434 → 0. Untyped (`st` = `-`) among QC-pass: 600, nearly all of genera with no PubMLST
+  scheme (*Morganella*, *Providencia*).
+- **Nothing but the typing changed.** The re-run took per-scheme subsets of the *unchanged* `genome_manifest.csv`
+  (`genomes/retype_mlst/genome_manifest_<scheme>.csv`), so each genome's contigs were reused on their matching
+  `src=` header and the Prodigal GFF on its `contigs_md5=`. Diffing `genomes/genome_qc.csv` against
+  `genomes/_pre_retype/genome_qc.csv`: **0 rows with a changed `n_cds`, `n_contigs` or `total_length`**, the same
+  67,326 QC-pass genomes, and the same sample set in `embedding_input_unfiltered.csv`. `contigs_path`/`gff_path`
+  differ in spelling only (`/rds/project/…` vs `/home/dca36/rds/…`) and resolve to the same file for all 5,142.
+  **Cause, fixed in this run but NOT yet in the script:** `build_entero_genomes.sh` leaves `MLST_SCHEME` unset, so
+  `run_mlst` omits `--scheme` and `mlst` auto-detects per genome (`engine/genomes/build_genomes.py:272-277, 340`).
+  **PsA was never affected** — `build_pa_genomes.sh` pins `SCHEME=paeruginosa` (all 3,677 QC-pass carry it).
+- **Held-out-ST candidates, re-typed** (`genomes/genome_qc.csv` × `binary_ast.csv`, 2026-11-21; share is of each
+  drug's *labelled* set, which runs well above the share of the unit because high-risk clones are over-represented
+  among drug-tested isolates; "scoreable" = ≥ 20 R and ≥ 20 S inside the ST):
+
+| Unit | ST | n | mean % | max % | scoreable |
+|---|---|--:|--:|--:|--:|
+| *E. coli* | ST131 | 3,029 | 22.3 | 30.4 | 9/10 |
+| *E. coli* | ST10 | 756 | 2.4 | 3.7 | 7/10 |
+| *E. coli* | ST38 | 482 | 2.5 | 3.3 | 7/10 |
+| *Klebsiella* | ST258 | 1,085 | 15.8 | 21.0 | 6/10 |
+| *Klebsiella* | ST15 | 565 | 5.4 | 7.7 | 8/10 |
+| *Klebsiella* | ST37 | 211 | 2.2 | 2.5 | 7/10 |
+| *Salmonella* | ST32 | 1,586 | 4.3 | 7.6 | 2/9 |
+| *Enterobacter* | ST171 | 69 | 6.6 | 9.2 | 2/10 |
+
+  ST131 more than doubled on re-typing (1,796 → 3,029) and *Klebsiella* ST258 and ST307 grew likewise, which is the
+  measure of how much the artefact was hiding. **There is no *E. coli* ST37** under any scheme.
+  *S. sonnei* and *S. flexneri* admit no ST holdout at all: ST152 is 97 % of *S. sonnei* and ST245 is 84 % of
+  *S. flexneri*, so holding either out is a species holdout.
 - **ESM-C array** (job `41596846`, submitted 2026-11-21): 58,675 genomes (`genomes/esm_samples_to_embed.txt`, md5
   `a5bd7804…`; the cohort minus the 8,651 linked), 196 tasks of ≤ 300, 4 h wall each, bf16, `--max-proteins 9000`.
   Expected ~13 s per genome at PsA's 2.8 ms per protein and ~4,800 proteins, so ~70 min per task and ~210 A100-h.
@@ -1871,10 +1898,10 @@ contig past the 1,000th the same contig id.
    failed by cause); BakRep ingest pre-QC (`annotate_entero_genomes.sh plan`, `ingest`); CheckM2 (34 × 2,000) and
    skani (`build_entero_genomes.sh qc`); collate in report mode → `species_crosstab.csv` and
    `embedding_input_unfiltered.csv`; our Bakta on the rest; proteins; ESM-C (~250 A100-h, SL2-GPU).
-   **Done through the ESM-C submission (2026-11-21); the array is in flight.** Left before training: the species
-   rule (David's), **re-typing MLST with the scheme pinned per species** (the 7.7 % artefact above), an
-   Enterobacterales holdout ST per species, the cross-species split tables (`--assert-same-as` the PsA tables, so
-   the PsA rows are identical across arms), and the cross-species `validate` choice.
+   **Done through the ESM-C submission (2026-11-21); the array is in flight. MLST re-typed per species and
+   re-collated (2026-11-21).** Left before training: the species rule (David's), the holdout ST per species under
+   the ≤ 5 % cap, the cross-species split tables (`--assert-same-as` the PsA tables, so the PsA rows are identical
+   across arms), and the cross-species `validate` choice.
    Decided 2026-11-20 (§6): embed every genome passing the non-species QC; BakRep-refused genomes get our Bakta;
    existing Kp ESM-C embeddings are reused by symlink where they align (*Caveats*).
 3. Splits (the ST holdout plus others, through `engine/splits`), then training. **PsA decisions made 2026-11-20**
