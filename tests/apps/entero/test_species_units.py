@@ -26,9 +26,13 @@ def test_aerogenes_is_enterobacter_under_both_names(label: str) -> None:
     assert assign_units(pd.Series([label])).iloc[0] == "enterobacter"
 
 
-def test_klebsiella_prefix_alone_is_not_enough() -> None:
-    """A Klebsiella outside the complex is not silently absorbed into ``kpsc``."""
-    assert assign_units(pd.Series(["Klebsiella oxytoca"])).iloc[0] != "kpsc"
+@pytest.mark.parametrize("label", ["Klebsiella oxytoca", "Klebsiella michiganensis", "Klebsiella grimontii"])
+def test_koxytoca_complex_is_not_kpsc_and_has_no_unit(label: str) -> None:
+    """A Klebsiella outside the complex is not absorbed into ``kpsc``, and gets no unit rather than a wrong one.
+
+    The 2026-07 cohort has none, but CABBAGE v2 does, so this must stay NA until that unit is decided.
+    """
+    assert assign_units(pd.Series([label])).isna().all()
 
 
 def test_shigella_subgroups_are_separate_from_ecoli() -> None:

@@ -64,8 +64,14 @@ UNIT_GENERA: dict[str, tuple[str, ...]] = {
 #: ⚠ Genera with no unit yet. They are Enterobacterales and the cross-species arm is "PsA + all Enterobacterales",
 #: so they need a decision before that arm is built — one unit each, one pooled unit, or left out. They do not
 #: affect any single-species arm. Counts in the 2026-07 QC-pass cohort: Serratia 329, Proteus 104, Morganella 60,
-#: Providencia 25.
+#: Providencia 25 (518 genomes in all).
 UNDECIDED_GENERA = ("Serratia", "Proteus", "Morganella", "Providencia")
+
+#: ⚠ The *K. oxytoca* complex is Klebsiella but NOT KpSC, so it falls in no unit and would be dropped from a
+#: cross-species arm. The 2026-07 cohort has none; **CABBAGE v2 (§3.7) does** — it pins a `koxytoca` MLST scheme —
+#: so this needs a unit before the two cohorts are built together. Listed, not assigned, so the gap is visible
+#: rather than silent.
+UNDECIDED_KOSC = ("Klebsiella oxytoca", "Klebsiella michiganensis", "Klebsiella grimontii", "Klebsiella pasteurii")
 
 
 def assign_units(species: pd.Series) -> pd.Series:
