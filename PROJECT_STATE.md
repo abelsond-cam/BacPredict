@@ -1677,6 +1677,28 @@ labels only):
 - ST235 is mostly resistant (62–93 % R for nine drugs), so its holdout has few susceptible genomes for some drugs
   (ciprofloxacin ~17 S). That bounds how precisely a zero-shot AUROC can be read there.
 
+**Numbers of record — PsA baseline models (one per drug).** `$AMR/processed/paeruginosa/models/<drug>/results.json`,
+collected in `models/holdout_metrics.csv` (md5 `4af2fc6f…`): array `41548353` at `9a813f0` (`finetune_amr
+--split-table`, bf16, deployed TB/Kp hyperparameters, early stopping on validate AUROC; 4.0–7.2 h per drug on one
+A100), on the split tables above. AUROC (balanced accuracy at 0.5 in brackets):
+
+| Drug | Random holdout (n, R) | AUROC | ST235 zero-shot (n, R) | AUROC | Validate AUROC (best) |
+|---|---|--:|---|--:|--:|
+| ciprofloxacin | 591, 341 | 0.827 (0.762) | 235, 218 | 0.783 (0.518) | 0.824 |
+| ceftazidime | 509, 206 | 0.774 (0.708) | 276, 207 | 0.595 (0.582) | 0.778 |
+| meropenem | 489, 163 | 0.807 (0.739) | 256, 159 | 0.703 (0.636) | 0.805 |
+| tobramycin | 491, 162 | 0.944 (0.899) | 224, 153 | 0.872 (0.836) | 0.951 |
+| amikacin | 457, 53 | 0.779 (0.684) | 209, 71 | 0.550 (0.539) | 0.793 |
+| imipenem | 420, 245 | 0.889 (0.835) | 156, 122 | 0.764 (0.773) | 0.886 |
+| piperacillin-tazobactam | 376, 180 | 0.709 (0.672) | 154, 131 | 0.562 (0.513) | 0.753 |
+| aztreonam | 347, 123 | 0.668 (0.607) | 161, 106 | 0.514 (0.533) | 0.695 |
+| levofloxacin | 283, 162 | 0.789 (0.694) | 152, 137 | 0.749 (0.582) | 0.796 |
+| cefepime | 221, 99 | 0.671 (0.625) | 105, 80 | 0.476 (0.466) | 0.681 |
+
+- No confidence intervals yet; ST235 has few susceptible genomes for several drugs (ciprofloxacin 17, levofloxacin 15).
+- The best validate checkpoint came early (step 500–2,250, of 3,360–6,000 run); validate AUROC then fell 0.01–0.05.
+- Not yet scored: mechanism-stratified metrics (§0.4: HGT/acquired vs chromosomal), calibration read-out.
+
 **Numbers of record — Enterobacterales genome sources.** Read from
 `$AMR/processed/enterobacterales/genomes/genome_manifest.csv` (`build_entero_genomes.sh plan` at `6369d50`; per-genus
 genome sizes, `--prefer-reads`, min depth 10×, a fresh ENA cache):
