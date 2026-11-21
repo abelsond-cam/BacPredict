@@ -1,8 +1,8 @@
 # BacPredict — project state
 
 > **Last verified: 2026-11-21 @ `bbbd03a`** (branch `refactor/consolidate-engine`).
-> **Verification scope, this pass (2026-11-21, third): §3.6 Enterobacterales annotation, proteins, the Kp ESM-C link
-> and the ESM-C submission only.** Read on CSD3: `genomes/{bakta_annotation_embedding_input_unfiltered.csv,
+> **Verification scope, this pass (2026-11-21, third): §3.6 Enterobacterales annotation, proteins, the Kp ESM-C
+> link, the ESM-C submission, and the MLST scheme audit only.** Read on CSD3: `genomes/{bakta_annotation_embedding_input_unfiltered.csv,
 > esm_linked_kp.tsv,esm_samples_to_embed.txt}`, the collate / check-proteins / link-kp / smoke / check-smoke logs,
 > sacct of the Bakta, protein, link and smoke jobs. **Nothing else was re-verified this pass.**
 >
@@ -1760,6 +1760,21 @@ genome sizes, `--prefer-reads`, min depth 10×, a fresh ENA cache):
 - **ESM-C smoke** (job `41595953`, 8 min on one A100): 10 genomes, one per genus (*Salmonella, Escherichia, Klebsiella,
   Enterobacter, Proteus, Morganella, Providencia, Serratia, Shigella*), each bf16 `(1, n, 960)` with n equal to its
   parquet's protein count; `check-smoke` PASS. Written to `$AMR/processed/esm_smoke/`, not the store.
+- **⛔ MLST scheme is wrong for 5,164 of the 67,326 QC-pass genomes (7.7 %)** (`genomes/genome_qc.csv`
+  `mlst_scheme` vs the labelled species, read 2026-11-21): the recorded scheme's genus is not the labelled
+  genus. **It is the scheme that is wrong, not the label** — for 5,015 of the 5,164 the submitter's species and our
+  independent skani `species_call` agree with each other against the scheme (97 %); only 38 have the call siding
+  with the scheme. The largest artefacts: `ecoli_achtman_4:14464` = 954 genomes both labelled and called
+  *K. pneumoniae*; `ecoli_achtman_4:102` = 1,537 both labelled and called *Salmonella*;
+  `salmonella:3529` = 1,264 labelled *E. coli* (called *E. coli* 936, *S. boydii* 230, *S. dysenteriae* 95).
+  **Cause:** `build_entero_genomes.sh` leaves `MLST_SCHEME` unset, so `run_mlst` omits `--scheme` and `mlst`
+  auto-detects per genome (`engine/genomes/build_genomes.py:272-277, 340`). **PsA is unaffected** —
+  `build_pa_genomes.sh` pins `SCHEME=paeruginosa`, and all 3,677 QC-pass PsA genomes carry it (ST235 = 286).
+  Share of each species unit whose true ST is therefore unknown: *Salmonella* 1,735 of 32,149 (5.4 %),
+  *E. coli* 1,792 of 21,699 (8.3 %), KpSC 1,462 of 9,370 (15.6 %), *Enterobacter* 136 of 1,323 (10.3 %),
+  *S. sonnei* 3 of 1,851, *S. flexneri* 0 of 395. Untyped (`st` = `-`) besides: 516 cohort-wide.
+  **Consequence: no Enterobacterales ST holdout is sound until the scheme is pinned per species** — genomes truly
+  in the held-out clone would sit in train under a bogus key, which is what the ST holdout exists to prevent.
 - **ESM-C array** (job `41596846`, submitted 2026-11-21): 58,675 genomes (`genomes/esm_samples_to_embed.txt`, md5
   `a5bd7804…`; the cohort minus the 8,651 linked), 196 tasks of ≤ 300, 4 h wall each, bf16, `--max-proteins 9000`.
   Expected ~13 s per genome at PsA's 2.8 ms per protein and ~4,800 proteins, so ~70 min per task and ~210 A100-h.
@@ -1857,8 +1872,9 @@ contig past the 1,000th the same contig id.
    skani (`build_entero_genomes.sh qc`); collate in report mode → `species_crosstab.csv` and
    `embedding_input_unfiltered.csv`; our Bakta on the rest; proteins; ESM-C (~250 A100-h, SL2-GPU).
    **Done through the ESM-C submission (2026-11-21); the array is in flight.** Left before training: the species
-   rule (David's), an Enterobacterales holdout ST per species, the cross-species split tables (`--assert-same-as` the
-   PsA tables, so the PsA rows are identical across arms), and the cross-species `validate` choice.
+   rule (David's), **re-typing MLST with the scheme pinned per species** (the 7.7 % artefact above), an
+   Enterobacterales holdout ST per species, the cross-species split tables (`--assert-same-as` the PsA tables, so
+   the PsA rows are identical across arms), and the cross-species `validate` choice.
    Decided 2026-11-20 (§6): embed every genome passing the non-species QC; BakRep-refused genomes get our Bakta;
    existing Kp ESM-C embeddings are reused by symlink where they align (*Caveats*).
 3. Splits (the ST holdout plus others, through `engine/splits`), then training. **PsA decisions made 2026-11-20**
@@ -1931,6 +1947,23 @@ Later: the AMR-GNN-cut benchmark, ANI thinning, and causal attribution of the pr
   diagnosis: a clean environment imports torch 2.10.0+cu128 with CUDA). `esm_embeddings_array.sh` now unsets the loader
   paths and runs Python with `-X faulthandler` (`4ff29d7`). CPU jobs on icelake (Intel) were unaffected.
 - **The QC-pass Prodigal GFFs and `n_cds` in `genome_qc.csv` are not the annotation of record**: Bakta is.
+- **`--mlst-scheme` is job-wide, and `st_key` is `<scheme>:<ST>`.** `run_mlst` takes one scheme for the whole
+  chunk (`build_genomes.py:272-277, 340`; `build_genomes_array.sh:45`), so pinning a mixed-species cohort needs one
+  array submission per species over its own subset manifest — there is no per-row scheme column, and
+  `plan_genome_sources` keeps no species column (`plan_genome_sources.py:198-200`). A re-run of `build_genomes` is
+  **effectively MLST-only when the manifest is unchanged**: contigs are reused on a matching `src=` header and the
+  Prodigal GFF on a matching `contigs_md5=`, while stats, the CDS count and `mlst` are always recomputed
+  (`build_genomes.py:290-313`). ⚠ If the manifest names a different source for a genome, its contigs are **deleted
+  and rebuilt**. `collate_genomes.st_counts_by_drug` groups by `(drug, st)` and ignores the scheme
+  (`collate_genomes.py:93-94`), so that file pools the same ST number across schemes.
+- **The splits builder already supports what the cross-species arm needs** (read at `43d4b92`): species units are
+  just the `--species NAME=LABELS,ELIGIBLE,QC` name (`build_amr_holdout_splits.py:326, 430-431`), so
+  subgroup units (`ecoli`, `ssonnei`, `sflexneri`, …) need **no code change** — only one eligible-genome CSV per
+  unit, which **nothing in the repo writes yet**. `--holdout-st NAME=SCHEME:ST` is repeatable and per species
+  (`:137-140, 374-376, 431`), so one ST per unit works today. Units may not overlap (`:391-393`), each needs ≥ 1
+  genome in train/validate/holdout (`:329-331`), and the unit name seeds its shuffle (`:160-163, 311`) — renaming a
+  unit or moving a genome between units changes every split in it. Several STs held in one unit land in a single
+  `holdout_st` pool that cannot be scored per ST.
   `n_cds` and the CDS-per-Mbp figures above are Prodigal counts.
 - **Bakta's memory is sacct's to measure.** A run record's `max_child_rss_gb` (getrusage, the largest single
   child) read 8–12 GB on gate genomes whose sacct MaxRSS was 37.5–42.6 GB; size `--mem` from sacct.
