@@ -1,6 +1,12 @@
 # BacPredict — project state
 
-> **Last verified: 2026-11-20 @ `82ca4f2`** (branch `refactor/consolidate-engine`).
+> **Last verified: 2026-11-21 @ `9a813f0`** (branch `refactor/consolidate-engine`).
+> **Verification scope, this pass (2026-11-21): §3.6 the Enterobacterales build, QC, species calls and BakRep ingest
+> only.** Read on CSD3: `build_entero_genomes.sh status`, `genomes/{genome_qc,embedding_input_unfiltered,
+> species_crosstab}.csv`, `genomes/bakta/ingest_status.tsv`, sacct of the CheckM2/skani/Bakta jobs.
+> **Nothing else was re-verified this pass.**
+>
+> **Stamp before this one: 2026-11-20 @ `82ca4f2`.**
 > **Verification scope, this pass (2026-11-20, fifth): §3.6 PsA ESM-C completion and the Enterobacterales jobs in
 > flight only.** Read on CSD3: sacct of array `41526902`; `build_pa_embeddings.sh check` at `4ff29d7`; the store
 > count and one file's size; squeue/sacct of the Enterobacterales arrays. **Nothing else was re-verified this pass.**
@@ -1694,6 +1700,26 @@ genome sizes, `--prefer-reads`, min depth 10×, a fresh ENA cache):
 - **ATB task shape, measured** (array `41519203`, 100 genomes per 8-core task, first 248 tasks): 2.0–4.4 min per task
   (median 2.7), MaxRSS 1.6 GB. The remaining tasks were cut from 45 min / 24 GB to 10 min / 6 GB, which made them
   backfill again on a busy queue.
+
+**Numbers of record — Enterobacterales build, QC and annotation.**
+- **Build:** 67,575 of 67,626 buildable genomes built (`build_entero_genomes.sh status`): atb 65,363, portal 2,049,
+  shovill 163 of 214. The 51 failures are all shovill: 45 `ftp.sra.ebi.ac.uk` refused the connection (EBI throttling;
+  transient), 4 HTTP 403 on the reads, 1 SPAdes, 1 Prodigal. Not rerun; they are outside QC.
+- **Non-species QC** (`collate_genomes --species-mode report`; `genomes/genome_qc.csv` md5 `d0aa9ef8…`): 67,326 pass,
+  300 fail (contamination 183, contigs 76, completeness 61, not built 51, N50 35, length 3; a genome can fail
+  several). The pass set is `genomes/embedding_input_unfiltered.csv` (md5 `d255a91f…`): the cohort that is annotated
+  and embedded (§6). CheckM2: 34 + 1 top-up tasks of ≤ 2,000 genomes at 32 cores, median 88 min, MaxRSS ≤ 67 GB.
+- **Species calls** (skani vs the 39-genome DRAFT panel; `genomes/species_crosstab.csv` md5 `832ff16b…`): 66,277 of
+  67,575 called at ≥ 95 % ANI. Patterns, not conclusions: 8,319 genomes labelled *E. coli* are called *S. boydii* /
+  *S. dysenteriae* with a median 0.14 % ANI gap to the runner-up (labelled *Shigella* separate by ~1.4 %); most
+  *Enterobacter* (*E. cloacae* 611 of 745, *E. hormaechei* 283 of 292) and *Serratia marcescens* (263 of 307) fall
+  below 95 % to every reference; 4 labelled *K. pneumoniae* are called *Proteus mirabilis*; 207 labelled *K.
+  pneumoniae* are other KpSC members. **Hypotheses:** the panel's *E. coli* references (phylogroups A, E) miss B2/D/B1;
+  the *Enterobacter*/*Serratia* clinical lineages lack references. The species rule is David's (asked 2026-11-21).
+- **BakRep ingest** (job `41530416`, 2 h 4 min, 8 streams; `genomes/bakta/ingest_status.tsv` md5 `ef3731b2…`):
+  63,552 of 63,700 ingested, **148 refused:names** (0.23 %; PsA 0.61 %), no errors. Our Bakta: 2,903 (array
+  `41530989`, all 726 tasks COMPLETED), the 148 refused (array `41541891`) and the 972 genomes built after the plan
+  (array `41561033`).
 
 **Numbers of record — BakRep coverage.** BakRep v2 serves AllTheBacteria's own Bakta run (Bakta 1.9.4, full
 DB v5.1, over ATB release 0.2 + the 2024-08 increment). Read from
