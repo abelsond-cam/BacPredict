@@ -73,6 +73,11 @@ latest) and md5-checked against its `md5sums`:
   assemblies); its `BioSample_ID → assembly_ID` keys are the portal's genome set.
 - ⚠ **`$AMR/raw/ebi_amr_portal/ebi_amr_records_<date>.csv` is a portal-UI export of the *genotype* table**
   (`genotype-*` columns), not AST — despite the name.
+- **`$AMR/raw/ebi_amr_portal/cabbage_v2_20261121/cabbage_v2.csv` — CABBAGE v2**, the AST tests behind a second
+  experiment at about twice the genomes (`PROJECT_STATE.md` §3.7). Not a portal release: one CSV with its own columns
+  (`genus` + epithet `species`, `Antibiotic_name` with "/", `measurement_value`, `database` "|"-separated, `Pubmed_ID`).
+  `.bz2` as received, `md5sums` and `README.md` alongside; its scoping against 2026-07 is in
+  `$AMR/processed/ebi_amr_portal/scoping_cabbage_v2_20261121/`.
 
 **Labels built from it**, one folder per species: `$AMR/processed/paeruginosa/` (*P. aeruginosa*:
 `binary_ast.csv`, `cohort.csv`, …; built by `apps/pa/scripts/build_pa_ast_labels.sh`, mechanics in
