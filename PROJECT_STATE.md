@@ -1,7 +1,12 @@
 # BacPredict — project state
 
-> **Last verified: 2026-11-21 @ `20ad6f3`** (branch `refactor/consolidate-engine`).
-> **Verification scope, this pass (2026-11-21, seventh): §3.7 the CABBAGE v2 labels only** — a pass by the v2 agent.
+> **Last verified: 2026-11-21 @ `aee27ec`** (branch `refactor/consolidate-engine`).
+> **Verification scope, this pass (2026-11-21, eighth): §3.6 the *E. aerogenes* MLST correction only.**
+> `genome_qc.csv` re-collated on CSD3 after job `41608859` and checked species by species for a single MLST scheme
+> (1 trips it, *E. chengduensis*, 7 typed + 1 untyped — no species carries two real schemes).
+> **Nothing else was re-verified this pass.**
+>
+> **Verification scope, a pass by the v2 agent (2026-11-21, seventh): §3.7 the CABBAGE v2 labels only** — a pass by the v2 agent.
 > Read on CSD3: `$AMR/processed/{paeruginosa,enterobacterales}_cabbage_v2/{manifest.json,label_counts.csv,cohort.csv}`
 > and their `checks_vs_2026-07/`. **Nothing else was re-verified this pass.**
 >
