@@ -1,7 +1,11 @@
 # BacPredict — project state
 
-> **Last verified: 2026-11-21 @ `0474612`** (branch `refactor/consolidate-engine`).
-> **Verification scope, this pass (2026-11-21, fifth): §3.7 CABBAGE v2 only** — a separate pass by the v2 agent.
+> **Last verified: 2026-11-21 @ `f595f0d`** (branch `refactor/consolidate-engine`).
+> **Verification scope, this pass (2026-11-21, sixth): §3.6 the PsA ST155 switch only** — the ten new split tables
+> and `check-splits` read live on CSD3, the preserve-move of the ST235 arm verified by md5 and a per-drug file
+> listing, and the retrain array submitted (no results yet). **Nothing else was re-verified this pass.**
+>
+> **Verification scope, a pass by the v2 agent (2026-11-21, fifth): §3.7 CABBAGE v2 only** — a separate pass by the v2 agent.
 > Read on CSD3: `$AMR/raw/ebi_amr_portal/cabbage_v2_20261121/md5sums` and `$AMR/processed/ebi_amr_portal/scoping_cabbage_v2_20261121/`
 > (`report.txt`, its CSVs, `puffin/`). **Nothing else was re-verified this pass.**
 >
@@ -1669,6 +1673,35 @@ shovill array `41326674` plus rerun `41335542`, QC job `41336261` (CheckM2 3 h 6
 - **6,919 of the 7,088 Kp AST samples (§3.1) are in this cohort.** Any comparison against the July Kp
   checkpoints must hold out none of their train/validate samples.
 
+**Numbers of record — PsA split tables (the baseline arm, ST155).** `$AMR/processed/paeruginosa/splits/<drug>_split.csv`
++ `split_manifest.json` (md5 `908fc0af…`), `engine/splits/build_amr_holdout_splits` at `f595f0d` via
+`train_pa_models.sh splits` from the pinned worktree `BacPredict-f595f0d`: eligible = the 3,677 of
+`bakta_annotation.csv` (each with a `.pt`), minus the 15 Ecuador genomes (`apps/pa/excluded_genomes.tsv`); the 3 CDC
+duplicate pairs grouped, none of them spanning ST155. Genome level: train 2,290, validate 574, holdout (random 20 %
+of what is left) 716, holdout_st (`paeruginosa:155`, exact) 82. Per drug (`check-splits`, 0/1 labels only):
+
+| Drug | Train | Validate | Holdout | %R | ST155 | %R |
+|---|--:|--:|--:|--:|--:|--:|
+| ciprofloxacin | 1,933 | 504 | 620 | 63.4 | 78 | 71.8 |
+| ceftazidime | 1,732 | 434 | 543 | 46.2 | 77 | 42.9 |
+| meropenem | 1,703 | 426 | 527 | 36.1 | 75 | 26.7 |
+| tobramycin | 1,586 | 409 | 508 | 38.8 | 75 | 34.7 |
+| amikacin | 1,554 | 385 | 464 | 18.1 | 75 | 9.3 |
+| imipenem | 1,357 | 349 | 410 | 58.3 | 69 | 69.6 |
+| piperacillin-tazobactam | 1,266 | 321 | 386 | 54.4 | 66 | 54.5 |
+| aztreonam | 1,161 | 304 | 357 | 38.9 | 66 | 31.8 |
+| levofloxacin | 967 | 226 | 292 | 62.7 | 54 | 77.8 |
+| cefepime | 736 | 183 | 229 | 53.7 | 47 | 53.2 |
+
+- **The holdout is 21.8 % of genomes in all** (716 + 82 of 3,662), against 26.2 % for the ST235 arm; training gains
+  69–166 genomes per drug. ST155 is **2.1–3.9 % of each drug's labelled set**, inside David's 5 % cap.
+- **8 of 10 drugs are scoreable inside ST155** (≥ 20 in each class) — the same count as ST235, but failing on
+  different drugs: amikacin has 7 R of 75 and levofloxacin 12 S of 54, where ST235 was thin on ciprofloxacin (17 S)
+  and levofloxacin (15 S). ST155 is far better balanced overall (9–78 % R, against ST235's 34–93 %).
+- Stage A/B were **not** repeated: no trainer code changed between the ST235 run (`9a813f0`) and `f595f0d` — only
+  `HOLDOUT_ST` and docs — and `check-splits` is the trainer's own `resolve_split_table` read of all ten new tables
+  (0 genomes without a `.pt`).
+
 > **⚠ SUPERSEDED 2026-11-21 — both PsA panels below are the ST235 arm, and are being replaced.** David capped the
 > lineage holdout at **5 % of a drug's labelled set**; ST235 is 7.1–9.9 % (mean 8.6 %), which with the random 20 %
 > put **26–28 % of genomes out of reach of training**. The held-out ST is now **ST155** (2.1–3.9 %, the same 8 of 10
@@ -1896,6 +1929,10 @@ than 1,000 contigs; Bacformer's input packing (`max_n_contigs=1000`) keeps all t
 contig past the 1,000th the same contig id.
 
 **In flight.**
+- **PsA fine-tunes on the ST155 tables**: array `41605929` at `f595f0d` (10 tasks, one A100 each, 32 cores, 250 G,
+  28 h wall, `ampere`/FLOTO-SL2-GPU), split tables md5-pinned to `908fc0af…`. The ST235 run took 4.0–7.2 h per drug
+  and ~60 A100-h; ~9 % more training genomes here, so expect up to ~8 h per drug. It shares the `gpu1` QOS with the
+  Enterobacterales ESM-C array, so the two interleave.
 - **Enterobacterales ESM-C**: array `41596846` (58,675 genomes, 196 tasks), from the pinned worktree
   `/rds/user/dca36/hpc-work/worktrees/BacPredict-8b791d4` at `9a813f0`. When it ends: `build_entero_embeddings.sh
   check` (every cohort genome has a `.pt` whose protein count is its parquet's; fp32 allowed only for the Kp links).
