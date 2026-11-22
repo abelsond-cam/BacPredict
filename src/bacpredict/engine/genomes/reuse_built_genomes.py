@@ -71,6 +71,9 @@ The Bakta stage keeps the same split — a reused genome's annotation is its own
     already has. Refuses past ``--max-run``; written read-only, as array tasks take rows by position.
 ``bakta-status``
     Built genomes, the BakRep roster and its ingest outcomes, and each cohort genome's records (built here / reused).
+``bakta-annotated``
+    The genomes built here whose annotation has finished (``bakta_annotated``): a cohort to collate, extract proteins
+    from and embed before QC exists, while the rest are still annotating. Written atomically, never frozen.
 
 Usage: through ``engine/genomes/scripts/build_genomes_reusing_built.sh`` and
 ``engine/genomes/scripts/annotate_genomes_reusing_built.sh`` and a cohort's wrappers (e.g.
@@ -86,11 +89,12 @@ import os
 import re
 import sys
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pandas as pd
 
-from bacpredict.engine.genomes.bakta import ingest_record, run_record, status_part
+from bacpredict.engine.genomes.bakta import ingest_record, run_record, running_marker, status_part
 from bacpredict.engine.genomes.build_genomes import select_chunk
 from bacpredict.engine.genomes.collate_genomes import read_shards
 
@@ -405,6 +409,7 @@ RUN_MODES = ("all", "planned", "refused")
 # the record names bakta.py writes beside a genome's GFF3, as suffixes of its Sample
 INGEST_SUFFIX = ingest_record(Path(), "").name  # ".bakta.ingest.json": BakRep's GFF3, ingested
 RUN_SUFFIX = run_record(Path(), "").name  # ".bakta.run.json": our own run
+RUNNING_SUFFIX = running_marker(Path(), "").name  # ".bakta.running": our run has started and not finished
 GFF3_SUFFIX = ".bakta.gff3.gz"
 REUSED_WHY = "reused, and no annotation record exists"
 
@@ -518,6 +523,49 @@ def bakta_roster(cohort: pd.DataFrame, built: pd.DataFrame, reused: pd.DataFrame
                               for s, p in zip(want["Sample"], want["sr_assembly_file"], strict=True)],
                              index=want.index, dtype=bool)
     return want.sort_values("Sample").reset_index(drop=True)
+
+
+def _newer(path: Path, than: str) -> bool:
+    try:
+        return path.stat().st_mtime > os.stat(than).st_mtime
+    except OSError:
+        return False
+
+
+def bakta_annotated(built: pd.DataFrame, annotation_dir: Path, fingerprint: str, workers: int = 16
+                    ) -> pd.DataFrame:
+    """Every genome built here with its annotation state: ``Sample, sr_assembly_file, state``.
+
+    ``state`` is ``ingest`` (BakRep's GFF3, ingested) or ``run`` (our run of ``fingerprint``) for a finished
+    annotation — exactly one record, written after the genome's contigs, and no run of ours in progress — and
+    otherwise why not: ``running``, ``both`` (collate refuses two records), ``stale`` (a record older than the contigs,
+    or our run under another env) or ``none``. The finished ones are a cohort ``bakta.py collate`` can take before QC
+    exists. Not an md5 check: collate makes that one. Per genome a stat or two and, for our run, its record: threaded,
+    as on Lustre the metadata round trips, not the bytes, are the cost.
+    """
+    names = _annotation_names(annotation_dir)
+    b = built[["Sample", "sr_assembly_file"]].reset_index(drop=True)
+    if not b["Sample"].is_unique or b["sr_assembly_file"].isna().any():
+        raise ValueError("built genomes: a Sample twice, or a genome without contigs")
+
+    def one(row: tuple[str, str]) -> str:
+        s, contigs = row
+        if s + RUNNING_SUFFIX in names:
+            return "running"
+        has_ingest, has_run = s + INGEST_SUFFIX in names, s + RUN_SUFFIX in names
+        if not (has_ingest or has_run):
+            return "none"
+        if has_ingest and has_run:
+            return "both"
+        if has_run:
+            return "run" if _run_done(annotation_dir, names, s, contigs, fingerprint) else "stale"
+        ok = s + GFF3_SUFFIX in names and _newer(annotation_dir / (s + INGEST_SUFFIX), contigs)
+        return "ingest" if ok else "stale"
+
+    rows = list(zip(b["Sample"].astype(str), b["sr_assembly_file"].astype(str), strict=True))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        state = list(pool.map(one, rows))
+    return b.assign(state=state)
 
 
 def read_roster(path: Path) -> pd.DataFrame:
@@ -652,6 +700,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     p.add_argument("--annotation-dir", type=Path, required=True)
     p.add_argument("--cohort", type=Path, default=None)
     p.add_argument("--reused", type=Path, required=True)
+    p = sub.add_parser("bakta-annotated")
+    p.add_argument("--built", type=Path, required=True, help="bakta-plan's built_genomes.csv, re-run just before")
+    p.add_argument("--annotation-dir", type=Path, required=True)
+    p.add_argument("--fingerprint", required=True, help="the fingerprint our runs must carry (§3.6's)")
+    p.add_argument("--workers", type=int, default=16)
+    p.add_argument("--out", type=Path, required=True, help="Sample, sr_assembly_file, origin of the finished ones")
     a = ap.parse_args(argv)
 
     if a.cmd == "partition":
@@ -819,6 +873,21 @@ def main(argv: Sequence[str] | None = None) -> None:
     elif a.cmd == "bakta-status":
         reused = set(pd.read_csv(a.reused, dtype=str, usecols=["Sample"])["Sample"])
         print(bakta_status(a.plan_dir, a.annotation_dir, a.cohort, reused))
+    elif a.cmd == "bakta-annotated":
+        built = pd.read_csv(a.built, dtype=str, usecols=["Sample", "sr_assembly_file"])
+        try:
+            t = bakta_annotated(built, a.annotation_dir, a.fingerprint, a.workers)
+        except ValueError as e:
+            raise SystemExit(str(e)) from e
+        done = t[t["state"].isin(["ingest", "run"])].rename(columns={"state": "origin"})
+        print(f"{len(t)} genomes built here ({a.built}): {t['state'].value_counts().to_dict()}")
+        if done.empty:
+            raise SystemExit("no genome built here has a finished annotation: nothing written")
+        a.out.parent.mkdir(parents=True, exist_ok=True)
+        tmp = a.out.with_name(f".{a.out.name}.part")
+        done.to_csv(tmp, index=False)
+        tmp.replace(a.out)
+        print(f"{len(done)} annotated → {a.out}")
 
 
 if __name__ == "__main__":

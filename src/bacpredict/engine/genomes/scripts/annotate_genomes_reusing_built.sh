@@ -12,6 +12,8 @@
 #                               read-only run roster). planned needs no ingest status, so it can run while ingest does
 #   <wrapper> collate           CPU job: exactly one current annotation per COHORT genome → genomes/bakta_annotation.csv
 #                               for embedding_input.csv, bakta_annotation_<COHORT file stem>.csv for any other cohort
+#   <wrapper> annotated         plan again, then genomes/preqc_annotated.csv: the genomes built here whose annotation has
+#                               finished, a COHORT to collate (LIVE_RUNS_OK=1) and embed before QC exists
 #   <wrapper> status
 #
 # The §3.6 annotation (apps/entero/scripts/annotate_entero_genomes.sh, after apps/pa/scripts/annotate_pa_genomes.sh;
@@ -35,6 +37,8 @@
 #   OWNER_BAKTA_JOBS   comma-separated job names of every owner's Bakta ingest and run jobs (empty if none)
 #   REF_RUN_ROSTER     a run roster of §3.6's whose first genome's run record fixes the fingerprint every run matches
 #   BAKREP_EXPORT      BakRep's bakrep-export.tsv.gz
+# collate refuses while this cohort's own run arrays are live, unless LIVE_RUNS_OK=1: for a cohort of finished genomes
+# only (annotated's), since a run task skips a genome whose run is current and a genome is on one roster only.
 # Jobs run from ARRAY_REPO, a detached worktree at the SHA to run (.venv symlinked to the shared env), and refuse to
 # start if its HEAD has moved.
 set -euo pipefail
@@ -96,12 +100,30 @@ refuse_if_live() {  # <job names, comma-separated> <why>: stop if any of mine is
     [[ -z $ids ]] || { echo "queued or running ($1): $(echo $ids) — $2"; exit 1; }
 }
 OWN_RUNS=$JOB-bakta-all,$JOB-bakta-planned,$JOB-bakta-refused
-
-case "${1:-}" in
-plan)
+# the fingerprint of §3.6's runs: the run record of the first genome of REF_RUN_ROSTER
+ref_fingerprint() {
+    local ref
+    read -r ref _ < "$REF_RUN_ROSTER"
+    uv run --no-sync python -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["fingerprint"])' \
+        "$ANN/$ref.bakta.run.json"
+}
+plan() {
     [[ -s $BAKREP_EXPORT ]] || { echo "no BakRep export at $BAKREP_EXPORT"; exit 1; }
     reuse bakta-plan --manifest "$GEN/genome_manifest.csv" --shard-root "$GEN/shards" \
         --reused "$GEN/reused_genomes.csv" --bakrep-export "$BAKREP_EXPORT" --out-dir "$PLAN"
+}
+
+case "${1:-}" in
+plan)
+    plan
+    ;;
+annotated)
+    # built_genomes.csv as the shards are now: a genome re-planned to another source drops out until it is rebuilt,
+    # and once rebuilt its contigs are newer than any record it had
+    plan
+    reuse bakta-annotated --built "$PLAN/built_genomes.csv" --annotation-dir "$ANN" --fingerprint "$(ref_fingerprint)" \
+        --out "$GEN/preqc_annotated.csv"
+    echo "next: COHORT=$GEN/preqc_annotated.csv LIVE_RUNS_OK=1 <wrapper> collate"
     ;;
 ingest)
     [[ -s $PLAN/bakrep_roster.tsv ]] || { echo "no BakRep roster at $PLAN/bakrep_roster.tsv: run plan first"; exit 1; }
@@ -155,13 +177,11 @@ submit)  # submit [all|planned|refused]: all = planned + refused (the default)
     fi
     # one annotation of record across cohorts: our runs must use the tool env and database §3.6's runs used
     tb=$(tools_bin)
-    read -r ref _ < "$REF_RUN_ROSTER"
     fp=$(PYTHONPATH=$ar/src uv run --project "$ar" --no-sync python -m bacpredict.engine.genomes.bakta fingerprint \
         --tools-bin "$tb" --db "$DB")
-    ref_fp=$(uv run --no-sync python -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["fingerprint"])' \
-        "$ANN/$ref.bakta.run.json")
+    ref_fp=$(ref_fingerprint)
     [[ $fp == "$ref_fp" ]] || {
-        echo "fingerprint of $tb + $DB is $fp; §3.6's runs ($ANN/$ref.bakta.run.json) used $ref_fp: not submitting"
+        echo "fingerprint of $tb + $DB is $fp; §3.6's runs ($REF_RUN_ROSTER) used $ref_fp: not submitting"
         exit 1; }
     roster=$PLAN/run_roster_$(date +%Y%m%d_%H%M%S).tsv
     reuse bakta-roster --cohort "$COHORT" --built "$PLAN/built_genomes.csv" --reused "$GEN/reused_genomes.csv" \
@@ -189,7 +209,11 @@ collate)
     # Only embedding_input.csv's collate writes bakta_annotation.csv: any other cohort's must neither replace it nor
     # (failing) delete it
     need_cohort
-    refuse_if_live "$JOB-bakta-ingest,$OWN_RUNS" "collate must see every annotation finished"
+    case ${LIVE_RUNS_OK:-0} in
+        0) refuse_if_live "$JOB-bakta-ingest,$OWN_RUNS" "collate must see every annotation finished" ;;
+        1) refuse_if_live "$JOB-bakta-ingest" "an ingest may be writing a cohort genome's GFF3" ;;
+        *) echo "LIVE_RUNS_OK: 0 or 1"; exit 2 ;;
+    esac
     canon=$(realpath -e -- "$GEN/embedding_input.csv" 2>/dev/null) || canon=
     if [[ $COHORT == "$canon" ]]; then
         out=$GEN/bakta_annotation.csv
@@ -214,5 +238,5 @@ status)
     grep -E "$JOB-bakta" <<<"$q" || echo "no $JOB-bakta job queued or running"
     ;;
 *)
-    sed -n '2,16p' "$0"; exit 2 ;;
+    sed -n '2,18p' "$0"; exit 2 ;;
 esac

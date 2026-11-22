@@ -2487,19 +2487,20 @@ refuted) — the same 12 as before the DNBSEQ genomes joined.
      36 % of the 66,585 h left on `FLOTO-PROJECT-K-SL2-CPU` (`mybalance`, 2026-11-22). **The Enterobacterales
      array runs on `FLOTO-SL3-CPU` first** (§6, 2026-11-22: three days, then SL2 if it gets nowhere).
 3. **ESM-C** (bf16) into the shared `$AMR/processed/esm/` through a sample list, **on `FLOTO-SL2-GPU`** (§6,
-   2026-11-22), starting now on every genome whose Bakta annotation exists. Reused genomes already have their `.pt`
-   (§3.6), so only genomes built here are embedded. **Plan, not yet written:**
-   - A generic driver `engine/embedding/scripts/build_embeddings_reusing_built.sh` (stages proteins, check-proteins,
-     link-kp, submit, check), adapted from `apps/entero/scripts/build_entero_embeddings.sh` (§3.6's, left unchanged)
-     with T, the job/log prefix and the cohort table configurable; `QC_COHORT=none` allowed for a pre-QC cohort; submit
-     refuses while §3.6's ESM arrays are live. Wrappers `apps/{pa,entero}/scripts/build_*_embeddings_cabbage_v2.sh`.
+   2026-11-22), starting now on every genome whose Bakta annotation exists. Reused genomes keep their owner's `.pt`
+   (§3.6): only genomes built here are ever on v2's array or link list, and `check` fails on a reused genome without
+   one. Machinery: `engine/embedding/scripts/build_embeddings_reusing_built.sh` (stages proteins, check-proteins,
+   link-kp, submit, check — §3.6's extractor, array, settings and checks; no smoke, the code being §3.6's; every job
+   from a pinned clean worktree with `TMPDIR=/local`), configured by `apps/{pa,entero}/scripts/build_*_embeddings_cabbage_v2.sh`.
    - **PsA:** once Bakta array `41644190` (the 401 DNBSEQ genomes) ends, `annotate collate` →
      `genomes/bakta_annotation.csv` (9,044) → proteins → check-proteins → submit (~5,400 new genomes, ~25 A100-h).
-   - **Enterobacterales, before QC:** a `reuse_built_genomes bakta-annotated` subcommand (genomes built here with an
-     ingest record or a finished run of the reference fingerprint; never the 31 genomes the DNBSEQ re-plan rebuilds) →
-     `annotate collate` with that cohort → `bakta_annotation_<stem>.csv` → proteins → check-proteins → link-kp (the
-     Kp ESM-C store, as §3.6) → submit. ~30k genomes annotated now (27,547 BakRep + our SL3 runs); re-run as Bakta
-     completes, then once more on the post-QC cohort (submit embeds only genomes with no `.pt`).
+   - **Enterobacterales, before QC:** `annotate_entero_genomes_cabbage_v2.sh annotated` (re-plans, then
+     `reuse_built_genomes bakta-annotated`: genomes built here with exactly one finished record — an ingest, or our run
+     of §3.6's fingerprint — newer than their contigs, so a genome the DNBSEQ re-plan rebuilds stays out until
+     re-annotated) → `genomes/preqc_annotated.csv` → `COHORT=… LIVE_RUNS_OK=1 … collate` (safe while the SL3 runs go
+     on: a run task skips a genome whose run is current) → `bakta_annotation_preqc_annotated.csv` → proteins →
+     check-proteins → link-kp (the Kp ESM-C store, as §3.6) → submit. Re-run as Bakta completes, then once more on the
+     post-QC cohort (`ANNOTATION=bakta_annotation_embedding_input_unfiltered.csv`); submit embeds only genomes with no `.pt`.
 4. **Splits and training** — new split tables, retrained models, a second PsA baseline, every holdout read through
    `engine.splits.load_splits` only. **The lineage holdout is §3.6's, under the same ≤ 5 % cap:** PsA **ST155**
    (replacing ST235 — David, 2026-11-21, relayed by the §3.6 agent; §3.6 records it); Enterobacterales *E. coli* ST10,

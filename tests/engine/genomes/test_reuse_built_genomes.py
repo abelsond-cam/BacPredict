@@ -6,6 +6,7 @@ import gzip
 import json
 import os
 import stat
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -15,6 +16,7 @@ from bacpredict.engine.genomes.reuse_built_genomes import (
     REUSED_WHY,
     array_list,
     bakrep_export_ids,
+    bakta_annotated,
     bakta_plan,
     bakta_roster,
     bakta_status,
@@ -425,3 +427,30 @@ def test_replan_diff_names_every_moved_genome_and_refuses_an_unexpected_move(tmp
 def test_bakta_roster_can_leave_reused_genomes_for_later(annotation):
     want, todo = _roster(annotation, "all", skip_reused=True)
     assert todo == ["A2", "N1", "N2"]  # R2 waits: an owner's job may be writing it
+
+
+def test_bakta_annotated_takes_only_finished_single_current_records(tmp_path, annotation):
+    a = annotation
+    ann = a["annotation_dir"]
+    paths = a["cohort"].set_index("Sample")["sr_assembly_file"]
+    for s, kind in (("B1", "ingest"), ("B2", "run"), ("B2", "ingest"), ("B3", "ingest")):
+        Path(paths["A1"]).with_name(f"{s}.fna.gz").write_bytes(b">c1\nACGT\n")
+        os.utime(Path(paths["A1"]).with_name(f"{s}.fna.gz"), (1_000_000, 1_000_000))
+        (ann / f"{s}.bakta.{kind}.json").write_text(json.dumps({"fingerprint": FP}))
+        (ann / f"{s}.bakta.gff3.gz").write_bytes(b"gff")
+    (ann / "B3.bakta.running").write_text("")  # our run of B3 has started: not finished, whatever else is there
+    built = pd.DataFrame({"Sample": ["A1", "A2", "A3", "N1", "N2", "B1", "B2", "B3"]})
+    built["sr_assembly_file"] = [paths.get(s, str(Path(paths["A1"]).with_name(f"{s}.fna.gz"))) for s in built["Sample"]]
+    os.utime(built.set_index("Sample").loc["B1", "sr_assembly_file"], None)  # rebuilt after its ingest
+    t = bakta_annotated(built, ann, FP, workers=2).set_index("Sample")["state"].to_dict()
+    assert t == {"A1": "ingest", "A2": "none", "A3": "run", "N1": "none", "N2": "stale", "B1": "stale",
+                 "B2": "both", "B3": "running"}
+    f = _csv(tmp_path / "built_genomes.csv", built.assign(source="atb"))
+    out = tmp_path / "genomes/preqc_annotated.csv"
+    main(["bakta-annotated", "--built", str(f), "--annotation-dir", str(ann), "--fingerprint", FP, "--out", str(out)])
+    got = pd.read_csv(out)
+    assert list(got.columns) == ["Sample", "sr_assembly_file", "origin"]
+    assert got[["Sample", "origin"]].values.tolist() == [["A1", "ingest"], ["A3", "run"]]
+    with pytest.raises(SystemExit, match="nothing written"):
+        main(["bakta-annotated", "--built", str(_csv(tmp_path / "b2.csv", built.iloc[[1, 3]])), "--annotation-dir",
+              str(ann), "--fingerprint", FP, "--out", str(tmp_path / "none.csv")])
