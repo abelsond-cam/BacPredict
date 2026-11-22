@@ -47,6 +47,12 @@ set -euo pipefail
 # 41525227; engine/embedding/scripts/esm_embeddings_array.sh). The uv env is self-contained: drop the loader paths.
 unset LD_LIBRARY_PATH LIBRARY_PATH LD_PRELOAD
 
+# bash writes EVERY here-string and here-document to $TMPDIR, so a full /tmp does not fail a step — it kills the job
+# in seconds, before any of this script runs, with "cannot create temp file for here-document". CSD3 icelake nodes
+# were found with a full /tmp on 2026-11-22 (cpu-q-116/72/243/531/546/577/578), which failed v2 CheckM2 tasks in 3 s.
+# This script uses here-strings below, so it is exposed. A node-local disk is also faster and nobody else's.
+if [[ -d /local && -w /local ]]; then export TMPDIR=/local; fi
+
 : "${TASK:?}" "${DRUGS:?one per array index}" "${SPLIT_DIR:?}" "${EMBEDDINGS_DIR:?}" "${OUT_ROOT:?}"
 REPO=${REPO:-$HOME/workspace/BacPredict}
 export PYTHONUNBUFFERED=1 TRANSFORMERS_VERBOSITY=info
@@ -56,6 +62,17 @@ export PYTHONPATH="$REPO/src${PYTHONPATH:+:$PYTHONPATH}"
 head=$(git -C "$REPO" rev-parse HEAD)
 if [[ -n "${EXPECT_SHA:-}" && "$head" != "$EXPECT_SHA"* ]]; then
     echo "the checkout moved: HEAD ${head:0:7}, this array was submitted at $EXPECT_SHA"; exit 3
+fi
+# HEAD alone does not pin the CODE: editing a file in the pinned worktree leaves HEAD untouched, so a task would run
+# something that is at no SHA at all while reporting the submitted one. A pending array is a standing invitation to
+# "just patch the worktree" — refuse it, so the only way to change what runs is to resubmit.
+if [[ -n "${EXPECT_SHA:-}" ]]; then
+    # tracked files only: the worktree legitimately carries an untracked .venv symlink to the shared env
+    dirty=$(git -C "$REPO" status --porcelain --untracked-files=no)
+    if [[ -n "$dirty" ]]; then
+        echo "$REPO is at $EXPECT_SHA but its working tree is modified, so what would run is at no SHA:"
+        echo "$dirty" | head -20; exit 3
+    fi
 fi
 if [[ -n "${SPLIT_MANIFEST_MD5:-}" ]]; then
     now=$(md5sum < "$SPLIT_DIR/split_manifest.json" | cut -d' ' -f1)
