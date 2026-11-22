@@ -189,15 +189,21 @@ print(f"cohort: {len(s)} genomes, {len(s) - len(own)} reused ({lacking} of them 
       f".pt in {sys.argv[4]} (embedded or linked), {len(todo)} to embed", file=sys.stderr)
 if todo:
     print("\n".join(todo))'
-# the cohort genomes built here whose cohort.csv species is of genus argv 4 (link-kp)
+# the cohort genomes built here whose cohort.csv species is of genus argv 4 and with no .pt in the ESM store (argv 5)
+# (link-kp). Two guards, as for the array, so neither alone keeps v2 out of another cohort's .pt: reused_genomes.csv,
+# and the store's own listing (link_existing_embeddings also never replaces a name that exists). Prints nothing if
+# none
 GENUS_SAMPLES=$OWN'
 genus = pd.read_csv(sys.argv[2], dtype={"Sample": str}).set_index("Sample")["species"].str.split().str[0]
-pick = sorted(own[own.map(genus).eq(sys.argv[4])])
-print(f"cohort: {len(s)} genomes, {len(own)} built here, {len(pick)} of them labelled {sys.argv[4]} (cohort.csv "
-      "species)", file=sys.stderr)
-if not pick:
-    sys.exit(f"no cohort genome built here is labelled {sys.argv[4]}")
-print("\n".join(pick))'
+suffix = "_esm_embeddings.pt"
+with os.scandir(sys.argv[5]) as it:
+    have = {e.name[: -len(suffix)] for e in it if e.name.endswith(suffix)}
+labelled = own[own.map(genus).eq(sys.argv[4])]
+pick = sorted(set(labelled) - have)
+print(f"cohort: {len(s)} genomes, {len(own)} built here, {len(labelled)} of them labelled {sys.argv[4]} (cohort.csv "
+      f"species), {len(pick)} of those without a .pt in {sys.argv[5]}", file=sys.stderr)
+if pick:
+    print("\n".join(pick))'
 
 # check_job <stage> <args…>: check_cohort_store as a 32-core icelake job (CHECK_* override the shape)
 check_job() {
@@ -252,7 +258,9 @@ link-kp)
     # links made while an array runs only race its writes; two link jobs would write one report
     n=$(live "^$JOB-esm-(embeddings|link-kp)\$")
     (( n == 0 )) || { echo "a $JOB-esm-embeddings array or a $JOB-esm-link-kp job is queued or running"; exit 1; }
-    write_list "$LINK_SAMPLES" "$GENUS_SAMPLES" "$LINK_GENUS" > /dev/null
+    write_list "$LINK_SAMPLES" "$GENUS_SAMPLES" "$LINK_GENUS" "$ESM" > /dev/null
+    [[ -s $LINK_SAMPLES ]] || {
+        echo "every $LINK_GENUS genome built here has a .pt already: nothing to link; submit with SKIP_LINK_KP=1"; exit 0; }
     run_dir=$LOGS/${JOB}_esm_link-kp_$(date +%Y%m%d_%H%M%S); mkdir -p "$run_dir"
     # as §3.6's: per genome a parquet column and the Kp .pt opened memory-mapped; 16 workers, 16G (~2× 16 imports of
     # torch). Loader paths unset and faulthandler on, as for the ESM-C array: this job imports torch
