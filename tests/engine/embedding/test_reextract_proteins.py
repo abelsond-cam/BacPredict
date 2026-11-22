@@ -6,7 +6,13 @@ import os
 
 import pandas as pd
 
-from bacpredict.engine.embedding.reextract_proteins import genome_record, main, parquet_path, write_atomically
+from bacpredict.engine.embedding.reextract_proteins import (
+    genome_record,
+    main,
+    nonstandard,
+    parquet_path,
+    write_atomically,
+)
 
 
 def _genome(d, name, seq):
@@ -46,3 +52,16 @@ def test_only_changed_parquets_are_rewritten(tmp_path):
     main(["--input-csv", str(cohort), "--output-dir", str(out), "--ambiguous-codons-as-x", "--workers", "2",
           "--report", str(again), "--exclude", str(exclude)])
     assert set(pd.read_csv(again)["status"]) == {"unchanged"}  # idempotent
+
+
+def test_a_residue_outside_the_alphabet_fails_the_run(tmp_path):
+    assert nonstandard([["MXK", "MUK"], ["MBJ"]]) == "BJ"
+    out = tmp_path / "prot"
+    out.mkdir()
+    fna, gff = _genome(tmp_path, "AMBIG", "ATGRAYAAATAA")
+    cohort = tmp_path / "cohort.csv"
+    pd.DataFrame([{"Sample": "AMBIG", "sr_assembly_file": fna, "sr_gff_file": gff}]).to_csv(cohort, index=False)
+    report = tmp_path / "report.csv"
+    # without the X setting, Biopython's B for RAY is written, and reported
+    assert main(["--input-csv", str(cohort), "--output-dir", str(out), "--workers", "1", "--report", str(report)]) == 1
+    assert pd.read_csv(report)["nonstandard"].tolist() == ["B"]

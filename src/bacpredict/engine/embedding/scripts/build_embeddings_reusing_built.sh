@@ -61,7 +61,9 @@ ESM=$ROOT/processed/esm
 # link-kp: the Klebsiella ESM-C store (fp32, 960-dim, keyed by BioSample; PROJECT_STATE §3.6 Caveats)
 KP_ESM=${KP_ESM_DIR:-/rds/project/rds-4k08a2yyQLw/david/bacformer_processed/esm/klebsiella}
 LINK_SAMPLES=$GEN/esm_samples_kp_link.txt
-LINK_REPORT=$GEN/esm_linked_kp.tsv
+# one report per link-kp run (esm_linked_kp_<time>.tsv): a later run lists only the genomes still without a .pt, so
+# a single report name would lose the record of every link made before it
+LINK_REPORTS=$GEN/esm_linked_kp_
 MAX_PROTEINS=9000
 SAVE_DTYPE=bfloat16
 # genomes per 4 h GPU task: §3.6's 300 (~13 s an Enterobacterales genome, ~18 s a PsA one, at 2.8 ms per protein on
@@ -153,19 +155,20 @@ proteins_passed() {
 kp_linked() {
     [[ -n $LINK_GENUS ]] || return 0
     if [[ ${SKIP_LINK_KP:-0} == 1 ]]; then echo "SKIP_LINK_KP=1: not requiring a link-kp run"; return 0; fi
-    local runs last outs out
+    local runs last outs out reports report
     runs=("$LOGS"/${JOB}_esm_link-kp_*)
     last=${runs[${#runs[@]}-1]}
+    reports=("$LINK_REPORTS"*.tsv); report=${reports[${#reports[@]}-1]}
     [[ -d $last ]] || {
         echo "no link-kp run in $LOGS: run link-kp first (or SKIP_LINK_KP=1 to embed the $LINK_GENUS genomes too)"; exit 1; }
     outs=("$last"/"$JOB"-esm-link-kp_*.out); out=${outs[${#outs[@]}-1]}
     [[ -f $out ]] && grep -qx done "$out" || {
         echo "the latest link-kp ($last) did not finish with 'done': read its .out, then run link-kp again"
         echo "(or SKIP_LINK_KP=1 to submit without it)"; exit 1; }
-    [[ $out -nt $PROTEINS_PASS && -s $LINK_REPORT && $LINK_REPORT -nt $PROTEINS_PASS ]] || {
-        echo "check-proteins passed again ($PROTEINS_PASS) after the latest link-kp ($last), or $LINK_REPORT is"
-        echo "missing or older: run link-kp again"; exit 1; }
-    echo "link-kp: $last ($LINK_REPORT)"
+    [[ $out -nt $PROTEINS_PASS && -s $report && $report -nt $PROTEINS_PASS ]] || {
+        echo "check-proteins passed again ($PROTEINS_PASS) after the latest link-kp ($last), or its report ($report)"
+        echo "is missing or older: run link-kp again"; exit 1; }
+    echo "link-kp: $last ($report)"
 }
 
 # write_list <out> <python> [args…]: (re)write <out> with what <python> prints — sorted, unique samples, from the
@@ -291,7 +294,7 @@ link-kp)
     write_list "$LINK_SAMPLES" "$GENUS_SAMPLES" "$LINK_GENUS" "$ESM" > /dev/null
     [[ -s $LINK_SAMPLES ]] || {
         echo "every $LINK_GENUS genome built here has a .pt already: nothing to link; submit with SKIP_LINK_KP=1"; exit 0; }
-    run_dir=$LOGS/${JOB}_esm_link-kp_$(date +%Y%m%d_%H%M%S); mkdir -p "$run_dir"
+    ts=$(date +%Y%m%d_%H%M%S); run_dir=$LOGS/${JOB}_esm_link-kp_$ts; mkdir -p "$run_dir"; report=$LINK_REPORTS$ts.tsv
     # as §3.6's: per genome a parquet column and the Kp .pt opened memory-mapped; 16 workers, 16G (~2× 16 imports of
     # torch). Loader paths unset and faulthandler on, as for the ESM-C array: this job imports torch
     cpus=${LINK_CPUS:-16}
@@ -301,8 +304,8 @@ link-kp)
         --wrap="$(pin_guard "$ar") unset LD_LIBRARY_PATH LIBRARY_PATH LD_PRELOAD; PYTHONUNBUFFERED=1 uv run \
 --project $ar --no-sync python -X faulthandler -m bacpredict.engine.embedding.link_existing_embeddings \
 --samples-file $LINK_SAMPLES --protein-dir $PROT --src-dir $KP_ESM --esm-dir $ESM --max-proteins $MAX_PROTEINS \
---workers $cpus --report $LINK_REPORT"
-    echo "genomes: $LINK_SAMPLES; report: $LINK_REPORT; logs: $run_dir"
+--workers $cpus --report $report"
+    echo "genomes: $LINK_SAMPLES; report: $report; logs: $run_dir"
     ;;
 submit)
     ar=$(pinned) || exit 1

@@ -2581,8 +2581,20 @@ from worktrees at `86fd4f7`/`6cadddc`, 2026-11-22).
   `preqc_annotated.csv` md5 `44be1fde…`, **30,488** → collate (job `41647929`) → `bakta_annotation_preqc_annotated.csv`
   md5 `c645abc7…` → **check-proteins PASS 30,488/30,488** (job `41649101`).
 - **Enterobacterales Kp link** (job `41649303`, 10 min): of the 10,371 cohort genomes labelled *Klebsiella*, **10,036
-  linked** from the Kp ESM-C store (fp32), 287 absent from it, 48 with a different protein count →
-  `genomes/esm_linked_kp.tsv` md5 `ee0f69fc…`. The other 20,452 go to the array.
+  linked** from the Kp ESM-C store (fp32), 287 absent from it, 48 with a different protein count. Its report
+  (`esm_linked_kp.tsv`, md5 `ee0f69fc…`) was overwritten by the next round's link-kp, which listed only the 343
+  genomes still without a `.pt` (0 linked); the links themselves are re-listed from the store as
+  `genomes/esm_kp_symlinks_20261122.tsv` md5 `fcf339d8…` (10,036, every target in the Kp store), and the driver now
+  keeps one dated report per run (`esm_linked_kp_<time>.tsv`).
+- **Ambiguous codons → `X`, applied** (§6; `reextract` at `9c81041`, which rewrites a parquet only where its
+  proteins change). **PsA** (job `41656147`): of 5,367 genomes built here, 320 rewritten, all with the same protein
+  count, 5,047 unchanged; check-proteins PASS 9,044/9,044 (job `41656464`); every residue in the 5,367 is one of the
+  20, `X` or `U` (U 5,342, X 13,844 overall; job `41656465`). **Enterobacterales**, a fresh `annotated` with no hold
+  → `preqc_annotated.csv` md5 `52c663e6…`: 31,888 (27,547 ingested, 4,341 our run; 48 running, 18,088 not yet) →
+  collate (job `41656460`) → `bakta_annotation_preqc_annotated.csv` md5 `8307c6f8…` → proteins (job `41656953`) →
+  reextract (job `41657884`): 218 rewritten (191 the same count; the 27 held genomes gain 1–10 proteins each),
+  31,670 unchanged → **check-proteins PASS 31,888/31,888** (job `41658673`). No rewritten genome had a `.pt`, linked
+  or embedded. `reextract` now also fails on any residue outside the 20, `X`, `U` and `O`.
 
 **Numbers of record — duplicate assemblies, PsA v2.** `engine/genomes/find_duplicate_assemblies` (§3.6's screen,
 `c94df7f`: same total length and contig count, then contig sequences hashed) over the 9,044 QC-pass genomes of
@@ -2605,13 +2617,15 @@ refuted) — the same 12 as before the DNBSEQ genomes joined.
   `--assert-same-as` against §3.6's PsA tables behaves with it before the v2 PsA splits are built.
 
 **In flight.**
-- **PsA:** ESM-C array `41647810` cancelled for the ambiguous-codon re-extraction (§6); `reextract` → check-proteins
-  → submit again. Bakta finished (arrays `41621246`, `41624615`,
+- **PsA:** **ESM-C array `41656695`** (`FLOTO-SL2-GPU`, 18 tasks of ≤ 299: the 5,367 genomes built here,
+  `genomes/esm_samples_to_embed.txt` md5 `19cd6df2…`); then `check`. (`41647810` was cancelled for the
+  ambiguous-codon re-extraction before it wrote a `.pt`.) Bakta finished (arrays `41621246`, `41624615`,
   `41644190`, SL2, 0 failed). **DNBSEQ re-plan** (`replan dnbseq drop:shovill,ncbi_gca:shovill` at `5fdd783`: exactly 414 drop → shovill, nothing else moved;
   old plan in `genomes/_plan_pre_dnbseq/`).
-- **Enterobacterales ESM-C, pre-QC cohort:** array `41650067` (20,452 genomes) cancelled for the same
-  re-extraction; `annotated` (no hold) → collate → proteins → `reextract` → check-proteins → link-kp → submit, and
-  again as the SL3 Bakta runs finish.
+- **Enterobacterales ESM-C, pre-QC cohort:** **array `41659165`** (`FLOTO-SL2-GPU`, 73 tasks of ≤ 300: 21,852
+  genomes, `genomes/esm_samples_to_embed.txt` md5 `470bde9e…`; the other 10,036 of the 31,888 are Kp links); then
+  `check`. (`41650067` was cancelled for the re-extraction before it started.) Again — `annotated` → collate →
+  proteins → `reextract` → check-proteins → link-kp → submit — as the SL3 Bakta runs finish.
 - **Enterobacterales:** the first build round ended with 640 genomes failed: 374 NCBI genomes on six nodes whose
   `/tmp` was full (mlst's temporary FASTA; fixed at `379d415` — v2 build tasks take a node-local `TMPDIR`), 253 NCBI
   503s, 13 fastq downloads truncated or mis-sized, 1 Prodigal error. **DNBSEQ re-plan** at `379d415`: exactly 510

@@ -17,7 +17,10 @@ Usage::
         --workers 32 --report reextract.csv
 
 The report holds one row per genome: ``unchanged``, ``rewritten`` (with the protein count before and after),
-``written`` (no parquet before) or ``error: …``. Exit status 1 if any genome errored.
+``written`` (no parquet before) or ``error: …``, and ``nonstandard``: any residue letter outside ESM-C's protein
+alphabet as the extractor can write it (the 20, ``X``, and the recoded ``U``/``O``) — Biopython's ``B``/``Z``/``J``
+for an ambiguous codon, say, which the tokenizer would take as ``B``/``Z`` or not at all. Exit status 1 if any
+genome errored or holds one.
 """
 
 from __future__ import annotations
@@ -35,6 +38,7 @@ from bacpredict.engine.embedding.extract_proteins_from_gff_fna import extract_pr
 # what preprocess_assemblies_to_protein_sequences drops before writing, and what is compared
 _DROPPED = ("strain_name", "accession_name", "protein_name", "accession_id")
 _COMPARED = ("contig_idx", "start", "end", "protein_sequence")
+ALPHABET = frozenset("ACDEFGHIKLMNPQRSTVWY") | frozenset("XUO")
 
 
 def parquet_path(output_dir: Path, sample: str) -> Path:
@@ -66,6 +70,11 @@ def _n_proteins(cell) -> int:
     return sum(len(c) for c in cell)
 
 
+def nonstandard(cell) -> str:
+    """The residue letters of a record's proteins outside :data:`ALPHABET`, sorted and joined ('' if none)."""
+    return "".join(sorted({a for contig in cell for p in contig for a in p} - ALPHABET))
+
+
 def write_atomically(record: dict, path: Path) -> None:
     """As ``preprocess_assemblies_to_protein_sequences.save_to_parquet``: a hidden sibling, renamed into place."""
     tmp = path.with_name(f".{path.name}.{os.getpid()}.part")
@@ -83,17 +92,19 @@ def reextract_one(task: tuple[str, str, str, str, bool]) -> dict:
     try:
         record = genome_record(sample, contigs, gff, ambiguous_codons_as_x=as_x)
         n_new = _n_proteins(record["protein_sequence"])
+        odd = nonstandard(record["protein_sequence"])
         if not path.exists():
             write_atomically(record, path)
-            return {"Sample": sample, "status": "written", "n_before": None, "n_after": n_new}
+            return {"Sample": sample, "status": "written", "n_before": None, "n_after": n_new, "nonstandard": odd}
         old = pd.read_parquet(path).iloc[0]
         if same_proteins(old, record):
-            return {"Sample": sample, "status": "unchanged", "n_before": n_new, "n_after": n_new}
+            return {"Sample": sample, "status": "unchanged", "n_before": n_new, "n_after": n_new, "nonstandard": odd}
         n_old = _n_proteins(old["protein_sequence"])
         write_atomically(record, path)
-        return {"Sample": sample, "status": "rewritten", "n_before": n_old, "n_after": n_new}
+        return {"Sample": sample, "status": "rewritten", "n_before": n_old, "n_after": n_new, "nonstandard": odd}
     except Exception as e:  # noqa: BLE001 (one genome's failure is reported, and fails the run, after the rest)
-        return {"Sample": sample, "status": f"error: {type(e).__name__}: {e}", "n_before": None, "n_after": None}
+        return {"Sample": sample, "status": f"error: {type(e).__name__}: {e}", "n_before": None, "n_after": None,
+                "nonstandard": ""}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -118,7 +129,7 @@ def main(argv: list[str] | None = None) -> int:
              for s, c, g in df[["Sample", "sr_assembly_file", "sr_gff_file"]].itertuples(index=False)]
     with Pool(a.workers) as pool:
         rows = pool.map(reextract_one, tasks, chunksize=16)
-    report = pd.DataFrame(rows, columns=["Sample", "status", "n_before", "n_after"])
+    report = pd.DataFrame(rows, columns=["Sample", "status", "n_before", "n_after", "nonstandard"])
     a.report.parent.mkdir(parents=True, exist_ok=True)
     report.to_csv(a.report, index=False)
     kind = report["status"].str.split(":").str[0]
@@ -127,7 +138,11 @@ def main(argv: list[str] | None = None) -> int:
     if len(changed):
         delta = (changed["n_after"] - changed["n_before"]).value_counts().sort_index().to_dict()
         print(f"rewritten, protein count after − before: {delta}", flush=True)
-    return 1 if kind.eq("error").any() else 0
+    odd = report["nonstandard"].fillna("").ne("")
+    if odd.any():
+        print(f"FAIL: {int(odd.sum())} genomes hold residues outside {''.join(sorted(ALPHABET))}: "
+              f"{report.loc[odd, ['Sample', 'nonstandard']].head(10).values.tolist()}", flush=True)
+    return 1 if kind.eq("error").any() or odd.any() else 0
 
 
 if __name__ == "__main__":
