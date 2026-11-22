@@ -74,6 +74,32 @@ def test_summarise_reads_selects_paired_illumina_dna_and_pools_runs():
     assert "F" not in summarise_reads(cached, genome_size=6.6e6).index           # "no runs" sentinel is not a run
 
 
+def test_fallback_read_platforms_only_for_genomes_without_usable_illumina_reads():
+    runs = pd.DataFrame([
+        _run("A", "SRR1"), _run("A", "SRR2", platform="DNBSEQ"),               # Illumina wins; never pooled
+        _run("G", "SRR7", platform="DNBSEQ"), _run("G", "SRR8", platform="BGISEQ"),
+        _run("H", "SRR9", platform="DNBSEQ", layout="SINGLE", files=1),
+        _run("I", "SRR10", platform="ION_TORRENT"),
+        _run("J", "SRR11", platform="DNBSEQ", strategy="RNA-Seq"),
+    ])
+    before = summarise_reads(runs, genome_size=6.6e6)
+    assert "reads_platform" not in before.columns                             # without the option: as before
+    assert before.loc["G", "no_reads_reason"] == "other_strategy" and pd.isna(before.loc["G", "fastq_urls"])
+    r = summarise_reads(runs, genome_size=6.6e6, fallback_platforms=frozenset({"DNBSEQ", "BGISEQ"}))
+    pd.testing.assert_series_equal(r.loc["A", before.columns], before.loc["A"])  # an Illumina genome is unchanged
+    assert r.loc["A", "runs"] == "SRR1" and r.loc["A", "reads_platform"] == "ILLUMINA"
+    assert r.loc["G", "runs"] == "SRR7;SRR8" and r.loc["G", "reads_depth"] == 200.0
+    assert r.loc["G", "reads_platform"] == "BGISEQ;DNBSEQ"
+    assert r.loc["H", "no_reads_reason"] == "single_end_only" and pd.isna(r.loc["H", "reads_platform"])
+    assert r.loc["I", "no_reads_reason"] == "other_strategy"                  # a platform not named stays unusable
+    assert r.loc["J", "no_reads_reason"] == "rna_seq_only"
+    plan = plan_genome_sources(pd.DataFrame({
+        "Sample": ["A", "G"], "n_drugs_labelled": [2, 2], "genome_route": ["reads"] * 2,
+        "assembly_genotype": [None] * 2, "assembly_phenotype": [None] * 2, "reads_accession": [None] * 2}),
+        pd.DataFrame(columns=["atb_bytes", "atb_md5", "atb_last_modified"]), r, min_depth=10).set_index("Sample")
+    assert plan.loc["G", "source"] == "shovill" and plan.loc["G", "reads_platform"] == "BGISEQ;DNBSEQ"
+
+
 def _cohort():
     return pd.DataFrame({
         "Sample": ["inATB", "portal", "portal_reads", "reads", "shallow", "rna", "nolabel"],

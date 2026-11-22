@@ -26,6 +26,7 @@ from bacpredict.engine.genomes.reuse_built_genomes import (
     partition,
     read_built,
     read_shard_dirs,
+    replan_diff,
     scheme_mismatches,
     split_by_scheme,
 )
@@ -396,3 +397,26 @@ def test_bakta_plan_cli_and_status(tmp_path):
     assert "NOT final" in text and "BakRep roster: 1 genomes, 0 without an ingest status" in text
     assert "built here: 2 — ingest record 0, our run record 0, both 0, neither 2" in text
     assert "reused: 1 — ingest record 1" in text
+
+
+def test_replan_diff_names_every_moved_genome_and_refuses_an_unexpected_move(tmp_path):
+    old = pd.DataFrame({"Sample": ["A", "B", "C", "D"], "source": ["atb", "drop", "ncbi_gca", "shovill"],
+                        "drop_reason": [None, "other_strategy", None, None], "runs": [None, None, None, "R1"]})
+    new = old.assign(source=["atb", "shovill", "shovill", "shovill"], drop_reason=None,
+                     runs=[None, "R2", "R3", "R1"], reads_platform=[None, "DNBSEQ", "DNBSEQ", "ILLUMINA"])
+    changed, bad = replan_diff(old, new, {("drop", "shovill"), ("ncbi_gca", "shovill")})
+    assert changed.to_dict("index") == {"B": {"old": "drop", "new": "shovill"}, "C": {"old": "ncbi_gca", "new": "shovill"}}
+    assert bad.empty  # D: only a column the old manifest lacks is new
+    _, bad = replan_diff(old, new.assign(runs=[None, "R2", "R3", "R9"]), {("drop", "shovill"), ("ncbi_gca", "shovill")})
+    assert list(bad.index) == ["D"]  # a genome whose reads changed is not an allowed move
+    with pytest.raises(ValueError, match="other genomes"):
+        replan_diff(old, new.iloc[:3], set())
+    files = {k: _csv(tmp_path / f"{k}.csv", df) for k, df in
+             (("old", old), ("new", new), ("r1", pd.DataFrame({"Sample": ["X"]})), ("r2", pd.DataFrame({"Sample": ["Y"]})))}
+    base = ["replan-diff", "--old-manifest", str(files["old"]), "--new-manifest", str(files["new"]),
+            "--old-reused", str(files["r1"])]
+    main([*base, "--new-reused", str(files["r1"]), "--allow", "drop:shovill,ncbi_gca:shovill"])
+    with pytest.raises(SystemExit, match="not among"):
+        main([*base, "--new-reused", str(files["r1"]), "--allow", "drop:shovill"])
+    with pytest.raises(SystemExit, match="reused_genomes.csv changed"):
+        main([*base, "--new-reused", str(files["r2"]), "--allow", "drop:shovill,ncbi_gca:shovill"])

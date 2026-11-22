@@ -27,6 +27,8 @@ export GENOME_SIZE=6.6e6
 # build_pa_genomes.sh's references; collate checks they are the files §3.6's skani rows name
 export REFS="Pseudomonas aeruginosa	$REFDIR/GCF_000006765.1.fna.gz
 Pseudomonas paraeruginosa	$REFDIR/GCF_000017205.1.fna.gz"
+# DNBSEQ/BGISEQ paired reads are assembled where a genome has no usable Illumina run (David, 2026-11-22)
+export READ_FALLBACK_PLATFORMS=DNBSEQ,BGISEQ
 export SPECIES_MODE=target TARGET_SPECIES="Pseudomonas aeruginosa"
 export ATB_INDEX=$ROOT/raw/allthebacteria/assemblies_list_20261115
 exec bash "$(cd "$(dirname "$0")" && git rev-parse --show-toplevel)/src/bacpredict/engine/genomes/scripts/build_genomes_reusing_built.sh" "$@"

@@ -52,6 +52,9 @@ Subcommands:
     ``--array`` list (``0-4,7``); empty when every task has written. ``submit`` sends only these, so running it again
     fills gaps and never duplicates a task that finished, and a shard left by an earlier plan whose rows shifted is not
     mistaken for done.
+``replan-diff``
+    Before a re-plan is published (``build_genomes_reusing_built.sh replan``): every genome whose manifest row changed
+    must have moved between the source pairs ``--allow`` names, and ``reused_genomes.csv`` must be unchanged.
 ``status``
     Per scheme and source: array tasks written against those expected (names as ``submit`` takes them), the tasks
     holding a failed genome, genomes ok and failed; then CheckM2 lists, their reports, and the skani result.
@@ -374,6 +377,28 @@ def status(by_scheme: Path, shard_root: Path, qc_dir: Path) -> str:
     return "\n".join(lines)
 
 
+def replan_diff(old: pd.DataFrame, new: pd.DataFrame, allowed: set[tuple[str, str]]
+                ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """``(changed, disallowed)``: the genomes a re-plan moved, and those whose move ``allowed`` does not name.
+
+    ``changed`` holds the ``old`` and ``new`` source per Sample; a move is ``(old source, new source)``.
+    A row is changed if any column of the old manifest differs (columns only the new one has are ignored, e.g.
+    ``reads_platform``). Both manifests must hold the same genomes.
+    """
+    if set(old["Sample"]) != set(new["Sample"]) or old["Sample"].duplicated().any():
+        raise ValueError(f"the re-plan holds other genomes: {len(set(old['Sample']) - set(new['Sample']))} only in "
+                         f"the old, {len(set(new['Sample']) - set(old['Sample']))} only in the new")
+    if missing := sorted(set(old.columns) - set(new.columns)):
+        raise ValueError(f"the new manifest lacks columns of the old: {missing}")
+    o = old.set_index("Sample").fillna("")
+    n = new.set_index("Sample").loc[o.index, o.columns].fillna("")
+    moved = (o != n).any(axis=1)
+    changed = pd.DataFrame({"old": o.loc[moved, "source"], "new": n.loc[moved, "source"]})
+    ok = pd.Series([(a, b) in allowed for a, b in zip(changed["old"], changed["new"], strict=True)],
+                   index=changed.index, dtype=bool)
+    return changed, changed[~ok]
+
+
 # ---- Bakta: the annotation stage over the same split between genomes built here and genomes reused -------------------
 
 RUN_MODES = ("all", "planned", "refused")
@@ -595,6 +620,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     p.add_argument("--by-scheme", type=Path, required=True)
     p.add_argument("--shard-root", type=Path, required=True)
     p.add_argument("--qc-dir", type=Path, required=True)
+    p = sub.add_parser("replan-diff")
+    p.add_argument("--old-manifest", type=Path, required=True)
+    p.add_argument("--new-manifest", type=Path, required=True)
+    p.add_argument("--old-reused", type=Path, required=True)
+    p.add_argument("--new-reused", type=Path, required=True)
+    p.add_argument("--allow", required=True, help="old source:new source,… — the only moves the re-plan may make")
     p = sub.add_parser("bakta-plan")
     p.add_argument("--manifest", type=Path, required=True)
     p.add_argument("--shard-root", type=Path, required=True, help="the per-scheme shard directories' parent")
@@ -721,6 +752,24 @@ def main(argv: Sequence[str] | None = None) -> None:
               f"{s['Query_file'].nunique()} genomes with a skani hit")
     elif a.cmd == "status":
         print(status(a.by_scheme, a.shard_root, a.qc_dir))
+    elif a.cmd == "replan-diff":
+        allowed = {tuple(x.strip().split(":", 1)) for x in a.allow.split(",") if x.strip()}
+        if any(len(t) != 2 for t in allowed):
+            raise SystemExit(f"--allow {a.allow!r}: expected old:new,…")
+        old_r, new_r = (pd.read_csv(f, dtype=str) for f in (a.old_reused, a.new_reused))
+        if not old_r.equals(new_r):
+            raise SystemExit(f"reused_genomes.csv changed ({len(old_r)} → {len(new_r)} rows): an owner manifest moved")
+        try:
+            changed, bad = replan_diff(pd.read_csv(a.old_manifest, dtype=str), pd.read_csv(a.new_manifest, dtype=str),
+                                       allowed)
+        except ValueError as e:
+            raise SystemExit(str(e)) from e
+        print(f"re-plan: {len(changed)} genomes change source" + (":" if len(changed) else ""))
+        if len(changed):
+            print(changed.value_counts().to_string())
+        if len(bad):
+            raise SystemExit(f"{len(bad)} changes are not among {sorted(allowed)}, e.g. "
+                             f"{bad.head(5).reset_index().values.tolist()}: not published")
     elif a.cmd == "bakta-plan":
         manifest = pd.read_csv(a.manifest, dtype=str, usecols=["Sample", "source"])
         reused = pd.read_csv(a.reused, dtype=str, usecols=["Sample"])

@@ -2278,8 +2278,9 @@ Checks against §3.6's labels (`checks_vs_2026-07/`, scripts alongside):
 
 - **Drops:** PsA `other_strategy` 487 (DNBSEQ paired runs; Illumina runs with no `_1`/`_2` fastq pair), single-end 21,
   long-read 8, RNA-seq 3, < 10× 2. Enterobacterales `other_strategy` 644 (DNBSEQ/BGISEQ; Illumina `WCS`), single-end
-  172, long-read 75, < 10× 13, no runs and no assembly 2. **Whether DNBSEQ paired reads are assembled is asked of
-  David**; a yes is a re-plan (shovill rows shift, and `missing-tasks` reruns only the shifted tasks).
+  172, long-read 75, < 10× 13, no runs and no assembly 2. **DNBSEQ/BGISEQ paired reads are now assembled** (§6,
+  2026-11-22): a `replan` per cohort (PsA 414 drops → shovill; Enterobacterales 510 drops + 31 NCBI → shovill, once its
+  build arrays drain), the table above being the plan before it.
 - **NCBI listed every accession asked for** (1,620 of 1,620; 15,549 of 15,549; `ncbi_assembly_dirs.tsv`). Without the
   fallback the same plans dropped 2,141 PsA (38 %) and 16,455 Enterobacterales (32 %) genomes, carrying on average more
   labels than the kept (PsA 8.0 vs 6.4 drugs); those plans are kept as `genomes/_plan_pre_ncbi_20261121/`.
@@ -2362,8 +2363,8 @@ none.
      is never on v2's ingest roster, and goes to v2's run only if no annotation record of it exists at all; v2's
      collate then checks every cohort genome has exactly one current record. Submit refuses while an owner's Bakta job
      is live. **Cost:** ~1.1 core-h per genome of our run (§3.6's sacct) — PsA ~2,800 core-h; Enterobacterales ~24,000,
-     36 % of the 66,585 h left on `FLOTO-PROJECT-K-SL2-CPU` (`mybalance`, 2026-11-22). **Which account runs the
-     Enterobacterales array is asked of David** (`BAKTA_ACCOUNT=FLOTO-SL3-CPU` is free and low-priority).
+     36 % of the 66,585 h left on `FLOTO-PROJECT-K-SL2-CPU` (`mybalance`, 2026-11-22). **The Enterobacterales
+     array runs on `FLOTO-SL3-CPU` first** (§6, 2026-11-22: three days, then SL2 if it gets nowhere).
 3. **ESM-C** (bf16) into the shared `$AMR/processed/esm/` through a sample list. Reused genomes already have their
    `.pt` (§3.6), so only genomes built here are embedded.
 4. **Splits and training** — new split tables, retrained models, a second PsA baseline, every holdout read through
@@ -2593,6 +2594,9 @@ directory was consolidated. Several of these existed nowhere else.
 | 2026-11-21 | **CABBAGE v2 labels accepted as built** (David, on the §3.7 checks). Where v2 and §3.6 disagree on a label, v2's EUCAST v15 re-call of its own MIC stands — "a consistent MIC call to label any with EUCAST", as §3.6 did. The 273 §3.6-labelled genomes v2 does not label are ignored ("tiny … not going to change any results"). v2 disk tests with no R/S call give no label: CABBAGE's `Updated_phenotype_*` is not used ("I'd just drop them"). |
 | 2026-11-21 | **v2 genomes with no reads take the submitter's NCBI GenBank assembly** (David: "An NCBI assembly is adequate … use NCBI when no reads exist … better than throwing out that much data"). Source `ncbi_gca`, last in the order ATB → portal assembly → shovill → NCBI, so the even surface stays first wherever it is attainable; like `portal_gff` it is a submitter assembly. §3.6's planner had no such route because every §3.6 genome had reads or a portal assembly; ~17,500 v2 genomes (15,135 Enterobacterales, 1,392 PsA) have neither — no runs in ENA, and none in SRA for 12 of 12 checked. |
 | 2026-11-21 | **v2's held-out set contains §3.6's** (David: "v2 held out should include v1 and same sublineage. Yes."): the same held-out ST per species plus §3.6's random holdout, enforced with `--assert-same-as`, so v1 and v2 models are scored on common genomes. |
+| 2026-11-22 | **v2 assembles DNBSEQ/BGISEQ paired reads** (David: "DNBSEQ / BGSEQ - yes"), with shovill as for Illumina, but only for a genome with no usable Illumina run (`plan_genome_sources --fallback-read-platforms`, opt-in; §3.6's plans are unchanged). By the priority order this moves the genomes that dropped as `other_strategy` with such reads (PsA 414, Enterobacterales 510, all ≥ 10×) and 31 Enterobacterales genomes that had taken an NCBI assembly to `shovill`. Applied by `replan`, which publishes only if no other row moved. |
+| 2026-11-22 | **The Enterobacterales v2 Bakta run goes on the free `FLOTO-SL3-CPU` first** (David: "lets try the free SL3. See how much we get from it in the next 3 days and if none, will go SL2"). SL3 is QOS `cpu2`: 12 h wall, 448 cores per user at once, priority 1,000 against SL2's 5,000 (`sacctmgr show qos`). |
+| 2026-11-22 | **An ST is held out only where a species unit has ≥ 1,000 genomes, and the ST ≥ 50** (David: "we only hold out an ST if there will be at least 50 samples. We need at least 1000 samples from the species to make that even a concern"). Grouping a small genus into a unit matters only for that holdout, so no v2 minor genus needs one: the largest, *Serratia*, has 553 labelled genomes (v2 `cohort.csv`). |
 
 ### Invasion / lab collection
 

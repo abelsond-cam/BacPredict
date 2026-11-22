@@ -7,6 +7,13 @@
 #                               the rest with the NCBI fallback (genome_manifest.csv; ENA and NCBI queries — submit it
 #                               as a job), then one read-only manifest per MLST scheme (by_scheme/). Refuses if
 #                               by_scheme/ exists
+#   <wrapper> replan <tag> <old:new,…>
+#                               plan again over the cached ENA and NCBI answers (e.g. after READ_FALLBACK_PLATFORMS
+#                               changed): the old plan is kept in genomes/_plan_pre_<tag>/, and the new manifest is
+#                               published only if every row that changed moved between the source pairs named (e.g.
+#                               drop:shovill,ncbi_gca:shovill) and reused_genomes.csv is unchanged. Then `submit`:
+#                               missing-tasks reruns only the tasks whose rows moved, and a task's genomes already
+#                               built from their planned source are skipped
 #   <wrapper> submit [scheme|all] [atb|portal|ncbi|shovill|all] [indices]
 #                               one build array per scheme × source, the scheme pinned (none for `auto`), of the tasks
 #                               that have written no shard yet — so a re-run fills gaps and never duplicates a finished
@@ -41,6 +48,8 @@
 #                      cohort's skani references differ from the ones the owner's skani rows name)
 #   SPECIES_MODE       target (with TARGET_SPECIES) or report — as the owner's collate
 #   ATB_INDEX          the ATB S3 inventory folder
+#   READ_FALLBACK_PLATFORMS (optional) short-read platforms whose paired runs are usable for a genome with no usable
+#                      Illumina run (plan_genome_sources --fallback-read-platforms), e.g. DNBSEQ,BGISEQ
 # Arrays and QC jobs run from ARRAY_REPO, a detached worktree at the SHA to run (.venv symlinked to the shared env),
 # and refuse to start if its HEAD has moved (EXPECT_SHA).
 set -euo pipefail
@@ -116,11 +125,7 @@ checkm2_ready() {  # resolve and check everything a CheckM2 submission needs, be
     "$cbin/checkm2" --version >/dev/null || { echo "no working checkm2 in $cbin"; exit 1; }
 }
 
-case "${1:-}" in
-plan)
-    refuse_if_queued "$JOB-build" "re-planning would shift its rows"
-    owners_exist
-    [[ ! -e $BYS ]] || { echo "$BYS exists: the plan is frozen (array tasks take its rows by position)"; exit 1; }
+make_plan() {  # partition + plan_genome_sources → $GEN/.genome_manifest.csv.part, checked disjoint, not yet published
     mkdir -p "$GEN"
     reuse partition --cohort "$T/cohort.csv" --built $OWNER_MANIFESTS \
         --out-cohort "$GEN/cohort_to_plan.csv" --out-reused "$GEN/reused_genomes.csv"
@@ -129,12 +134,47 @@ plan)
         --cohort "$GEN/cohort_to_plan.csv" --atb-index "$ATB_INDEX"/*.csv.gz --genome-size "$GENOME_SIZE" \
         ${GENOME_SIZES:+--genome-size-by-genus "$GENOME_SIZES"} \
         ${GENOME_SIZES_BY_SPECIES:+--genome-size-by-species "$GENOME_SIZES_BY_SPECIES"} \
+        ${READ_FALLBACK_PLATFORMS:+--fallback-read-platforms "$READ_FALLBACK_PLATFORMS"} \
         --min-depth "$MIN_DEPTH" --prefer-reads --ena-cache "$GEN/ena_filereport_cache.tsv" \
-        --ncbi-fallback --ncbi-cache "$GEN/ncbi_assembly_dirs.tsv" --out "$GEN/genome_manifest.csv"
-    reuse check-disjoint --manifest "$GEN/genome_manifest.csv" --built $OWNER_MANIFESTS
+        --ncbi-fallback --ncbi-cache "$GEN/ncbi_assembly_dirs.tsv" --out "$GEN/.genome_manifest.csv.part"
+    reuse check-disjoint --manifest "$GEN/.genome_manifest.csv.part" --built $OWNER_MANIFESTS
+}
+publish_plan() {  # the manifest by rename (a reader sees the old file or the new, never half of one), then by_scheme/
+    mv -f "$GEN/.genome_manifest.csv.part" "$GEN/genome_manifest.csv"
+    chmod a-w "$GEN/genome_manifest.csv"
     reuse split-by-scheme --manifest "$GEN/genome_manifest.csv" --cohort "$T/cohort.csv" \
         --scheme-by-genus "$SCHEME_BY_GENUS" ${SCHEME_BY_SPECIES:+--scheme-by-species "$SCHEME_BY_SPECIES"} --out-dir "$BYS"
-    chmod a-w "$GEN/genome_manifest.csv"
+}
+
+case "${1:-}" in
+plan)
+    refuse_if_queued "$JOB-build" "re-planning would shift its rows"
+    owners_exist
+    [[ ! -e $BYS ]] || { echo "$BYS exists: the plan is frozen (array tasks take its rows by position); see replan"; exit 1; }
+    make_plan
+    publish_plan
+    ;;
+replan)  # replan <tag> <old:new,…>
+    tag=${2:?replan <tag> <old source:new source,…>}; allow=${3:?replan <tag> <old source:new source,…>}
+    [[ $tag =~ ^[A-Za-z0-9_]+$ ]] || { echo "tag $tag: letters, digits and _ only"; exit 2; }
+    refuse_if_queued "$JOB-build" "re-planning would shift its rows"
+    owners_exist
+    [[ -e $BYS && -s $GEN/genome_manifest.csv ]] || { echo "no plan to replace: use plan"; exit 1; }
+    old=$GEN/_plan_pre_$tag
+    [[ ! -e $old ]] || { echo "$old exists: choose another tag"; exit 1; }
+    mkdir "$old"
+    # genome_manifest.csv stays in place until the new one replaces it by rename: later cohorts' build tasks read it
+    # as an owner manifest. by_scheme/ is read only by this cohort's tasks, and none is queued
+    cp -p "$GEN/genome_manifest.csv" "$GEN/reused_genomes.csv" "$GEN/cohort_to_plan.csv" "$old/"
+    mv "$BYS" "$old/by_scheme"
+    make_plan
+    reuse replan-diff --old-manifest "$old/genome_manifest.csv" --new-manifest "$GEN/.genome_manifest.csv.part" \
+        --old-reused "$old/reused_genomes.csv" --new-reused "$GEN/reused_genomes.csv" --allow "$allow" || {
+        echo "new plan NOT published (still $GEN/.genome_manifest.csv.part). To restore the old one:" \
+             "mv $old/by_scheme $BYS; cp -p $old/reused_genomes.csv $old/cohort_to_plan.csv $GEN/"
+        exit 1; }
+    publish_plan
+    echo "old plan kept in $old; next: submit (only tasks whose rows moved run)"
     ;;
 submit)  # submit [scheme|all] [atb|portal|ncbi|shovill|all] [indices]
     want_scheme=${2:-all}; want_src=${3:-all}; idx=${4:-}

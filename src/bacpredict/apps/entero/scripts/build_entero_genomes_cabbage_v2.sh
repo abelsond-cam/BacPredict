@@ -54,6 +54,8 @@ export GENOME_SIZES_BY_SPECIES="Klebsiella aerogenes=4.9e6"
 [[ -s $E/qc/skani_dist.refs.tsv ]] || { echo "no §3.6 skani reference list at $E/qc/skani_dist.refs.tsv"; exit 1; }
 REFS=$(cat "$E/qc/skani_dist.refs.tsv")
 export REFS
+# DNBSEQ/BGISEQ paired reads are assembled where a genome has no usable Illumina run (David, 2026-11-22)
+export READ_FALLBACK_PLATFORMS=DNBSEQ,BGISEQ
 export SPECIES_MODE=report
 export ATB_INDEX=$ROOT/raw/allthebacteria/assemblies_list_20261115
 exec bash "$REPO/src/bacpredict/engine/genomes/scripts/build_genomes_reusing_built.sh" "$@"

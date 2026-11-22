@@ -11,6 +11,10 @@ genome should be a shovill assembly wherever that is attainable.
    genome so that choice can be made with numbers.
 3. ``shovill`` — no assembly we use exists: assemble the ENA reads. Only paired Illumina WGS/WGA runs are
    usable, pooled per BioSample, at ``>= --min-depth`` (``sum(base_count) / --genome-size``).
+   ``--fallback-read-platforms DNBSEQ,BGISEQ`` also makes paired WGS/WGA runs of those short-read platforms usable,
+   but only for a BioSample with no usable Illumina run, so every genome Illumina reads already cover is planned
+   exactly as without it; the manifest then gains ``reads_platform``. Added for CABBAGE v2 (``PROJECT_STATE.md``
+   §3.7, David 2026-11-22: assemble the DNBSEQ/BGISEQ genomes, ~920 of v2's drops).
 4. ``ncbi_gca`` — only with ``--ncbi-fallback``: a genome that would otherwise drop, whose AST record names a GenBank
    assembly (``assembly_phenotype``, e.g. ``GCA_025835955.1``), takes that assembly from NCBI's FTP
    (``genomes/all/GCA/…/<accession>_<name>/<accession>_<name>_genomic.fna.gz``). Like ``portal_gff`` it is a submitter
@@ -229,18 +233,24 @@ def ena_runs(samples: list[str], cache_path: Path, threads: int = 8) -> pd.DataF
     return cached[cached["query"].isin(samples)]
 
 
-def summarise_reads(runs: pd.DataFrame, genome_size: float | pd.Series) -> pd.DataFrame:
+def summarise_reads(runs: pd.DataFrame, genome_size: float | pd.Series,
+                    fallback_platforms: frozenset[str] | set[str] = frozenset()) -> pd.DataFrame:
     """Per BioSample: usable paired Illumina WGS/WGA runs pooled → depth and fastq URLs, or why there are none.
 
     ``genome_size`` is one size (bp) for every genome, or a Series of sizes indexed by BioSample.
+    ``fallback_platforms``: paired WGS/WGA runs of these platforms are usable for a BioSample with no usable Illumina
+    run (never pooled with Illumina runs), and a ``reads_platform`` column says which platform(s) a sample's usable
+    runs are on. Empty (the default), the output is exactly as before.
     """
     r = runs[runs["run_accession"].notna() & ~runs["run_accession"].isin([QUERY_FAILED, NO_RUNS])].copy()
     files = r["fastq_ftp"].fillna("").str.split(";")
     r["n_files"] = files.map(lambda f: sum(1 for x in f if x))
     # a paired run may also carry an unpaired file; keep only the _1/_2 pair
     r["pair"] = files.map(lambda f: [x for x in f if re.search(r"_[12]\.fastq\.gz$", x)])
-    r["usable"] = (r["instrument_platform"].eq("ILLUMINA") & r["library_layout"].eq("PAIRED")
-                   & r["library_strategy"].isin(USABLE_STRATEGIES) & r["pair"].map(len).eq(2))
+    paired = r["library_layout"].eq("PAIRED") & r["library_strategy"].isin(USABLE_STRATEGIES) & r["pair"].map(len).eq(2)
+    illumina = paired & r["instrument_platform"].eq("ILLUMINA")
+    has_illumina = illumina.groupby(r["query"]).transform("any").astype(bool)
+    r["usable"] = illumina | (paired & r["instrument_platform"].isin(fallback_platforms) & ~has_illumina)
     r["base_count"] = pd.to_numeric(r["base_count"], errors="coerce").fillna(0)
     out = {}
     for sample, g in r.groupby("query"):
@@ -258,7 +268,8 @@ def summarise_reads(runs: pd.DataFrame, genome_size: float | pd.Series) -> pd.Da
             out[sample] = {"runs": ";".join(u["run_accession"]), "fastq_urls": ";".join(urls),
                            "fastq_bytes": ";".join(byts), "fastq_md5": ";".join(mds),
                            "reads_depth": round(u["base_count"].sum() / _size(genome_size, sample), 1),
-                           "no_reads_reason": pd.NA}
+                           "no_reads_reason": pd.NA,
+                           "reads_platform": ";".join(sorted(u["instrument_platform"].unique()))}
             continue
         if g["library_strategy"].eq("RNA-Seq").all():
             why = "rna_seq_only"
@@ -269,8 +280,9 @@ def summarise_reads(runs: pd.DataFrame, genome_size: float | pd.Series) -> pd.Da
         else:
             why = "other_strategy"
         out[sample] = {"runs": pd.NA, "fastq_urls": pd.NA, "fastq_bytes": pd.NA, "fastq_md5": pd.NA,
-                       "reads_depth": np.nan, "no_reads_reason": why}
-    return pd.DataFrame.from_dict(out, orient="index")
+                       "reads_depth": np.nan, "no_reads_reason": why, "reads_platform": pd.NA}
+    res = pd.DataFrame.from_dict(out, orient="index")
+    return res if fallback_platforms else res.drop(columns="reads_platform", errors="ignore")
 
 
 def _size(genome_size: float | pd.Series, sample: str) -> float:
@@ -323,6 +335,8 @@ def plan_genome_sources(
     if genome_size is not None:
         c["genome_size"] = c["Sample"].map(genome_size)
         keep.append("genome_size")
+    if "reads_platform" in c.columns:  # only from summarise_reads(..., fallback_platforms)
+        keep.append("reads_platform")
     return c[keep].sort_values("Sample").reset_index(drop=True)
 
 
@@ -345,6 +359,9 @@ def main() -> None:
     ap.add_argument("--ncbi-fallback", action="store_true",
                     help="a genome that would drop takes its AST record's GenBank assembly from NCBI (source ncbi_gca)")
     ap.add_argument("--ncbi-cache", type=Path, default=None, help="NCBI FTP directory cache; required with --ncbi-fallback")
+    ap.add_argument("--fallback-read-platforms", default="",
+                    help="comma-separated short-read platforms (e.g. DNBSEQ,BGISEQ) whose paired runs are usable for a "
+                         "genome with no usable Illumina run")
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
 
@@ -369,7 +386,8 @@ def main() -> None:
         unmapped = genus[~genus.isin(by_genus)].value_counts()
         if len(unmapped):
             print(f"genera without a size (use --genome-size {args.genome_size:.3g}): {unmapped.to_dict()}")
-    reads = summarise_reads(runs, sizes if sizes is not None else args.genome_size)
+    fallback = frozenset(x.strip() for x in args.fallback_read_platforms.split(",") if x.strip())
+    reads = summarise_reads(runs, sizes if sizes is not None else args.genome_size, fallback)
     plan = plan_genome_sources(cohort, atb, reads, args.min_depth, args.prefer_reads, sizes)
     if args.ncbi_fallback:
         if args.ncbi_cache is None:
