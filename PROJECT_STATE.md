@@ -1,7 +1,15 @@
 # BacPredict — project state
 
-> **Last verified: 2026-11-22 @ `d6c3e05`** (branch `refactor/consolidate-engine`).
-> **Verification scope, a pass by the v2 agent (2026-11-22, tenth): §3.7 the PsA v2 genome collate and the BakRep
+> **Last verified: 2026-11-22 @ `0dd9f51`** (branch `refactor/consolidate-engine`).
+> **Verification scope, this pass (2026-11-22, eleventh): §3.6 duplicate isolates in KpSC and PsA, and what the
+> splits builder does with `--exclude`/`--groups`.** Read on CSD3: `enterobacterales/genomes/genome_qc.csv` for the
+> exact `(total_length, n_contigs, n_cds)` collisions, then every candidate pair's contigs re-read from
+> `raw/contigs/` and hashed sequence-only (headers stripped, orientation canonicalised); the ten
+> `paeruginosa/splits/<drug>_split.csv` for where the two PsA candidate pairs actually sit. The builder's re-draw
+> behaviour read from `build_amr_holdout_splits.py`. **No list was written and no split table was built or
+> rebuilt**; the duplicate policy is still open with David.
+>
+> **Verification scope, the pass before (2026-11-22, tenth): §3.7 the PsA v2 genome collate and the BakRep
 > coverage of both v2 plans only.** Read on CSD3: `paeruginosa_cabbage_v2/genomes/{genome_qc,embedding_input,
 > reused_genomes,genome_manifest}.csv` (collated at `d6c3e05`), `reuse_built_genomes status` for both cohorts, sacct of
 > the v2 CheckM2 and skani jobs, and BakRep's export joined to both v2 `genome_manifest.csv`. **Nothing else was
@@ -2051,6 +2059,45 @@ reads — the single-species arms, the cross-species arm and CABBAGE v2 (§3.7).
 Later: the AMR-GNN-cut benchmark, ANI thinning, and causal attribution of the predictions.
 
 **Caveats.**
+- **Duplicate isolates — measured, policy still open with David.** The PsA arm's two filter files are different
+  things and must not be read as one: `apps/pa/excluded_genomes.tsv` (15) is an **assembly-quality** exclusion (the
+  Ecuador block below), and `apps/pa/duplicate_isolate_groups.csv` (3 groups) is the only duplicate artifact. Both
+  were hand-written in `986813e`; **no script produced either and no document records the duplicate criterion.** It
+  re-derives exactly as an exact match on the portal phenotype table's `isolate` column, which is consistent but
+  unproven.
+  - **KpSC holds 3 pairs of bit-identical assemblies.** Exact `(total_length, n_contigs, n_cds)` collision in
+    `enterobacterales/genomes/genome_qc.csv` gives 3 groups / 6 genomes, and all three are identical sequence —
+    verified by re-reading `raw/contigs/*.fna.gz` and hashing contigs with headers stripped and orientation
+    canonicalised: SAMN04014892/SAMN04448224 (197 contigs, 5,375,650 bp), SAMN12738924/SAMN12738928 (10,
+    5,737,703), SAMN11953933/SAMN11953937 (167, 6,132,443). Every pair carries **conflicting names**
+    (`FDA-CDC-AR_0051` vs `6`; `AR_0613` vs `AR_0617`; `Kp10` vs `Kp33`) and different WGS projects, so no name or
+    provenance screen can see them. 3 hits, 3 confirmed, 0 false positives.
+  - **The `n_cds` term is load-bearing**: SAMN06437650/SAMN06438666 match on length and contig count but share only
+    5 of 142 contigs. A length+contigs screen would have called them duplicates.
+  - **A file checksum can never find these.** `contigs_md5` and `atb_md5` hash the gzipped file, and every contig
+    header embeds the BioSample (`>SAMD00061218.contig00001 … src=atb`), so all 9,095 KpSC `atb_md5` are distinct
+    by construction (`build_genomes.py:179-184`).
+  - **The two metadata screens do not discriminate in KpSC.** Shared strain/isolate names: 83 groups / 311 genomes,
+    but **307 of the 311 are generic labels** — ST numbers used as a strain name (213), bare integers (75), the
+    literal `Klebsiella pneumoniae` (19); only 4 genomes share a specific name and a single ST. Provenance keys
+    (study × date × country × host × source): 93 % of the 6,034 genomes with a complete key fall in a shared group,
+    and the 65 single-ST groups sit inside a study × year × country permutation null of 55.5 (95 % 48–65). Applied
+    to PsA that key flags 400 genomes and co-groups **0 of the 3 known CDC pairs**.
+  - **ANI cannot rule a pair *in*.** skani scores a genome against itself at 99.99, and 1,076 of 4,950 random
+    KpSC ST258 pairs score ≥ 99.98. In a clonal cohort near-identity is the background, so ANI can only rule out.
+  - **Two findings in §3.6's own PsA tables.** `MRSN 20176`/`MRSN20176` (SAMN03316892, SAMN09788414 — both ST316,
+    24 vs 290 contigs) sit in **holdout and train respectively for five drugs** (aztreonam, ceftazidime,
+    levofloxacin, meropenem, piperacillin-tazobactam) in the live ST155 tables: the exact-match criterion missed
+    them on one space. At 1 genome of a 716-genome holdout this is below anything that moves a reported number, and
+    rebuilding would re-draw all ten tables, so **array `41605929` was left to run**. Separately,
+    SAMN03105472/SAMN03105661 are **identical sequence** (50 contigs, 6,380,431 bp) with **opposite AST calls for
+    meropenem and levofloxacin**; both are in train, so no leak, but one of the two labels is wrong.
+  - ⛔ **An `--exclude` or `--groups` list re-draws the whole split, not just the listed genomes** — the builder
+    permutes the post-exclusion pool, so its contents and its length both change (`build_amr_holdout_splits.py`
+    L396 → L430 → L311-313; the repo's own test asserts it at `test_build_amr_holdout_splits.py:212-215`).
+    Measured on a synthetic 9,370-genome unit: ~0.50 of the rest keep their split after excluding one
+    early-sorting genome, ~0.64 after adding three two-member groups. **So the policy must be fixed before an
+    arm's tables are built.** `$AMR/processed/kpsc/splits` does not exist yet, so for the Kp arm it is still free.
 - **Low-depth MiSeq 2×300 reads assemble to a fraction of a genome under shovill's defaults** — measured
   across the cohort, all in one study (Cortes-Lara et al. 2021): of the 18 shovill genomes under 30×, 12
   fail completeness and 1 fails to build; all 14 shovill completeness failures are this study, at
