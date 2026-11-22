@@ -1,7 +1,8 @@
 # BacPredict — project state
 
-> **Last verified: 2026-11-22 @ `73da407`** (branch `refactor/consolidate-engine`).
-> **Verification scope, this pass (2026-11-22, eleventh): §3.6 duplicate isolates in KpSC and PsA, and what the
+> **Last verified: 2026-11-22 @ `19065b7`** (branch `refactor/consolidate-engine`).
+> **Verification scope, this pass (2026-11-22, eleventh): §3.6 the ESM-C completion, duplicate isolates across all
+> three cohorts, and what the
 > splits builder does with `--exclude`/`--groups`.** Read on CSD3: `enterobacterales/genomes/genome_qc.csv` for the
 > `(total_length, n_contigs)` collisions, then every candidate pair's contigs re-read from `raw/contigs/` and
 > hashed sequence-only (headers stripped, orientation canonicalised); the ten `paeruginosa/splits/<drug>_split.csv`
@@ -1902,9 +1903,14 @@ genome sizes, `--prefer-reads`, min depth 10×, a fresh ENA cache):
   measure of how much the artefact was hiding. **There is no *E. coli* ST37** under any scheme.
   *S. sonnei* and *S. flexneri* admit no ST holdout at all: ST152 is 97 % of *S. sonnei* and ST245 is 84 % of
   *S. flexneri*, so holding either out is a species holdout.
-- **ESM-C array** (job `41596846`, submitted 2026-11-21): 58,675 genomes (`genomes/esm_samples_to_embed.txt`, md5
-  `a5bd7804…`; the cohort minus the 8,651 linked), 196 tasks of ≤ 300, 4 h wall each, bf16, `--max-proteins 9000`.
-  Expected ~13 s per genome at PsA's 2.8 ms per protein and ~4,800 proteins, so ~70 min per task and ~210 A100-h.
+- **ESM-C: COMPLETE.** Array `41596846` (58,675 genomes, `genomes/esm_samples_to_embed.txt` md5 `a5bd7804…` — the
+  cohort minus the 8,651 linked; 196 tasks of ≤ 300, bf16, `--max-proteins 9000`): **all 196 COMPLETED**, longest
+  task 00:42:53, peak 3,722 MB. `check_cohort_store` (job `41632894`) then found **all 67,326 cohort genomes have
+  an embedding** (8,651 of them symlinks into the older Kp store) with **0 rows in `problems.csv`** — protein
+  counts, contig counts and shapes all agree. Sampled dtypes are `bfloat16` for files and `float32` for links,
+  which is the expected split: the linked store holds bf16 values in an fp32 container, and `datasets.py:54-65`
+  casts everything to fp32 at load, so model precision comes from `--precision`, not from the store.
+  **All 9,370 `kpsc` genomes now have a `.pt`**, so the Klebsiella arm's embedding gate is cleared.
 
 **Numbers of record — BakRep coverage.** BakRep v2 serves AllTheBacteria's own Bakta run (Bakta 1.9.4, full
 DB v5.1, over ATB release 0.2 + the 2024-08 increment). Read from
@@ -2079,6 +2085,13 @@ Later: the AMR-GNN-cut benchmark, ANI thinning, and causal attribution of the pr
     `shovill` 155 and holds **no `ncbi_gca` genome at all**, which is why it yields 5 pairs in 67,326 while v2's
     PsA yields 12 in 8,643 (§3.7): 11 of v2's 12 are NCBI GenBank deposits of one isolate under two GCAs. Any
     arm that takes NCBI assemblies should expect a different order of magnitude.
+  - **What grouping them would be worth, measured — under one genome per drug.** For a pair, the chance of
+    straddling a random 80/20 draw is 2 × 0.2 × 0.8 = 0.32. The three `kpsc` pairs are labelled on both members
+    for 1–3 drugs each, so the expected number of holdout genomes whose twin is in train runs **0.32–0.96 per
+    drug — 0.044 % (levofloxacin) to 0.109 % (imipenem) of that drug's holdout** (`binary_ast.csv` × the screen's
+    report). **So grouping is hygiene, not a measurable correction**: it will not move any reported number. What
+    makes it worth doing *now* rather than later is only that no `kpsc` table exists yet, so it is free today and
+    costs a full re-draw after the tables are built.
   - ⚠ **An identical genome pair can carry contradictory labels.** `kpsc` SAMN11953933/SAMN11953937 are the same
     sequence and are labelled on all ten drugs, disagreeing on **meropenem and imipenem**; PsA's
     SAMN03105472/SAMN03105661 disagree on meropenem and levofloxacin; 4 of v2's 12 disagree somewhere (§3.7).
