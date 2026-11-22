@@ -2518,8 +2518,9 @@ from worktrees at `86fd4f7`/`6cadddc`, 2026-11-22).
   each is one protein short of CDS − pseudogenes. All 27 are NCBI GenBank assemblies with our Bakta run; their
   contigs carry IUPAC ambiguity codes (R, Y, M), and in each one CDS has an ambiguous codon that Biopython translates
   as a stop (e.g. `TRA`), so the extractor drops that CDS under its internal-stop rule. Bakta's own `.faa` writes
-  `X` there and keeps the protein. §3.6 never met this (no NCBI assemblies). **Held back** from the pre-QC cohort
-  pending David's choice (*Next* 3): `HOLD=genomes/esm_hold_ambiguous_codons.csv` (that problems.csv, copied to
+  `X` there and keeps the protein. §3.6 never met this (no NCBI assemblies). **David chose `X` (§6, 2026-11-22)**;
+  both arrays (`41647810`, `41650067`) were cancelled before any genome was embedded (PsA task 0 ran 6 min, wrote no
+  `.pt`), so nothing was embedded under the old reading. Until then the 27 were held back from the pre-QC cohort: `HOLD=genomes/esm_hold_ambiguous_codons.csv` (that problems.csv, copied to
   project_k) with `ANNOTATED_FROM` the first cohort (kept as `genomes/bakta/preqc_annotated_20261122_1121.csv`) →
   `preqc_annotated.csv` md5 `44be1fde…`, **30,488** → collate (job `41647929`) → `bakta_annotation_preqc_annotated.csv`
   md5 `c645abc7…` → **check-proteins PASS 30,488/30,488** (job `41649101`).
@@ -2548,13 +2549,13 @@ refuted) — the same 12 as before the DNBSEQ genomes joined.
   `--assert-same-as` against §3.6's PsA tables behaves with it before the v2 PsA splits are built.
 
 **In flight.**
-- **PsA:** **ESM-C array `41647810`** (`FLOTO-SL2-GPU`, 18 tasks of ≤ 299: the 5,367 genomes built here,
-  `genomes/esm_samples_to_embed.txt` md5 `19cd6df2…`); then `check`. Bakta finished (arrays `41621246`, `41624615`,
+- **PsA:** ESM-C array `41647810` cancelled for the ambiguous-codon re-extraction (§6); `reextract` → check-proteins
+  → submit again. Bakta finished (arrays `41621246`, `41624615`,
   `41644190`, SL2, 0 failed). **DNBSEQ re-plan** (`replan dnbseq drop:shovill,ncbi_gca:shovill` at `5fdd783`: exactly 414 drop → shovill, nothing else moved;
   old plan in `genomes/_plan_pre_dnbseq/`).
-- **Enterobacterales ESM-C, pre-QC cohort:** array `41650067` (`FLOTO-SL2-GPU`, 69 tasks of ≤ 297: 20,452 genomes,
-  `genomes/esm_samples_to_embed.txt` md5 `67cb28ec…`); then `check`. Re-run `annotated` → collate → proteins →
-  check-proteins → link-kp → submit as the SL3 Bakta runs finish.
+- **Enterobacterales ESM-C, pre-QC cohort:** array `41650067` (20,452 genomes) cancelled for the same
+  re-extraction; `annotated` (no hold) → collate → proteins → `reextract` → check-proteins → link-kp → submit, and
+  again as the SL3 Bakta runs finish.
 - **Enterobacterales:** the first build round ended with 640 genomes failed: 374 NCBI genomes on six nodes whose
   `/tmp` was full (mlst's temporary FASTA; fixed at `379d415` — v2 build tasks take a node-local `TMPDIR`), 253 NCBI
   503s, 13 fastq downloads truncated or mis-sized, 1 Prodigal error. **DNBSEQ re-plan** at `379d415`: exactly 510
@@ -2617,13 +2618,10 @@ refuted) — the same 12 as before the DNBSEQ genomes joined.
      on: a run task skips a genome whose run is current) → `bakta_annotation_preqc_annotated.csv` → proteins →
      check-proteins → link-kp (the Kp ESM-C store, as §3.6) → submit. Re-run as Bakta completes, then once more on the
      post-QC cohort (`ANNOTATION=bakta_annotation_embedding_input_unfiltered.csv`); submit embeds only genomes with no `.pt`.
-   - **For David — IUPAC ambiguity codes in NCBI GenBank contigs** (27 genomes held back so far, *Numbers of record*):
-     (a) keep §3.6's extractor rule, so the CDS whose ambiguous codon reads as a stop is dropped and the check is
-     taught to expect it; or (b) translate every codon holding a non-ACGT base as `X`, as Bakta's own `.faa` does,
-     which keeps the protein. (b) changes the shared extractor, so e7 must agree; it leaves §3.6's stores unchanged
-     only if none of §3.6's contigs carry such codes, which is unchecked. Either way the extractor also writes
-     Biopython's `B`/`Z`/`J` for an ambiguous codon that is not a stop, where Bakta writes `X` (seen in
-     SAMN10187602). Whether ESM-C's tokenizer has a `J` is unchecked.
+   - **Ambiguous codons → `X`** (§6, 2026-11-22): the driver's `proteins` passes `--ambiguous-codons-as-x`, and
+     `reextract` rewrites any v2 parquet written before it whose proteins change (reused genomes excluded). Then
+     check-proteins, link-kp (only genomes still without a `.pt`) and submit again, for both cohorts; the 27 rejoin
+     the Enterobacterales cohort.
 4. **Splits and training** — new split tables, retrained models, a second PsA baseline, every holdout read through
    `engine.splits.load_splits` only. **The lineage holdout is §3.6's, under the same ≤ 5 % cap:** PsA **ST155**
    (replacing ST235 — David, 2026-11-21, relayed by the §3.6 agent; §3.6 records it); Enterobacterales *E. coli* ST10,
@@ -2857,6 +2855,7 @@ directory was consolidated. Several of these existed nowhere else.
 | 2026-11-22 | **An ST is held out only where a species unit has ≥ 1,000 genomes, and the ST ≥ 50** (David: "we only hold out an ST if there will be at least 50 samples. We need at least 1000 samples from the species to make that even a concern"). Grouping a small genus into a unit matters only for that holdout, so no v2 minor genus needs one: the largest, *Serratia*, has 553 labelled genomes (v2 `cohort.csv`). |
 | 2026-11-22 | **One genome of each byte-identical duplicate pair is deleted** (David: "just delete one of each of duplicates. keep it simple. You are talking about tiny numbers."). The pairs are `engine/genomes/find_duplicate_assemblies`' confirmed groups; the lexicographically later Sample is kept (§3.6: 5 Enterobacterales genomes, `apps/entero/excluded_genomes.tsv`; §3.6 PsA's one pair, both in train, left as it is). v2 applies the same rule to its own screens (PsA: 12 pairs). |
 | 2026-11-22 | **All v2 GPU work runs on `FLOTO-SL2-GPU`** (David: "The work is too important for the lab. Just run SL2 for all GPU work." — in his experience SL3 never picks up GPU jobs). SL3 is tried only for the Enterobacterales Bakta CPU array, which would cost ~£240 on SL2 (~24,000 core-h at ~£0.01), because SL3 does sometimes pick up CPU work. ESM-C starts on every v2 genome that already has its Bakta annotation, without waiting for the rest. |
+| 2026-11-22 | **v2 translates every codon holding a base other than A, C, G or T as `X`**, as Bakta's own `.faa` does (David: "b) is fine. so few that it doesn't matter."). NCBI GenBank contigs carry IUPAC ambiguity codes; Biopython resolves an ambiguous codon where it can (`ACY` → T, `RAY` → B) and reads `TRA` as a stop, so the extractor's internal-stop rule dropped that CDS (27 Enterobacterales genomes, one protein each). `extract_proteins_from_gff_fna(ambiguous_codons_as_x=True)` / `--ambiguous-codons-as-x`, opt-in: §3.6's stores and drivers are unchanged. v2's parquets written before it are brought up to it by `reextract_proteins`, which rewrites only those that change. |
 
 ### Invasion / lab collection
 

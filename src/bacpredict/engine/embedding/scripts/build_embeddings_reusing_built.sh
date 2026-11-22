@@ -3,6 +3,8 @@
 # cohort built to that cohort's own embedding. Run it through a cohort wrapper, from a CSD3 login node:
 #
 #   ARRAY_REPO=<worktree> <wrapper> proteins        CPU job: the cohort's genomes → protein parquets (shared store)
+#   ARRAY_REPO=<worktree> <wrapper> reextract       CPU job: re-extract the genomes built here, rewriting a parquet
+#                                                   only where its proteins differ (after an extractor setting changed)
 #   ARRAY_REPO=<worktree> <wrapper> check-proteins  CPU job: every cohort parquet holds its GFF3's proteins
 #   ARRAY_REPO=<worktree> <wrapper> link-kp         CPU job: Kp-store .pt linked in where they match (LINK_GENUS)
 #   ARRAY_REPO=<worktree> <wrapper> submit          GPU array: the genomes built here with no .pt yet → esm/
@@ -19,6 +21,10 @@
 #   array then takes only those still without a .pt.
 # - A reused genome (genomes/reused_genomes.csv) is its owner's: never on this cohort's array or link list. check
 #   still requires its .pt, so a reused genome its owner never embedded fails check rather than being embedded here.
+# - Ambiguous codons (David, 2026-11-22, PROJECT_STATE §6): every codon holding a base other than A, C, G or T is
+#   translated as X, as Bakta's .faa does (--ambiguous-codons-as-x). v2's NCBI GenBank assemblies carry IUPAC codes;
+#   under §3.6's setting Biopython read some as stops and the CDS was dropped. reextract brings parquets written
+#   before the setting up to it, touching only those that change; check-proteins must pass again after it.
 # - Every job, CPU ones too, runs from ARRAY_REPO (a detached worktree at the SHA to run, .venv symlinked to the
 #   shared env), refuses to start if its HEAD moved or a tracked file is modified, and takes TMPDIR on node-local
 #   /local (/tmp was full on some icelake nodes). submit refuses unless ARRAY_REPO's array code is this checkout's.
@@ -132,6 +138,13 @@ proteins_passed() {
     [[ $have == "$want" ]] || {
         echo "$COHORT has changed since the latest check-proteins ($last) passed: run check-proteins again"; exit 1; }
     PROTEINS_PASS=$last/problems.csv.pass  # kp_linked dates the link-kp run against it
+    # a reextract rewrites parquets in place, leaving the cohort table (so its md5) as it was
+    local rx last_rx
+    rx=("$LOGS"/${JOB}_protein_reextract_*)
+    last_rx=${rx[${#rx[@]}-1]}
+    [[ ! -d $last_rx || $PROTEINS_PASS -nt $last_rx ]] || {
+        echo "parquets were re-extracted ($last_rx) after the latest check-proteins passed: run check-proteins again"
+        exit 1; }
 }
 
 # kp_linked (after proteins_passed): with LINK_GENUS set, refuse unless the latest link-kp ran to completion after
@@ -242,8 +255,25 @@ proteins)
         --output="$run_dir/%x_%j.out" --error="$run_dir/%x_%j.err" \
         --wrap="$(pin_guard "$ar") PYTHONUNBUFFERED=1 uv run --project $ar --no-sync \
 python -m bacpredict.engine.embedding.preprocess_assemblies_to_protein_sequences --input-csv $COHORT \
---output-dir $PROT --workers $cpus --skip-existing"
+--output-dir $PROT --workers $cpus --skip-existing --ambiguous-codons-as-x"
     echo "cohort: $COHORT, $(($(wc -l < "$COHORT") - 1)) genomes; logs: $run_dir"
+    ;;
+reextract)
+    ar=$(pinned) || exit 1
+    need_cohort
+    # nothing else may write these parquets meanwhile; an array or link job reading them would race the rewrite
+    n=$(live "^$JOB-(protein-sequences|protein-reextract|esm-embeddings|esm-link-kp)\$")
+    (( n == 0 )) || { echo "a $JOB protein, array or link-kp job is queued or running"; exit 1; }
+    run_dir=$LOGS/${JOB}_protein_reextract_$(date +%Y%m%d_%H%M%S); mkdir -p "$run_dir"
+    # as proteins (every genome is extracted again, then compared): ~26 min per 68k genomes at 32 cores
+    cpus=${PROT_CPUS:-32}
+    submit --account=$ACCOUNT --partition=${PROT_PARTITION:-icelake} --cpus-per-task=$cpus \
+        --mem=${PROT_MEM:-96G} --time=${PROT_TIME:-01:00:00} --job-name="$JOB-protein-reextract" --chdir="$run_dir" \
+        --output="$run_dir/%x_%j.out" --error="$run_dir/%x_%j.out" \
+        --wrap="$(pin_guard "$ar") PYTHONUNBUFFERED=1 uv run --project $ar --no-sync \
+python -m bacpredict.engine.embedding.reextract_proteins --input-csv $COHORT --exclude $REUSED --output-dir $PROT \
+--ambiguous-codons-as-x --workers $cpus --report $run_dir/reextract.csv"
+    echo "cohort: $COHORT (reused genomes excluded); report: $run_dir/reextract.csv; then check-proteins"
     ;;
 check-proteins)
     check_job check-proteins
@@ -305,5 +335,5 @@ check)
     check_job check --esm-dir "$ESM"
     ;;
 *)
-    sed -n '2,9p' "$0"; exit 2 ;;
+    sed -n '2,11p' "$0"; exit 2 ;;
 esac

@@ -51,6 +51,28 @@ _GBFF_SUFFIXES = (".gbff", ".gbff.gz")
 # whose translations already start with M.
 _BACTERIAL_INITIATORS = frozenset({"ATG", "GTG", "TTG", "CTG", "ATT", "ATC", "ATA"})
 
+# Any base that is not A, C, G or T: an IUPAC ambiguity code (R, Y, M, …) or N. GenBank assemblies carry them.
+_NON_ACGT = re.compile(r"[^ACGT]")
+
+
+def _ambiguous_codons_to_x(nt: str, protein: str) -> tuple[str, int]:
+    """Write ``X`` at every residue whose codon holds a base other than A, C, G or T, as Bakta's ``.faa`` does.
+
+    Biopython resolves an ambiguous codon where it can: ``ACY`` → ``T`` (both readings are Thr), ``GAY`` →
+    ``B`` (Asp or Asn), and ``TRA`` → ``*`` (TAA or TGA, both stops). The last makes the internal-stop filter
+    drop a CDS the annotator called through the ambiguity; ``B``, ``Z`` and ``J`` are not residues. ``nt`` is the
+    in-frame coding sequence ``protein`` was translated from (after phase and the trailing partial codon are
+    trimmed), and ``protein`` has had its terminal stop removed, so a codon past its end is that stop and is left.
+    Returns ``(protein, n_codons_written_as_X)``.
+    """
+    codons = sorted({m.start() // 3 for m in _NON_ACGT.finditer(nt.upper())} - set(range(len(protein), len(nt))))
+    if not codons:
+        return protein, 0
+    residues = list(protein)
+    for k in codons:
+        residues[k] = "X"
+    return "".join(residues), len(codons)
+
 
 def is_gff_path(path: str | Path) -> bool:
     """Return True if `path` ends with a GFF/GFF3 extension (gzipped or not)."""
@@ -445,6 +467,7 @@ def extract_proteins_from_gff_fna(
     translation_table: int = 11,
     keep_internal_stop: bool = False,
     recode_transl_except: bool = True,
+    ambiguous_codons_as_x: bool = False,
     annotate_amr: bool = False,
     amr_ref_dir: str | Path | None = None,
     minimap2_bin: str = "minimap2",
@@ -468,6 +491,11 @@ def extract_proteins_from_gff_fna(
         reproduce a *historical* protein order — e.g. regenerating the Kp
         protein-sequence parquets so their flat index still aligns 1:1 with
         embeddings generated before the internal-stop skip was added.
+    ambiguous_codons_as_x : bool, default False
+        Translate every codon holding a base other than A, C, G or T (an IUPAC ambiguity code or N) as ``X``, as
+        Bakta's own ``.faa`` does (:func:`_ambiguous_codons_to_x`), before the internal-stop filter. Off by default,
+        which keeps every existing store's proteins; on for CABBAGE v2, whose NCBI GenBank assemblies carry such
+        codes (PROJECT_STATE §6, 2026-11-22). Only genomes with a non-ACGT base inside a CDS differ.
     annotate_amr : bool, default False
         Also ``minimap2``-align the vendored Kleborate AMR references against
         ``fna_path`` and attach allele-level labels to overlapping CDS (see the
@@ -510,6 +538,7 @@ def extract_proteins_from_gff_fna(
     n_recoded_exceptions = 0
     n_declared_exceptions_not_applied = 0
     n_skipped_missing_contig = 0
+    n_ambiguous_codons = 0
 
     with _open_text(gff_path) as handle:
         for line in handle:
@@ -576,6 +605,9 @@ def extract_proteins_from_gff_fna(
                 )
                 n_recoded_exceptions += _rec
                 n_declared_exceptions_not_applied += _skip
+            if ambiguous_codons_as_x:
+                protein, _amb = _ambiguous_codons_to_x(str(nt), protein)
+                n_ambiguous_codons += _amb
             if "*" in protein and not keep_internal_stop:
                 n_skipped_internal_stop += 1
                 continue
@@ -617,6 +649,8 @@ def extract_proteins_from_gff_fna(
             n_skipped_internal_stop,
             n_skipped_missing_contig,
         )
+    if n_ambiguous_codons:
+        logger.info("Ambiguous codons written as X: %d", n_ambiguous_codons)
     # ⚠ Reported even when zero. A silent recoder is indistinguishable from one that never ran, and the
     # whole reason this defect survived is that nothing ever counted it. `not_applied` non-zero means the
     # annotator declared an exception this code did not write -- a coordinate convention to look at, not

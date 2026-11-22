@@ -265,3 +265,24 @@ def test_path_extension_helpers() -> None:
     assert is_gbff_path("a/b.gbff")
     assert is_gbff_path("a/b.gbff.gz")
     assert not is_gbff_path("a/b.gff")
+
+
+def test_extract_proteins_ambiguous_codons(tmp_path: Path) -> None:
+    """An ambiguity code: Biopython's resolution by default; X with ambiguous_codons_as_x, as Bakta writes it."""
+    gff = tmp_path / "sample.gff"
+    fna = tmp_path / "sample.fna"
+    # c1: ATG-ACY-RAY-AAA-TAA → default M T B K (ACY: Thr either way; RAY: Asn or Asp); as X: M X X K
+    # c2: ATG-TRA-AAA-TAR     → default the TRA reads as a stop (TAA/TGA) and the CDS is dropped; as X: M X K (the
+    #     ambiguous terminal TAR is the stop either way, so it adds no residue)
+    # c3: ATG-AAR-AAA-TAA on the minus strand → default M K K (AAR: Lys either way); as X: M X K
+    gff.write_text(
+        "##gff-version 3\n"
+        "c1\tprodigal\tCDS\t1\t15\t.\t+\t0\tID=a\n"
+        "c2\tprodigal\tCDS\t1\t12\t.\t+\t0\tID=b\n"
+        "c3\tprodigal\tCDS\t1\t12\t.\t-\t0\tID=c\n"
+    )
+    fna.write_text(">c1\nATGACYRAYAAATAA\n>c2\nATGTRAAAATAR\n>c3\nTTATTTYTTCAT\n")
+    default = extract_proteins_from_gff_fna(gff, fna)
+    assert default["protein_sequence"] == [["MTBK"], ["MKK"]]  # c2 dropped
+    as_x = extract_proteins_from_gff_fna(gff, fna, ambiguous_codons_as_x=True)
+    assert as_x["protein_sequence"] == [["MXXK"], ["MXK"], ["MXK"]]

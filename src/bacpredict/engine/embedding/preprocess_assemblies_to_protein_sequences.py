@@ -78,7 +78,7 @@ def save_to_parquet(data_dict: dict, output_path: Path) -> None:
 
 
 def _extract_genome_info(sample_id: str, sr_assembly_file: str, sr_gff_file: str,
-                         *, keep_internal_stop: bool = False) -> dict:
+                         *, keep_internal_stop: bool = False, ambiguous_codons_as_x: bool = False) -> dict:
     """Dispatch to the correct extractor based on the `sr_gff_file` extension."""
     if sr_gff_file and is_gff_path(sr_gff_file):
         if not sr_assembly_file:
@@ -87,7 +87,8 @@ def _extract_genome_info(sample_id: str, sr_assembly_file: str, sr_gff_file: str
                 "GFF+FNA extractor needs both."
             )
         return extract_proteins_from_gff_fna(
-            sr_gff_file, sr_assembly_file, keep_internal_stop=keep_internal_stop
+            sr_gff_file, sr_assembly_file, keep_internal_stop=keep_internal_stop,
+            ambiguous_codons_as_x=ambiguous_codons_as_x,
         )
     if sr_gff_file and is_gbff_path(sr_gff_file):
         return preprocess_genome_assembly(filepath=str(sr_gff_file))
@@ -107,7 +108,8 @@ def process_single_genome(args_tuple: tuple) -> tuple[str, bool, str, float]:
     tuple
         ``(sample_id, success, error_message, processing_time)``.
     """
-    sample_id, sr_assembly_file, sr_gff_file, output_dir, skip_existing, keep_internal_stop = args_tuple
+    sample_id, sr_assembly_file, sr_gff_file, output_dir, skip_existing, keep_internal_stop, *rest = args_tuple
+    ambiguous_codons_as_x = bool(rest and rest[0])
     start_time = time.time()
 
     try:
@@ -115,7 +117,8 @@ def process_single_genome(args_tuple: tuple) -> tuple[str, bool, str, float]:
             return sample_id, True, "Already exists (skipped)", 0.0
 
         genome_info = _extract_genome_info(
-            sample_id, sr_assembly_file, sr_gff_file, keep_internal_stop=keep_internal_stop
+            sample_id, sr_assembly_file, sr_gff_file, keep_internal_stop=keep_internal_stop,
+            ambiguous_codons_as_x=ambiguous_codons_as_x,
         )
 
         # Strip metadata-only keys that the downstream embedding step does not consume.
@@ -168,6 +171,12 @@ def main():
         action="store_true",
         help="Keep CDS with an internal stop codon (retains the '*'), to reproduce a historical "
         "protein order — e.g. regenerating Kp parquets that must align with pre-existing embeddings.",
+    )
+    parser.add_argument(
+        "--ambiguous-codons-as-x",
+        action="store_true",
+        help="Translate every codon holding a non-ACGT base (IUPAC code or N) as X, as Bakta's .faa does, instead "
+        "of Biopython's resolution (which can read one as a stop and drop the CDS). Off keeps existing stores.",
     )
 
     args = parser.parse_args()
@@ -228,6 +237,7 @@ def main():
             output_dir,
             args.skip_existing,
             args.keep_internal_stop,
+            args.ambiguous_codons_as_x,
         )
         for _, row in df.iterrows()
     ]
