@@ -74,6 +74,9 @@ CHECKM2_DB=${CHECKM2_DB:-$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/raw/Che
 PIXI_DIR=${PIXI_DIR:-$HOME/workspace/BacPredict/src/bacpredict/engine/genomes}
 ARRAY=src/bacpredict/engine/genomes/scripts/build_genomes_array_disjoint.sh
 MAX_ARRAY=10000          # CSD3 MaxArraySize
+# bash 4.4 writes every here-string and here-document to a temp file in $TMPDIR (default /tmp), and /tmp was full on
+# several icelake nodes: a job script failed at its first `<<<` in 3 s. Node-local disk instead
+NODE_TMP=TMPDIR=/local
 
 reuse() { uv run --no-sync python -m bacpredict.engine.genomes.reuse_built_genomes "$@"; }
 tools_bin() { echo "$(cd "$PIXI_DIR" && pixi run -- printenv CONDA_PREFIX)/bin"; }
@@ -116,7 +119,7 @@ submit_checkm2() {  # <list> <indices or empty> <pin> <checkm2 bin>
     # 2,000 genomes at 32 cores: §3.6 measured a median 88 min and MaxRSS ≤ 67 GB, so 4 h and 100G (icelake's 32 × 3,380 MB)
     submit --array="${2:-0-$((n - 1))%40}" --partition=${QC_PARTITION:-icelake} --cpus-per-task=32 \
         --mem=${QC_MEM:-100G} --time=${QC_TIME:-04:00:00} --job-name="$JOB-checkm2-$k" \
-        --export="ALL,$3,LIST=$list,QC_DIR=$QCD/list_$k,CHUNK=$CHECKM2_CHUNK,CHECKM2_BIN=$4,CHECKM2_DB=$CHECKM2_DB" \
+        --export="ALL,$3,LIST=$list,QC_DIR=$QCD/list_$k,CHUNK=$CHECKM2_CHUNK,CHECKM2_BIN=$4,CHECKM2_DB=$CHECKM2_DB,$NODE_TMP" \
         src/bacpredict/engine/genomes/scripts/run_checkm2_shard.sh
 }
 checkm2_ready() {  # resolve and check everything a CheckM2 submission needs, before anything is frozen
@@ -272,7 +275,7 @@ qc)  # qc checkm2 | qc checkm2-rerun <list number> <indices> | qc skani
         cat "${L[@]}" > "$QCD/skani/skani_list.tsv"
         printf '%s\n' "$REFS" > "$QCD/skani/skani_refs.tsv"
         submit --partition=${QC_PARTITION:-icelake} --cpus-per-task=32 --mem=64G --time=01:00:00 --job-name="$JOB-skani" \
-            --export="ALL,$p,LIST=$QCD/skani/skani_list.tsv,REFS_TSV=$QCD/skani/skani_refs.tsv,QC_DIR=$QCD/skani,TOOLS_BIN=$tb" \
+            --export="ALL,$p,LIST=$QCD/skani/skani_list.tsv,REFS_TSV=$QCD/skani/skani_refs.tsv,QC_DIR=$QCD/skani,TOOLS_BIN=$tb,$NODE_TMP" \
             src/bacpredict/engine/genomes/scripts/run_skani.sh
         ;;
     *) echo "qc checkm2 | qc checkm2-rerun <list number> <indices> | qc skani"; exit 2 ;;

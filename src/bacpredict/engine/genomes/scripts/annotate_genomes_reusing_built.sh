@@ -170,7 +170,9 @@ submit)  # submit [all|planned|refused]: all = planned + refused (the default)
     # as §3.6 (sacct): 33 min mean / 61 min max per 4-genome task, MaxRSS ≤ 42.6 GB per genome, so 8 cores / 52 GB
     # (under 8 × 6,760 MB) on icelake-himem and 3 h. On a congested himem queue, icelake (3,380 MB per core) needs
     # BAKTA_PARTITION=icelake BAKTA_CPUS=16 for the same 52G
-    export_vars="ALL,REPO=$ar,ROSTER=$roster,OUT_DIR=$ANN,TOOLS_BIN=$tb,DB=$DB,CHUNK=$chunk,KEEP=gff3+faa+txt"
+    # TMPDIR: run_bakta_array.sh reads each roster row through a here-string, which bash 4.4 writes to $TMPDIR — /tmp
+    # was full on several icelake nodes
+    export_vars="ALL,REPO=$ar,ROSTER=$roster,OUT_DIR=$ANN,TOOLS_BIN=$tb,DB=$DB,CHUNK=$chunk,KEEP=gff3+faa+txt,TMPDIR=/local"
     export_vars+=",EXPECT_SHA=$(git -C "$ar" rev-parse HEAD)"
     # BAKTA_ACCOUNT: the run array's account (FLOTO-SL3-CPU — free, low priority — for a large array that can wait)
     submit --array=0-$((n - 1))%${BAKTA_CONCURRENT:-100} --account=${BAKTA_ACCOUNT:-$ACCOUNT} \
