@@ -2486,8 +2486,9 @@ refuted) — the same 12 as before the DNBSEQ genomes joined.
      is live. **Cost:** ~1.1 core-h per genome of our run (§3.6's sacct) — PsA ~2,800 core-h; Enterobacterales ~24,000,
      36 % of the 66,585 h left on `FLOTO-PROJECT-K-SL2-CPU` (`mybalance`, 2026-11-22). **The Enterobacterales
      array runs on `FLOTO-SL3-CPU` first** (§6, 2026-11-22: three days, then SL2 if it gets nowhere).
-3. **ESM-C** (bf16) into the shared `$AMR/processed/esm/` through a sample list. Reused genomes already have their
-   `.pt` (§3.6), so only genomes built here are embedded.
+3. **ESM-C** (bf16) into the shared `$AMR/processed/esm/` through a sample list, **on `FLOTO-SL2-GPU`** (§6,
+   2026-11-22), starting now on every genome whose Bakta annotation exists. Reused genomes already have their `.pt`
+   (§3.6), so only genomes built here are embedded.
 4. **Splits and training** — new split tables, retrained models, a second PsA baseline, every holdout read through
    `engine.splits.load_splits` only. **The lineage holdout is §3.6's, under the same ≤ 5 % cap:** PsA **ST155**
    (replacing ST235 — David, 2026-11-21, relayed by the §3.6 agent; §3.6 records it); Enterobacterales *E. coli* ST10,
@@ -2719,6 +2720,7 @@ directory was consolidated. Several of these existed nowhere else.
 | 2026-11-22 | **The Enterobacterales v2 Bakta run goes on the free `FLOTO-SL3-CPU` first** (David: "lets try the free SL3. See how much we get from it in the next 3 days and if none, will go SL2"). SL3 is QOS `cpu2`: 12 h wall, 448 cores per user at once, priority 1,000 against SL2's 5,000 (`sacctmgr show qos`). |
 | 2026-11-22 | **An ST is held out only where a species unit has ≥ 1,000 genomes, and the ST ≥ 50** (David: "we only hold out an ST if there will be at least 50 samples. We need at least 1000 samples from the species to make that even a concern"). Grouping a small genus into a unit matters only for that holdout, so no v2 minor genus needs one: the largest, *Serratia*, has 553 labelled genomes (v2 `cohort.csv`). |
 | 2026-11-22 | **One genome of each byte-identical duplicate pair is deleted** (David: "just delete one of each of duplicates. keep it simple. You are talking about tiny numbers."). The pairs are `engine/genomes/find_duplicate_assemblies`' confirmed groups; the lexicographically later Sample is kept (§3.6: 5 Enterobacterales genomes, `apps/entero/excluded_genomes.tsv`; §3.6 PsA's one pair, both in train, left as it is). v2 applies the same rule to its own screens (PsA: 12 pairs). |
+| 2026-11-22 | **All v2 GPU work runs on `FLOTO-SL2-GPU`** (David: "The work is too important for the lab. Just run SL2 for all GPU work." — in his experience SL3 never picks up GPU jobs). SL3 is tried only for the Enterobacterales Bakta CPU array, which would cost ~£240 on SL2 (~24,000 core-h at ~£0.01), because SL3 does sometimes pick up CPU work. ESM-C starts on every v2 genome that already has its Bakta annotation, without waiting for the rest. |
 
 ### Invasion / lab collection
 
