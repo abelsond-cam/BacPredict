@@ -2429,8 +2429,10 @@ refuted) — the same 12 as before the DNBSEQ genomes joined.
   calibrated on §3.6 alone.
 - **PAO1's 6,264,404 bp sequence is a v2 genome twice:** SAMN02603714 (PAO1's own BioSample, labelled on one drug)
   and SAMN31936973, whose GenBank assembly is PAO1's sequence exactly — so not, on its face, that isolate's own.
-- What to do with a confirmed pair (group, keep one, drop both on a contradiction) is asked of David — and it
-  collides with v2's `--assert-same-as` against §3.6's tables (any `--groups`/`--exclude` re-draws a whole split).
+- **Decided (§6, 2026-11-22): one genome of each confirmed pair is deleted**, the lexicographically later Sample kept
+  (the §3.6 agent's rule, `apps/entero/excluded_genomes.tsv`). v2's own lists — PsA's 12 now, Enterobacterales' after
+  its collate — go to its split builder as `--exclude`. ⚠ An `--exclude` re-draws a whole split, so check how
+  `--assert-same-as` against §3.6's PsA tables behaves with it before the v2 PsA splits are built.
 
 **In flight.**
 - **PsA:** Bakta — 2,536 of our runs done (arrays `41621246`, `41624615`, SL2: 635 tasks, 0 failed, ≤ 55 min and
@@ -2716,6 +2718,7 @@ directory was consolidated. Several of these existed nowhere else.
 | 2026-11-22 | **v2 assembles DNBSEQ/BGISEQ paired reads** (David: "DNBSEQ / BGSEQ - yes"), with shovill as for Illumina, but only for a genome with no usable Illumina run (`plan_genome_sources --fallback-read-platforms`, opt-in; §3.6's plans are unchanged). By the priority order this moves the genomes that dropped as `other_strategy` with such reads (PsA 414, Enterobacterales 510, all ≥ 10×) and 31 Enterobacterales genomes that had taken an NCBI assembly to `shovill`. Applied by `replan`, which publishes only if no other row moved. |
 | 2026-11-22 | **The Enterobacterales v2 Bakta run goes on the free `FLOTO-SL3-CPU` first** (David: "lets try the free SL3. See how much we get from it in the next 3 days and if none, will go SL2"). SL3 is QOS `cpu2`: 12 h wall, 448 cores per user at once, priority 1,000 against SL2's 5,000 (`sacctmgr show qos`). |
 | 2026-11-22 | **An ST is held out only where a species unit has ≥ 1,000 genomes, and the ST ≥ 50** (David: "we only hold out an ST if there will be at least 50 samples. We need at least 1000 samples from the species to make that even a concern"). Grouping a small genus into a unit matters only for that holdout, so no v2 minor genus needs one: the largest, *Serratia*, has 553 labelled genomes (v2 `cohort.csv`). |
+| 2026-11-22 | **One genome of each byte-identical duplicate pair is deleted** (David: "just delete one of each of duplicates. keep it simple. You are talking about tiny numbers."). The pairs are `engine/genomes/find_duplicate_assemblies`' confirmed groups; the lexicographically later Sample is kept (§3.6: 5 Enterobacterales genomes, `apps/entero/excluded_genomes.tsv`; §3.6 PsA's one pair, both in train, left as it is). v2 applies the same rule to its own screens (PsA: 12 pairs). |
 
 ### Invasion / lab collection
 
