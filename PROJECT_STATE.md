@@ -1,7 +1,13 @@
 # BacPredict — project state
 
-> **Last verified: 2026-11-21 @ `ba55740`** (branch `refactor/consolidate-engine`).
-> **Verification scope, this pass (2026-11-21, ninth): §3.6 the species units and the Klebsiella-only arm.**
+> **Last verified: 2026-11-22 @ `d6c3e05`** (branch `refactor/consolidate-engine`).
+> **Verification scope, a pass by the v2 agent (2026-11-22, tenth): §3.7 the PsA v2 genome collate and the BakRep
+> coverage of both v2 plans only.** Read on CSD3: `paeruginosa_cabbage_v2/genomes/{genome_qc,embedding_input,
+> reused_genomes,genome_manifest}.csv` (collated at `d6c3e05`), `reuse_built_genomes status` for both cohorts, sacct of
+> the v2 CheckM2 and skani jobs, and BakRep's export joined to both v2 `genome_manifest.csv`. **Nothing else was
+> re-verified this pass.**
+>
+> **Verification scope, the pass before (2026-11-21, ninth): §3.6 the species units and the Klebsiella-only arm.**
 > `apps/entero/species_units.py` run against `genomes/genome_qc.csv` on CSD3 (the seven-way unit table, and the
 > 9,370 `kpsc` genomes); ST37's per-drug counts read from `genome_qc.csv` × `binary_ast.csv`; the fp32-vs-bf16
 > question settled by loading one genome (`SAMD00497419`) from both the linked store and the ESM-C smoke output and
@@ -2156,8 +2162,9 @@ Later: the AMR-GNN-cut benchmark, ANI thinning, and causal attribution of the pr
 
 ### 3.7 Multi-species AMR — CABBAGE v2 (the second experiment, same procedures at ~2× the data)
 
-**Status.** **Labels built** (stage 1 of 4) for PsA and Enterobacterales, and reviewed by David (§6, 2026-11-21). **Genomes
-(stage 2) planned and being built** — see *In flight*. CABBAGE v2 is an extension of the data behind the EBI AMR
+**Status.** **Labels built** (stage 1 of 4) for PsA and Enterobacterales, and reviewed by David (§6, 2026-11-21).
+**Genomes (stage 2): PsA built, QC'd and collated** (8,643 genomes pass, below); **Enterobacterales still building** — see
+*In flight*. The Bakta step of stage 2 is written and reviewed, not yet run. CABBAGE v2 is an extension of the data behind the EBI AMR
 Portal, given to the project as one CSV, with about twice the BioSamples. **It is a second experiment, not an
 update of §3.6** (David, 2026-11-21: "second test, same procedures"): v2 labels are neither merged with nor
 substituted for §3.6's, which continues on the portal's 2026-07 release ("v1"). Every stage repeats §3.6's procedure —
@@ -2286,12 +2293,45 @@ Checks against §3.6's labels (`checks_vs_2026-07/`, scripts alongside):
   genera), portal (`klebsiella`) 34/34, shovill (`ecloacae`) 1/1. Peak memory 1.3–1.7 GB (download tasks), 4.1 GB
   (shovill); an NCBI task of 40 genomes ran in ~1.5 min.
 
-**In flight.** Stage 2 build arrays, all from the pinned worktree `BacPredict-d6c3e05` (each task re-checks
-disjointness before it builds): PsA `41611827`–`41611829`; Enterobacterales `41611841`–`41612885` (one ATB array per
-scheme; the NCBI arrays and the shovill arrays each share one job name and run `--dependency=singleton`, 4 and 25
-tasks at a time across the cohort). Two adversarial reviews of the stage code ran first (16 and 6 findings survived,
-all fixed at `c66a737` / `d6c3e05`). Next in the stage: `qc checkm2` as genomes land, `qc skani` once the build is
-done, `collate`, then Bakta.
+**Numbers of record — PsA v2 genome QC.** Read from `$AMR/processed/paeruginosa_cabbage_v2/genomes/genome_qc.csv`
+(md5 `553c5988…`) and `embedding_input.csv` (md5 `d2a2d426…`), collated at `d6c3e05` (`build_pa_genomes_cabbage_v2.sh
+collate`, 2026-11-22) over CheckM2 lists `qc/checkm2_list_{01,02}.tsv` (4,881 + 226) and `qc/skani/` (PAO1 + PA7).
+
+| | built | pass QC | species | contamination | completeness | contigs | other |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| built here | 5,107 of 5,107 | **4,966** | 55 | 45 | 17 | 12 | 12 |
+| reused from §3.6 | 3,773 (+21 dropped by §3.6) | **3,677** | 35 | 3 | 44 | 5 | 9 |
+| **v2 PsA** | 8,880 | **8,643** | | | | | |
+
+- **Reused genomes pass exactly as in §3.6:** 3,677 is §3.6's QC-pass PsA cohort. The `check-schemes` gate passed —
+  every genome built here is on `paeruginosa`, and all 3,773 reused carry §3.6's scheme and ST.
+- **Built here, by source:** ATB 3,183 of 3,304 pass, NCBI GenBank assemblies 1,606 of 1,620, shovill 177 of 183.
+  Fail counts above are the single reason; combinations (e.g. `contamination;species`) are in "other".
+- **The held-out ST155: 223 of 8,643 QC-pass genomes (2.6 %)**, under the 5 % cap. (ST235 717, untyped 377.)
+- The build needed one rerun: 82 NCBI downloads failed with HTTP 503 on the first array (bursts, so NCBI outages, not
+  our rate); `submit paeruginosa ncbi 9,10,21,22,24` rebuilt all 82.
+
+**Numbers of record — BakRep coverage of the v2 plans.** BakRep's export
+(`$AMR/raw/bakrep/v2_export_20250612/bakrep-export.tsv.gz`, 2,438,386 BioSamples) joined to each v2
+`genome_manifest.csv` (inline on CSD3, 2026-11-22; `annotate_*_cabbage_v2.sh plan` writes the roster of record,
+`genomes/bakta/bakrep_roster.tsv`, from the genomes actually built). §3.6's `in_bakrep_ids.txt` cannot be reused: it is
+§3.6's cohorts joined to the export (66,482 rows), so it lists no genome only v2 has.
+
+| planned here | ATB, in BakRep (ingest) | ATB, not in BakRep | NCBI | shovill | portal | our Bakta, before QC |
+|---|--:|--:|--:|--:|--:|--:|
+| PsA | 2,564 | 740 | 1,620 | 183 | 0 | ~2,540 |
+| Enterobacterales | 28,075 | 5,704 | 15,549 | 712 | 34 | ~22,000 |
+
+No NCBI genome is in BakRep (BakRep annotates ATB's assemblies, and these have none).
+
+**In flight.** Stage 2, from the pinned worktree `BacPredict-d6c3e05` (each build task re-checks disjointness before it
+builds). **PsA: done through collate.** **Enterobacterales:** every ATB array done; the NCBI and shovill arrays share one
+job name each and run `--dependency=singleton` at 4 and 25 tasks across the cohort — at 2026-11-22 02:06 `ecoli`
+NCBI 65/172 and shovill 34/178 tasks, the other schemes' NCBI and shovill arrays waiting in turn; 10 *Citrobacter*
+NCBI 503 failures to rerun once those arrays drain. CheckM2 list 01 (35,032 genomes, 18 tasks of 2,000) finished:
+80–105 min per task, MaxRSS ≤ 69.5 GB at 100G. Two adversarial reviews of the build code ran first (16 and 6
+findings survived, all fixed at `c66a737` / `d6c3e05`); a third, of the Bakta step (4 lenses, 5 findings), confirmed
+none.
 
 **Next.** Agreed with David 2026-11-21, in this order, each stage §3.6's procedure:
 1. **Labels — done** (above). `cabbage_v2_phenotype.py` replaced the planned `cabbage_v2_tests.py` and the optional
@@ -2315,7 +2355,17 @@ done, `collate`, then Bakta.
      pin and a reused genome must carry exactly its owner's scheme and ST — the check that catches §3.6's re-typed
      shards losing their mtime order.
    - **Aerogenes is sized as §3.6 sized it** (4.9 Mbp) under its v2 name, so its read depth is computed the same way.
-3. **ESM-C** (bf16) into the shared `$AMR/processed/esm/` through a sample list.
+   - **Bakta, §3.6's procedure** (BakRep's GFF3 where BakRep holds the genome on our ATB contigs, our run of the same
+     release, flags, env and database otherwise — submit refuses unless the env's fingerprint is §3.6's) through
+     `engine/genomes/scripts/annotate_genomes_reusing_built.sh`, configured by
+     `apps/{pa,entero}/scripts/annotate_*_genomes_cabbage_v2.sh`. **A reused genome keeps its owner's annotation:** it
+     is never on v2's ingest roster, and goes to v2's run only if no annotation record of it exists at all; v2's
+     collate then checks every cohort genome has exactly one current record. Submit refuses while an owner's Bakta job
+     is live. **Cost:** ~1.1 core-h per genome of our run (§3.6's sacct) — PsA ~2,800 core-h; Enterobacterales ~24,000,
+     36 % of the 66,585 h left on `FLOTO-PROJECT-K-SL2-CPU` (`mybalance`, 2026-11-22). **Which account runs the
+     Enterobacterales array is asked of David** (`BAKTA_ACCOUNT=FLOTO-SL3-CPU` is free and low-priority).
+3. **ESM-C** (bf16) into the shared `$AMR/processed/esm/` through a sample list. Reused genomes already have their
+   `.pt` (§3.6), so only genomes built here are embedded.
 4. **Splits and training** — new split tables, retrained models, a second PsA baseline, every holdout read through
    `engine.splits.load_splits` only. **The lineage holdout is §3.6's, under the same ≤ 5 % cap:** PsA **ST155**
    (replacing ST235 — David, 2026-11-21, relayed by the §3.6 agent; §3.6 records it); Enterobacterales *E. coli* ST10,
@@ -2347,9 +2397,14 @@ done, `collate`, then Bakta.
   manifests reference it. A rename would need a `2026-07` symlink.
 - Shared code, one branch: each build's `manifest.json` records the git SHA, so an engine change between the two
   experiments' runs stays traceable.
+- **One file per genome, shared by both experiments:** a reused genome's contigs and Bakta GFF3 are §3.6's own files,
+  not copies. Anything that rewrites them for §3.6 changes v2's input too; v2's collates re-check each against its md5.
+- **NCBI GenBank assemblies are the submitters' own**, assembled by whatever pipeline they used, unlike ATB's uniform
+  shovill/SKESA: they pass QC at about ATB's rate (PsA 99.1 % against 96.3 %), but are a source to stratify by if a v2
+  result looks odd.
 
 **Owns.** `engine/ast_labels/cabbage_v2_phenotype.py` (+ its test), `engine/genomes/reuse_built_genomes.py` (+ its
-test), `engine/genomes/scripts/build_genomes_{reusing_built,array_disjoint}.sh`, the `ncbi_gca` source and
+test), `engine/genomes/scripts/{build_genomes_reusing_built,build_genomes_array_disjoint,annotate_genomes_reusing_built}.sh`, the `ncbi_gca` source and
 `--genome-size-by-species` in `engine/genomes/{plan_genome_sources,build_genomes}.py` (opt-in; §3.6's path unchanged),
 the `*_cabbage_v2` run scripts,
 `$AMR/raw/ebi_amr_portal/cabbage_v2_20261121/`, `$AMR/processed/ebi_amr_portal/scoping_cabbage_v2_20261121/`,
@@ -2382,6 +2437,8 @@ correct.**
 | `$AMR/processed/ebi_amr_portal/cabbage_v2_20261121/phenotype.parquet` (+ `.json`) | `engine/ast_labels/cabbage_v2_phenotype` (run by either `*_cabbage_v2` label script if absent) | both §3.7 label builds | Every §3.7 label; delete it to rebuild from the CSV |
 | `$AMR/processed/{paeruginosa,enterobacterales}_cabbage_v2/{binary_ast,cohort,label_counts}.csv` | `build_binary_ast_labels` via `apps/{pa,entero}/scripts/build_*_ast_labels_cabbage_v2.sh` | §3.7 genome acquisition and splits | Every §3.7 genome manifest, split and model |
 | `$AMR/processed/{paeruginosa,enterobacterales}_cabbage_v2/genomes/{genome_manifest,reused_genomes}.csv`, `by_scheme/` | `engine/genomes/reuse_built_genomes` + `plan_genome_sources --ncbi-fallback` via `apps/{pa,entero}/scripts/build_*_genomes_cabbage_v2.sh plan` (read-only once written) | the §3.7 build arrays (by row position), QC and collate | Every §3.7 build shard (a re-plan moves `by_scheme/` aside; `missing-tasks` reruns any task whose rows moved) |
+| `$AMR/processed/{paeruginosa,enterobacterales}_cabbage_v2/genomes/{genome_qc,embedding_input,st_counts_by_drug}.csv` (+ `embedding_input_unfiltered.csv` for Enterobacterales) | `collate_genomes` over `collate_inputs/` (this cohort's builds + the reused genomes' §3.6 rows) via `build_*_genomes_cabbage_v2.sh collate`, published only after `check-schemes` passes | §3.7 Bakta (the cohort annotated), ESM-C, splits | The §3.7 annotation table, embeddings list and every §3.7 split |
+| `$AMR/processed/{paeruginosa,enterobacterales}_cabbage_v2/genomes/bakta/{built_genomes.csv,bakrep_roster.tsv,ingest_status.tsv,run_roster_*.tsv}` → `genomes/bakta_annotation*.csv` | `reuse_built_genomes bakta-plan` / `bakta-roster` and `bakta.py ingest` / `run` / `collate` via `annotate_*_genomes_cabbage_v2.sh` (run rosters dated, read-only) | the §3.7 protein stage and ESM-C (`bakta_annotation*.csv`) | The proteins and ESM-C embeddings of every genome built for v2 |
 | `$AMR/processed/enterobacterales/{binary_ast,cohort,label_counts}.csv` | `engine/ast_labels/build_binary_ast_labels` (via `apps/entero/scripts/build_entero_ast_labels.sh`) | Enterobacterales genome acquisition and splits | Every Enterobacterales genome manifest, split and model |
 | `$AMR/raw/bakrep/v2_export_20250612/bakrep-export.tsv.gz` + `$AMR/processed/bakrep_coverage_20261119/` | BakRep's published export; `join.py` | Which genomes take BakRep's Bakta annotation and which get our own Bakta run | The annotation source of every PsA and Enterobacterales genome |
 | `$AMR/raw/bakta_db/v5.1_full/` (+ `v5.1_full.md5`, `README.txt`) | copied from nuna's `refs/bakta/db` (job `41494699`); AMRFinderPlus DB `latest` → 2024-07-22.1 | every Bakta run of ours (`engine/genomes/bakta.py`) | Every our-run annotation (a run's fingerprint includes this DB's `version.json` and AMRFinderPlus DB) |

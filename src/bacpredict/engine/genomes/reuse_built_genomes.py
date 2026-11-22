@@ -56,13 +56,30 @@ Subcommands:
     Per scheme and source: array tasks written against those expected (names as ``submit`` takes them), the tasks
     holding a failed genome, genomes ok and failed; then CheckM2 lists, their reports, and the skani result.
 
-Usage: through ``engine/genomes/scripts/build_genomes_reusing_built.sh`` and a cohort's wrapper (e.g.
+The Bakta stage keeps the same split — a reused genome's annotation is its owner's:
+
+``bakta-plan``
+    ``built_genomes.csv`` (every genome built here so far) and ``bakrep_roster.tsv`` (the ATB-built ones whose
+    BioSample BakRep's own export lists — not §3.6's ``in_bakrep_ids.txt``, which is §3.6's cohorts joined to it and
+    lists no genome only a later cohort has). Re-run as more genomes are built; written atomically, never frozen.
+``bakta-roster``
+    The run roster under ``all``/``planned``/``refused`` (``bakta_roster``): genomes built here that BakRep cannot
+    cover or that ingest did not take, and reused genomes with no annotation record at all, minus those our run
+    already has. Refuses past ``--max-run``; written read-only, as array tasks take rows by position.
+``bakta-status``
+    Built genomes, the BakRep roster and its ingest outcomes, and each cohort genome's records (built here / reused).
+
+Usage: through ``engine/genomes/scripts/build_genomes_reusing_built.sh`` and
+``engine/genomes/scripts/annotate_genomes_reusing_built.sh`` and a cohort's wrappers (e.g.
 ``apps/entero/scripts/build_entero_genomes_cabbage_v2.sh``), never by hand.
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
+import json
+import os
 import re
 import sys
 from collections.abc import Sequence
@@ -70,6 +87,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from bacpredict.engine.genomes.bakta import ingest_record, run_record, status_part
 from bacpredict.engine.genomes.build_genomes import select_chunk
 from bacpredict.engine.genomes.collate_genomes import read_shards
 
@@ -356,6 +374,166 @@ def status(by_scheme: Path, shard_root: Path, qc_dir: Path) -> str:
     return "\n".join(lines)
 
 
+# ---- Bakta: the annotation stage over the same split between genomes built here and genomes reused -------------------
+
+RUN_MODES = ("all", "planned", "refused")
+# the record names bakta.py writes beside a genome's GFF3, as suffixes of its Sample
+INGEST_SUFFIX = ingest_record(Path(), "").name  # ".bakta.ingest.json": BakRep's GFF3, ingested
+RUN_SUFFIX = run_record(Path(), "").name  # ".bakta.run.json": our own run
+GFF3_SUFFIX = ".bakta.gff3.gz"
+REUSED_WHY = "reused, and no annotation record exists"
+
+
+def bakrep_export_ids(path: Path) -> set[str]:
+    """The BioSamples BakRep's export lists (its first column, ``#id``)."""
+    ids = pd.read_csv(path, sep="\t", usecols=[0], dtype=str, quoting=csv.QUOTE_NONE)
+    if ids.columns[0] != "#id":
+        raise ValueError(f"{path}: its first column is {ids.columns[0]!r}, not BakRep's export's '#id'")
+    return set(ids.iloc[:, 0].dropna())
+
+
+def bakta_plan(manifest: pd.DataFrame, shards: pd.DataFrame, reused: pd.DataFrame, bakrep_ids: set[str]
+               ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """``(built, bakrep_roster)``: the genomes this cohort has built so far, and those BakRep's GFF3 may stand for.
+
+    ``built`` (``Sample, sr_assembly_file, source``) is every genome whose shard row is ``ok`` under the source this
+    cohort's manifest planned for it (a row under another source was written under an earlier plan). ``bakrep_roster``
+    (``Sample, sr_assembly_file``) is the ATB-built ones whose BioSample BakRep's export lists: BakRep's GFF3 sits on
+    ATB's contigs, so it cannot stand for a genome built from any other source. A reused genome is never on either —
+    its annotation is its owner's — and finding one among this cohort's builds is an error.
+    """
+    planned = manifest.set_index("Sample")["source"]
+    ok = shards[shards["status"].eq("ok") & shards["source"].eq(shards["Sample"].map(planned))]
+    if both := sorted(set(ok["Sample"]) & set(reused["Sample"])):
+        raise ValueError(f"{len(both)} genomes are both built by this cohort and reused, e.g. {both[:5]}")
+    built = (ok.rename(columns={"contigs_path": "sr_assembly_file"})[["Sample", "sr_assembly_file", "source"]]
+             .sort_values("Sample").reset_index(drop=True))
+    if not built["sr_assembly_file"].astype(str).str.startswith("/").all():
+        raise ValueError("contigs paths must be absolute")
+    roster = built.loc[built["source"].eq("atb") & built["Sample"].isin(bakrep_ids), ["Sample", "sr_assembly_file"]]
+    return built, roster.reset_index(drop=True)
+
+
+def _annotation_names(annotation_dir: Path) -> set[str]:
+    """One directory read, not a stat per genome (the store holds several files per genome of every cohort)."""
+    return set(os.listdir(annotation_dir)) if annotation_dir.is_dir() else set()
+
+
+def _run_done(annotation_dir: Path, names: set[str], sample: str, contigs: str, fingerprint: str) -> bool:
+    """Our run of ``sample`` with this env and database exists, written after its contigs.
+
+    Not an md5 check: collate makes that one, over every cohort genome.
+    """
+    if sample + RUN_SUFFIX not in names or sample + GFF3_SUFFIX not in names:
+        return False
+    rec = annotation_dir / (sample + RUN_SUFFIX)
+    try:
+        return (json.loads(rec.read_text()).get("fingerprint") == fingerprint
+                and rec.stat().st_mtime > os.stat(contigs).st_mtime)
+    except (OSError, ValueError):
+        return False
+
+
+def bakta_roster(cohort: pd.DataFrame, built: pd.DataFrame, reused: pd.DataFrame, bakrep_roster: pd.DataFrame,
+                 status: pd.DataFrame | None, annotation_dir: Path, fingerprint: str, mode: str,
+                 allow_errors: bool = False) -> pd.DataFrame:
+    """The cohort genomes our Bakta must annotate under ``mode``: ``Sample, sr_assembly_file, why, done``.
+
+    ``done`` marks those our run already has (``_run_done``); the run roster is the rest.
+
+    - **Built here, not on the BakRep roster** (``planned``, ``all``): no BakRep file can stand for them.
+    - **Built here, on the BakRep roster, not ingested** (``refused``, ``all``): ``absent``, ``refused:*`` and
+      ``skipped:run``; ``error:*`` raises unless ``allow_errors`` (re-running ingest usually clears it). Needs
+      ``status``, ingest's outcome per genome; a roster genome without one raises (plan has run since ingest did).
+    - **Reused, with no annotation record at all** (``planned``, ``all``): its owner never annotated it. Every other
+      reused genome is left to its owner's record, which collate then checks is current — this cohort never fetches
+      or re-runs a genome its owner has annotated.
+
+    A cohort genome that is neither reused nor in ``built`` raises (plan has not seen it), as does one in both.
+    """
+    if mode not in RUN_MODES:
+        raise ValueError(f"mode {mode!r}: one of {RUN_MODES}")
+    c = cohort[["Sample", "sr_assembly_file"]].reset_index(drop=True)
+    if not c["Sample"].is_unique or c["sr_assembly_file"].isna().any():
+        raise ValueError("the cohort holds a Sample twice, or a genome without contigs")
+    is_reused = c["Sample"].isin(set(reused["Sample"]))
+    source = c["Sample"].map(built.set_index("Sample")["source"])
+    if (bad := is_reused & source.notna()).any():
+        raise ValueError(f"{int(bad.sum())} cohort genomes are both reused and built here, e.g. "
+                         f"{c.loc[bad, 'Sample'].head(3).tolist()}")
+    if (bad := ~is_reused & source.isna()).any():
+        raise ValueError(f"{int(bad.sum())} cohort genomes are neither reused nor in built_genomes.csv, e.g. "
+                         f"{c.loc[bad, 'Sample'].head(3).tolist()}: re-run plan")
+    bakrep = c["Sample"].isin(set(bakrep_roster["Sample"]))
+    names = _annotation_names(annotation_dir)
+    has_record = (c["Sample"] + INGEST_SUFFIX).isin(names) | (c["Sample"] + RUN_SUFFIX).isin(names)
+    bare_reused = is_reused & ~has_record
+    not_in_bakrep = ~is_reused & ~bakrep
+    st = pd.Series(pd.NA, index=c.index, dtype=object)
+    if mode == "planned":
+        take = not_in_bakrep | bare_reused
+    else:
+        if status is None:
+            raise ValueError("no ingest status: run ingest first (or run mode planned, which needs none)")
+        st = c["Sample"].map(status.set_index("Sample")["status"])
+        if (none := bakrep & st.isna()).any():
+            raise ValueError(f"{int(none.sum())} BakRep-roster cohort genomes have no ingest status, e.g. "
+                             f"{c.loc[none, 'Sample'].head(3).tolist()}: re-run ingest")
+        err = bakrep & st.str.startswith("error:", na=False)
+        if err.any() and not allow_errors:
+            raise ValueError(f"ingest ended {st[err].value_counts().to_dict()}: re-run ingest (it resumes) until none "
+                             "do, or allow errors to run ours on them (the same annotation of record)")
+        refused = bakrep & st.ne("ingested")
+        take = refused if mode == "refused" else refused | not_in_bakrep | bare_reused
+    why = (("not in BakRep: " + source.fillna("")).where(~bakrep, "BakRep " + st.fillna(""))
+           .where(~is_reused, REUSED_WHY))
+    want = c[take].assign(why=why[take])
+    want["done"] = pd.Series([_run_done(annotation_dir, names, s, p, fingerprint)
+                              for s, p in zip(want["Sample"], want["sr_assembly_file"], strict=True)],
+                             index=want.index, dtype=bool)
+    return want.sort_values("Sample").reset_index(drop=True)
+
+
+def read_roster(path: Path) -> pd.DataFrame:
+    """A header-less ``Sample<TAB>contigs`` roster; an empty file is an empty roster."""
+    if path.stat().st_size == 0:
+        return pd.DataFrame({"Sample": pd.Series(dtype=str), "sr_assembly_file": pd.Series(dtype=str)})
+    return pd.read_csv(path, sep="\t", header=None, names=["Sample", "sr_assembly_file"], dtype=str)
+
+
+def bakta_status(plan_dir: Path, annotation_dir: Path, cohort_csv: Path | None, reused: set[str]) -> str:
+    """Annotation progress, as text: built genomes, the BakRep roster and ingest, the cohort's records, run rosters."""
+    lines = []
+    if (f := plan_dir / "built_genomes.csv").exists():
+        b = pd.read_csv(f, dtype=str)
+        lines.append(f"built here: {len(b)} {b['source'].value_counts().to_dict()}")
+    roster = read_roster(plan_dir / "bakrep_roster.tsv") if (plan_dir / "bakrep_roster.tsv").exists() else None
+    final = plan_dir / "ingest_status.tsv"
+    src = final if final.exists() else status_part(final) if status_part(final).exists() else None
+    st = pd.read_csv(src, sep="\t", dtype=str) if src is not None else None
+    if st is None:
+        lines.append("no ingest status yet")
+    else:
+        lines.append(f"ingest status ({src.name}, {'final' if src == final else 'NOT final: ingest is running, or was killed'}"
+                     f"): {len(st)} genomes {st['status'].value_counts().to_dict()}")
+    if roster is not None:
+        n = len(roster) if st is None else int((~roster["Sample"].isin(st["Sample"])).sum())
+        lines.append(f"BakRep roster: {len(roster)} genomes, {n} without an ingest status")
+    if cohort_csv is not None and cohort_csv.exists():
+        names = _annotation_names(annotation_dir)
+        c = pd.read_csv(cohort_csv, dtype={"Sample": str}, usecols=["Sample"])["Sample"]
+        ing, run, r = (c + INGEST_SUFFIX).isin(names), (c + RUN_SUFFIX).isin(names), c.isin(reused)
+        for label, m in (("built here", ~r), ("reused", r)):
+            lines.append(f"cohort {cohort_csv.name}, {label}: {int(m.sum())} — ingest record {int((ing & m).sum())}, "
+                         f"our run record {int((run & m).sum())}, both {int((ing & run & m).sum())}, "
+                         f"neither {int((~ing & ~run & m).sum())}")
+    else:
+        lines.append(f"no cohort at {cohort_csv}")
+    for f in sorted(plan_dir.glob("run_roster_*.tsv")):
+        lines.append(f"  {f.name}: {len(read_roster(f))} genomes")
+    return "\n".join(lines)
+
+
 def _write_frozen(df: pd.DataFrame, path: Path, **kw) -> None:
     if path.exists():
         raise SystemExit(f"{path} exists and is frozen (array tasks take its rows by position)")
@@ -417,6 +595,29 @@ def main(argv: Sequence[str] | None = None) -> None:
     p.add_argument("--by-scheme", type=Path, required=True)
     p.add_argument("--shard-root", type=Path, required=True)
     p.add_argument("--qc-dir", type=Path, required=True)
+    p = sub.add_parser("bakta-plan")
+    p.add_argument("--manifest", type=Path, required=True)
+    p.add_argument("--shard-root", type=Path, required=True, help="the per-scheme shard directories' parent")
+    p.add_argument("--reused", type=Path, required=True)
+    p.add_argument("--bakrep-export", type=Path, required=True, help="BakRep's bakrep-export.tsv.gz")
+    p.add_argument("--out-dir", type=Path, required=True)
+    p = sub.add_parser("bakta-roster")
+    p.add_argument("--cohort", type=Path, required=True, help="CSV with Sample, sr_assembly_file")
+    p.add_argument("--built", type=Path, required=True, help="bakta-plan's built_genomes.csv")
+    p.add_argument("--reused", type=Path, required=True)
+    p.add_argument("--bakrep-roster", type=Path, required=True, help="bakta-plan's bakrep_roster.tsv")
+    p.add_argument("--status", type=Path, default=None, help="ingest_status.tsv (not needed for mode planned)")
+    p.add_argument("--annotation-dir", type=Path, required=True)
+    p.add_argument("--fingerprint", required=True, help="bakta.py fingerprint of the env and database to run")
+    p.add_argument("--mode", choices=RUN_MODES, required=True)
+    p.add_argument("--max-run", type=int, required=True, help="refuse to write a roster of more genomes than this")
+    p.add_argument("--allow-errors", action="store_true", help="run ours on genomes whose ingest ended error:*")
+    p.add_argument("--out", type=Path, required=True, help="the run roster to write (new; read-only once written)")
+    p = sub.add_parser("bakta-status")
+    p.add_argument("--plan-dir", type=Path, required=True)
+    p.add_argument("--annotation-dir", type=Path, required=True)
+    p.add_argument("--cohort", type=Path, default=None)
+    p.add_argument("--reused", type=Path, required=True)
     a = ap.parse_args(argv)
 
     if a.cmd == "partition":
@@ -520,6 +721,52 @@ def main(argv: Sequence[str] | None = None) -> None:
               f"{s['Query_file'].nunique()} genomes with a skani hit")
     elif a.cmd == "status":
         print(status(a.by_scheme, a.shard_root, a.qc_dir))
+    elif a.cmd == "bakta-plan":
+        manifest = pd.read_csv(a.manifest, dtype=str, usecols=["Sample", "source"])
+        reused = pd.read_csv(a.reused, dtype=str, usecols=["Sample"])
+        dirs = existing_shard_dirs(a.shard_root)
+        if not dirs:
+            raise SystemExit(f"no shards under {a.shard_root}: nothing is built yet")
+        ids = bakrep_export_ids(a.bakrep_export)
+        try:
+            built, roster = bakta_plan(manifest, read_shard_dirs(dirs), reused, ids)
+        except ValueError as e:
+            raise SystemExit(str(e)) from e
+        a.out_dir.mkdir(parents=True, exist_ok=True)
+        # atomically, never frozen: plan is re-run as genomes are built, and a running ingest may be reading the roster
+        for df, name, kw in ((built, "built_genomes.csv", {}), (roster, "bakrep_roster.tsv", {"sep": "\t", "header": False})):
+            tmp = a.out_dir / f".{name}.part"
+            df.to_csv(tmp, index=False, **kw)
+            tmp.replace(a.out_dir / name)
+        n_atb = int(built["source"].eq("atb").sum())
+        print(f"{len(dirs)} shard directories: {len(built)} of {int(manifest['source'].ne('drop').sum())} genomes to "
+              f"build are built {built['source'].value_counts().to_dict()} → {a.out_dir / 'built_genomes.csv'}")
+        print(f"BakRep ({len(ids)} BioSamples in {a.bakrep_export.name}): {len(roster)} of the {n_atb} ATB-built "
+              f"genomes → {a.out_dir / 'bakrep_roster.tsv'}; the other {len(built) - len(roster)} built genomes take "
+              "our run")
+    elif a.cmd == "bakta-roster":
+        cohort = pd.read_csv(a.cohort, dtype={"Sample": str}, usecols=["Sample", "sr_assembly_file"])
+        status_df = pd.read_csv(a.status, sep="\t", dtype=str) if a.status is not None else None
+        try:
+            want = bakta_roster(cohort, pd.read_csv(a.built, dtype=str), pd.read_csv(a.reused, dtype=str),
+                                read_roster(a.bakrep_roster), status_df, a.annotation_dir, a.fingerprint, a.mode,
+                                a.allow_errors)
+        except ValueError as e:
+            raise SystemExit(str(e)) from e
+        todo = want[~want["done"]]
+        print(f"cohort {len(cohort)} ({a.cohort}): {a.mode}: {len(want)} genomes for our run, of which "
+              f"{int(want['done'].sum())} already have it → {len(todo)} to run")
+        if todo.empty:
+            return
+        print(todo["why"].value_counts().to_string())
+        if len(todo) > a.max_run:
+            raise SystemExit(f"{len(todo)} genomes to run is more than the {a.max_run} allowed: no roster written. If "
+                             f"the counts above are meant, re-run with MAX_RUN={len(todo)}")
+        _write_frozen(todo[["Sample", "sr_assembly_file"]], a.out, sep="\t", header=False, index=False)
+        print(f"run roster: {a.out}")
+    elif a.cmd == "bakta-status":
+        reused = set(pd.read_csv(a.reused, dtype=str, usecols=["Sample"])["Sample"])
+        print(bakta_status(a.plan_dir, a.annotation_dir, a.cohort, reused))
 
 
 if __name__ == "__main__":

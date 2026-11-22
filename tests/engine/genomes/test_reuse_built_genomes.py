@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import gzip
+import json
 import os
 import stat
 
@@ -10,7 +12,12 @@ import pytest
 
 from bacpredict.engine.genomes.reuse_built_genomes import (
     AUTO,
+    REUSED_WHY,
     array_list,
+    bakrep_export_ids,
+    bakta_plan,
+    bakta_roster,
+    bakta_status,
     collate_inputs,
     main,
     missing_tasks,
@@ -238,3 +245,154 @@ def test_collate_inputs_refuses_a_stale_skani_and_a_different_panel(cohort):
     m, sh, q, s = collate_inputs(*args, reuse_skani=reuse_skani, refs=["/elsewhere/K12.fna.gz"], skani_list={"N1"},
                                  listed={"N1"})
     assert sorted(s["Query_file"]) == ["/l/E2.fna.gz", "/l/N1.fna.gz"]
+
+
+# ---- Bakta ------------------------------------------------------------------------------------------------------------
+
+FP = "fp-of-record"
+
+
+def test_bakrep_export_ids_reads_the_id_column(tmp_path):
+    f = tmp_path / "bakrep-export.tsv.gz"
+    with gzip.open(f, "wt") as fh:  # a stray quote in a later column must not swallow lines
+        fh.write('#id\tbakta.genome.genus\nSAMN1\tE"scherichia\nSAMN2\t\nSAMN3\tSalmonella\n')
+    assert bakrep_export_ids(f) == {"SAMN1", "SAMN2", "SAMN3"}
+    bad = tmp_path / "not_export.tsv"
+    bad.write_text("Sample\tx\nS\t1\n")
+    with pytest.raises(ValueError, match="#id"):
+        bakrep_export_ids(bad)
+
+
+def test_bakta_plan_takes_ok_builds_and_rosters_only_the_atb_ones_bakrep_lists():
+    samples = ["A1", "A2", "N1", "S1", "F1", "X1"]
+    manifest = pd.DataFrame({"Sample": samples, "source": ["atb", "atb", "ncbi_gca", "shovill", "atb", "shovill"]})
+    shards = pd.DataFrame({"Sample": samples, "source": ["atb", "atb", "ncbi_gca", "shovill", "atb", "atb"],
+                           "status": ["ok", "ok", "ok", "ok", "fail:x", "ok"],
+                           "contigs_path": [f"/c/{s}.fna.gz" for s in samples]})
+    built, roster = bakta_plan(manifest, shards, pd.DataFrame({"Sample": ["R1"]}), {"A1", "N1", "R1"})
+    assert list(built["Sample"]) == ["A1", "A2", "N1", "S1"]  # F1 failed; X1's row is from a plan since changed
+    assert list(built.columns) == ["Sample", "sr_assembly_file", "source"]
+    # N1 is in BakRep but built from NCBI: BakRep's GFF3 sits on ATB's contigs, not on these
+    assert roster.to_dict("list") == {"Sample": ["A1"], "sr_assembly_file": ["/c/A1.fna.gz"]}
+    with pytest.raises(ValueError, match="both built by this cohort and reused"):
+        bakta_plan(manifest, shards, pd.DataFrame({"Sample": ["A2"]}), set())
+    with pytest.raises(ValueError, match="absolute"):
+        bakta_plan(manifest, shards.assign(contigs_path="c/x.fna.gz"), pd.DataFrame({"Sample": []}), set())
+
+
+@pytest.fixture
+def annotation(tmp_path):
+    """A cohort over the shared store: genomes built here (A*, N*) and reused (R*), with the records each has."""
+    ann, contigs = tmp_path / "bakta", tmp_path / "contigs"
+    ann.mkdir()
+    contigs.mkdir()
+    cohort = ["A1", "A2", "A3", "N1", "N2", "R1", "R2", "R3"]
+    for s in cohort:
+        (contigs / f"{s}.fna.gz").write_bytes(b">c1\nACGT\n")
+        os.utime(contigs / f"{s}.fna.gz", (1_000_000, 1_000_000))
+
+    def rec(sample, kind, **body):
+        (ann / f"{sample}.bakta.{kind}.json").write_text(json.dumps(body))
+        (ann / f"{sample}.bakta.gff3.gz").write_bytes(b"gff")
+
+    rec("A1", "ingest")
+    rec("A3", "run", fingerprint=FP)  # ours, finished after its contigs: done
+    rec("N2", "run", fingerprint="another env")  # ours, under another env: not done
+    rec("R1", "ingest")  # the owner's
+    rec("R3", "run", fingerprint=FP)
+    built = pd.DataFrame({"Sample": ["A1", "A2", "A3", "N1", "N2"],
+                          "source": ["atb", "atb", "atb", "ncbi_gca", "shovill"]})
+    return {
+        "cohort": pd.DataFrame({"Sample": cohort, "sr_assembly_file": [str(contigs / f"{s}.fna.gz") for s in cohort]}),
+        "built": built,
+        "reused": pd.DataFrame({"Sample": ["R1", "R2", "R3"]}),
+        "bakrep_roster": pd.DataFrame({"Sample": ["A1", "A2", "A3"]}),
+        "status": pd.DataFrame({"Sample": ["A1", "A2", "A3"], "status": ["ingested", "refused:names", "absent"]}),
+        "annotation_dir": ann,
+        "fingerprint": FP,
+    }
+
+
+def _roster(a, mode, **kw):
+    want = bakta_roster(**{**a, **kw}, mode=mode).set_index("Sample")
+    return want, sorted(want.index[~want["done"]])
+
+
+def test_bakta_roster_modes(annotation):
+    want, todo = _roster(annotation, "planned")
+    assert sorted(want.index) == ["N1", "N2", "R2"] and todo == ["N1", "N2", "R2"]
+    assert want.loc["R2", "why"] == REUSED_WHY and want.loc["N1", "why"] == "not in BakRep: ncbi_gca"
+    want, todo = _roster(annotation, "refused")
+    assert sorted(want.index) == ["A2", "A3"] and todo == ["A2"]  # A3: our run of this env already stands
+    assert want.loc["A2", "why"] == "BakRep refused:names"
+    want, todo = _roster(annotation, "all")
+    assert todo == ["A2", "N1", "N2", "R2"]  # never A1 (ingested), R1 or R3 (their owner's records stand)
+
+
+def test_bakta_roster_reruns_ours_when_the_contigs_are_newer(annotation):
+    os.utime(annotation["cohort"].set_index("Sample").loc["A3", "sr_assembly_file"], None)  # rebuilt just now
+    assert _roster(annotation, "refused")[1] == ["A2", "A3"]
+
+
+def test_bakta_roster_refuses_what_it_cannot_place(annotation):
+    a = annotation
+    with pytest.raises(ValueError, match="no ingest status: run ingest"):
+        bakta_roster(**{**a, "status": None}, mode="all")
+    assert _roster(a, "planned", status=None)[1] == ["N1", "N2", "R2"]  # planned needs none
+    with pytest.raises(ValueError, match="1 BakRep-roster cohort genomes have no ingest status"):
+        bakta_roster(**{**a, "status": a["status"].iloc[:2]}, mode="refused")
+    err = a["status"].assign(status=["ingested", "error:transient", "absent"])
+    with pytest.raises(ValueError, match="error:transient"):
+        bakta_roster(**{**a, "status": err}, mode="all")
+    assert _roster(a, "refused", status=err, allow_errors=True)[1] == ["A2"]
+    with pytest.raises(ValueError, match="neither reused nor in built_genomes"):
+        bakta_roster(**{**a, "built": a["built"].iloc[1:]}, mode="planned")
+    with pytest.raises(ValueError, match="both reused and built here"):
+        bakta_roster(**{**a, "reused": pd.DataFrame({"Sample": ["R1", "N1"]})}, mode="planned")
+    with pytest.raises(ValueError, match="twice"):
+        bakta_roster(**{**a, "cohort": pd.concat([a["cohort"], a["cohort"].head(1)])}, mode="planned")
+
+
+def test_bakta_roster_cli_writes_a_read_only_roster_and_refuses_past_max_run(tmp_path, annotation):
+    a = annotation
+    files = {k: _csv(tmp_path / f"in/{k}.csv", a[k]) for k in ("cohort", "built", "reused")}
+    roster = tmp_path / "in/bakrep_roster.tsv"
+    a["bakrep_roster"].assign(c="/x").to_csv(roster, sep="\t", header=False, index=False)
+    status = tmp_path / "in/ingest_status.tsv"
+    a["status"].to_csv(status, sep="\t", index=False)
+    base = ["bakta-roster", "--cohort", str(files["cohort"]), "--built", str(files["built"]), "--reused",
+            str(files["reused"]), "--bakrep-roster", str(roster), "--status", str(status), "--annotation-dir",
+            str(a["annotation_dir"]), "--fingerprint", FP, "--mode", "all"]
+    out = tmp_path / "run_roster_1.tsv"
+    with pytest.raises(SystemExit, match="more than the 3 allowed"):
+        main([*base, "--max-run", "3", "--out", str(out)])
+    assert not out.exists()
+    main([*base, "--max-run", "4", "--out", str(out)])
+    assert [r.split("\t")[0] for r in out.read_text().splitlines()] == ["A2", "N1", "N2", "R2"]
+    assert not out.stat().st_mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
+    empty = tmp_path / "run_roster_2.tsv"
+    main([*base[:-1], "refused", "--status", str(status), "--max-run", "9", "--out", str(empty),
+          "--cohort", str(_csv(tmp_path / "in/c2.csv", a["cohort"][a["cohort"]["Sample"].isin(["A1", "A3"])]))])
+    assert not empty.exists()  # nothing to run: no roster
+
+
+def test_bakta_plan_cli_and_status(tmp_path):
+    gen = tmp_path / "genomes"
+    m = _csv(gen / "genome_manifest.csv", pd.DataFrame({"Sample": ["A", "B", "C"], "source": ["atb", "atb", "drop"]}))
+    _shards(gen / "shards/klebsiella", [["A", "atb", "ok", "/c/A"], ["B", "atb", "ok", "/c/B"]])
+    reused = _csv(gen / "reused_genomes.csv", pd.DataFrame({"Sample": ["R"]}))
+    export = tmp_path / "bakrep-export.tsv.gz"
+    with gzip.open(export, "wt") as fh:
+        fh.write("#id\tx\nA\t1\nR\t1\n")
+    main(["bakta-plan", "--manifest", str(m), "--shard-root", str(gen / "shards"), "--reused", str(reused),
+          "--bakrep-export", str(export), "--out-dir", str(gen / "bakta")])
+    assert (gen / "bakta/bakrep_roster.tsv").read_text() == "A\t/c/A\n"
+    assert list(pd.read_csv(gen / "bakta/built_genomes.csv")["Sample"]) == ["A", "B"]
+    cohort = _csv(gen / "embedding_input.csv", pd.DataFrame({"Sample": ["A", "B", "R"], "sr_assembly_file": "/c"}))
+    (gen / "bakta/ingest_status.tsv.part").write_text("Sample\tstatus\tdetail\nA\tingested\tfetched\n")
+    (tmp_path / "ann").mkdir()
+    (tmp_path / "ann/R.bakta.ingest.json").write_text("{}")
+    text = bakta_status(gen / "bakta", tmp_path / "ann", cohort, {"R"})
+    assert "NOT final" in text and "BakRep roster: 1 genomes, 0 without an ingest status" in text
+    assert "built here: 2 — ingest record 0, our run record 0, both 0, neither 2" in text
+    assert "reused: 1 — ingest record 1" in text
