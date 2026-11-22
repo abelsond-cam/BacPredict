@@ -2488,7 +2488,18 @@ refuted) — the same 12 as before the DNBSEQ genomes joined.
      array runs on `FLOTO-SL3-CPU` first** (§6, 2026-11-22: three days, then SL2 if it gets nowhere).
 3. **ESM-C** (bf16) into the shared `$AMR/processed/esm/` through a sample list, **on `FLOTO-SL2-GPU`** (§6,
    2026-11-22), starting now on every genome whose Bakta annotation exists. Reused genomes already have their `.pt`
-   (§3.6), so only genomes built here are embedded.
+   (§3.6), so only genomes built here are embedded. **Plan, not yet written:**
+   - A generic driver `engine/embedding/scripts/build_embeddings_reusing_built.sh` (stages proteins, check-proteins,
+     link-kp, submit, check), adapted from `apps/entero/scripts/build_entero_embeddings.sh` (§3.6's, left unchanged)
+     with T, the job/log prefix and the cohort table configurable; `QC_COHORT=none` allowed for a pre-QC cohort; submit
+     refuses while §3.6's ESM arrays are live. Wrappers `apps/{pa,entero}/scripts/build_*_embeddings_cabbage_v2.sh`.
+   - **PsA:** once Bakta array `41644190` (the 401 DNBSEQ genomes) ends, `annotate collate` →
+     `genomes/bakta_annotation.csv` (9,044) → proteins → check-proteins → submit (~5,400 new genomes, ~25 A100-h).
+   - **Enterobacterales, before QC:** a `reuse_built_genomes bakta-annotated` subcommand (genomes built here with an
+     ingest record or a finished run of the reference fingerprint; never the 31 genomes the DNBSEQ re-plan rebuilds) →
+     `annotate collate` with that cohort → `bakta_annotation_<stem>.csv` → proteins → check-proteins → link-kp (the
+     Kp ESM-C store, as §3.6) → submit. ~30k genomes annotated now (27,547 BakRep + our SL3 runs); re-run as Bakta
+     completes, then once more on the post-QC cohort (submit embeds only genomes with no `.pt`).
 4. **Splits and training** — new split tables, retrained models, a second PsA baseline, every holdout read through
    `engine.splits.load_splits` only. **The lineage holdout is §3.6's, under the same ≤ 5 % cap:** PsA **ST155**
    (replacing ST235 — David, 2026-11-21, relayed by the §3.6 agent; §3.6 records it); Enterobacterales *E. coli* ST10,
