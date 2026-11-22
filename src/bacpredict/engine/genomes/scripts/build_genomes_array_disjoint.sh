@@ -24,6 +24,13 @@ head=$(git rev-parse HEAD)
 if [[ -n "${EXPECT_SHA:-}" && "$head" != "$EXPECT_SHA"* ]]; then
     echo "the checkout moved: HEAD ${head:0:7}, this array was submitted at $EXPECT_SHA"; exit 3
 fi
+# HEAD alone does not pin the code: an edited file in the pinned worktree leaves HEAD unchanged, so the task would run
+# code at no SHA while reporting the submitted one (found by the §3.6 agent in finetune_amr_array.sh, d75e0d7). Tracked
+# files only: the worktree carries an untracked .venv symlink to the shared env.
+if [[ -n "${EXPECT_SHA:-}" ]]; then
+    dirty=$(git status --porcelain --untracked-files=no)
+    [[ -z $dirty ]] || { echo "$REPO is at $EXPECT_SHA but its tracked files are modified:"; echo "$dirty" | head -20; exit 3; }
+fi
 mapfile -t owners < "$OWNERS_FILE"
 (( ${#owners[@]} )) || { echo "no owner manifests in $OWNERS_FILE"; exit 7; }
 uv run --no-sync python -m bacpredict.engine.genomes.reuse_built_genomes check-disjoint \

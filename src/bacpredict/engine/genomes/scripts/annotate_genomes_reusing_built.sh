@@ -80,12 +80,15 @@ pinned() {  # the checkout a job runs: ARRAY_REPO, which must be a checkout with
         echo "ARRAY_REPO=$ar: no src/bacpredict or no .venv (symlink the shared one)" >&2; return 1; }
     echo "$ar"
 }
-# The start of a --wrap job run from checkout $1: refuse unless it is still at the SHA submitted, and put its code
-# first on PYTHONPATH.
+# The start of a --wrap job run from checkout $1: refuse unless it is still at the SHA submitted with no tracked file
+# modified (HEAD alone does not pin the code), and put its code first on PYTHONPATH.
 pin_guard() {
     local sha; sha=$(git -C "$1" rev-parse HEAD)
     echo "EXPECT_SHA=$sha; h=\$(git -C $1 rev-parse HEAD); [ \"\$h\" = \"\$EXPECT_SHA\" ] ||" \
-         "{ echo \"$1 moved: \$h, submitted at \$EXPECT_SHA\"; exit 3; }; echo repo=$1@\$h; export PYTHONPATH=$1/src;"
+         "{ echo \"$1 moved: \$h, submitted at \$EXPECT_SHA\"; exit 3; };" \
+         "[ -z \"\$(git -C $1 status --porcelain --untracked-files=no)\" ] ||" \
+         "{ echo \"$1 has modified tracked files: what would run is at no SHA\"; exit 3; };" \
+         "echo repo=$1@\$h; export PYTHONPATH=$1/src;"
 }
 refuse_if_live() {  # <job names, comma-separated> <why>: stop if any of mine is queued or running
     local ids
