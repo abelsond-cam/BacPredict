@@ -2376,7 +2376,12 @@ none.
    only with §3.6's ST155 arm:** the ST swap re-drew train, validate and the random holdout too, so an ST235-era number
    (`_superseded_st235/`) is on different genomes. The §3.6 agent is adding a **Klebsiella-only arm** (KpSC unit,
    held-out `klebsiella:37`) at David's request: its Klebsiella rows must be the same in v2 (a third place for
-   `--assert-same-as`). Species units name the KpSC species explicitly, never a "Klebsiella" prefix (v2's 424
+   `--assert-same-as`). **The PsA builder takes §3.6's two filters too:** `--exclude apps/pa/excluded_genomes.tsv`
+   (the 15 Ecuador assemblies) and `--groups apps/pa/duplicate_isolate_groups.csv` (3 CDC strains under two BioSamples
+   each), as `train_pa_models.sh splits` passes them — they are applied inside the builder, so §3.6's eligible list
+   (3,677) is not its split cohort (3,662). Without them the 15 would land in a v2 holdout §3.6's baseline excluded.
+   No duplicate-isolate list exists for any Enterobacterales species; whether one is built before v2's splits (and
+   §3.6's Kp arm) is asked of David. Species units name the KpSC species explicitly, never a "Klebsiella" prefix (v2's 424
    *K. aerogenes* are not KpSC); E. coli/Shigella skani calls do not decide any unit (the panel cannot separate them).
 
 **Caveats.**
