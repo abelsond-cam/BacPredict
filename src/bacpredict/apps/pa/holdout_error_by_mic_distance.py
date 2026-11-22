@@ -214,6 +214,116 @@ def concentration_ratio(scored: pd.DataFrame, thresholds: dict[str, float], n_bo
             "n_boot_valid": len(boots)}
 
 
+def per_drug_vs_auroc(scored: pd.DataFrame, thresholds: dict[str, float], models_dir: Path) -> pd.DataFrame:
+    """Per drug: near- and far-band error beside that drug's headline AUROC, and the rank correlations.
+
+    Tests the proposition that **a drug's AUROC falls as its near-breakpoint error rises**. The error
+    summary per band is the *balanced* error ``(FPR + FNR) / 2``, which is prevalence-free and so
+    comparable across drugs whose %R runs 18–63.
+
+    ⚠ Carries its own control. A correlation between AUROC and **far**-band error would mean only that
+    hard drugs are hard everywhere; the near-band correlation is evidence about the breakpoint zone only
+    if it is the stronger of the two. Both are returned.
+
+    ⚠ n = 10 drugs, so |rho| must reach ~0.648 for p < 0.05, and the effective n is smaller still: cefepime
+    and ceftazidime share AmpC-plus-porin biology, ciprofloxacin and levofloxacin share *gyrA*/*parC*,
+    imipenem and meropenem share OprD. Read these as descriptive.
+    """
+    import json
+
+    rows = []
+    for drug, g in scored.groupby("drug", sort=True):
+        res = models_dir / drug / "results.json"
+        auroc = float(json.loads(res.read_text())["holdouts"]["holdout"]["metrics"]["auroc"]) \
+            if res.exists() else float("nan")
+        g = g.assign(err=_errors(g, thresholds[drug]))
+        placed = g[g["band"].isin(["near", "mid", "far"])]
+        out: dict[str, object] = {"drug": drug, "auroc": auroc, "n_holdout": len(g),
+                                  "pct_near": 100.0 * float((g["band"] == "near").mean())}
+        for label, sel in (("near", placed["band"] == "near"), ("far", placed["band"] != "near")):
+            part = placed[sel]
+            fpr = part.loc[part["y"] == 0, "err"].mean() if (part["y"] == 0).any() else np.nan
+            fnr = part.loc[part["y"] == 1, "err"].mean() if (part["y"] == 1).any() else np.nan
+            out[f"n_{label}"] = len(part)
+            out[f"fpr_{label}"], out[f"fnr_{label}"] = fpr, fnr
+            out[f"balanced_error_{label}"] = (fpr + fnr) / 2
+        out["balanced_error_gap"] = out["balanced_error_near"] - out["balanced_error_far"]
+        rows.append(out)
+    df = pd.DataFrame(rows)
+
+    corr = []
+    for col in ("balanced_error_near", "balanced_error_far", "balanced_error_gap", "pct_near"):
+        sub = df.dropna(subset=["auroc", col])
+        rho, p = stats.spearmanr(sub["auroc"], sub[col]) if len(sub) > 2 else (np.nan, np.nan)
+        pr, pp = stats.pearsonr(sub["auroc"], sub[col]) if len(sub) > 2 else (np.nan, np.nan)
+        corr.append({"x": "auroc", "y": col, "n_drugs": len(sub), "spearman_rho": rho,
+                     "spearman_p": p, "pearson_r": pr, "pearson_p": pp})
+    return df, pd.DataFrame(corr)
+
+
+def leave_out_ceiling(scored: pd.DataFrame, n_null: int = 1000, seed: int = 1) -> pd.DataFrame:
+    """Per drug: AUROC after deleting the near-band genomes, against two nulls.
+
+    ⚠ **Deleting genomes near the label boundary raises AUROC mechanically**, because they also sit near
+    the model's decision boundary. The observed gain means nothing on its own, so it is reported against:
+
+    ``random``
+        delete the same number of genomes uniformly at random.
+    ``score_matched``
+        delete the same number, drawn from the non-near genomes to match the removed set's ``p̂``
+        distribution by decile — the strict control, since it removes genomes the model found equally
+        hard but whose labels are not contestable.
+
+    A gain that does not clear both nulls is not evidence that near-breakpoint labels cap the model.
+    """
+    rng = np.random.default_rng(seed)
+    rows = []
+    for drug, g in scored.groupby("drug", sort=True):
+        g = g[g["band"].isin(["near", "mid", "far"])]
+        near = g["band"] == "near"
+        k = int(near.sum())
+        if k == 0 or g["y"].nunique() < 2:
+            continue
+        base = roc_auc_score(g["y"], g["p"])
+        kept = g[~near]
+        obs = roc_auc_score(kept["y"], kept["p"]) if kept["y"].nunique() == 2 else np.nan
+
+        def _auroc_without(idx: np.ndarray) -> float:
+            sub = g.drop(index=idx)
+            return roc_auc_score(sub["y"], sub["p"]) if sub["y"].nunique() == 2 else np.nan
+
+        rand = [_auroc_without(rng.choice(g.index, k, replace=False)) for _ in range(n_null)]
+        # score-matched: same count per p-hat decile as the removed near-band set, drawn from the rest
+        edges = np.quantile(g["p"], np.linspace(0, 1, 11))
+        edges[0], edges[-1] = -np.inf, np.inf
+        want = pd.cut(g.loc[near, "p"], edges, include_lowest=True).value_counts()
+        pool = {b: sub.index.to_numpy() for b, sub in g[~near].groupby(pd.cut(g.loc[~near, "p"], edges))}
+        matched, shortfall = [], 0
+        for _ in range(n_null):
+            pick = []
+            for b, c in want.items():
+                avail = pool.get(b, np.array([], dtype=int))
+                if len(avail) == 0:
+                    shortfall += int(c); continue
+                pick.append(rng.choice(avail, int(min(c, len(avail))), replace=False))
+                shortfall += int(max(0, c - len(avail)))
+            matched.append(_auroc_without(np.concatenate(pick)) if pick else np.nan)
+        rand = [v for v in rand if np.isfinite(v)]
+        matched = [v for v in matched if np.isfinite(v)]
+        rows.append({
+            "drug": drug, "auroc_all": base, "n_removed": k, "auroc_without_near": obs,
+            "gain_observed": obs - base,
+            "gain_null_random": float(np.median(rand)) - base if rand else np.nan,
+            "null_random_p95": float(np.percentile(rand, 95)) - base if rand else np.nan,
+            "gain_null_score_matched": float(np.median(matched)) - base if matched else np.nan,
+            "null_matched_p95": float(np.percentile(matched, 95)) - base if matched else np.nan,
+            "beats_both_nulls": bool(rand and matched and obs > np.percentile(rand, 95)
+                                     and obs > np.percentile(matched, 95)),
+            "matched_shortfall_per_draw": shortfall / max(1, n_null),
+        })
+    return pd.DataFrame(rows)
+
+
 def conditional_logit(scored: pd.DataFrame, thresholds: dict[str, float]) -> pd.DataFrame:
     """``error ~ near + drug``, conditional on genome — the confirmatory number.
 
@@ -290,6 +400,11 @@ def main(argv: list[str] | None = None) -> int:
         conf.to_csv(out / "conditional_logit.csv", index=False)
         logger.info("error concentration ratio %.3f (95%% CI %.3f-%.3f) over %d genomes",
                     cr["ratio"], cr["ci_lo"], cr["ci_hi"], cr["n_genomes"])
+        per_drug, corr = per_drug_vs_auroc(ho, thr_ho, models)
+        per_drug.to_csv(out / "per_drug_vs_auroc.csv", index=False)
+        corr.to_csv(out / "per_drug_correlations.csv", index=False)
+        ceiling = leave_out_ceiling(ho, seed=args.seed)
+        ceiling.to_csv(out / "leave_out_ceiling.csv", index=False)
 
     with pd.option_context("display.width", 230, "display.max_columns", 40):
         c = pd.DataFrame(contrasts)
@@ -300,6 +415,16 @@ def main(argv: list[str] | None = None) -> int:
         if len(conf):
             print("\n== confirmatory: error ~ near + drug, conditional on genome ==")
             print(conf.round(4).to_string(index=False))
+            print("\n== per drug: near/far balanced error against the headline AUROC ==")
+            print(per_drug[["drug", "auroc", "pct_near", "n_near", "balanced_error_near",
+                            "n_far", "balanced_error_far", "balanced_error_gap"]]
+                  .sort_values("auroc", ascending=False).round(4).to_string(index=False))
+            print("\n== rank correlation with AUROC (n = 10 drugs; |rho| >= 0.648 for p < 0.05) ==")
+            print(corr.round(4).to_string(index=False))
+            print("\n== ceiling: AUROC after deleting the near band, against two nulls ==")
+            print(ceiling[["drug", "auroc_all", "n_removed", "auroc_without_near", "gain_observed",
+                           "null_random_p95", "null_matched_p95", "beats_both_nulls"]]
+                  .round(4).to_string(index=False))
     return 0
 
 
