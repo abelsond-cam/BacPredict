@@ -1,13 +1,15 @@
 # BacPredict — project state
 
-> **Last verified: 2026-11-22 @ `0dd9f51`** (branch `refactor/consolidate-engine`).
+> **Last verified: 2026-11-22 @ `c94df7f`** (branch `refactor/consolidate-engine`).
 > **Verification scope, this pass (2026-11-22, eleventh): §3.6 duplicate isolates in KpSC and PsA, and what the
 > splits builder does with `--exclude`/`--groups`.** Read on CSD3: `enterobacterales/genomes/genome_qc.csv` for the
-> exact `(total_length, n_contigs, n_cds)` collisions, then every candidate pair's contigs re-read from
-> `raw/contigs/` and hashed sequence-only (headers stripped, orientation canonicalised); the ten
-> `paeruginosa/splits/<drug>_split.csv` for where the two PsA candidate pairs actually sit. The builder's re-draw
-> behaviour read from `build_amr_holdout_splits.py`. **No list was written and no split table was built or
-> rebuilt**; the duplicate policy is still open with David.
+> `(total_length, n_contigs)` collisions, then every candidate pair's contigs re-read from `raw/contigs/` and
+> hashed sequence-only (headers stripped, orientation canonicalised); the ten `paeruginosa/splits/<drug>_split.csv`
+> for where the two PsA candidate pairs actually sit. The builder's re-draw behaviour read from
+> `build_amr_holdout_splits.py`. Both cohorts then re-run through
+> `engine/genomes/find_duplicate_assemblies.py` at `c94df7f` from a detached worktree, reproducing the hand
+> result exactly — and the run is what caught the first version's key being wrong (it returned nothing on PsA).
+> **No list was written and no split table was built or rebuilt**; the duplicate policy is still open with David.
 >
 > **Verification scope, the pass before (2026-11-22, tenth): §3.7 the PsA v2 genome collate and the BakRep
 > coverage of both v2 plans only.** Read on CSD3: `paeruginosa_cabbage_v2/genomes/{genome_qc,embedding_input,
@@ -2072,8 +2074,14 @@ Later: the AMR-GNN-cut benchmark, ANI thinning, and causal attribution of the pr
     5,737,703), SAMN11953933/SAMN11953937 (167, 6,132,443). Every pair carries **conflicting names**
     (`FDA-CDC-AR_0051` vs `6`; `AR_0613` vs `AR_0617`; `Kp10` vs `Kp33`) and different WGS projects, so no name or
     provenance screen can see them. 3 hits, 3 confirmed, 0 false positives.
-  - **The `n_cds` term is load-bearing**: SAMN06437650/SAMN06438666 match on length and contig count but share only
-    5 of 142 contigs. A length+contigs screen would have called them duplicates.
+  - **The screen is `engine/genomes/find_duplicate_assemblies.py`**, so both experiments answer this one way. Its
+    candidate key is `(total_length, n_contigs)` and the sequence hash decides. ⛔ **`n_cds` must not be added**:
+    it is the weakest key that cannot miss a real hit (identical contig sets force both columns to agree), and
+    precision there is free because the hash adjudicates — 4 candidate pairs in KpSC's 9,370, 1 in PsA's 3,677.
+    With `n_cds` in the key the **PsA screen returns nothing at all**, dropping SAMN03105472/SAMN03105661, which
+    are annotated 5,821 against 5,818 CDS because each carries its submitter's annotation. Run at `c94df7f`:
+    KpSC 4 candidate groups → **3 confirmed, 1 refuted** (SAMN06437650/SAMN06438666, 5 of 142 contigs shared —
+    refuted by the hash, which is where it should be refuted); PsA 1 candidate → **1 confirmed**.
   - **A file checksum can never find these.** `contigs_md5` and `atb_md5` hash the gzipped file, and every contig
     header embeds the BioSample (`>SAMD00061218.contig00001 … src=atb`), so all 9,095 KpSC `atb_md5` are distinct
     by construction (`build_genomes.py:179-184`).
