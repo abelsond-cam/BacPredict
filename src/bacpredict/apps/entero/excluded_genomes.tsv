@@ -1,0 +1,6 @@
+Sample	reason
+SAMN04014892	duplicate assembly: byte-identical contig set with SAMN04448224 (197 contigs, 5,375,650 bp); one of each pair dropped (David, 2026-11-22)
+SAMN12738924	duplicate assembly: byte-identical contig set with SAMN12738928 (10 contigs, 5,737,703 bp); one of each pair dropped (David, 2026-11-22)
+SAMN11953933	duplicate assembly: byte-identical contig set with SAMN11953937 (167 contigs, 6,132,443 bp); the two disagree on meropenem and imipenem, so dropping one also picks a label; one of each pair dropped (David, 2026-11-22)
+SAMN04014925	duplicate assembly: byte-identical contig set with SAMN05170083 (79 contigs, 5,142,992 bp); ecoli unit; one of each pair dropped (David, 2026-11-22)
+SAMN19836102	duplicate assembly: byte-identical contig set with SAMN20181416 (94 contigs, 5,018,812 bp); salmonella unit; one of each pair dropped (David, 2026-11-22)

@@ -62,6 +62,10 @@ MODELS=$T/models
 # spelled identically here, in the cross-species arm and in CABBAGE v2 (§3.7) or --assert-same-as fails
 UNIT=kpsc
 HOLDOUT_ST=klebsiella:37
+# One genome of each byte-identical assembly pair is dropped (David, 2026-11-22). The file is cohort-wide, so the
+# ecoli and salmonella rows do nothing here and are carried for the cross-species arm; an exclusion that is not in
+# this unit's eligible set is a logged warning, not an error.
+EXCLUDE_FILE=$HERE/src/bacpredict/apps/entero/excluded_genomes.tsv
 KP_DRUGS=(ciprofloxacin ceftazidime meropenem tobramycin amikacin imipenem piperacillin-tazobactam aztreonam
           levofloxacin cefepime)
 if [[ -n ${ONLY:-} ]]; then IFS=, read -r -a KP_DRUGS <<<"$ONLY"; fi
@@ -144,6 +148,7 @@ EOF
     # no --exclude and no --groups: neither file exists for this cohort (see the header)
     uv run --no-sync python -m bacpredict.engine.splits.build_amr_holdout_splits \
         --species "$UNIT=$LABELS,$ELIGIBLE,$QC" --holdout-st "$UNIT=$HOLDOUT_ST" \
+        --exclude "$EXCLUDE_FILE" \
         --drugs "${KP_DRUGS[@]}" --out-dir "$SPLITS" ${OVERWRITE:+--overwrite}
     ;;
 check-splits)
