@@ -1,6 +1,6 @@
 # BacPredict — project state
 
-> **Last verified: 2026-11-22 @ `c94df7f`** (branch `refactor/consolidate-engine`).
+> **Last verified: 2026-11-22 @ `73da407`** (branch `refactor/consolidate-engine`).
 > **Verification scope, this pass (2026-11-22, eleventh): §3.6 duplicate isolates in KpSC and PsA, and what the
 > splits builder does with `--exclude`/`--groups`.** Read on CSD3: `enterobacterales/genomes/genome_qc.csv` for the
 > `(total_length, n_contigs)` collisions, then every candidate pair's contigs re-read from `raw/contigs/` and
@@ -2067,13 +2067,24 @@ Later: the AMR-GNN-cut benchmark, ANI thinning, and causal attribution of the pr
   were hand-written in `986813e`; **no script produced either and no document records the duplicate criterion.** It
   re-derives exactly as an exact match on the portal phenotype table's `isolate` column, which is consistent but
   unproven.
-  - **KpSC holds 3 pairs of bit-identical assemblies.** Exact `(total_length, n_contigs, n_cds)` collision in
-    `enterobacterales/genomes/genome_qc.csv` gives 3 groups / 6 genomes, and all three are identical sequence —
-    verified by re-reading `raw/contigs/*.fna.gz` and hashing contigs with headers stripped and orientation
-    canonicalised: SAMN04014892/SAMN04448224 (197 contigs, 5,375,650 bp), SAMN12738924/SAMN12738928 (10,
-    5,737,703), SAMN11953933/SAMN11953937 (167, 6,132,443). Every pair carries **conflicting names**
-    (`FDA-CDC-AR_0051` vs `6`; `AR_0613` vs `AR_0617`; `Kp10` vs `Kp33`) and different WGS projects, so no name or
-    provenance screen can see them. 3 hits, 3 confirmed, 0 false positives.
+  - **The whole Enterobacterales cohort holds 5 pairs of bit-identical assemblies — 10 genomes of 67,326.**
+    Screened at `73da407` in **13 s**: 42 candidate groups on `(total_length, n_contigs)`, of which the sequence
+    hash confirms 5 and refutes 37. Three are `kpsc` (SAMN04014892/SAMN04448224, 197 contigs, 5,375,650 bp,
+    `klebsiella:34`; SAMN12738924/SAMN12738928, 10, 5,737,703, `klebsiella:39`; SAMN11953933/SAMN11953937, 167,
+    6,132,443, `klebsiella:11`), one is `ecoli` (SAMN04014925/SAMN05170083, 79, 5,142,992, **`ST131`**) and one is
+    `salmonella` (SAMN19836102/SAMN20181416, 94, 5,018,812, **`ST32`**) — both of those STs were on the original
+    holdout-ST shortlist. The KpSC pairs carry **conflicting names** (`FDA-CDC-AR_0051` vs `6`; `AR_0613` vs
+    `AR_0617`; `Kp10` vs `Kp33`) and different WGS projects, so no name or provenance screen can see them.
+  - **The rate tracks the source mix, not the species.** §3.6's cohort is `atb` 65,122 + `portal_gff` 2,049 +
+    `shovill` 155 and holds **no `ncbi_gca` genome at all**, which is why it yields 5 pairs in 67,326 while v2's
+    PsA yields 12 in 8,643 (§3.7): 11 of v2's 12 are NCBI GenBank deposits of one isolate under two GCAs. Any
+    arm that takes NCBI assemblies should expect a different order of magnitude.
+  - ⚠ **An identical genome pair can carry contradictory labels.** `kpsc` SAMN11953933/SAMN11953937 are the same
+    sequence and are labelled on all ten drugs, disagreeing on **meropenem and imipenem**; PsA's
+    SAMN03105472/SAMN03105661 disagree on meropenem and levofloxacin; 4 of v2's 12 disagree somewhere (§3.7).
+    **Hypothesis, untested:** either the AST record is noisy at roughly this rate, or a "duplicate" is sometimes
+    two isolates whose assemblies were confused upstream — the two readings differ in what should be done about
+    it, and nothing measured here separates them.
   - **The screen is `engine/genomes/find_duplicate_assemblies.py`**, so both experiments answer this one way. Its
     candidate key is `(total_length, n_contigs)` and the sequence hash decides. ⛔ **`n_cds` must not be added**:
     it is the weakest key that cannot miss a real hit (identical contig sets force both columns to agree), and
