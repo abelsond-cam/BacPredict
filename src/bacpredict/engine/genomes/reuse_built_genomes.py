@@ -461,7 +461,7 @@ def _run_done(annotation_dir: Path, names: set[str], sample: str, contigs: str, 
 
 def bakta_roster(cohort: pd.DataFrame, built: pd.DataFrame, reused: pd.DataFrame, bakrep_roster: pd.DataFrame,
                  status: pd.DataFrame | None, annotation_dir: Path, fingerprint: str, mode: str,
-                 allow_errors: bool = False) -> pd.DataFrame:
+                 allow_errors: bool = False, skip_reused: bool = False) -> pd.DataFrame:
     """The cohort genomes our Bakta must annotate under ``mode``: ``Sample, sr_assembly_file, why, done``.
 
     ``done`` marks those our run already has (``_run_done``); the run roster is the rest.
@@ -474,6 +474,7 @@ def bakta_roster(cohort: pd.DataFrame, built: pd.DataFrame, reused: pd.DataFrame
       reused genome is left to its owner's record, which collate then checks is current — this cohort never fetches
       or re-runs a genome its owner has annotated.
 
+    ``skip_reused`` leaves that last class off (while an owner's Bakta job is live, it may be writing their files).
     A cohort genome that is neither reused nor in ``built`` raises (plan has not seen it), as does one in both.
     """
     if mode not in RUN_MODES:
@@ -492,7 +493,7 @@ def bakta_roster(cohort: pd.DataFrame, built: pd.DataFrame, reused: pd.DataFrame
     bakrep = c["Sample"].isin(set(bakrep_roster["Sample"]))
     names = _annotation_names(annotation_dir)
     has_record = (c["Sample"] + INGEST_SUFFIX).isin(names) | (c["Sample"] + RUN_SUFFIX).isin(names)
-    bare_reused = is_reused & ~has_record
+    bare_reused = is_reused & ~has_record & (not skip_reused)
     not_in_bakrep = ~is_reused & ~bakrep
     st = pd.Series(pd.NA, index=c.index, dtype=object)
     if mode == "planned":
@@ -643,6 +644,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     p.add_argument("--mode", choices=RUN_MODES, required=True)
     p.add_argument("--max-run", type=int, required=True, help="refuse to write a roster of more genomes than this")
     p.add_argument("--allow-errors", action="store_true", help="run ours on genomes whose ingest ended error:*")
+    p.add_argument("--skip-reused", action="store_true",
+                   help="leave reused genomes off the roster (an owner's Bakta job is live); a later submit takes them")
     p.add_argument("--out", type=Path, required=True, help="the run roster to write (new; read-only once written)")
     p = sub.add_parser("bakta-status")
     p.add_argument("--plan-dir", type=Path, required=True)
@@ -799,7 +802,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         try:
             want = bakta_roster(cohort, pd.read_csv(a.built, dtype=str), pd.read_csv(a.reused, dtype=str),
                                 read_roster(a.bakrep_roster), status_df, a.annotation_dir, a.fingerprint, a.mode,
-                                a.allow_errors)
+                                a.allow_errors, a.skip_reused)
         except ValueError as e:
             raise SystemExit(str(e)) from e
         todo = want[~want["done"]]

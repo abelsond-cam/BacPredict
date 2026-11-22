@@ -420,3 +420,8 @@ def test_replan_diff_names_every_moved_genome_and_refuses_an_unexpected_move(tmp
         main([*base, "--new-reused", str(files["r1"]), "--allow", "drop:shovill"])
     with pytest.raises(SystemExit, match="reused_genomes.csv changed"):
         main([*base, "--new-reused", str(files["r2"]), "--allow", "drop:shovill,ncbi_gca:shovill"])
+
+
+def test_bakta_roster_can_leave_reused_genomes_for_later(annotation):
+    want, todo = _roster(annotation, "all", skip_reused=True)
+    assert todo == ["A2", "N1", "N2"]  # R2 waits: an owner's job may be writing it

@@ -22,8 +22,8 @@
 #   joined to it, so it lists no genome only this cohort has.
 # - A reused genome (reused_genomes.csv: an earlier cohort's manifest names it) belongs to its owner. It is never on
 #   this cohort's ingest roster, and goes to our run only if no annotation record of it exists at all; otherwise the
-#   owner's record stands, and collate checks it is current for the contigs the cohort holds. Submit refuses while any
-#   owner's Bakta job is live (OWNER_BAKTA_JOBS), which could be writing the same genome's files.
+#   owner's record stands, and collate checks it is current for the contigs the cohort holds. While any owner's Bakta
+#   job is live (OWNER_BAKTA_JOBS), which could be writing the same genome's files, submit leaves reused genomes off.
 # - Plan, the run roster and status are reuse_built_genomes.py subcommands (bakta-plan, bakta-roster, bakta-status).
 #
 # Configuration (exported by the wrapper):
@@ -135,8 +135,12 @@ submit)  # submit [all|planned|refused]: all = planned + refused (the default)
     allow=()
     case ${ALLOW_ERRORS:-0} in 0) ;; 1) allow=(--allow-errors) ;; *) echo "ALLOW_ERRORS: 0 or 1"; exit 2 ;; esac
     refuse_if_live "$clash" "an overlapping run array would run the same genomes twice"
-    [[ -z $OWNER_BAKTA_JOBS ]] || refuse_if_live "$OWNER_BAKTA_JOBS" \
-        "an owner's Bakta job may be writing a reused genome's files; wait for it"
+    # an owner's live Bakta job may be writing a reused genome's files: reused genomes then wait for a later submit
+    skip=()
+    if [[ -n $OWNER_BAKTA_JOBS ]]; then
+        live=$(squeue -u "$USER" -h -n "$OWNER_BAKTA_JOBS" -o '%i') || { echo "squeue failed: cannot tell"; exit 1; }
+        [[ -z $live ]] || { skip=(--skip-reused); echo "owner Bakta jobs live ($(echo $live)): reused genomes left for a later submit"; }
+    fi
     status=()
     if [[ $mode != planned ]]; then
         [[ -s $STATUS ]] || {
@@ -159,7 +163,7 @@ submit)  # submit [all|planned|refused]: all = planned + refused (the default)
     roster=$PLAN/run_roster_$(date +%Y%m%d_%H%M%S).tsv
     reuse bakta-roster --cohort "$COHORT" --built "$PLAN/built_genomes.csv" --reused "$GEN/reused_genomes.csv" \
         --bakrep-roster "$PLAN/bakrep_roster.tsv" "${status[@]}" --annotation-dir "$ANN" --fingerprint "$fp" \
-        --mode "$mode" --max-run "$max_run" "${allow[@]}" --out "$roster"
+        --mode "$mode" --max-run "$max_run" "${allow[@]}" "${skip[@]}" --out "$roster"
     [[ -s $roster ]] || { echo "nothing to run"; exit 0; }
     chunk=4
     n=$(( ($(wc -l < "$roster") + chunk - 1) / chunk ))
