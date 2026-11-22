@@ -2374,22 +2374,27 @@ Checks against §3.6's labels (`checks_vs_2026-07/`, scripts alongside):
   (shovill); an NCBI task of 40 genomes ran in ~1.5 min.
 
 **Numbers of record — PsA v2 genome QC.** Read from `$AMR/processed/paeruginosa_cabbage_v2/genomes/genome_qc.csv`
-(md5 `553c5988…`) and `embedding_input.csv` (md5 `d2a2d426…`), collated at `d6c3e05` (`build_pa_genomes_cabbage_v2.sh
-collate`, 2026-11-22) over CheckM2 lists `qc/checkm2_list_{01,02}.tsv` (4,881 + 226) and `qc/skani/` (PAO1 + PA7).
+(md5 `ae5365c2…`) and `embedding_input.csv` (md5 `dbd01289…`), re-collated at `94938a3` after the DNBSEQ re-plan
+(`build_pa_genomes_cabbage_v2.sh collate`, 2026-11-22) over CheckM2 lists `qc/checkm2_list_{01..04}.tsv`
+(4,881 + 226 + 412 + 1) and `qc/skani/` (PAO1 + PA7). Supersedes the first collate (8,643; `genome_qc.csv` md5
+`553c5988…`, at `d6c3e05`), which had no DNBSEQ genome.
 
 | | built | pass QC | species | contamination | completeness | contigs | other |
 |---|--:|--:|--:|--:|--:|--:|--:|
-| built here | 5,107 of 5,107 | **4,966** | 55 | 45 | 17 | 12 | 12 |
+| built here | 5,520 of 5,521 | **5,367** | 57 | 50 | 17 | 14 | 16 |
 | reused from §3.6 | 3,773 (+21 dropped by §3.6) | **3,677** | 35 | 3 | 44 | 5 | 9 |
-| **v2 PsA** | 8,880 | **8,643** | | | | | |
+| **v2 PsA** | 9,293 | **9,044** | | | | | |
 
 - **Reused genomes pass exactly as in §3.6:** 3,677 is §3.6's QC-pass PsA cohort. The `check-schemes` gate passed —
   every genome built here is on `paeruginosa`, and all 3,773 reused carry §3.6's scheme and ST.
-- **Built here, by source:** ATB 3,183 of 3,304 pass, NCBI GenBank assemblies 1,606 of 1,620, shovill 177 of 183.
-  Fail counts above are the single reason; combinations (e.g. `contamination;species`) are in "other".
-- **The held-out ST155: 223 of 8,643 QC-pass genomes (2.6 %)**, under the 5 % cap. (ST235 717, untyped 377.)
-- The build needed one rerun: 82 NCBI downloads failed with HTTP 503 on the first array (bursts, so NCBI outages, not
-  our rate); `submit paeruginosa ncbi 9,10,21,22,24` rebuilt all 82.
+- **Built here, by source:** ATB 3,183 of 3,304 pass; NCBI GenBank assemblies 1,606 of 1,620; shovill on Illumina
+  177 of 183; **shovill on DNBSEQ 401 of 414** (12 fail QC — contamination 5, contigs 2, species 2, combinations 3 — and
+  1 never built: ENA now answers SAMN28697289's fastq URL with a directory redirect). DNBSEQ assemblies are more
+  fragmented than Illumina's (median 246 contigs against 191). Fail counts are the single reason; combinations are
+  "other".
+- **The held-out ST155: 225 of 9,044 QC-pass genomes (2.5 %)**, under the 5 % cap.
+- Build reruns: 82 NCBI 503s (`submit paeruginosa ncbi 9,10,21,22,24`, all rebuilt); 2 truncated fastq downloads
+  (one rebuilt).
 
 **Numbers of record — BakRep coverage of the v2 plans.** BakRep's export
 (`$AMR/raw/bakrep/v2_export_20250612/bakrep-export.tsv.gz`, 2,438,386 BioSamples) joined to each v2
@@ -2409,10 +2414,10 @@ No NCBI genome is in BakRep (BakRep annotates ATB's assemblies, and these have n
 28,075**, 528 `refused:names` (1.9 %; job `41624840`). Refused genomes go to our run. Every reused PsA QC-pass genome
 already had exactly one §3.6 record (1,781 ingest + 1,896 run — §3.6's split).
 
-**Numbers of record — duplicate assemblies, PsA v2 (preliminary).** `engine/genomes/find_duplicate_assemblies`
-(§3.6's screen, `c94df7f`: same total length and contig count, then contig sequences hashed) over the 8,643 QC-pass
-genomes of `genome_qc.csv` md5 `553c5988…` (before the DNBSEQ genomes; rerun after the re-collate) →
-`genomes/duplicate_assemblies.csv`: **12 groups of 2 confirmed identical** (2 refuted).
+**Numbers of record — duplicate assemblies, PsA v2.** `engine/genomes/find_duplicate_assemblies` (§3.6's screen,
+`c94df7f`: same total length and contig count, then contig sequences hashed) over the 9,044 QC-pass genomes of
+`genome_qc.csv` md5 `ae5365c2…` → `genomes/duplicate_assemblies.csv`: **12 groups of 2 confirmed identical** (2
+refuted) — the same 12 as before the DNBSEQ genomes joined.
 - 11 pairs are genomes built here, all NCBI GenBank assemblies — 7 from study 42168836 (consecutive BioSamples, two
   GCAs each), 2 more same-study pairs, and one pair that is PAO1's own reference sequence (SAMN02603714, whose record
   names GCA_000006765.1, and SAMN31936973). 1 pair is §3.6's (SAMN03105472/SAMN03105661).
@@ -2428,17 +2433,23 @@ genomes of `genome_qc.csv` md5 `553c5988…` (before the DNBSEQ genomes; rerun a
   collides with v2's `--assert-same-as` against §3.6's tables (any `--groups`/`--exclude` re-draws a whole split).
 
 **In flight.**
-- **PsA:** our Bakta on 2,501 + 35 genomes (arrays `41621246`, `41624615`, SL2; 0 failures in the first 244 tasks,
-  33–35 min per task, MaxRSS ≤ 37 GB). **DNBSEQ re-plan** (`replan dnbseq drop:shovill,ncbi_gca:shovill` at `5fdd783`:
-  exactly 414 drop → shovill, nothing else moved; old plan in `genomes/_plan_pre_dnbseq/`); canary task 96
-  (SAMN27923509, DNBSEQ 876×) built ok — 431 contigs, 7.19 Mbp, N50 227 kb, ST313 — in 14 min at 14 GB; the rest
-  in array `41628304`. Then CheckM2 list 03, skani, re-collate, and Bakta on the new genomes.
-- **Enterobacterales:** NCBI and shovill build arrays still running (from `BacPredict-d6c3e05`); then the
-  *Citrobacter* NCBI 503 reruns, the DNBSEQ re-plan (510 drops + 31 NCBI → shovill), CheckM2, skani, collate. **Bakta
-  started before QC on SL3** (§6): `41627214` (13,096 genomes built so far and not in BakRep — 6,920 NCBI, 5,704 ATB,
-  438 shovill, 34 portal; cohort `genomes/bakta/built_genomes_preqc_sl3.csv`, i.e. `built_genomes.csv` without the 31
-  NCBI genomes the re-plan will rebuild) and `41627455` (the 528 refused), 56 tasks at a time (SL3's 448-core cap).
-  CheckM2 list 01 (35,032 genomes, 18 tasks of 2,000): 80–105 min per task, MaxRSS ≤ 69.5 GB at 100G.
+- **PsA:** Bakta — 2,536 of our runs done (arrays `41621246`, `41624615`, SL2: 635 tasks, 0 failed, ≤ 55 min and
+  ≤ 41 GB per task); the 401 QC-passing DNBSEQ genomes in array `41644190` (SL2). Then `annotate collate`. **DNBSEQ
+  re-plan** (`replan dnbseq drop:shovill,ncbi_gca:shovill` at `5fdd783`: exactly 414 drop → shovill, nothing else moved;
+  old plan in `genomes/_plan_pre_dnbseq/`).
+- **Enterobacterales:** the first build round ended with 640 genomes failed: 374 NCBI genomes on six nodes whose
+  `/tmp` was full (mlst's temporary FASTA; fixed at `379d415` — v2 build tasks take a node-local `TMPDIR`), 253 NCBI
+  503s, 13 fastq downloads truncated or mis-sized, 1 Prodigal error. **DNBSEQ re-plan** at `379d415`: exactly 510
+  drop → shovill and 31 `ncbi_gca` → shovill, nothing else moved; the shifted tasks rerun (`41641473` NCBI,
+  `41641474`/`41641507`/`41641515` shovill), the failed tasks in unshifted schemes once those drain; then CheckM2,
+  skani, collate. **Bakta started before QC on SL3** (§6): `41627214` (13,096 genomes built so far and not in BakRep —
+  6,920 NCBI, 5,704 ATB, 438 shovill, 34 portal; cohort `genomes/bakta/built_genomes_preqc_sl3.csv`, i.e.
+  `built_genomes.csv` without the 31 NCBI genomes the re-plan rebuilds) and `41627455` (the 528 refused), 56 tasks at a
+  time (SL3's 448-core cap) — 590 tasks done in the first ~5.3 h, 0 failed (~445 genomes an hour). CheckM2 list 01
+  (35,032 genomes, 18 tasks of 2,000): 80–105 min per task, MaxRSS ≤ 69.5 GB at 100G.
+- **`/tmp` is full on some icelake nodes:** bash 4.4 writes every here-string and here-document to `$TMPDIR`, so a job
+  script fails at its first `<<<` (a CheckM2 task, in 3 s). v2's CheckM2, skani and Bakta jobs take `TMPDIR=/local`
+  (`94938a3`). §3.6's own drivers do not.
 - Two adversarial reviews of the build code ran first (16 and 6 findings survived, all fixed at `c66a737` /
   `d6c3e05`); a third, of the Bakta step (4 lenses, 5 findings), confirmed none.
 
