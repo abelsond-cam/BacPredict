@@ -39,6 +39,11 @@ head=$(git rev-parse HEAD)
 if [[ -n "${EXPECT_SHA:-}" && "$head" != "$EXPECT_SHA"* ]]; then
     echo "the checkout moved: HEAD ${head:0:7}, this array was submitted at $EXPECT_SHA"; exit 3
 fi
+# HEAD alone does not pin the code: a modified tracked file leaves HEAD unchanged, so the task would run code at no SHA
+# while reporting the submitted one (d75e0d7). Tracked files only: a pinned worktree carries an untracked .venv symlink.
+if [[ -n "${EXPECT_SHA:-}" && -n "$(git status --porcelain --untracked-files=no)" ]]; then
+    echo "$PWD is at ${head:0:7} but its tracked files are modified: what would run is at no SHA"; exit 3
+fi
 # Normally resolved once at submit time (build_pa_genomes.sh exports it); fall back to resolving here.
 TOOLS_BIN=${TOOLS_BIN:-"$(cd src/bacpredict/engine/genomes && pixi run -- printenv CONDA_PREFIX)/bin"}
 
