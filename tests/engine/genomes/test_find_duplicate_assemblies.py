@@ -56,16 +56,20 @@ def test_contig_hashes_differ_on_different_sequence(tmp_path: Path) -> None:
     assert contig_hashes(one) != contig_hashes(other)
 
 
-def test_candidate_groups_needs_every_fingerprint_column() -> None:
-    """⛔ The regression this screen exists for: n_cds separates two genomes of equal length and contig count."""
+def test_a_differing_cds_count_does_not_block_a_candidate() -> None:
+    """⛔ The regression: n_cds must NOT be in the key.
+
+    PsA's SAMN03105472/SAMN03105661 are identical sequence annotated 5,821 against 5,818 CDS, because each
+    carries its submitter's own annotation. With n_cds in the key the whole PsA screen returns nothing.
+    """
     qc = _qc([
-        {"Sample": "S1", "contigs_path": "/a", "qc_pass": "True", "total_length": 100, "n_contigs": 5, "n_cds": 90},
-        {"Sample": "S2", "contigs_path": "/b", "qc_pass": "True", "total_length": 100, "n_contigs": 5, "n_cds": 88},
+        {"Sample": "S1", "contigs_path": "/a", "qc_pass": "True", "total_length": 100, "n_contigs": 5, "n_cds": 5821},
+        {"Sample": "S2", "contigs_path": "/b", "qc_pass": "True", "total_length": 100, "n_contigs": 5, "n_cds": 5818},
     ])
-    assert candidate_groups(qc).empty
+    assert list(candidate_groups(qc)["Sample"]) == ["S1", "S2"]
 
 
-def test_candidate_groups_finds_an_exact_triple() -> None:
+def test_candidate_groups_finds_an_exact_key_match() -> None:
     qc = _qc([
         {"Sample": "S2", "contigs_path": "/b", "qc_pass": "True", "total_length": 100, "n_contigs": 5, "n_cds": 90},
         {"Sample": "S1", "contigs_path": "/a", "qc_pass": "True", "total_length": 100, "n_contigs": 5, "n_cds": 90},

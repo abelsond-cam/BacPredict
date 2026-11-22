@@ -2,16 +2,24 @@
 
 Two cheap stages, in order, because the second cannot be run over every pair:
 
-1. **Fingerprint collision** — genomes sharing an exact ``(total_length, n_contigs, n_cds)`` triple in
-   ``genome_qc.csv``. A table read; no sequence is touched.
+1. **Fingerprint collision** — genomes sharing an exact ``(total_length, n_contigs)`` pair in ``genome_qc.csv``.
+   A table read; no sequence is touched.
 2. **Sequence confirmation** — each candidate group's contigs are re-read and hashed *sequence only*, with the
    header dropped and each contig canonicalised against its reverse complement, so the comparison does not depend
-   on contig order, orientation, line wrapping or the header text.
+   on contig order, orientation, line wrapping or the header text. **This stage decides**; stage 1 only proposes.
 
-⛔ **All three fingerprint columns are load-bearing.** Measured on the KpSC cohort (PROJECT_STATE §3.6 *Caveats*):
-the triple gave 3 groups, and all 3 were confirmed identical; dropping ``n_cds`` added SAMN06437650/SAMN06438666,
-which share only 5 of their 142 contigs. ``n_cds`` separates them because both are ``portal_gff`` genomes carrying
-their submitter's own annotation.
+⛔ **Do not add ``n_cds`` to the fingerprint, however much it tightens stage 1.** ``(total_length, n_contigs)`` is
+the *weakest* key that cannot miss a real hit — two genomes with the same multiset of contig sequences necessarily
+agree on both — so it cannot trade recall away, and stage 1's precision is worth nothing because stage 2
+adjudicates and the candidate volume is tiny either way (KpSC: 4 pairs out of 9,370; PsA: 1 out of 3,677).
+Measured, on this repo's two cohorts:
+
+- Adding ``n_cds`` **loses a confirmed duplicate**: PsA's SAMN03105472/SAMN03105661 are identical sequence (50
+  contigs, 6,380,431 bp, every contig shared) but are annotated 5,821 against 5,818 CDS, because both are
+  ``portal_gff`` genomes carrying their *submitter's* annotation rather than ours. With ``n_cds`` in the key the
+  PsA screen returns **nothing at all**.
+- What it would have bought is something stage 2 handles for free: in KpSC it suppresses SAMN06437650/
+  SAMN06438666, a same-length, same-contig-count pair sharing only 5 of 142 contigs — which the hash refutes.
 
 ⛔ **A file checksum cannot do this job.** ``contigs_md5`` and ``atb_md5`` hash the gzipped file, and every contig
 header embeds the BioSample (``>SAMD00061218.contig00001 … src=atb``), so two deposits of one assembly never share
@@ -45,15 +53,18 @@ from pathlib import Path
 
 import pandas as pd
 
-#: The fingerprint. Every column is required; see the module docstring for why ``n_cds`` cannot be dropped.
-FINGERPRINT = ("total_length", "n_contigs", "n_cds")
+#: The candidate key: the weakest one that cannot miss an identical-contig-set pair. See the module docstring for
+#: why ``n_cds`` must NOT be added to it — doing so returns nothing at all on PsA.
+FINGERPRINT = ("total_length", "n_contigs")
 
 #: Reverse complement over the IUPAC alphabet, so a contig stored in either orientation hashes the same.
 _COMPLEMENT = str.maketrans("ACGTRYSWKMBDHVNacgtryswkmbdhvn", "TGCAYRSWMKVHDBNtgcayrswmkvhdbn")
 
 
 def candidate_groups(qc: pd.DataFrame, samples: list[str] | None = None) -> pd.DataFrame:
-    """Genomes sharing an exact :data:`FINGERPRINT` triple with at least one other genome.
+    """Genomes sharing an exact :data:`FINGERPRINT` key with at least one other genome.
+
+    Candidates only — :func:`confirm_groups` decides. The key is deliberately loose; see the module docstring.
 
     Parameters
     ----------
