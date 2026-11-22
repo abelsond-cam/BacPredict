@@ -2404,7 +2404,13 @@ genomes of `genome_qc.csv` md5 `553c5988…` (before the DNBSEQ genomes; rerun a
   GCAs each), 2 more same-study pairs, and one pair that is PAO1's own reference sequence (SAMN02603714, whose record
   names GCA_000006765.1, and SAMN31936973). 1 pair is §3.6's (SAMN03105472/SAMN03105661).
 - **Labels:** 8 pairs agree on every drug both carry; 4 disagree on one or two (§3.6's pair: meropenem and
-  levofloxacin; others: ceftazidime, imipenem ×2).
+  levofloxacin; others: ceftazidime, imipenem ×2). Two readings, untested and implying different actions: a noisy
+  AST record, or an assembly attached to the wrong BioSample upstream.
+- **The rate follows the assembly source, not the species:** §3.6's whole Enterobacterales cohort (67,326, no NCBI
+  assembly) has 5 confirmed pairs (§3.6 *Caveats*); 11 of v2 PsA's 12 are NCBI GenBank deposits. A policy cannot be
+  calibrated on §3.6 alone.
+- **PAO1's 6,264,404 bp sequence is a v2 genome twice:** SAMN02603714 (PAO1's own BioSample, labelled on one drug)
+  and SAMN31936973, whose GenBank assembly is PAO1's sequence exactly — so not, on its face, that isolate's own.
 - What to do with a confirmed pair (group, keep one, drop both on a contradiction) is asked of David — and it
   collides with v2's `--assert-same-as` against §3.6's tables (any `--groups`/`--exclude` re-draws a whole split).
 
