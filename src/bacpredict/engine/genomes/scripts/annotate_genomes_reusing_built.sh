@@ -39,6 +39,9 @@
 #   BAKREP_EXPORT      BakRep's bakrep-export.tsv.gz
 # collate refuses while this cohort's own run arrays are live, unless LIVE_RUNS_OK=1: for a cohort of finished genomes
 # only (annotated's), since a run task skips a genome whose run is current and a genome is on one roster only.
+# annotated takes HOLD (Samples to leave out: one per line, or a CSV with a Sample column such as a check's
+# problems.csv) and ANNOTATED_FROM (a CSV with Sample, sr_assembly_file: consider only these genomes, e.g. the previous
+# preqc_annotated.csv, so a re-run adds no genome that finished since; default every genome built here).
 # Jobs run from ARRAY_REPO, a detached worktree at the SHA to run (.venv symlinked to the shared env), and refuse to
 # start if its HEAD has moved.
 set -euo pipefail
@@ -121,8 +124,9 @@ annotated)
     # built_genomes.csv as the shards are now: a genome re-planned to another source drops out until it is rebuilt,
     # and once rebuilt its contigs are newer than any record it had
     plan
-    reuse bakta-annotated --built "$PLAN/built_genomes.csv" --annotation-dir "$ANN" --fingerprint "$(ref_fingerprint)" \
-        --out "$GEN/preqc_annotated.csv"
+    from=${ANNOTATED_FROM:-$PLAN/built_genomes.csv}
+    reuse bakta-annotated --built "$from" --annotation-dir "$ANN" --fingerprint "$(ref_fingerprint)" \
+        ${HOLD:+--hold "$HOLD"} --out "$GEN/preqc_annotated.csv"
     echo "next: COHORT=$GEN/preqc_annotated.csv LIVE_RUNS_OK=1 <wrapper> collate"
     ;;
 ingest)

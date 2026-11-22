@@ -2505,6 +2505,22 @@ No NCBI genome is in BakRep (BakRep annotates ATB's assemblies, and these have n
 28,075**, 528 `refused:names` (1.9 %; job `41624840`). Refused genomes go to our run. Every reused PsA QC-pass genome
 already had exactly one §3.6 record (1,781 ingest + 1,896 run — §3.6's split).
 
+**Numbers of record — v2 annotation tables and proteins** (`annotate_*_cabbage_v2.sh` / `build_*_embeddings_cabbage_v2.sh`
+from worktrees at `86fd4f7`/`6cadddc`, 2026-11-22).
+- **PsA:** every Bakta run done (array `41644190`, the 401 DNBSEQ genomes: 101 tasks, 0 failed). `annotate collate`
+  (job `41646827`) → `genomes/bakta_annotation.csv` md5 `d4df2c0f…`: **9,044 of 9,044** with one current annotation
+  (4,211 BakRep, 4,833 our run). Proteins (job `41647155`, 5,367 new parquets in 9 min; reused genomes' kept);
+  **check-proteins PASS 9,044/9,044** (job `41647550`).
+- **Enterobacterales, pre-QC:** `annotated` → `genomes/preqc_annotated.csv` md5 `50f52800…`: of 49,545 genomes built
+  here, 27,547 ingested + 2,968 our run finished, 53 running, 18,977 none. Collate (job `41645790`, 8 min) →
+  `genomes/bakta_annotation_preqc_annotated.csv` md5 `3a2ed689…`: **30,515 of 30,515**. Proteins (job `41646365`,
+  30,515 in 18 min). **check-proteins FAIL on 27** (job `41647413`; `hpc-work/logs/v2-entero_esm_check-proteins_20261122_115914/problems.csv`):
+  each is one protein short of CDS − pseudogenes. All 27 are NCBI GenBank assemblies with our Bakta run; their
+  contigs carry IUPAC ambiguity codes (R, Y, M), and in each one CDS has an ambiguous codon that Biopython translates
+  as a stop (e.g. `TRA`), so the extractor drops that CDS under its internal-stop rule. Bakta's own `.faa` writes
+  `X` there and keeps the protein. §3.6 never met this (no NCBI assemblies). **Held back** from the pre-QC cohort
+  (`HOLD=` that problems.csv) pending David's choice — see *Next* 3.
+
 **Numbers of record — duplicate assemblies, PsA v2.** `engine/genomes/find_duplicate_assemblies` (§3.6's screen,
 `c94df7f`: same total length and contig count, then contig sequences hashed) over the 9,044 QC-pass genomes of
 `genome_qc.csv` md5 `ae5365c2…` → `genomes/duplicate_assemblies.csv`: **12 groups of 2 confirmed identical** (2
@@ -2526,9 +2542,9 @@ refuted) — the same 12 as before the DNBSEQ genomes joined.
   `--assert-same-as` against §3.6's PsA tables behaves with it before the v2 PsA splits are built.
 
 **In flight.**
-- **PsA:** Bakta — 2,536 of our runs done (arrays `41621246`, `41624615`, SL2: 635 tasks, 0 failed, ≤ 55 min and
-  ≤ 41 GB per task); the 401 QC-passing DNBSEQ genomes in array `41644190` (SL2). Then `annotate collate`. **DNBSEQ
-  re-plan** (`replan dnbseq drop:shovill,ncbi_gca:shovill` at `5fdd783`: exactly 414 drop → shovill, nothing else moved;
+- **PsA:** **ESM-C array `41647810`** (`FLOTO-SL2-GPU`, 18 tasks of ≤ 299: the 5,367 genomes built here,
+  `genomes/esm_samples_to_embed.txt` md5 `19cd6df2…`); then `check`. Bakta finished (arrays `41621246`, `41624615`,
+  `41644190`, SL2, 0 failed). **DNBSEQ re-plan** (`replan dnbseq drop:shovill,ncbi_gca:shovill` at `5fdd783`: exactly 414 drop → shovill, nothing else moved;
   old plan in `genomes/_plan_pre_dnbseq/`).
 - **Enterobacterales:** the first build round ended with 640 genomes failed: 374 NCBI genomes on six nodes whose
   `/tmp` was full (mlst's temporary FASTA; fixed at `379d415` — v2 build tasks take a node-local `TMPDIR`), 253 NCBI
@@ -2592,6 +2608,13 @@ refuted) — the same 12 as before the DNBSEQ genomes joined.
      on: a run task skips a genome whose run is current) → `bakta_annotation_preqc_annotated.csv` → proteins →
      check-proteins → link-kp (the Kp ESM-C store, as §3.6) → submit. Re-run as Bakta completes, then once more on the
      post-QC cohort (`ANNOTATION=bakta_annotation_embedding_input_unfiltered.csv`); submit embeds only genomes with no `.pt`.
+   - **For David — IUPAC ambiguity codes in NCBI GenBank contigs** (27 genomes held back so far, *Numbers of record*):
+     (a) keep §3.6's extractor rule, so the CDS whose ambiguous codon reads as a stop is dropped and the check is
+     taught to expect it; or (b) translate every codon holding a non-ACGT base as `X`, as Bakta's own `.faa` does,
+     which keeps the protein. (b) changes the shared extractor, so e7 must agree; it leaves §3.6's stores unchanged
+     only if none of §3.6's contigs carry such codes, which is unchecked. Either way the extractor also writes
+     Biopython's `B`/`Z`/`J` for an ambiguous codon that is not a stop, where Bakta writes `X` (seen in
+     SAMN10187602). Whether ESM-C's tokenizer has a `J` is unchecked.
 4. **Splits and training** — new split tables, retrained models, a second PsA baseline, every holdout read through
    `engine.splits.load_splits` only. **The lineage holdout is §3.6's, under the same ≤ 5 % cap:** PsA **ST155**
    (replacing ST235 — David, 2026-11-21, relayed by the §3.6 agent; §3.6 records it); Enterobacterales *E. coli* ST10,

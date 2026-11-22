@@ -532,6 +532,14 @@ def _newer(path: Path, than: str) -> bool:
         return False
 
 
+def read_sample_list(path: Path) -> set[str]:
+    """Samples from a CSV with a ``Sample`` column (e.g. a check's problems.csv), or one per line."""
+    first = path.read_text().split("\n", 1)[0].strip()
+    if first.split(",")[0] == "Sample":
+        return set(pd.read_csv(path, dtype=str, usecols=["Sample"])["Sample"].dropna())
+    return {line.strip() for line in path.read_text().splitlines() if line.strip()}
+
+
 def bakta_annotated(built: pd.DataFrame, annotation_dir: Path, fingerprint: str, workers: int = 16
                     ) -> pd.DataFrame:
     """Every genome built here with its annotation state: ``Sample, sr_assembly_file, state``.
@@ -705,6 +713,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     p.add_argument("--annotation-dir", type=Path, required=True)
     p.add_argument("--fingerprint", required=True, help="the fingerprint our runs must carry (§3.6's)")
     p.add_argument("--workers", type=int, default=16)
+    p.add_argument("--hold", type=Path, default=None,
+                   help="Samples to leave out (one per line, or a CSV with a Sample column), e.g. a check's problems")
     p.add_argument("--out", type=Path, required=True, help="Sample, sr_assembly_file, origin of the finished ones")
     a = ap.parse_args(argv)
 
@@ -881,6 +891,12 @@ def main(argv: Sequence[str] | None = None) -> None:
             raise SystemExit(str(e)) from e
         done = t[t["state"].isin(["ingest", "run"])].rename(columns={"state": "origin"})
         print(f"{len(t)} genomes built here ({a.built}): {t['state'].value_counts().to_dict()}")
+        if a.hold is not None:
+            hold = read_sample_list(a.hold)
+            held = done["Sample"].isin(hold)
+            print(f"held back ({a.hold}): {int(held.sum())} of the {len(hold)} listed are annotated; "
+                  f"{len(hold - set(t['Sample']))} listed are not built here")
+            done = done[~held]
         if done.empty:
             raise SystemExit("no genome built here has a finished annotation: nothing written")
         a.out.parent.mkdir(parents=True, exist_ok=True)

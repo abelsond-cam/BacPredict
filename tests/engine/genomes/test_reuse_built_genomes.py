@@ -451,6 +451,15 @@ def test_bakta_annotated_takes_only_finished_single_current_records(tmp_path, an
     got = pd.read_csv(out)
     assert list(got.columns) == ["Sample", "sr_assembly_file", "origin"]
     assert got[["Sample", "origin"]].values.tolist() == [["A1", "ingest"], ["A3", "run"]]
+    hold = tmp_path / "problems.csv"
+    hold.write_text("Sample,problem\nA3,protein count != CDS - pseudogenes\nZ9,x\n")
+    main(["bakta-annotated", "--built", str(f), "--annotation-dir", str(ann), "--fingerprint", FP, "--hold", str(hold),
+          "--out", str(out)])
+    assert pd.read_csv(out)["Sample"].tolist() == ["A1"]
+    (tmp_path / "hold.txt").write_text("A1\n\n")
+    main(["bakta-annotated", "--built", str(f), "--annotation-dir", str(ann), "--fingerprint", FP, "--hold",
+          str(tmp_path / "hold.txt"), "--out", str(out)])
+    assert pd.read_csv(out)["Sample"].tolist() == ["A3"]
     with pytest.raises(SystemExit, match="nothing written"):
         main(["bakta-annotated", "--built", str(_csv(tmp_path / "b2.csv", built.iloc[[1, 3]])), "--annotation-dir",
               str(ann), "--fingerprint", FP, "--out", str(tmp_path / "none.csv")])
