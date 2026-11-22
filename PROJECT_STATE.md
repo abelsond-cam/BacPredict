@@ -1,7 +1,14 @@
 # BacPredict — project state
 
 > **Last verified: 2026-11-22 @ `19065b7`** (branch `refactor/consolidate-engine`).
-> **Verification scope, this pass (2026-11-22, eleventh): §3.6 the ESM-C completion, duplicate isolates across all
+> **Verification scope, this pass (2026-11-22, twelfth): §3.6 the PsA holdout's clonal similarity and the lookup
+> baseline.** Every held-out PsA genome measured against all 2,290 training genomes with `skani dist` (job
+> `41644484`), then the nearest-labelled-neighbour lookup scored on the same held-out sets through
+> `engine.splits.load_splits` and `engine.finetune.metrics.compute_full_metrics` — the same readers and the same
+> metric function the fine-tunes used, so baseline and model are comparable. Model AUROCs read from the six
+> `paeruginosa/models/<drug>/results.json` that exist; four drugs are still training.
+>
+> **Eleventh pass (2026-11-22): §3.6 the ESM-C completion, duplicate isolates across all
 > three cohorts, and what the
 > splits builder does with `--exclude`/`--groups`.** Read on CSD3: `enterobacterales/genomes/genome_qc.csv` for the
 > `(total_length, n_contigs)` collisions, then every candidate pair's contigs re-read from `raw/contigs/` and
@@ -2023,20 +2030,81 @@ reads — the single-species arms, the cross-species arm and CABBAGE v2 (§3.7).
   unit, an arm's explicit exclusion, or `UNDECIDED`, and print the counts. Agreed with the v2 agent as one shared
   helper, to be written once the units are settled; **not written yet**.
 
+**Numbers of record — PsA holdout clonal similarity.** `$AMR/processed/paeruginosa/ani/psa_heldout_max_ani_to_train.csv`,
+written by job `41644484` (`skani dist`, every held-out genome against all 2,290 training genomes, 798 × 2,290 =
+1.83 M pairs, 32 cores, ~10 min). Each row is one held-out genome's **maximum** ANI to any training genome.
+⚠ skani prints two decimals and scores a genome **against itself at 99.99**, so `≥ 99.99` is the resolution limit,
+not a measurement — it cannot separate a clone from the same genome.
+
+| | random `holdout` (n=716) | `holdout_st` = ST155 (n=82) |
+|---|--:|--:|
+| min / p25 / median / p75 / max | 99.13 / 99.94 / **99.98** / 99.99 / 100.00 | 99.58 / 99.77 / **99.86** / 99.97 / 99.99 |
+| ≥ 99.99 to some training genome | **351 (49.0 %)** | 13 (15.9 %) |
+| ≥ 99.95 | 520 (72.6 %) | 25 (30.5 %) |
+| ≥ 99.90 | 585 (81.7 %) | 30 (36.6 %) |
+| ≥ 99.50 | 682 (95.3 %) | 82 (100 %) |
+
+**Half the random holdout has a training genome at the limit of what skani can tell apart from itself.** ⚠ A
+thinning threshold cannot be read off the low end of this range: PsA core ANI between *unrelated* strains is already
+~99.0–99.5, so a 99.5 cut deletes 95 % of the holdout as "clonal" when most of that is species-level core identity.
+The usable band is 99.90–99.99, which is ~10 distinguishable skani values wide. Whether whole-genome ANI is the right
+metric at all is open (§6) — it is core-dominated, and acquired AMR determinants are largely accessory.
+
+**Numbers of record — the clonal-lookup baseline.** `$AMR/processed/paeruginosa/ani/psa_nn_lookup_baseline.csv`,
+written by `engine/splits/holdout_lookup_baseline.py` from the same skani TSV and the ST155 split tables. For each
+held-out genome it takes the highest-ANI **labelled** training genome (every genome tied at that ANI votes) and
+predicts that label. **No model is involved**, and the metrics come from `engine/finetune/metrics.compute_full_metrics`
+— the same function that wrote the models' `results.json`, so the two are computed identically.
+
+| Drug | lookup AUROC, `holdout` | lookup AUROC, ST155 |
+|---|--:|--:|
+| tobramycin | 0.7988 | 0.5985 |
+| amikacin | 0.7316 | 0.5000 |
+| levofloxacin | 0.7101 | 0.4167 |
+| ciprofloxacin | 0.6994 | 0.4732 |
+| meropenem | 0.6760 | 0.5723 |
+| ceftazidime | 0.6599 | 0.5155 |
+| aztreonam | 0.6590 | 0.5704 |
+| piperacillin-tazobactam | 0.6461 | 0.4681 |
+| cefepime | 0.6427 | 0.5491 |
+| imipenem | 0.6199 | 0.4926 |
+| **mean** | **0.684** | **0.516** |
+
+**Roughly 0.68 AUROC of the random holdout is available from clonal lookup alone; the ST155 holdout yields
+chance (0.516).** That is the size of the inflation term in every random-holdout number in this layer.
+
+**Numbers of record — PsA baseline models, the ST155 arm (6 of 10; array `41605929` still running).** Read from
+`$AMR/processed/paeruginosa/models/<drug>/results.json`. Shown against the lookup baseline on the same held-out sets.
+
+| Drug | `holdout` AUROC | lookup | margin | ST155 AUROC | lookup | margin |
+|---|--:|--:|--:|--:|--:|--:|
+| tobramycin | 0.9326 | 0.7988 | +0.134 | 0.9819 | 0.5985 | +0.383 |
+| imipenem | 0.8845 | 0.6199 | +0.265 | 0.7649 | 0.4926 | +0.272 |
+| levofloxacin | 0.8227 | 0.7101 | +0.113 | 0.6865 | 0.4167 | +0.270 |
+| amikacin | 0.7900 | 0.7316 | +0.058 | 0.5924 | 0.5000 | +0.092 |
+| aztreonam | 0.7456 | 0.6590 | +0.087 | 0.6899 | 0.5704 | +0.120 |
+| cefepime | 0.7138 | 0.6427 | +0.071 | 0.6664 | 0.5491 | +0.117 |
+| **mean margin** | | | **+0.121** | | | **+0.209** |
+
+**The fine-tune beats clonal lookup on both holdouts, and by more out of lineage.** On ST155 the lookup is at
+chance, so there is nothing clonally close to memorise, and the model still scores 0.59–0.98. ciprofloxacin,
+ceftazidime, meropenem and piperacillin-tazobactam are not in this table yet. Hypotheses and limits: *Caveats*.
+
 **In flight.**
 - **PsA fine-tunes on the ST155 tables**: array `41605929` at `f595f0d` (10 tasks, one A100 each, 32 cores, 250 G,
-  28 h wall, `ampere`/FLOTO-SL2-GPU), split tables md5-pinned to `908fc0af…`. The ST235 run took 4.0–7.2 h per drug
-  and ~60 A100-h; ~9 % more training genomes here, so expect up to ~8 h per drug. It shares the `gpu1` QOS with the
-  Enterobacterales ESM-C array, so the two interleave.
+  28 h wall, `ampere`/FLOTO-SL2-GPU), split tables md5-pinned to `908fc0af…`. **6 of 10 drugs have landed** (above);
+  tobramycin, amikacin, imipenem, levofloxacin, aztreonam and cefepime took 4.3–5.4 h each. ciprofloxacin,
+  ceftazidime, meropenem and piperacillin-tazobactam are still training at ~4.0 s/step with 8 h of wall left.
 - **The Klebsiella-only arm** (`apps/entero/scripts/train_kpsc_models.sh`, `52e1311`): unit `kpsc`, 9,370 genomes,
   held-out ST `klebsiella:37` (211 genomes, **1.8–2.5 % of each drug's labelled set**), random 20 % of the rest,
   seed 1 / fraction 0.2 / 5 folds / fold 0, **no `--exclude` and no `--groups`** (neither file exists for this
   cohort). Per drug 3,601–7,817 labelled, against PsA's 1,195–3,136; ST37 scores 7 of 10 drugs (meropenem 12 R,
-  imipenem 11 R and amikacin 15 R fall under 20). Outputs under `processed/kpsc/`. **Blocked on embeddings:**
-  8,794 of 9,370 have a `.pt`, and `splits` refuses until all do.
-- **Enterobacterales ESM-C**: array `41596846` (58,675 genomes, 196 tasks), from the pinned worktree
-  `/rds/user/dca36/hpc-work/worktrees/BacPredict-8b791d4` at `9a813f0`. When it ends: `build_entero_embeddings.sh
-  check` (every cohort genome has a `.pt` whose protein count is its parquet's; fp32 allowed only for the Kp links).
+  imipenem 11 R and amikacin 15 R fall under 20). Outputs under `processed/kpsc/`. Now carries
+  `--exclude apps/entero/excluded_genomes.tsv` (`21e3c78`), so its eligible set is 9,367, not 9,370 — ⚠ an exclusion
+  re-draws the **whole** split, not just the listed genomes. **Embeddings no longer block it:** all 9,370 have a
+  `.pt` (job `41632894`, above). Splits not yet built.
+- ~~**Enterobacterales ESM-C**: array `41596846`~~ — **complete**; the counts are in *Numbers of record* above, and
+  its check (job `41632894`) found 0 problem rows. Kept here only so a reader of an older copy sees it closed.
 
 **Next.** Agreed with David 2026-11-19 ("even annotation sorted before embedding and models lock us in"):
 1. **A cross-species model as soon as possible** (David, 2026-11-20). Needs: a split builder that holds out STs
@@ -2067,6 +2135,27 @@ reads — the single-species arms, the cross-species arm and CABBAGE v2 (§3.7).
 Later: the AMR-GNN-cut benchmark, ANI thinning, and causal attribution of the predictions.
 
 **Caveats.**
+- **⚠ What the clonal-lookup baseline does and does not license.** It is a **lower bound on memorisation, not a
+  ceiling.** Whole-genome ANI is core-dominated while most acquired AMR determinants are accessory, so a lookup keyed
+  on accessory gene content — or a k-NN in the embedding space itself — would score higher than 0.684. A *low* number
+  would therefore not license "the model generalises"; the *high* one we measured does convict the random holdout.
+  Three further limits on the tables above: the ST155 holdout is **one lineage**, so its 47–78 genomes are mutually
+  correlated and every CI in that column is wider than its *n* implies; amikacin's ST155 set has only **7 resistant**
+  genomes and levofloxacin's only **12 susceptible**, so those two rows are close to uninterpretable alone; and
+  "model minus lookup" compares two differently-sized sets at different prevalences, so the margins rank drugs but do
+  not subtract cleanly. The *direction* — lookup at 0.684 on the random holdout against 0.516 on ST155 — is the
+  finding; the per-drug arithmetic is not.
+- **Hypotheses from the ST155-versus-random gap, offered to David 2026-11-22 and not resolved.** (1) The random
+  holdout's headline is real signal **plus** a clonal lookup bonus, and ST155 is the honest number — thinning removes
+  an inflation term rather than rescuing a broken result. (2) The model's own gap between the two holdouts (−0.085
+  mean over 6 drugs) is *smaller* than the lookup baseline's (−0.168), suggesting its representation is partly
+  lineage-invariant and does not cash in the full clonal bonus. (3) Tobramycin has the **strongest** clonal structure
+  of any drug (lookup 0.7988, the highest) yet is the one drug the model scores **better** out of lineage (0.9819 vs
+  0.9326) — consistent with acquired AME genes being read as gene presence, which transfers across lineages intact,
+  against imipenem (*oprD* loss) and levofloxacin (*gyrA*/*parC*) being chromosomal-mutational and lineage-entangled.
+  That is the §0.4 HGT-vs-chromosomal hypothesis appearing as a holdout-type contrast. ⚠ Amikacin is also an
+  aminoglycoside and cuts the other way, but its ST155 set is the 7-resistant one. **The §0.4 mechanism
+  stratification has not been computed**, so (3) is a hypothesis about a stratification we have not run.
 - **Duplicate isolates — measured, policy still open with David.** The PsA arm's two filter files are different
   things and must not be read as one: `apps/pa/excluded_genomes.tsv` (15) is an **assembly-quality** exclusion (the
   Ecuador block below), and `apps/pa/duplicate_isolate_groups.csv` (3 groups) is the only duplicate artifact. Both
@@ -2237,7 +2326,9 @@ Later: the AMR-GNN-cut benchmark, ANI thinning, and causal attribution of the pr
   multi-genus ST count or ST holdout must key on scheme:ST, never `st` alone.
 
 **Owns.** `engine/ast_labels/{breakpoints,ast_tests,build_binary_ast_labels}.py`,
-`engine/ast_labels/eucast_v15_breakpoints.csv`, `apps/pa/`, `apps/entero/`.
+`engine/ast_labels/eucast_v15_breakpoints.csv`, `engine/splits/holdout_lookup_baseline.py`, `apps/pa/`,
+`apps/entero/`. ⚠ `holdout_lookup_baseline` is **shared engine** — organism-agnostic by construction (it takes a
+skani TSV and split tables and nothing else), and §3.7 runs it on v2's cohorts from the same file.
 
 ### 3.7 Multi-species AMR — CABBAGE v2 (the second experiment, same procedures at ~2× the data)
 
@@ -2588,6 +2679,7 @@ correct.**
 | `$AMR/processed/enterobacterales/genomes/esm_linked_kp.tsv` + the symlinks in `$AMR/processed/esm/` | `build_entero_embeddings.sh link-kp` (`engine/embedding/link_existing_embeddings.py`) over `david/bacformer_processed/esm/klebsiella/` | `build_entero_embeddings.sh submit` (skips genomes with a `.pt`), `check_cohort_store` | `esm_samples_to_embed.txt`; a Kp source `.pt` that changes silently changes our store |
 | ESM-C sample lists: `$AMR/processed/paeruginosa/esm_samples{,_smoke}.txt`, `$AMR/processed/enterobacterales/genomes/esm_samples_{to_embed,smoke}.txt` | `build_pa_embeddings.sh` `submit` writes `esm_samples.txt` (sorted Samples of `bakta_annotation.csv`); `build_entero_embeddings.sh` `submit` writes `esm_samples_to_embed.txt` (sorted cohort Samples with no `.pt` in the store yet); `smoke` its own `_smoke` list | `esm_embeddings_array.sh` (`SAMPLES`, md5-pinned) | Pending tasks of an array submitted with the old list: they refuse to run (exit 3) |
 | `$AMR/processed/bakta_vs_bakrep_validation/` | `engine/genomes/scripts/validate_bakta_against_bakrep.sh` | the decision to annotate BakRep-less genomes with our own run | — (evidence only) |
+| `$AMR/processed/paeruginosa/ani/{psa_heldout_max_ani_to_train,psa_nn_lookup_baseline}.csv` (+ `psa_heldout_split_ids.txt`) | `skani dist` (job `41644484`) → `engine/splits/holdout_lookup_baseline` | the ANI-thinning threshold decision; how much of §3.6's random-holdout AUROC is clonal lookup | — (evidence only). ⚠ Tied to the ST155 split tables: rebuild the splits and these describe a holdout that no longer exists. The 599 MB pairwise TSV behind them is **not** kept (`hpc-work` scratch, swept) — it regenerates in ~10 min on 32 cores |
 
 **`catalogue_ceiling_panel.csv` is reproducible.** It was hand-assembled once, which was itself the
 defect this file exists to prevent; `engine/ref_catalogues/build_ceiling_panel` now regenerates it
