@@ -2380,14 +2380,37 @@ collate`, 2026-11-22) over CheckM2 lists `qc/checkm2_list_{01,02}.tsv` (4,881 + 
 
 No NCBI genome is in BakRep (BakRep annotates ATB's assemblies, and these have none).
 
-**In flight.** Stage 2, from the pinned worktree `BacPredict-d6c3e05` (each build task re-checks disjointness before it
-builds). **PsA: done through collate.** **Enterobacterales:** every ATB array done; the NCBI and shovill arrays share one
-job name each and run `--dependency=singleton` at 4 and 25 tasks across the cohort — at 2026-11-22 02:06 `ecoli`
-NCBI 65/172 and shovill 34/178 tasks, the other schemes' NCBI and shovill arrays waiting in turn; 10 *Citrobacter*
-NCBI 503 failures to rerun once those arrays drain. CheckM2 list 01 (35,032 genomes, 18 tasks of 2,000) finished:
-80–105 min per task, MaxRSS ≤ 69.5 GB at 100G. Two adversarial reviews of the build code ran first (16 and 6
-findings survived, all fixed at `c66a737` / `d6c3e05`); a third, of the Bakta step (4 lenses, 5 findings), confirmed
-none.
+**Numbers of record — BakRep ingest** (`genomes/bakta/ingest_status.tsv`, `annotate_*_cabbage_v2.sh ingest` at
+`5880518`): **PsA 2,529 of 2,564 ingested**, 35 `refused:names` (job `41621245`, 7 min); **Enterobacterales 27,547 of
+28,075**, 528 `refused:names` (1.9 %; job `41624840`). Refused genomes go to our run. Every reused PsA QC-pass genome
+already had exactly one §3.6 record (1,781 ingest + 1,896 run — §3.6's split).
+
+**Numbers of record — duplicate assemblies, PsA v2 (preliminary).** `engine/genomes/find_duplicate_assemblies`
+(§3.6's screen, `c94df7f`: same total length and contig count, then contig sequences hashed) over the 8,643 QC-pass
+genomes of `genome_qc.csv` md5 `553c5988…` (before the DNBSEQ genomes; rerun after the re-collate) →
+`genomes/duplicate_assemblies.csv`: **12 groups of 2 confirmed identical** (2 refuted).
+- 11 pairs are genomes built here, all NCBI GenBank assemblies — 7 from study 42168836 (consecutive BioSamples, two
+  GCAs each), 2 more same-study pairs, and one pair that is PAO1's own reference sequence (SAMN02603714, whose record
+  names GCA_000006765.1, and SAMN31936973). 1 pair is §3.6's (SAMN03105472/SAMN03105661).
+- **Labels:** 8 pairs agree on every drug both carry; 4 disagree on one or two (§3.6's pair: meropenem and
+  levofloxacin; others: ceftazidime, imipenem ×2).
+- What to do with a confirmed pair (group, keep one, drop both on a contradiction) is asked of David — and it
+  collides with v2's `--assert-same-as` against §3.6's tables (any `--groups`/`--exclude` re-draws a whole split).
+
+**In flight.**
+- **PsA:** our Bakta on 2,501 + 35 genomes (arrays `41621246`, `41624615`, SL2; 0 failures in the first 244 tasks,
+  33–35 min per task, MaxRSS ≤ 37 GB). **DNBSEQ re-plan** (`replan dnbseq drop:shovill,ncbi_gca:shovill` at `5fdd783`:
+  exactly 414 drop → shovill, nothing else moved; old plan in `genomes/_plan_pre_dnbseq/`); canary task 96
+  (SAMN27923509, DNBSEQ 876×) built ok — 431 contigs, 7.19 Mbp, N50 227 kb, ST313 — in 14 min at 14 GB; the rest
+  in array `41628304`. Then CheckM2 list 03, skani, re-collate, and Bakta on the new genomes.
+- **Enterobacterales:** NCBI and shovill build arrays still running (from `BacPredict-d6c3e05`); then the
+  *Citrobacter* NCBI 503 reruns, the DNBSEQ re-plan (510 drops + 31 NCBI → shovill), CheckM2, skani, collate. **Bakta
+  started before QC on SL3** (§6): `41627214` (13,096 genomes built so far and not in BakRep — 6,920 NCBI, 5,704 ATB,
+  438 shovill, 34 portal; cohort `genomes/bakta/built_genomes_preqc_sl3.csv`, i.e. `built_genomes.csv` without the 31
+  NCBI genomes the re-plan will rebuild) and `41627455` (the 528 refused), 56 tasks at a time (SL3's 448-core cap).
+  CheckM2 list 01 (35,032 genomes, 18 tasks of 2,000): 80–105 min per task, MaxRSS ≤ 69.5 GB at 100G.
+- Two adversarial reviews of the build code ran first (16 and 6 findings survived, all fixed at `c66a737` /
+  `d6c3e05`); a third, of the Bakta step (4 lenses, 5 findings), confirmed none.
 
 **Next.** Agreed with David 2026-11-21, in this order, each stage §3.6's procedure:
 1. **Labels — done** (above). `cabbage_v2_phenotype.py` replaced the planned `cabbage_v2_tests.py` and the optional
