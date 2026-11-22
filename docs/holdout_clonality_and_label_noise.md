@@ -159,6 +159,86 @@ the same genome. It is robust to the operating point (OR 2.47 at a flat 0.5 thre
 The error-concentration ratio — share of errors in the near band over share of genomes in it, bootstrapped
 clustered on genome — is **1.535 (95 % CI 1.433–1.648)** over 646 genomes.
 
+### 2.6 Per drug — and what actually predicts a drug's AUROC
+
+Balanced error `(FPR + FNR) / 2` per band, which is prevalence-free and so comparable across drugs whose
+%R runs 18–63. Sorted by headline AUROC.
+
+| Drug | AUROC | % of holdout near | n near | **error near** | n far | **error far** | gap |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| tobramycin | 0.9326 | 8.9 | 45 | 0.393 | 245 | 0.128 | +0.265 |
+| imipenem | 0.8845 | 23.2 | 95 | 0.361 | 213 | 0.142 | +0.219 |
+| levofloxacin | 0.8227 | 13.4 | 39 | 0.537 | 103 | 0.270 | +0.267 |
+| ciprofloxacin | 0.8173 | 15.2 | 94 | 0.488 | 339 | 0.293 | +0.195 |
+| meropenem | 0.8098 | 20.3 | 107 | 0.539 | 299 | 0.257 | +0.282 |
+| amikacin | 0.7900 | 14.2 | 66 | 0.349 | 237 | 0.311 | +0.037 |
+| piperacillin-tazobactam | 0.7529 | 25.1 | 97 | 0.447 | 152 | 0.330 | +0.117 |
+| ceftazidime | 0.7484 | 22.8 | 124 | 0.482 | 311 | 0.319 | +0.162 |
+| aztreonam | 0.7456 | 30.0 | 107 | 0.413 | 173 | 0.311 | +0.102 |
+| cefepime | 0.7138 | **43.7** | 100 | 0.451 | 76 | 0.310 | +0.142 |
+
+> **The intuitive version of the hypothesis is wrong, and the data says so clearly.**
+> A drug's AUROC does **not** fall as its near-band error rises: Spearman ρ = **−0.08, p = 0.83**.
+
+Near-band error is close to constant across the panel — 0.348 to 0.539, sd 0.067. **Near the cut every
+drug is bad, and bad by about the same amount.** It is a floor, not a differentiator, so it cannot
+explain why one drug scores 0.93 and another 0.71.
+
+Two things do predict AUROC, and they are close to independent of each other (ρ = +0.52 between them,
+p = 0.13; each survives partialling out the other):
+
+| Predictor of a drug's AUROC | Spearman ρ | p | partial, controlling for the other |
+|---|--:|--:|--:|
+| **far-band** error — how good the drug is *away* from the cut | **−0.79** | 0.006 | −0.72 (p = 0.018) |
+| **% of the holdout in the near band** — how much of the cohort is in the noisy zone | **−0.76** | 0.011 | −0.67 (p = 0.034) |
+| near-band error | −0.08 | 0.83 | — |
+| near-minus-far gap | +0.66 | 0.038 | — |
+
+So **label noise does depress AUROC, through exposure rather than severity**: not how badly the model
+does once it is at the cut, but how much of the cohort sits there. cefepime has 43.7 % of its holdout in
+the near band and the lowest AUROC of the ten; tobramycin has 8.9 % and the highest. The positive sign on
+the gap is the same fact seen from the other side — the *better* drugs have the *bigger* near-vs-far
+gap, because they have further to fall.
+
+⚠ n = 10 drugs, so |ρ| must reach 0.648 for p < 0.05, and the effective n is smaller: cefepime and
+ceftazidime share AmpC-plus-porin biology, ciprofloxacin and levofloxacin share *gyrA*/*parC*, imipenem
+and meropenem share OprD. Read this as descriptive. The genome-conditional model in §2.5 is the
+confirmatory number, not this table.
+
+### 2.7 What the holdout would score without the near band
+
+Deleting the near-band genomes and recomputing AUROC. ⚠ This rises **mechanically** — those genomes also
+sit near the model's decision boundary — so the gain is reported against two nulls: deleting the same
+number at random, and deleting the same number drawn from the rest to match the removed set's predicted-
+probability distribution by decile. That second null removes genomes the model found *equally hard* but
+whose labels are not contestable.
+
+| Drug | AUROC, placed genomes | n removed | without near | gain | beats both nulls |
+|---|--:|--:|--:|--:|:--|
+| meropenem | 0.7619 | 107 | 0.8728 | **+0.111** | yes |
+| levofloxacin | 0.7217 | 39 | 0.8064 | **+0.085** | yes |
+| imipenem | 0.8576 | 95 | 0.9226 | **+0.065** | yes |
+| piperacillin-tazobactam | 0.6996 | 97 | 0.7568 | **+0.057** | yes |
+| aztreonam | 0.6785 | 107 | 0.7347 | **+0.056** | yes |
+| cefepime | 0.6512 | 100 | 0.7063 | +0.055 | no — random null p95 +0.083 |
+| ciprofloxacin | 0.7327 | 94 | 0.7871 | **+0.054** | yes |
+| ceftazidime | 0.6918 | 124 | 0.7422 | **+0.050** | yes |
+| tobramycin | 0.8934 | 45 | 0.9141 | +0.021 | no |
+| amikacin | 0.7839 | 66 | 0.7844 | +0.000 | no |
+
+**Seven of ten drugs clear both nulls, mean gain +0.068.** That is the size of the AUROC currently being
+spent on labels a single dilution could flip.
+
+⚠ The baseline column is **not** the headline AUROC: it is computed on the genomes that have a placed
+band, excluding `no_mic` and `undetermined` (34 % of genome × drug pairs), so it runs lower. Compare
+within the row, never against §1.2.
+
+The three that do not clear their nulls are informative rather than awkward. **amikacin gains nothing**
+(+0.0005) — and amikacin is one of the two drugs with no Intermediate zone at all, whose near band is
+purely a measurement-distance artifact. tobramycin, the other, gains only +0.021. cefepime's near band
+is so large (43.7 %) that deleting 100 genomes at random moves its AUROC by +0.083 on its own, so nothing
+can be concluded from deleting its near band specifically.
+
 ---
 
 ## Part 3 — The two effects do not explain each other
@@ -214,6 +294,21 @@ regenerates in ~10 min on 32 cores.
 
 ## Open — not decided here
 
-Two downstream options follow from Part 2 and neither is taken in this document: **exclude** the
-near-breakpoint genomes, or give the model a **multi-class head** that can say "intermediate". Part 2
-measures the scope of the problem; it does not choose the fix.
+Three downstream options follow from Part 2; none is taken in this document, which measures the scope of
+the problem rather than choosing the fix.
+
+1. **Exclude** the near-breakpoint genomes. §2.7 bounds what that buys on the holdout: +0.068 mean AUROC
+   over the seven drugs that clear both nulls, nothing for amikacin and tobramycin. ⚠ It also *removes
+   the genomes a clinician most needs a call on*, so a gain here is partly a gain from declining the hard
+   cases, and the resulting number is not comparable to the current one.
+2. **A multi-class head** that can say "intermediate". ⚠ For 7 of the 10 drugs EUCAST assigns no
+   susceptible category at all, so a three-class head would have an empty S class for them; the classes
+   would have to be defined on measurement distance rather than on the EUCAST category.
+3. **Regress log₂ MIC directly** instead of the binary call, thresholding afterwards if a call is needed.
+   This is the option §2.6 points at most strongly: near-band error is a near-constant floor across
+   drugs, which is what a model forced to cut a continuous quantity at one threshold would produce, and
+   `Spearman(p̂, d)` is already positive in every drug and class — the model is reading the gradient the
+   binary label discards. The MIC is retained per test in `ast_tests_called.parquet` (value, sign, units)
+   and never reaches the model today. ⚠ It changes the task, the loss and every downstream comparison:
+   roughly a third of tests are censored (`≤`/`>`), which a plain regression cannot consume honestly —
+   it needs interval-censored handling — and no existing result would remain comparable.

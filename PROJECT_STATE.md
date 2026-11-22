@@ -2141,6 +2141,24 @@ below the random one for 9 of 10 drugs (mean −0.114); tobramycin alone rises. 
 - **Clonality points the wrong way, so it is not the explanation**: genomes near the breakpoint for ≥1 drug have
   a ≥99.99-ANI training neighbour **51.4 %** of the time against **37.6 %** for the rest — they should be
   *easier*.
+- **⚠ Per drug, the intuitive form of the hypothesis is WRONG** (`per_drug_vs_auroc.csv`,
+  `per_drug_correlations.csv`). A drug's AUROC does **not** fall as its near-band error rises: Spearman
+  **ρ = −0.08, p = 0.83**. Near-band balanced error is near-constant across the panel (0.348–0.539, sd 0.067) —
+  near the cut every drug is bad by about the same amount, so it is a floor, not a differentiator. What predicts
+  AUROC is **far-band error** (ρ = −0.79, p = 0.006) and **the share of the holdout in the near band**
+  (ρ = −0.76, p = 0.011); the two are near-independent (ρ = +0.52, p = 0.13) and each survives partialling out
+  the other (−0.72 and −0.67). **Label noise depresses AUROC through exposure, not severity**: cefepime has
+  43.7 % of its holdout near the cut and the lowest AUROC; tobramycin 8.9 % and the highest. ⚠ n = 10 drugs
+  (|ρ| ≥ 0.648 for p < 0.05) and the effective n is smaller — cefepime/ceftazidime share AmpC+porin,
+  cipro/levo *gyrA*/*parC*, imi/mero OprD. Descriptive; §2.5's genome-conditional model is the confirmatory one.
+- **Ceiling: removing the near band is worth a mean +0.068 AUROC** over the **7 of 10 drugs that clear both
+  nulls** (`leave_out_ceiling.csv`): meropenem +0.111, levofloxacin +0.085, imipenem +0.065, down to
+  ceftazidime +0.050. ⚠ The gain is reported against a random-deletion null **and** a `p̂`-decile-matched null,
+  because deleting genomes near the label boundary raises AUROC mechanically. The three that fail are
+  informative: **amikacin gains +0.0005 and tobramycin +0.021 — the two drugs with no I zone** — and cefepime's
+  near band is so large (43.7 %) that random deletion alone moves it +0.083. ⚠ That table's baseline is over
+  band-placed genomes only (excluding `no_mic`/`undetermined`, 34 % of pairs) so it runs below the headline
+  AUROC; compare within a row, never against the model table above.
 - **Reproduces the previously-uncommitted figure of record.** §6 cited "PsA 19.8–42.3 % within one dilution" from
   `checks_vs_2026-07/near_breakpoint_by_drug.csv`, produced by a script never committed. `mic_distance_bands.py`
   regenerates its v1 column **exactly for all 10 drugs** (18.1–54.4 %, matching `n_labelled` too).
@@ -2781,7 +2799,7 @@ correct.**
 | `$AMR/processed/bakta_vs_bakrep_validation/` | `engine/genomes/scripts/validate_bakta_against_bakrep.sh` | the decision to annotate BakRep-less genomes with our own run | — (evidence only) |
 | `$AMR/processed/paeruginosa/ani/{psa_heldout_max_ani_to_train,psa_nn_lookup_baseline}.csv` (+ `psa_heldout_split_ids.txt`) | `skani dist` (job `41644484`) → `engine/splits/holdout_lookup_baseline` | the ANI-thinning threshold decision; how much of §3.6's random-holdout AUROC is clonal lookup | — (evidence only). ⚠ Tied to the ST155 split tables: rebuild the splits and these describe a holdout that no longer exists. The 599 MB pairwise TSV behind them is **not** kept (`hpc-work` scratch, swept) — it regenerates in ~10 min on 32 cores |
 | `$AMR/processed/paeruginosa/mic_bands/<drug>_mic_bands.csv` + `mic_band_summary.csv` | `apps/pa/mic_distance_bands` over `ast_tests_called.parquet` + `eucast_v15_breakpoints.csv` | `apps/pa/holdout_error_by_mic_distance`; the exclude-vs-multi-class-head decision | — (evidence only). Rebuilt if the breakpoint table or the labels change |
-| `$AMR/processed/paeruginosa/mic_bands/error_by_distance/{error_by_band,near_vs_far,error_concentration,conditional_logit}.csv` | `apps/pa/holdout_error_by_mic_distance` over `models/<drug>/eval_scores*.npz` | [`docs/holdout_clonality_and_label_noise.md`](docs/holdout_clonality_and_label_noise.md) | — (evidence only). ⚠ Tied to **these** checkpoints and **these** split tables: retrain or re-split and every row is stale |
+| `$AMR/processed/paeruginosa/mic_bands/error_by_distance/{error_by_band,near_vs_far,error_concentration,conditional_logit,per_drug_vs_auroc,per_drug_correlations,leave_out_ceiling}.csv` | `apps/pa/holdout_error_by_mic_distance` over `models/<drug>/eval_scores*.npz` + `results.json` | [`docs/holdout_clonality_and_label_noise.md`](docs/holdout_clonality_and_label_noise.md) | — (evidence only). ⚠ Tied to **these** checkpoints and **these** split tables: retrain or re-split and every row is stale |
 
 **`catalogue_ceiling_panel.csv` is reproducible.** It was hand-assembled once, which was itself the
 defect this file exists to prevent; `engine/ref_catalogues/build_ceiling_panel` now regenerates it
@@ -2955,9 +2973,15 @@ directory was consolidated. Several of these existed nowhere else.
   breakpoint is important. That is a huge number in PsA and maybe a reason the model is so hard for Bacformer."
   It is: class-conditional holdout error is **3.9× (susceptible) and 2.9× (resistant)** higher at the cut than
   far from it, and conditional on genome the odds of error are **2.52× (95 % CI 2.01–3.16)** for a drug where
-  that genome sits within one dilution. Still open, and David's call: whether to **exclude** those genomes or
-  give the model a **multi-class head**. Also still open: the same measurement for Enterobacterales (3.9–10.2 %
-  near-breakpoint, so a much smaller expected effect), which has no trained arm yet.
+  that genome sits within one dilution. Removing the near band is worth a mean **+0.068 AUROC** on the 7 of 10
+  drugs that clear both deletion nulls. Still open, and David's call, now **three** options: **exclude** those
+  genomes; a **multi-class head** (⚠ 7 drugs have no S category, so its classes would have to be defined on
+  measurement distance, not the EUCAST category); or **regress log2 MIC** directly and threshold afterwards
+  (David, 2026-11-22: "We might need to consider predicting log MIC instead of the binary call"). ⚠ The third
+  changes the task, the loss and every downstream comparison, and ~⅓ of tests are censored (`≤`/`>`), which a
+  plain regression cannot consume honestly — it needs interval-censored handling. The MIC is already retained
+  per test in `ast_tests_called.parquet` and reaches nothing today. Also still open: the same measurement for
+  Enterobacterales (3.9–10.2 % near-breakpoint, so a much smaller expected effect), which has no trained arm yet.
 - **Head vs mean, across all drugs.** One point measured (rifampin: 0.958 vs 0.964); a full column and
   scatter were wanted.
 - **Does the chromosomal-blindness hypothesis survive?** It was motivated by a TB rifampicin gap that
