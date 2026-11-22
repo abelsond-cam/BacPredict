@@ -2519,7 +2519,13 @@ from worktrees at `86fd4f7`/`6cadddc`, 2026-11-22).
   contigs carry IUPAC ambiguity codes (R, Y, M), and in each one CDS has an ambiguous codon that Biopython translates
   as a stop (e.g. `TRA`), so the extractor drops that CDS under its internal-stop rule. Bakta's own `.faa` writes
   `X` there and keeps the protein. §3.6 never met this (no NCBI assemblies). **Held back** from the pre-QC cohort
-  (`HOLD=` that problems.csv) pending David's choice — see *Next* 3.
+  pending David's choice (*Next* 3): `HOLD=genomes/esm_hold_ambiguous_codons.csv` (that problems.csv, copied to
+  project_k) with `ANNOTATED_FROM` the first cohort (kept as `genomes/bakta/preqc_annotated_20261122_1121.csv`) →
+  `preqc_annotated.csv` md5 `44be1fde…`, **30,488** → collate (job `41647929`) → `bakta_annotation_preqc_annotated.csv`
+  md5 `c645abc7…` → **check-proteins PASS 30,488/30,488** (job `41649101`).
+- **Enterobacterales Kp link** (job `41649303`, 10 min): of the 10,371 cohort genomes labelled *Klebsiella*, **10,036
+  linked** from the Kp ESM-C store (fp32), 287 absent from it, 48 with a different protein count →
+  `genomes/esm_linked_kp.tsv` md5 `ee0f69fc…`. The other 20,452 go to the array.
 
 **Numbers of record — duplicate assemblies, PsA v2.** `engine/genomes/find_duplicate_assemblies` (§3.6's screen,
 `c94df7f`: same total length and contig count, then contig sequences hashed) over the 9,044 QC-pass genomes of
@@ -2546,6 +2552,9 @@ refuted) — the same 12 as before the DNBSEQ genomes joined.
   `genomes/esm_samples_to_embed.txt` md5 `19cd6df2…`); then `check`. Bakta finished (arrays `41621246`, `41624615`,
   `41644190`, SL2, 0 failed). **DNBSEQ re-plan** (`replan dnbseq drop:shovill,ncbi_gca:shovill` at `5fdd783`: exactly 414 drop → shovill, nothing else moved;
   old plan in `genomes/_plan_pre_dnbseq/`).
+- **Enterobacterales ESM-C, pre-QC cohort:** array `41650067` (`FLOTO-SL2-GPU`, 69 tasks of ≤ 297: 20,452 genomes,
+  `genomes/esm_samples_to_embed.txt` md5 `67cb28ec…`); then `check`. Re-run `annotated` → collate → proteins →
+  check-proteins → link-kp → submit as the SL3 Bakta runs finish.
 - **Enterobacterales:** the first build round ended with 640 genomes failed: 374 NCBI genomes on six nodes whose
   `/tmp` was full (mlst's temporary FASTA; fixed at `379d415` — v2 build tasks take a node-local `TMPDIR`), 253 NCBI
   503s, 13 fastq downloads truncated or mis-sized, 1 Prodigal error. **DNBSEQ re-plan** at `379d415`: exactly 510
