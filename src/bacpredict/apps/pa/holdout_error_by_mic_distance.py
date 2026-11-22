@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -164,8 +165,11 @@ def near_vs_far(df: pd.DataFrame, threshold: float, n_boot: int, seed: int) -> l
         if len(sd) > 10:
             rho, _ = stats.spearmanr(sd["p"], sd["d_min_abs"])
             rng = np.random.default_rng(seed)
-            boots = [stats.spearmanr(sd["p"].to_numpy()[i], sd["d_min_abs"].to_numpy()[i])[0]
-                     for i in (rng.integers(0, len(sd), len(sd)) for _ in range(min(n_boot, 1000)))]
+            with warnings.catch_warnings():
+                # a resample can draw one distinct MIC; spearmanr warns and returns NaN, which we drop
+                warnings.simplefilter("ignore", stats.ConstantInputWarning)
+                boots = [stats.spearmanr(sd["p"].to_numpy()[i], sd["d_min_abs"].to_numpy()[i])[0]
+                         for i in (rng.integers(0, len(sd), len(sd)) for _ in range(min(n_boot, 1000)))]
             boots = [b for b in boots if np.isfinite(b)]
             row["rho"] = float(rho)
             row["rho_lo"], row["rho_hi"] = (float(np.percentile(boots, 2.5)), float(np.percentile(boots, 97.5))) \
