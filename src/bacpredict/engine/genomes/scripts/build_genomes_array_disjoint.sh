@@ -28,4 +28,11 @@ mapfile -t owners < "$OWNERS_FILE"
 (( ${#owners[@]} )) || { echo "no owner manifests in $OWNERS_FILE"; exit 7; }
 uv run --no-sync python -m bacpredict.engine.genomes.reuse_built_genomes check-disjoint \
     --manifest "$MANIFEST" --built "${owners[@]}" || { echo "refusing to build: see above"; exit 7; }
-exec bash "$REPO/src/bacpredict/engine/genomes/scripts/build_genomes_array.sh"
+# mlst (any2fasta) writes its temporary FASTA to $TMPDIR, by default /tmp, which was full on six icelake nodes and
+# failed 374 NCBI genomes ("No space left on device"): give every tool node-local disk, as the build's own work dir is
+if [[ -d /local && -w /local ]]; then
+    export TMPDIR=/local/tmp_build_${SLURM_ARRAY_JOB_ID:-local}_${SLURM_ARRAY_TASK_ID:-0}
+    mkdir -p "$TMPDIR"
+    trap 'rm -rf "$TMPDIR"' EXIT
+fi
+bash "$REPO/src/bacpredict/engine/genomes/scripts/build_genomes_array.sh"
