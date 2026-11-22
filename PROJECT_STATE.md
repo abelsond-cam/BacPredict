@@ -1,7 +1,14 @@
 # BacPredict — project state
 
 > **Last verified: 2026-11-22 @ `19065b7`** (branch `refactor/consolidate-engine`).
-> **Verification scope, this pass (2026-11-22, twelfth): §3.6 the PsA holdout's clonal similarity and the lookup
+> **Verification scope, this pass (2026-11-22, thirteenth): §3.6 label noise at the breakpoint.** Every PsA AST
+> test re-banded by `d = log2(MIC / r_gt)` from `ast_tests_called.parquet`, reading the `s_le_mg_l` column no
+> other code reads; the reading that EUCAST v15 gives PsA no S category for 7 drugs checked against
+> `label_provenance.csv` (`n_mic == 0`) and confirmed for all 7; the banding validated by regenerating the
+> previously-uncommitted `near_breakpoint_by_drug.csv` exactly. Saved holdout predictions then re-scored by band
+> — no retraining — through `engine.finetune.stratified_metrics`' own helpers. All 10 PsA models now landed.
+>
+> **Twelfth pass (2026-11-22): §3.6 the PsA holdout's clonal similarity and the lookup
 > baseline.** Every held-out PsA genome measured against all 2,290 training genomes with `skani dist` (job
 > `41644484`), then the nearest-labelled-neighbour lookup scored on the same held-out sets through
 > `engine.splits.load_splits` and `engine.finetune.metrics.compute_full_metrics` — the same readers and the same
@@ -2073,28 +2080,74 @@ predicts that label. **No model is involved**, and the metrics come from `engine
 **Roughly 0.68 AUROC of the random holdout is available from clonal lookup alone; the ST155 holdout yields
 chance (0.516).** That is the size of the inflation term in every random-holdout number in this layer.
 
-**Numbers of record — PsA baseline models, the ST155 arm (6 of 10; array `41605929` still running).** Read from
-`$AMR/processed/paeruginosa/models/<drug>/results.json`. Shown against the lookup baseline on the same held-out sets.
+**Numbers of record — PsA baseline models, the ST155 arm. COMPLETE, all 10 drugs** (array `41605929`, 4.3–7.0 h
+per drug). Read from `$AMR/processed/paeruginosa/models/<drug>/results.json`, against the lookup baseline on the
+same held-out sets.
 
 | Drug | `holdout` AUROC | lookup | margin | ST155 AUROC | lookup | margin |
 |---|--:|--:|--:|--:|--:|--:|
 | tobramycin | 0.9326 | 0.7988 | +0.134 | 0.9819 | 0.5985 | +0.383 |
 | imipenem | 0.8845 | 0.6199 | +0.265 | 0.7649 | 0.4926 | +0.272 |
 | levofloxacin | 0.8227 | 0.7101 | +0.113 | 0.6865 | 0.4167 | +0.270 |
+| ciprofloxacin | 0.8173 | 0.6994 | +0.118 | 0.6615 | 0.4732 | +0.188 |
+| meropenem | 0.8098 | 0.6760 | +0.134 | 0.6673 | 0.5723 | +0.095 |
 | amikacin | 0.7900 | 0.7316 | +0.058 | 0.5924 | 0.5000 | +0.092 |
+| piperacillin-tazobactam | 0.7529 | 0.6461 | +0.107 | 0.6796 | 0.4681 | +0.212 |
+| ceftazidime | 0.7484 | 0.6599 | +0.089 | 0.6856 | 0.5155 | +0.170 |
 | aztreonam | 0.7456 | 0.6590 | +0.087 | 0.6899 | 0.5704 | +0.120 |
 | cefepime | 0.7138 | 0.6427 | +0.071 | 0.6664 | 0.5491 | +0.117 |
-| **mean margin** | | | **+0.121** | | | **+0.209** |
+| **mean** | **0.802** | **0.684** | **+0.117** | **0.708** | **0.516** | **+0.192** |
 
 **The fine-tune beats clonal lookup on both holdouts, and by more out of lineage.** On ST155 the lookup is at
-chance, so there is nothing clonally close to memorise, and the model still scores 0.59–0.98. ciprofloxacin,
-ceftazidime, meropenem and piperacillin-tazobactam are not in this table yet. Hypotheses and limits: *Caveats*.
+chance, so there is nothing clonally close to memorise, and the model still scores 0.59–0.98. The ST155 holdout is
+below the random one for 9 of 10 drugs (mean −0.114); tobramycin alone rises. Hypotheses and limits: *Caveats*.
+
+**Numbers of record — PsA label noise at the breakpoint.** `$AMR/processed/paeruginosa/mic_bands/`, written by
+`apps/pa/mic_distance_bands.py` (bands) and `apps/pa/holdout_error_by_mic_distance.py` (the re-scoring). Both are
+**re-scoring of saved predictions** — no retraining, no split touched. Argument and evidence:
+[`docs/holdout_clonality_and_label_noise.md`](docs/holdout_clonality_and_label_noise.md).
+
+- **The I zone is folded into S and nothing records it.** The label rule is *resistant iff MIC > `r_gt_mg_l`*;
+  `s_le_mg_l` sits in `eucast_v15_breakpoints.csv` and is read by **no code in the repo**
+  (`breakpoints.py:73`, `:102`). A phenotype string is used only when a test has no MIC (`ast_tests.py:148`), so
+  of 922 source-reported *intermediate* PsA tests, **865 were re-derived from their MIC** (578 → R, 287 → S) and
+  only the 57 without one were dropped. `label_counts.csv` has no intermediate counter and `call_agreement.csv`
+  excludes every I test by construction (`ast_tests.py:186-189`), so the override is invisible in every artifact.
+- **EUCAST v15 gives PsA no S category for 7 of 10 drugs** (`S ≤ 0.001`): ciprofloxacin, levofloxacin,
+  ceftazidime, cefepime, imipenem, aztreonam, piperacillin-tazobactam. meropenem has a genuine band (S≤2, R>8);
+  amikacin (16/16) and tobramycin (2/2) have none. **Verified**: the non-I-zone holdout negatives for those 7 are
+  exactly the genomes with `n_mic == 0` in `label_provenance.csv` — MATCH for all 7. Pooled, **7,093 of 14,038
+  "susceptible" test labels (50.5 %) are EUCAST I**.
+- **⚠ The I *category* is the wrong handle; distance is the right one.** For those 7 drugs "I-zone negative" is a
+  tautology for "negative". The quantity that carries information is `d = log2(MIC / r_gt)`, and `|d| ≤ 1` is
+  exactly the set of label states one dilution of measurement error can flip (ISO 20776-2 essential agreement).
+  **The two drugs with no I zone at all show the effect anyway.**
+- **Error rises monotonically toward the cut** (`error_by_distance/error_by_band.csv`, random holdout,
+  class-conditional, prevalence-matched threshold):
+
+  | band | susceptible n / error | resistant n / error |
+  |---|--:|--:|
+  | far (\|d\| > 3) | 203 / **0.108** | 321 / **0.159** |
+  | mid (1 < \|d\| ≤ 3) | 1,147 / 0.219 | 477 / 0.321 |
+  | **near (\|d\| ≤ 1)** | 449 / **0.419** | 425 / **0.454** |
+
+  **3.9× and 2.9×** far → near. 19 of 20 drug × class contrasts go the same way; 11 of 20 have a Newcombe
+  difference interval excluding zero (`near_vs_far.csv`). `Spearman(p̂, d)` is positive in every drug × class
+  (0.03–0.53), so the model reads the MIC gradient the binary label discarded.
+- **Confirmatory, `conditional_logit.csv`: `error ~ near + drug` conditional on genome, OR 2.52 (95 % CI
+  2.01–3.16)**, 368 informative genomes, 2,196 rows; OR 2.47 at a flat 0.5 threshold. Clonality, lineage,
+  assembly source and QC are genome-level constants and are differenced out **exactly**. Error-concentration
+  ratio **1.535 (1.433–1.648)** over 646 genomes (`error_concentration.csv`).
+- **Clonality points the wrong way, so it is not the explanation**: genomes near the breakpoint for ≥1 drug have
+  a ≥99.99-ANI training neighbour **51.4 %** of the time against **37.6 %** for the rest — they should be
+  *easier*.
+- **Reproduces the previously-uncommitted figure of record.** §6 cited "PsA 19.8–42.3 % within one dilution" from
+  `checks_vs_2026-07/near_breakpoint_by_drug.csv`, produced by a script never committed. `mic_distance_bands.py`
+  regenerates its v1 column **exactly for all 10 drugs** (18.1–54.4 %, matching `n_labelled` too).
 
 **In flight.**
-- **PsA fine-tunes on the ST155 tables**: array `41605929` at `f595f0d` (10 tasks, one A100 each, 32 cores, 250 G,
-  28 h wall, `ampere`/FLOTO-SL2-GPU), split tables md5-pinned to `908fc0af…`. **6 of 10 drugs have landed** (above);
-  tobramycin, amikacin, imipenem, levofloxacin, aztreonam and cefepime took 4.3–5.4 h each. ciprofloxacin,
-  ceftazidime, meropenem and piperacillin-tazobactam are still training at ~4.0 s/step with 8 h of wall left.
+- ~~**PsA fine-tunes on the ST155 tables**: array `41605929`~~ — **complete**, all 10 drugs, 4.3–7.0 h each. The
+  metrics are in *Numbers of record* above. Kept here only so a reader of an older copy sees it closed.
 - **The Klebsiella-only arm** (`apps/entero/scripts/train_kpsc_models.sh`, `52e1311`): unit `kpsc`, 9,370 genomes,
   held-out ST `klebsiella:37` (211 genomes, **1.8–2.5 % of each drug's labelled set**), random 20 % of the rest,
   seed 1 / fraction 0.2 / 5 folds / fold 0, **no `--exclude` and no `--groups`** (neither file exists for this
@@ -2327,8 +2380,11 @@ Later: the AMR-GNN-cut benchmark, ANI thinning, and causal attribution of the pr
 
 **Owns.** `engine/ast_labels/{breakpoints,ast_tests,build_binary_ast_labels}.py`,
 `engine/ast_labels/eucast_v15_breakpoints.csv`, `engine/splits/holdout_lookup_baseline.py`, `apps/pa/`,
-`apps/entero/`. ⚠ `holdout_lookup_baseline` is **shared engine** — organism-agnostic by construction (it takes a
+`apps/entero/`, [`docs/holdout_clonality_and_label_noise.md`](docs/holdout_clonality_and_label_noise.md).
+⚠ `holdout_lookup_baseline` is **shared engine** — organism-agnostic by construction (it takes a
 skani TSV and split tables and nothing else), and §3.7 runs it on v2's cohorts from the same file.
+`apps/pa/{mic_distance_bands,holdout_error_by_mic_distance}.py` are app-level and touch no engine code; they move
+to the engine only when a second organism needs them.
 
 ### 3.7 Multi-species AMR — CABBAGE v2 (the second experiment, same procedures at ~2× the data)
 
@@ -2710,6 +2766,8 @@ correct.**
 | ESM-C sample lists: `$AMR/processed/paeruginosa/esm_samples{,_smoke}.txt`, `$AMR/processed/enterobacterales/genomes/esm_samples_{to_embed,smoke}.txt` | `build_pa_embeddings.sh` `submit` writes `esm_samples.txt` (sorted Samples of `bakta_annotation.csv`); `build_entero_embeddings.sh` `submit` writes `esm_samples_to_embed.txt` (sorted cohort Samples with no `.pt` in the store yet); `smoke` its own `_smoke` list | `esm_embeddings_array.sh` (`SAMPLES`, md5-pinned) | Pending tasks of an array submitted with the old list: they refuse to run (exit 3) |
 | `$AMR/processed/bakta_vs_bakrep_validation/` | `engine/genomes/scripts/validate_bakta_against_bakrep.sh` | the decision to annotate BakRep-less genomes with our own run | — (evidence only) |
 | `$AMR/processed/paeruginosa/ani/{psa_heldout_max_ani_to_train,psa_nn_lookup_baseline}.csv` (+ `psa_heldout_split_ids.txt`) | `skani dist` (job `41644484`) → `engine/splits/holdout_lookup_baseline` | the ANI-thinning threshold decision; how much of §3.6's random-holdout AUROC is clonal lookup | — (evidence only). ⚠ Tied to the ST155 split tables: rebuild the splits and these describe a holdout that no longer exists. The 599 MB pairwise TSV behind them is **not** kept (`hpc-work` scratch, swept) — it regenerates in ~10 min on 32 cores |
+| `$AMR/processed/paeruginosa/mic_bands/<drug>_mic_bands.csv` + `mic_band_summary.csv` | `apps/pa/mic_distance_bands` over `ast_tests_called.parquet` + `eucast_v15_breakpoints.csv` | `apps/pa/holdout_error_by_mic_distance`; the exclude-vs-multi-class-head decision | — (evidence only). Rebuilt if the breakpoint table or the labels change |
+| `$AMR/processed/paeruginosa/mic_bands/error_by_distance/{error_by_band,near_vs_far,error_concentration,conditional_logit}.csv` | `apps/pa/holdout_error_by_mic_distance` over `models/<drug>/eval_scores*.npz` | [`docs/holdout_clonality_and_label_noise.md`](docs/holdout_clonality_and_label_noise.md) | — (evidence only). ⚠ Tied to **these** checkpoints and **these** split tables: retrain or re-split and every row is stale |
 
 **`catalogue_ceiling_panel.csv` is reproducible.** It was hand-assembled once, which was itself the
 defect this file exists to prevent; `engine/ref_catalogues/build_ceiling_panel` now regenerates it
@@ -2878,10 +2936,14 @@ directory was consolidated. Several of these existed nowhere else.
 
 ### Open questions — not decisions
 
-- **Near-breakpoint labels and the PsA ceiling** (David, 2026-11-21: "Labels within 1 dilution of breakpoint is
-  important. That is a huge number in PsA and maybe a reason the model is so hard for Bacformer"). 19.8–42.3 % of v2
-  PsA labels by drug (18.1–54.4 % in §3.6) rest on an `=` MIC within one dilution of R; Enterobacterales 3.9–10.2 %.
-  A hypothesis to test — e.g. score each model's holdout stratified by MIC distance from the breakpoint — not a result.
+- ~~**Near-breakpoint labels and the PsA ceiling**~~ — **MEASURED 2026-11-22, the hypothesis holds** (§3.6
+  *Numbers of record — PsA label noise at the breakpoint*). David, 2026-11-21: "Labels within 1 dilution of
+  breakpoint is important. That is a huge number in PsA and maybe a reason the model is so hard for Bacformer."
+  It is: class-conditional holdout error is **3.9× (susceptible) and 2.9× (resistant)** higher at the cut than
+  far from it, and conditional on genome the odds of error are **2.52× (95 % CI 2.01–3.16)** for a drug where
+  that genome sits within one dilution. Still open, and David's call: whether to **exclude** those genomes or
+  give the model a **multi-class head**. Also still open: the same measurement for Enterobacterales (3.9–10.2 %
+  near-breakpoint, so a much smaller expected effect), which has no trained arm yet.
 - **Head vs mean, across all drugs.** One point measured (rifampin: 0.958 vs 0.964); a full column and
   scatter were wanted.
 - **Does the chromosomal-blindness hypothesis survive?** It was motivated by a TB rifampicin gap that
