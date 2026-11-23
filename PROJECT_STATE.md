@@ -2689,10 +2689,15 @@ refuted) — the same 12 as before the DNBSEQ genomes joined.
 **In flight.**
 - **PsA:** nothing — genomes, Bakta and ESM-C are done (above). Splits wait on the exclude list and David's
   ANI-thinning question (*Next*, 4).
-- **Enterobacterales ESM-C, pre-QC cohort:** **array `41659165`** (`FLOTO-SL2-GPU`, 73 tasks of ≤ 300: 21,852
-  genomes, `genomes/esm_samples_to_embed.txt` md5 `470bde9e…`; the other 10,036 of the 31,888 are Kp links; 5 tasks
-  done, 9 running at 2026-11-23 00:04); then `check`. (`41650067` was cancelled for the re-extraction before it started.) Again — `annotated` → collate →
-  proteins → `reextract` → check-proteins → link-kp → submit — as the SL3 Bakta runs finish.
+- **Enterobacterales ESM-C, pre-QC cohort.** Array `41659165` (`FLOTO-SL2-GPU`, 73 tasks of ≤ 300, 59–72 min
+  each, 2026-11-22 22:40 → 2026-11-23 04:27) embedded 21,852 genomes; **`check` PASS 31,888/31,888** (job
+  `41701657`; `/rds/user/dca36/hpc-work/logs/v2-entero_esm_check_20261123_042902/`, `problems.csv` 0 rows; 10,036
+  of them Kp links, fp32). **Third round** (at `6936272`, a local chain of the driver's stages): `annotated` →
+  `preqc_annotated.csv` 37,687 (27,547 ingested, 10,140 our run; 45 running, 12,841 not yet) → collate (job
+  `41702229`) 37,687 of 37,687 → proteins (job `41702770`, 5,799 new) → reextract (job `41703431`, 37,687
+  unchanged) → **check-proteins PASS 37,687/37,687** (job `41704298`) → link-kp (job `41704789`; 668 *Klebsiella*
+  without a `.pt`, none in the Kp store) → **array `41705160`** (5,799 genomes, `genomes/esm_samples_to_embed.txt`
+  md5 `23c1f8b1…`, 20 tasks of ≤ 290); then `check`. Once more on the post-QC cohort when Bakta ends.
 - **Enterobacterales genomes: built, QC'd and collated** (*Numbers of record* above); the duplicate screen and its
   exclude list done. Left in stage 2: Bakta.
   **Bakta started before QC on SL3** (§6): `41627214` (13,096 genomes built so far and not in BakRep —
