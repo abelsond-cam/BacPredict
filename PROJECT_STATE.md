@@ -2667,8 +2667,8 @@ refuted) — the same 12 as before the DNBSEQ genomes joined.
   and SAMN31936973, whose GenBank assembly is PAO1's sequence exactly — so not, on its face, that isolate's own.
 - **Decided (§6, 2026-11-22): one genome of each confirmed pair is deleted**, the lexicographically later Sample kept
   (the §3.6 agent's rule, `apps/entero/excluded_genomes.tsv`). v2's own lists — PsA's 12 now, Enterobacterales' after
-  its collate — go to its split builder as `--exclude`. ⚠ An `--exclude` re-draws a whole split, so check how
-  `--assert-same-as` against §3.6's PsA tables behaves with it before the v2 PsA splits are built.
+  its collate — go to its split builder as `--exclude`. ⚠ An `--exclude` re-draws a whole split (*Next*, 4: what
+  "contains §3.6's holdout" needs from the builder).
 - **Enterobacterales v2** (`enterobacterales_cabbage_v2/genomes/duplicate_assemblies.csv` md5 `515228bf…`, the same screen over the
   117,277 of `embedding_input_unfiltered.csv`, inline, 39 s): 122 fingerprint groups (246 genomes) → **41 pairs
   confirmed identical** (81 refuted). 34 pairs are genomes built here; 5 are both §3.6's — exactly §3.6's 5, whose
@@ -2683,8 +2683,8 @@ refuted) — the same 12 as before the DNBSEQ genomes joined.
   the same assemblies and re-tested them.
 - **The lists:** `apps/pa/excluded_genomes_cabbage_v2.tsv` (12) and `apps/entero/excluded_genomes_cabbage_v2.tsv`
   (41), `Sample, reason` as §3.6's: the earlier Sample of each confirmed pair, with any label disagreement named.
-  The Enterobacterales list holds all 5 of §3.6's. ⚠ **PsA's holds SAMN03105472, of the pair §3.6 kept both of**
-  (both in train): with it, v2's PsA rows cannot equal §3.6's under `--assert-same-as` — for David, with the splits.
+  The Enterobacterales list holds all 5 of §3.6's. PsA's holds SAMN03105472, of the pair §3.6 kept both of: both
+  were in §3.6's train, so dropping it moves no §3.6 holdout genome.
 
 **In flight.**
 - **PsA:** nothing — genomes, Bakta and ESM-C are done (above). Splits wait on the exclude list and David's
@@ -2770,7 +2770,12 @@ refuted) — the same 12 as before the DNBSEQ genomes joined.
    *Klebsiella* ST37, *Salmonella* ST32, *Enterobacter* ST171, none for *S. sonnei* or *S. flexneri* (§6). **v2's
    held-out set contains §3.6's** — the same held-out ST plus §3.6's random holdout (David, 2026-11-21, §6): v2's PsA arm
    builds with `--assert-same-as paeruginosa=$AMR/processed/paeruginosa/splits` against the ST155 tables
-   (`split_manifest.json` md5 `908fc0af…`), and the Enterobacterales arm against §3.6's once they exist. **Compare v2
+   (`split_manifest.json` md5 `908fc0af…`), and the Enterobacterales arm against §3.6's once they exist. ⚠ **As
+   written that cannot pass:** `assert_same_as` (`engine/splits/build_amr_holdout_splits.py`) requires a species'
+   rows to *equal* the other tables' — the same genomes, the same splits — and v2's PsA has 9,044 QC-pass genomes to
+   §3.6's 3,662. "Contains §3.6's holdout" needs the builder to *pin* §3.6's assignments for the genomes both hold
+   and draw only the new ones, then assert containment — an additive engine option, to design and agree with the
+   §3.6 agent before the v2 splits. **Compare v2
    only with §3.6's ST155 arm:** the ST swap re-drew train, validate and the random holdout too, so an ST235-era number
    (`_superseded_st235/`) is on different genomes. The §3.6 agent is adding a **Klebsiella-only arm** (KpSC unit,
    held-out `klebsiella:37`) at David's request: its Klebsiella rows must be the same in v2 (a third place for
