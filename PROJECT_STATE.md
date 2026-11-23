@@ -2687,6 +2687,22 @@ refuted) — the same 12 as before the DNBSEQ genomes joined.
   were in §3.6's train, so dropping it moves no §3.6 holdout genome.
 
 **In flight.**
+- **ESM-C precision check (David, 2026-11-23): are PsA's predictions the same with ESM-C run in fp32?** Every store
+  so far ran ESM-C in bf16 — `bacformer.pp.load_plm`'s ESM-C branch casts it `.to(torch.bfloat16)`, and so does our
+  `load_esmc_pinned` — and the older Kp store's fp32 files hold bf16-computed values: in 12 of 12 sampled
+  `bacformer_processed/esm/klebsiella/*.pt` every value is exactly representable in bf16. No fp32-computed ESM-C had
+  existed. `--esm-dtype float32` (`99ffd0d`, opt-in; default unchanged) runs ESM-C's weights and arithmetic in fp32
+  (the pinned checkpoint's 308 tensors are F32 — verified by the §3.6 agent). **Smoke** (job `41744117`, 12 genomes,
+  `$AMR/processed/esm_fp32/`): layout identical to the bf16 store in 12/12; per-protein cosine median 0.999981, the
+  worst protein per genome 0.983–0.9996; per-protein relative difference median 0.66 %, max 21.5 % (one protein recurs
+  as the worst in 9 of 12); only 14 % of fp32 values round to the stored bf16 value, so bf16 ESM-C is not a rounding
+  of fp32 ESM-C. ~33 s per genome in fp32 (bf16 ~18 s). **Array `41746488`** (19 tasks): fp32 ESM-C of exactly the
+  3,662 genomes in §3.6's PsA split tables (`processed/paeruginosa/precision_check/esm_fp32_samples.txt` md5
+  `50177f61…`). Then **the ten PsA fine-tunes retrained on it** — one run per drug (David: "if almost exactly the same,
+  we have an answer; if wildly different, we also have an answer; only rerun if moderately different") — with §3.6's
+  array script and trainer at `f595f0d`, its split tables (`split_manifest.json` md5 `908fc0af…`) and settings; only
+  `EMBEDDINGS_DIR` and `OUT_ROOT` (`precision_check/models_esm_fp32/`) change. Compared drug by drug with §3.6's
+  `models/holdout_metrics.csv`. ~43–70 GPU-h. v2's last ESM-C round waits on the answer.
 - **PsA:** nothing — genomes, Bakta and ESM-C are done (above). Splits wait on the exclude list and David's
   ANI-thinning question (*Next*, 4).
 - **Enterobacterales ESM-C, pre-QC cohort.** Array `41659165` (`FLOTO-SL2-GPU`, 73 tasks of ≤ 300, 59–72 min
@@ -3025,6 +3041,7 @@ directory was consolidated. Several of these existed nowhere else.
 | 2026-11-22 | **One genome of each byte-identical duplicate pair is deleted** (David: "just delete one of each of duplicates. keep it simple. You are talking about tiny numbers."). The pairs are `engine/genomes/find_duplicate_assemblies`' confirmed groups; the lexicographically later Sample is kept (§3.6: 5 Enterobacterales genomes, `apps/entero/excluded_genomes.tsv`; §3.6 PsA's one pair, both in train, left as it is). v2 applies the same rule to its own screens (PsA: 12 pairs). |
 | 2026-11-22 | **All v2 GPU work runs on `FLOTO-SL2-GPU`** (David: "The work is too important for the lab. Just run SL2 for all GPU work." — in his experience SL3 never picks up GPU jobs). SL3 is tried only for the Enterobacterales Bakta CPU array, which would cost ~£240 on SL2 (~24,000 core-h at ~£0.01), because SL3 does sometimes pick up CPU work. ESM-C starts on every v2 genome that already has its Bakta annotation, without waiting for the rest. |
 | 2026-11-22 | **v2 translates every codon holding a base other than A, C, G or T as `X`**, as Bakta's own `.faa` does (David: "b) is fine. so few that it doesn't matter."). NCBI GenBank contigs carry IUPAC ambiguity codes; Biopython resolves an ambiguous codon where it can (`ACY` → T, `RAY` → B) and reads `TRA` as a stop, so the extractor's internal-stop rule dropped that CDS (27 Enterobacterales genomes, one protein each). `extract_proteins_from_gff_fna(ambiguous_codons_as_x=True)` / `--ambiguous-codons-as-x`, opt-in: §3.6's stores and drivers are unchanged. v2's parquets written before it are brought up to it by `reextract_proteins`, which rewrites only those that change. |
+| 2026-11-23 | **ESM-C precision check: ten PsA fine-tunes retrained on fp32-computed ESM-C, one run per drug** (David: "Lets just do ten fp32 … If answer is almost exactly same, we have answer, if wildly different, we also have an answer. Only reason to rerun is if answer are moderately different"). Every store so far is bf16-computed ESM-C, including the older Kp store's fp32 files; a fresh bf16 replicate for run-to-run noise was offered and declined for now. |
 
 ### Invasion / lab collection
 
