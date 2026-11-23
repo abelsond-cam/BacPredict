@@ -406,7 +406,8 @@ def _source_arm(tmp_path: Path, sp: b.SpeciesInputs, n_src: int = 250, **kw) -> 
     src = b.SpeciesInputs(sp.name, sp.labels, eligible, sp.qc)
     tables, _ = b.build_arm([src], DRUGS, holdout_sts=HELD, **kw)
     out = tmp_path / "source_splits"
-    b.write_arm(out, tables, {"arguments": {"n_folds": kw.get("n_folds", 5), "fold": kw.get("fold", 0)}})
+    b.write_arm(out, tables, {"arguments": {"n_folds": kw.get("n_folds", 5), "fold": kw.get("fold", 0),
+                                            "holdout_fraction": kw.get("holdout_fraction", 0.2)}})
     return out, _genome_splits(tables)
 
 
@@ -428,6 +429,31 @@ def test_pin_keeps_every_shared_genome_and_unpinned_does_not(tmp_path: Path, pa:
     assert mix["holdout"] == {"pinned": src_holdout, "new": 72 - src_holdout}
     assert mix["holdout_st"] == {"pinned": 40, "new": 0}  # every 235 genome is among the source's first 250
     assert rep["pinned_from"]["n_pinned_here"] == 250 and rep["pinned_from"]["n_source"] == 250
+    rates = rep["pinned_from"]["holdout_rate_by_stratum"]
+    assert abs(rates["pinned"] - 0.2) < 0.01 and abs(rates["new"] - 0.2) < 0.02  # a proportional stratified sample
+
+
+def test_pin_warns_on_a_changed_st_and_a_changed_fraction(tmp_path: Path, pa: b.SpeciesInputs, caplog) -> None:
+    """A pinned genome re-typed between two non-held STs keeps its split but is warned about by name; so is a source
+    built at another holdout_fraction, whose stratum then keeps its own rate."""
+    src_dir, src = _source_arm(tmp_path, pa)
+    qc = pd.read_csv(pa.qc, dtype=str)
+    moved = next(s for s, v in src.items() if v == "train")
+    qc.loc[qc["Sample"] == moved, "st"] = "999"
+    retyped = tmp_path / "retyped_qc.csv"
+    qc.to_csv(retyped, index=False)
+    sp = b.SpeciesInputs(pa.name, pa.labels, pa.eligible, retyped)
+    with caplog.at_level("WARNING"):
+        tables, report = b.build_arm([sp], DRUGS, holdout_sts=HELD, pin_from={"paeruginosa": src_dir})
+    assert _genome_splits(tables)[moved] == "train"
+    assert report["species"]["paeruginosa"]["pinned_from"]["st_key_changed"] == [moved]
+    assert moved in caplog.text and "disagree about their lineage" in caplog.text
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        _, report = b.build_arm([pa], DRUGS, holdout_sts=HELD, holdout_fraction=0.3, pin_from={"paeruginosa": src_dir})
+    assert "not a proportional sample" in caplog.text
+    rates = report["species"]["paeruginosa"]["pinned_from"]["holdout_rate_by_stratum"]
+    assert rates["new"] > rates["pinned"] + 0.1
 
 
 def test_pin_is_read_per_genome_from_the_union_of_tables(tmp_path: Path, pa: b.SpeciesInputs) -> None:

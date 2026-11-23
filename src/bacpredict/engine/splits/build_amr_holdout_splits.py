@@ -51,8 +51,9 @@ pinned ``holdout_st`` genome needs its ST in this build's ``--holdout-st``. The 
 pinned and new genomes together, so pinned ``holdout`` genomes count toward it and the draw tops it up. The earlier
 build must have the same ``--n-folds`` and ``--fold`` (its ``validate`` is that fold). With pins the holdout is a
 **mixture** — the earlier build's draw plus a top-up from genomes it never had — not a plain draw of this cohort;
-the manifest records each split's pinned and new counts, and names every earlier held-out genome this build lacks
-(excluded, or not eligible here).
+the manifest records each split's pinned and new counts and each stratum's realised holdout rate (equal rates: a
+proportional stratified sample), names every earlier held-out genome this build lacks (excluded, or not eligible
+here), and lists pinned genomes whose ST differs between the builds (also logged).
 
 A cross-species table pools its species in every split. To score one species, read it with
 ``load_splits(path, species=NAME)`` / ``load_split_ids(path, split, species=NAME)``, which return exactly that
@@ -295,6 +296,7 @@ def read_pins(other_dir: Path, species: str, *, n_folds: int, fold: int) -> tupl
         "tables": {p.name: _md5(p) for p in paths},
         "n_source": len(union),
         "source_splits": {s: int((union["split"] == s).sum()) for s in SPLIT_VALUES},
+        "source_holdout_fraction": args.get("holdout_fraction"),
     }
     return (dict(zip(union["Sample"], union["split"], strict=True)),
             dict(zip(union["Sample"], union["st_key"], strict=True)), info)
@@ -457,13 +459,24 @@ def _pin_report(assignment: pd.DataFrame, pins: Mapping[str, str], pin_st: Mappi
             entry.update(excluded=excluded, absent=absent)
         not_here[split] = entry
     changed = sorted(s for s in pins if s in here and st_here[s] != pin_st[s])
+    if changed:  # the held-ST cases already raised: these moved between two STs neither build holds out
+        logger.warning("%d pinned genomes have another st_key here than in the pinned build — the two builds "
+                       "disagree about their lineage — e.g. %s", len(changed),
+                       [(s, pin_st[s], st_here[s]) for s in changed[:5]])
     mix = {split: {"pinned": int(((assignment["split"] == split) & assignment["pinned"]).sum()),
                    "new": int(((assignment["split"] == split) & ~assignment["pinned"]).sum())} for split in SPLIT_VALUES}
+    # the realised holdout rate of each stratum (genomes outside a held-out ST): equal rates make the holdout a
+    # proportional stratified sample; a source built at another holdout_fraction would make them differ
+    rates = {}
+    for stratum in ("pinned", "new"):
+        n_random = sum(mix[s][stratum] for s in ("train", "validate", "holdout"))
+        rates[stratum] = round(mix["holdout"][stratum] / n_random, 4) if n_random else None
     lost = {k: v for k, v in not_here.items() if k in ("holdout", "holdout_st") and (v["n_excluded"] or v["n_absent"])}
     if lost:
         logger.warning("pinned held-out genomes not in this build (excluded or not eligible): %s", lost)
     return {**info, "n_pinned_here": sum(s in here for s in pins), "splits_pinned_vs_new": mix,
-            "source_not_here": not_here, "n_st_key_changed": len(changed), "st_key_changed": changed[:50]}
+            "holdout_rate_by_stratum": rates, "source_not_here": not_here, "n_st_key_changed": len(changed),
+            "st_key_changed": changed[:50]}
 
 
 # ---------------------------------------------------------------------------------------------------- the arm
@@ -560,6 +573,11 @@ def build_arm(
         pins: dict[str, str] = {}
         if inp.name in pin_from:
             pins, pin_st, pin_info = read_pins(pin_from[inp.name], inp.name, n_folds=n_folds, fold=fold)
+            if pin_info["source_holdout_fraction"] != holdout_fraction:
+                logger.warning("%s: the pinned build's holdout_fraction is %s, this build's %s: its holdout stays at its "
+                               "own rate and the new genomes make up the rest, so the holdout is not a proportional "
+                               "sample (holdout_rate_by_stratum in the manifest)", inp.name,
+                               pin_info["source_holdout_fraction"], holdout_fraction)
         assignment = assign_species_genomes(
             inp.name, keys, holdout_sts=holdout_sts.get(inp.name, ()), groups=groups,
             holdout_fraction=holdout_fraction, n_folds=n_folds, fold=fold, seed=seed, pinned=pins,

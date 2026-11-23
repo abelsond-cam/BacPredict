@@ -2773,9 +2773,16 @@ refuted) — the same 12 as before the DNBSEQ genomes joined.
    (`split_manifest.json` md5 `908fc0af…`), and the Enterobacterales arm against §3.6's once they exist. ⚠ **As
    written that cannot pass:** `assert_same_as` (`engine/splits/build_amr_holdout_splits.py`) requires a species'
    rows to *equal* the other tables' — the same genomes, the same splits — and v2's PsA has 9,044 QC-pass genomes to
-   §3.6's 3,662. "Contains §3.6's holdout" needs the builder to *pin* §3.6's assignments for the genomes both hold
-   and draw only the new ones, then assert containment — an additive engine option, to design and agree with the
-   §3.6 agent before the v2 splits. **Compare v2
+   §3.6's 3,662. **`--pin-from NAME=DIR` does it** (additive; reviewed and approved by the §3.6 agent, 2026-11-23):
+   §3.6's split kept per genome, read from the union of its tables; only v2's new genomes drawn, topping the holdout
+   up to floor(0.2 × pool); refuses a two-split genome, another fold, or a pinned `holdout_st` whose ST is not held
+   out. **Dry run** (local copies of v2 PsA's inputs, `--holdout-st paeruginosa:155`, both exclude lists and §3.6's
+   groups, pinned from `$AMR/processed/paeruginosa/splits`; nothing written on CSD3): 3,661 of §3.6's 3,662 here
+   (SAMN03105472 excluded, from train), none absent, no ST changed; train 5,625 · validate 1,409 · holdout 1,758 ·
+   holdout_st 225, of which pinned 2,289 · 574 · 716 · 82. Each stratum's holdout rate is 0.20 (pinned 716/3,579,
+   new 1,042/5,213): a proportional stratified sample, not a skewed mixture. **But v2's holdout and §3.6's share 716
+   genomes (and 82 ST155):** their headline numbers are paired, not independent — right for a v1-vs-v2 comparison,
+   wrong to read as a replication. Whether to accept that trade is put to David by the §3.6 agent. **Compare v2
    only with §3.6's ST155 arm:** the ST swap re-drew train, validate and the random holdout too, so an ST235-era number
    (`_superseded_st235/`) is on different genomes. The §3.6 agent is adding a **Klebsiella-only arm** (KpSC unit,
    held-out `klebsiella:37`) at David's request: its Klebsiella rows must be the same in v2 (a third place for
