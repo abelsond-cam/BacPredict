@@ -397,6 +397,14 @@ def main():
         "embeddings and Bacformer outputs only, masks and contig ids stay float32)",
     )
     parser.add_argument(
+        "--esm-dtype",
+        choices=["bfloat16", "float32"],
+        default="bfloat16",
+        help="dtype ESM-C's weights and arithmetic run in (default bfloat16, as bacformer.pp.load_plm casts it and "
+        "as every store so far was made). float32 is the precision check: pair it with --save-dtype float32 and a "
+        "separate --esm-dir, since its values are not bf16 values",
+    )
+    parser.add_argument(
         "--max-contigs",
         type=int,
         default=1000,
@@ -549,8 +557,8 @@ def main():
     logger.info(f"Using device: {device}")
 
     # Load ESM model (protein language model) - ONCE, pinned revision (see load_esmc_pinned)
-    logger.info(f"Loading pinned ESM-C ({ESMC_MODEL_PATH}@{ESMC_REVISION[:8]})...")
-    esm_model, esm_tokenizer = load_esmc_pinned(device)
+    logger.info(f"Loading pinned ESM-C ({ESMC_MODEL_PATH}@{ESMC_REVISION[:8]}) in {args.esm_dtype}...")
+    esm_model, esm_tokenizer = load_esmc_pinned(device, dtype=getattr(torch, args.esm_dtype))
     logger.info("ESM model loaded")
 
     # Load Bacformer model - ONCE (only when --bacformer-embeddings is set)

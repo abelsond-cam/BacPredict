@@ -11,6 +11,8 @@
 #   NTASKS        the FULL array size the slices are cut for (16 for --array=0-15). Explicit, not
 #                 SLURM_ARRAY_TASK_COUNT: re-running two failed tasks with --array=3,7 must redo slices 3 and 7
 #                 of 16, not cut the list in two and leave both tasks an empty range.
+#   ESM_DTYPE     optional: bfloat16 (default, every store so far) | float32 — the dtype ESM-C runs in. float32 is
+#                 the precision check; give it its own ESM_DIR and SAVE_DTYPE=float32
 #   N             optional: only the first N files (sorted) — the smoke test
 #   SAMPLES       optional, an absolute path: embed these samples only (one per non-blank line, sorted and unique;
 #                 engine/embedding/sample_list.py). The work list is then <INPUT_DIR>/<Sample>_protein_sequences.parquet
@@ -91,12 +93,13 @@ RUN_DIR=/rds/user/dca36/hpc-work/logs/esm_embeddings_${SLURM_ARRAY_JOB_ID:-local
 mkdir -p "$RUN_DIR" "$ESM_DIR"
 cd "$RUN_DIR"
 echo "[$(date -Is)] host=$(hostname) gpu=${CUDA_VISIBLE_DEVICES:-none} task=$TASK/$NT files=[$START,$END) of $TOTAL" \
-     "max_proteins=$MAX_PROTEINS dtype=$SAVE_DTYPE repo=$REPO@${head:0:7}" \
+     "max_proteins=$MAX_PROTEINS dtype=$SAVE_DTYPE esm_dtype=${ESM_DTYPE:-bfloat16} repo=$REPO@${head:0:7}" \
      "${SAMPLES:+samples=$SAMPLES md5=$SAMPLES_SUM}"
 if (( START >= END )); then echo "empty slice"; exit 0; fi
 
 uv run --project "$REPO" --no-sync python -X faulthandler -m bacpredict.engine.embedding.generate_embeddings \
     --input-dir "$INPUT_DIR" --esm-dir "$ESM_DIR" --max-proteins "$MAX_PROTEINS" --save-dtype "$SAVE_DTYPE" \
+    --esm-dtype "${ESM_DTYPE:-bfloat16}" \
     --skip-existing --start-idx "$START" --end-idx "$END" ${N:+--n "$N"} ${SAMPLES:+--samples-file "$SAMPLES"} \
     ${SAMPLES_MD5:+--samples-md5 "$SAMPLES_MD5"}
 echo "[$(date -Is)] done"
