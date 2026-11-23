@@ -1,0 +1,13 @@
+Sample	reason
+SAMN02603714	duplicate assembly: byte-identical contig set with SAMN31936973 (1 contigs, 6,264,404 bp); one of each pair dropped, the later Sample kept (David, 2026-11-22)
+SAMN03105472	duplicate assembly: byte-identical contig set with SAMN03105661 (50 contigs, 6,380,431 bp); the two disagree on meropenem, levofloxacin, so dropping one also picks a label; one of each pair dropped, the later Sample kept (David, 2026-11-22)
+SAMN13340376	duplicate assembly: byte-identical contig set with SAMN13340378 (85 contigs, 6,357,971 bp); the two disagree on ceftazidime, so dropping one also picks a label; one of each pair dropped, the later Sample kept (David, 2026-11-22)
+SAMN30433219	duplicate assembly: byte-identical contig set with SAMN30433220 (80 contigs, 6,614,106 bp); the two disagree on imipenem, so dropping one also picks a label; one of each pair dropped, the later Sample kept (David, 2026-11-22)
+SAMN55070626	duplicate assembly: byte-identical contig set with SAMN55070635 (113 contigs, 6,803,315 bp); one of each pair dropped, the later Sample kept (David, 2026-11-22)
+SAMN55070647	duplicate assembly: byte-identical contig set with SAMN55070656 (171 contigs, 6,947,763 bp); one of each pair dropped, the later Sample kept (David, 2026-11-22)
+SAMN55070657	duplicate assembly: byte-identical contig set with SAMN55070666 (191 contigs, 6,955,635 bp); the two disagree on imipenem, so dropping one also picks a label; one of each pair dropped, the later Sample kept (David, 2026-11-22)
+SAMN55070667	duplicate assembly: byte-identical contig set with SAMN55070675 (183 contigs, 6,950,634 bp); one of each pair dropped, the later Sample kept (David, 2026-11-22)
+SAMN55070686	duplicate assembly: byte-identical contig set with SAMN55070695 (95 contigs, 6,509,021 bp); one of each pair dropped, the later Sample kept (David, 2026-11-22)
+SAMN55070696	duplicate assembly: byte-identical contig set with SAMN55070705 (164 contigs, 6,355,134 bp); one of each pair dropped, the later Sample kept (David, 2026-11-22)
+SAMN55070719	duplicate assembly: byte-identical contig set with SAMN55070728 (62 contigs, 6,359,796 bp); one of each pair dropped, the later Sample kept (David, 2026-11-22)
+SAMN55070729	duplicate assembly: byte-identical contig set with SAMN55070737 (66 contigs, 6,360,620 bp); one of each pair dropped, the later Sample kept (David, 2026-11-22)
