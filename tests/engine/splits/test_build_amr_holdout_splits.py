@@ -392,3 +392,129 @@ def test_st_key_formats_untyped_and_missing() -> None:
     assert b.st_key(None, float("nan")) == "-:-"
     scheme, st = pd.Series([s for s, _, _ in cases]), pd.Series([t for _, t, _ in cases])
     assert b._st_keys(scheme, st) == [k for *_, k in cases]
+
+
+# ------------------------------------------------------------------------------------------- --pin-from (v2 vs §3.6)
+
+HELD = {"paeruginosa": ["paeruginosa:235"]}
+
+
+def _source_arm(tmp_path: Path, sp: b.SpeciesInputs, n_src: int = 250, **kw) -> tuple[Path, dict[str, str]]:
+    """An earlier, smaller build of the same species (its first ``n_src`` genomes), written with its manifest."""
+    eligible = tmp_path / "source_eligible.csv"
+    pd.DataFrame({"Sample": pd.read_csv(sp.eligible)["Sample"].tolist()[:n_src]}).to_csv(eligible, index=False)
+    src = b.SpeciesInputs(sp.name, sp.labels, eligible, sp.qc)
+    tables, _ = b.build_arm([src], DRUGS, holdout_sts=HELD, **kw)
+    out = tmp_path / "source_splits"
+    b.write_arm(out, tables, {"arguments": {"n_folds": kw.get("n_folds", 5), "fold": kw.get("fold", 0)}})
+    return out, _genome_splits(tables)
+
+
+def test_pin_keeps_every_shared_genome_and_unpinned_does_not(tmp_path: Path, pa: b.SpeciesInputs) -> None:
+    """Pinned: every genome both builds hold keeps its split. Unpinned, the larger pool re-draws them — so the
+    first half is not a no-op. The holdout target counts pinned and new together, and the report says which is which."""
+    src_dir, src = _source_arm(tmp_path, pa)
+    pinned, report = b.build_arm([pa], DRUGS, holdout_sts=HELD, pin_from={"paeruginosa": src_dir})
+    now = _genome_splits(pinned)
+    assert all(now[s] == v for s, v in src.items())
+    unpinned = _genome_splits(b.build_arm([pa], DRUGS, holdout_sts=HELD)[0])
+    same = sum(unpinned[s] == v for s, v in src.items() if v != "holdout_st") / sum(v != "holdout_st" for v in src.values())
+    assert same < 0.9  # measured ~0.6 here; 1.0 would mean the pool change does not re-draw, and pinning tests nothing
+
+    rep = report["species"]["paeruginosa"]
+    g, mix = rep["genome_splits"], rep["pinned_from"]["splits_pinned_vs_new"]
+    assert g["holdout"] == int(0.2 * (400 - 40)) == 72  # not 72 + the source's 42
+    src_holdout = sum(v == "holdout" for v in src.values())
+    assert mix["holdout"] == {"pinned": src_holdout, "new": 72 - src_holdout}
+    assert mix["holdout_st"] == {"pinned": 40, "new": 0}  # every 235 genome is among the source's first 250
+    assert rep["pinned_from"]["n_pinned_here"] == 250 and rep["pinned_from"]["n_source"] == 250
+
+
+def test_pin_is_read_per_genome_from_the_union_of_tables(tmp_path: Path, pa: b.SpeciesInputs) -> None:
+    """A genome in only one of the source's drug tables is pinned in every table here; a source giving a genome two
+    splits across its tables is refused."""
+    src_dir, src = _source_arm(tmp_path, pa)
+    mero = pd.read_csv(src_dir / "meropenem_split.csv", dtype=str)
+    only_cipro = sorted(set(src) - set(mero["Sample"]))
+    assert only_cipro  # the fixture leaves ~30 % unlabelled for meropenem
+    # here, every genome is labelled for meropenem: the cipro-only source genomes enter meropenem's table pinned
+    labels = pd.read_csv(pa.labels, index_col=0)
+    labels["meropenem"] = labels["meropenem"].fillna(0.0)
+    full = tmp_path / "full_labels.csv"
+    labels.to_csv(full)
+    sp = b.SpeciesInputs(pa.name, full, pa.eligible, pa.qc)
+    tables, _ = b.build_arm([sp], DRUGS, holdout_sts=HELD, pin_from={"paeruginosa": src_dir})
+    here = tables["meropenem"].set_index("Sample")["split"]
+    assert all(here[s] == src[s] for s in only_cipro)
+
+    cipro = pd.read_csv(src_dir / "ciprofloxacin_split.csv", dtype=str)
+    i = cipro.index[cipro["Sample"].isin(mero["Sample"]) & cipro["split"].eq("train")][0]
+    cipro.loc[i, "split"] = "holdout"
+    cipro.to_csv(src_dir / "ciprofloxacin_split.csv", index=False)
+    with pytest.raises(ValueError, match="two splits"):
+        b.build_arm([pa], DRUGS, holdout_sts=HELD, pin_from={"paeruginosa": src_dir})
+
+
+def test_pin_units_and_held_st_coherence(tmp_path: Path, pa: b.SpeciesInputs) -> None:
+    """A new genome grouped with a pinned one takes its split; a unit pinned two ways is refused; a pinned
+    holdout_st needs the same --holdout-st, and a pinned non-holdout_st genome may not fall in a held ST here."""
+    src_dir, src = _source_arm(tmp_path, pa)
+    pin = {"paeruginosa": src_dir}
+    a = next(s for s, v in src.items() if v == "holdout")
+    tables, _ = b.build_arm([pa], DRUGS, holdout_sts=HELD, pin_from=pin, groups={a: "iso", "P0300": "iso"})
+    assert _genome_splits(tables)["P0300"] == "holdout"
+    t = next(s for s, v in src.items() if v == "train")
+    with pytest.raises(ValueError, match="more than one split"):
+        b.build_arm([pa], DRUGS, holdout_sts=HELD, pin_from=pin, groups={a: "iso", t: "iso"})
+    with pytest.raises(ValueError, match="pass the pinned build's --holdout-st"):
+        b.build_arm([pa], DRUGS, pin_from=pin)
+    with pytest.raises(ValueError, match="in a held-out ST here but pinned"):
+        b.build_arm([pa], DRUGS, holdout_sts={"paeruginosa": ["paeruginosa:235", "paeruginosa:17"]}, pin_from=pin)
+
+
+def test_pin_source_must_match_folds_and_carry_a_manifest(tmp_path: Path, pa: b.SpeciesInputs) -> None:
+    src_dir, _ = _source_arm(tmp_path, pa)
+    with pytest.raises(ValueError, match="fold=0"):
+        b.build_arm([pa], DRUGS, holdout_sts=HELD, fold=1, pin_from={"paeruginosa": src_dir})
+    (src_dir / b.MANIFEST_NAME).unlink()
+    with pytest.raises(ValueError, match="no split_manifest.json"):
+        b.build_arm([pa], DRUGS, holdout_sts=HELD, pin_from={"paeruginosa": src_dir})
+    with pytest.raises(ValueError, match="not given with --species"):
+        b.build_arm([pa], DRUGS, holdout_sts=HELD, pin_from={"nope": src_dir})
+
+
+def test_pin_names_every_lost_held_out_genome(tmp_path: Path, pa: b.SpeciesInputs) -> None:
+    """A source held-out genome excluded here, or not eligible here, is named in the report (not a failure)."""
+    src_dir, src = _source_arm(tmp_path, pa)
+    held_out = sorted(s for s, v in src.items() if v == "holdout")
+    gone, excluded = held_out[0], held_out[1]
+    eligible = tmp_path / "fewer.csv"
+    pd.DataFrame({"Sample": [s for s in pd.read_csv(pa.eligible)["Sample"] if s != gone]}).to_csv(eligible, index=False)
+    sp = b.SpeciesInputs(pa.name, pa.labels, eligible, pa.qc)
+    _, report = b.build_arm([sp], DRUGS, holdout_sts=HELD, exclusions={excluded: "duplicate"},
+                            pin_from={"paeruginosa": src_dir})
+    lost = report["species"]["paeruginosa"]["pinned_from"]["source_not_here"]["holdout"]
+    assert lost == {"n_excluded": 1, "n_absent": 1, "excluded": [excluded], "absent": [gone]}
+
+
+def test_cli_pin_from_records_the_source_and_the_mixture(tmp_path: Path, pa: b.SpeciesInputs) -> None:
+    src_dir, src = _source_arm(tmp_path, pa)
+    out = tmp_path / "v2"
+    b.main(["--species", f"paeruginosa={pa.labels},{pa.eligible},{pa.qc}", "--holdout-st",
+            "paeruginosa=paeruginosa:235", "--drugs", ",".join(DRUGS), "--out-dir", str(out),
+            "--pin-from", f"paeruginosa={src_dir}"])
+    manifest = json.loads((out / b.MANIFEST_NAME).read_text())
+    assert manifest["arguments"]["pin_from"] == {"paeruginosa": str(src_dir.resolve())}
+    pf = manifest["species"]["paeruginosa"]["pinned_from"]
+    assert set(pf["tables"]) == {f"{d}_split.csv" for d in DRUGS} and len(pf["manifest_md5"]) == 32
+    assert pf["splits_pinned_vs_new"]["holdout"]["pinned"] == sum(v == "holdout" for v in src.values())
+    table = pd.read_csv(out / "ciprofloxacin_split.csv", dtype=str).set_index("Sample")["split"]
+    assert all(table[s] == v for s, v in src.items() if s in table.index)
+
+
+def test_committed_cabbage_v2_exclusions_parse() -> None:
+    """apps/{pa,entero}/excluded_genomes_cabbage_v2.tsv (v2's duplicate-assembly drops) are valid exclusion lists."""
+    for app, n in (("pa", 12), ("entero", 41)):
+        excl = b.read_sample_map([REPO / f"src/bacpredict/apps/{app}/excluded_genomes_cabbage_v2.tsv"], "reason",
+                                 sep="\t", what="exclusions")
+        assert len(excl) == n and all(r.startswith("duplicate assembly") for r in excl.values())

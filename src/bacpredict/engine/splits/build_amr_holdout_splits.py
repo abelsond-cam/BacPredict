@@ -42,6 +42,18 @@ arm's NAME rows must equal the NAME rows of the other arm's table, row for row a
 every drug, or nothing is written. Build the PsA-only arm first, then the PsA + Enterobacterales arm with
 ``--assert-same-as paeruginosa=<PsA-only dir>``.
 
+**Pinning** (``--pin-from NAME=<earlier arm dir>``) is for a second experiment over a larger cohort of the same
+species — CABBAGE v2 against §3.6 — whose held-out set must contain the first's, where ``--assert-same-as`` (equal
+rows) cannot hold. The earlier build's split is read **per genome, from the union of all its tables** (never per
+drug: a genome in one drug's table and not another's would otherwise be pinned for one drug and drawn for the other)
+and kept for every genome both builds hold; only the rest are drawn. A unit takes its pinned member's split; a
+pinned ``holdout_st`` genome needs its ST in this build's ``--holdout-st``. The holdout target is computed over
+pinned and new genomes together, so pinned ``holdout`` genomes count toward it and the draw tops it up. The earlier
+build must have the same ``--n-folds`` and ``--fold`` (its ``validate`` is that fold). With pins the holdout is a
+**mixture** — the earlier build's draw plus a top-up from genomes it never had — not a plain draw of this cohort;
+the manifest records each split's pinned and new counts, and names every earlier held-out genome this build lacks
+(excluded, or not eligible here).
+
 A cross-species table pools its species in every split. To score one species, read it with
 ``load_splits(path, species=NAME)`` / ``load_split_ids(path, split, species=NAME)``, which return exactly that
 species' own arm. Never filter the ``species`` column outside the reader.
@@ -49,7 +61,9 @@ species' own arm. Never filter the ``species`` column outside the reader.
 **Fails loudly on:** a Sample duplicated in any input, or eligible in two species; an eligible genome missing from
 its QC table; a label sheet with no key column, or with ``Sample`` and ``phenotype-BioSample_ID`` disagreeing; a
 drug column missing from a label sheet, or a label outside 0–1; a held-out ST with no eligible
-genomes, or an untyped one; a group spanning a held-out ST and not, or two species; an empty
+genomes, or an untyped one; a group spanning a held-out ST and not, or two species; a pin source without a
+manifest, with another ``n_folds``/``fold``, or giving a genome two splits; a unit pinned to two splits, or pinned
+against this build's held-out STs; an empty
 ``train``/``validate``/``holdout`` for a species; and output tables that already exist with different content
 (``--overwrite`` replaces them) or a ``*_split.csv`` in ``--out-dir`` for a drug not in ``--drugs``.
 
@@ -240,6 +254,52 @@ def read_labels(path: Path, drugs: Sequence[str]) -> pd.DataFrame:
     return labels
 
 
+def read_pins(other_dir: Path, species: str, *, n_folds: int, fold: int) -> tuple[dict[str, str], dict[str, str], dict]:
+    """``(Sample -> split, Sample -> st_key, info)`` for ``species`` in an earlier build's tables, at genome level.
+
+    Read from the **union of every** ``*_split.csv`` in ``other_dir``, never one drug's table at a time: the
+    tables are label-restricted, so a genome labelled for one drug and not another is in one table only, and pinning
+    per drug would pin it for the first and draw it afresh for the second — holdout for one drug, train for another,
+    in one build, which no per-table check would see. A genome with two splits (or two ``st_key``) across the source
+    tables is refused. So is a source whose ``split_manifest.json`` is missing or was built with another
+    ``n_folds``/``fold``: ``validate`` is fold ``fold`` of ``n_folds``, so a pinned ``validate`` means nothing under
+    another fold.
+    """
+    other_dir = Path(other_dir)
+    manifest_path = other_dir / MANIFEST_NAME
+    if not manifest_path.exists():
+        raise ValueError(f"--pin-from {species}={other_dir}: no {MANIFEST_NAME} there")
+    args = json.loads(manifest_path.read_text()).get("arguments", {})
+    if (args.get("n_folds"), args.get("fold")) != (n_folds, fold):
+        raise ValueError(f"--pin-from {species}={other_dir}: built with n_folds={args.get('n_folds')} "
+                         f"fold={args.get('fold')}, this build n_folds={n_folds} fold={fold}")
+    paths = sorted(other_dir.glob(f"*{TABLE_SUFFIX}"))
+    if not paths:
+        raise ValueError(f"--pin-from {species}={other_dir}: no *{TABLE_SUFFIX} there")
+    rows = []
+    for path in paths:
+        t = pd.read_csv(path, dtype=str, keep_default_na=False)
+        if tuple(t.columns) != TABLE_COLUMNS:
+            raise ValueError(f"{path}: columns {list(t.columns)}, expected {list(TABLE_COLUMNS)}")
+        rows.append(t.loc[t["species"] == species, ["Sample", "st_key", "split"]])
+    union = pd.concat(rows, ignore_index=True).drop_duplicates()
+    if union.empty:
+        raise ValueError(f"--pin-from {species}={other_dir}: no {species} rows in its tables")
+    two = union.loc[union["Sample"].duplicated(keep=False)].sort_values("Sample")
+    if len(two):
+        raise ValueError(f"--pin-from {species}={other_dir}: {two['Sample'].nunique()} genome(s) have two splits or "
+                         f"two st_keys across its tables, e.g. {two.head(6).to_dict('records')}")
+    info = {
+        "dir": str(other_dir.resolve()),
+        "manifest_md5": _md5(manifest_path),
+        "tables": {p.name: _md5(p) for p in paths},
+        "n_source": len(union),
+        "source_splits": {s: int((union["split"] == s).sum()) for s in SPLIT_VALUES},
+    }
+    return (dict(zip(union["Sample"], union["split"], strict=True)),
+            dict(zip(union["Sample"], union["st_key"], strict=True)), info)
+
+
 def format_label(value: float) -> str:
     """``0``/``1`` for a whole label, else the shortest float repr (``0.5``): fixed per value, whatever the dtype."""
     v = float(value)
@@ -259,8 +319,9 @@ def assign_species_genomes(
     n_folds: int = 5,
     fold: int = 0,
     seed: int = 1,
+    pinned: Mapping[str, str] | None = None,
 ) -> pd.DataFrame:
-    """Assign one species' eligible genomes to splits → ``DataFrame(Sample, species, st_key, split)``.
+    """Assign one species' eligible genomes to splits → ``DataFrame(Sample, species, st_key, split, pinned)``.
 
     Parameters
     ----------
@@ -275,13 +336,25 @@ def assign_species_genomes(
     holdout_fraction, n_folds, fold, seed
         Random holdout fraction (of the genomes not in a held-out ST), folds over the rest, the fold that is
         ``validate``, and the seed.
+    pinned : Mapping[str, str], optional
+        ``Sample -> split`` fixed by an earlier build (:func:`read_pins`); members not in ``st_keys`` are ignored.
+        A unit with a pinned member takes that split whole (a unit pinned to two splits is refused), and a pinned
+        ``holdout_st`` must be, and a pinned other split must not be, in ``holdout_sts``. Only unpinned units are
+        drawn: the holdout target stays ``floor(holdout_fraction × genomes not in a held-out ST)``, pinned and new
+        together, so pinned ``holdout`` genomes count toward it and the draw only tops it up; the rest of the
+        unpinned units are cut into folds as without pins. With no pins the assignment is exactly the unpinned one.
 
     Returns
     -------
     pd.DataFrame
-        One row per genome in ``st_keys``, sorted by ``Sample``.
+        One row per genome in ``st_keys``, sorted by ``Sample``; ``pinned`` is whether the genome's split came from
+        ``pinned``: its own pin, or, outside a held-out ST, its unit's.
     """
     groups = groups or {}
+    pinned = {s: v for s, v in (pinned or {}).items() if s in st_keys}
+    bad = sorted({v for v in pinned.values() if v not in SPLIT_VALUES})
+    if bad:
+        raise ValueError(f"{species}: pinned split value(s) {bad} are not among {SPLIT_VALUES}")
     held = list(dict.fromkeys(holdout_sts))
     present = set(st_keys.values())
     for key in held:
@@ -298,20 +371,41 @@ def assign_species_genomes(
 
     split_of: dict[str, str] = {}
     pool: list[str] = []
+    pinned_units: list[str] = []
     for key in sorted(members):
         in_held = {st_keys[s] in held_set for s in members[key]}
         if in_held == {True, False}:
             detail = {s: st_keys[s] for s in members[key]}
             raise ValueError(f"{species}: {key} spans a held-out ST and not: {detail}")
+        pins = {pinned[s] for s in members[key] if s in pinned}
+        if len(pins) > 1:
+            detail = {s: pinned.get(s) for s in members[key]}
+            raise ValueError(f"{species}: {key} is pinned to more than one split: {detail}")
         if True in in_held:
+            if pins and pins != {"holdout_st"}:
+                detail = {s: st_keys[s] for s in members[key]}
+                raise ValueError(f"{species}: {key} is in a held-out ST here but pinned to {sorted(pins)}: {detail}")
             split_of.update(dict.fromkeys(members[key], "holdout_st"))
+        elif pins:
+            (pin,) = pins
+            if pin == "holdout_st":
+                raise ValueError(f"{species}: {key} was held out by ST in the pinned build, but its ST "
+                                 f"{sorted({st_keys[s] for s in members[key]})} is not held out here: pass the "
+                                 "pinned build's --holdout-st too, or this build trains on the lineage it held out")
+            split_of.update(dict.fromkeys(members[key], pin))
+            pinned_units.append(key)
         else:
             pool.append(key)
 
     order = [pool[i] for i in species_rng(seed, species).permutation(len(pool))]
-    n_pool = sum(len(members[k]) for k in pool)
+    n_pool = sum(len(members[k]) for k in pool) + sum(len(members[k]) for k in pinned_units)
     target = int(np.floor(holdout_fraction * n_pool + 1e-9))
-    taken = n_units = 0
+    # pinned holdout genomes count toward the target: the draw only tops the holdout up to it
+    taken = sum(len(members[k]) for k in pinned_units if split_of[members[k][0]] == "holdout")
+    if taken > target:
+        logger.warning("%s: %d pinned holdout genomes exceed the target %d (%.2f of %d): nothing is drawn into it",
+                       species, taken, target, holdout_fraction, n_pool)
+    n_units = 0
     while n_units < len(order) and taken < target:
         split_of.update(dict.fromkeys(members[order[n_units]], "holdout"))
         taken += len(members[order[n_units]])
@@ -326,6 +420,11 @@ def assign_species_genomes(
     out["species"] = species
     out["st_key"] = out["Sample"].map(st_keys)
     out["split"] = out["Sample"].map(split_of)
+    in_pinned_unit = {s for k in pinned_units for s in members[k]} | {s for s in pinned if split_of[s] == "holdout_st"}
+    out["pinned"] = out["Sample"].isin(in_pinned_unit)
+    moved = sorted(s for s, v in pinned.items() if split_of[s] != v)
+    if moved:  # cannot happen by construction; the pin is the point of the option, so it is checked, not assumed
+        raise AssertionError(f"{species}: pinned genomes moved: {[(s, pinned[s], split_of[s]) for s in moved[:10]]}")
     empty = [s for s in ("train", "validate", "holdout") if not (out["split"] == s).any()]
     if empty:
         raise ValueError(f"{species}: no genomes in {empty} ({len(out)} eligible) — too few genomes for this split")
@@ -343,6 +442,30 @@ def drug_tables(assignment: pd.DataFrame, labels: pd.DataFrame, drugs: Sequence[
     return out
 
 
+def _pin_report(assignment: pd.DataFrame, pins: Mapping[str, str], pin_st: Mapping[str, str], info: dict,
+                exclusions: Mapping[str, str]) -> dict:
+    """What a pinned build kept, drew and lost: the manifest's record of the holdout's pinned/new mixture."""
+    here = set(assignment["Sample"])
+    st_here = dict(zip(assignment["Sample"], assignment["st_key"], strict=True))
+    not_here: dict[str, dict] = {}
+    for split in SPLIT_VALUES:
+        gone = sorted(s for s, v in pins.items() if v == split and s not in here)
+        excluded = [s for s in gone if s in exclusions]
+        absent = [s for s in gone if s not in exclusions]
+        entry = {"n_excluded": len(excluded), "n_absent": len(absent)}
+        if split in ("holdout", "holdout_st"):  # a held-out genome lost to the comparison is named, not counted
+            entry.update(excluded=excluded, absent=absent)
+        not_here[split] = entry
+    changed = sorted(s for s in pins if s in here and st_here[s] != pin_st[s])
+    mix = {split: {"pinned": int(((assignment["split"] == split) & assignment["pinned"]).sum()),
+                   "new": int(((assignment["split"] == split) & ~assignment["pinned"]).sum())} for split in SPLIT_VALUES}
+    lost = {k: v for k, v in not_here.items() if k in ("holdout", "holdout_st") and (v["n_excluded"] or v["n_absent"])}
+    if lost:
+        logger.warning("pinned held-out genomes not in this build (excluded or not eligible): %s", lost)
+    return {**info, "n_pinned_here": sum(s in here for s in pins), "splits_pinned_vs_new": mix,
+            "source_not_here": not_here, "n_st_key_changed": len(changed), "st_key_changed": changed[:50]}
+
+
 # ---------------------------------------------------------------------------------------------------- the arm
 
 
@@ -357,11 +480,14 @@ def build_arm(
     n_folds: int = 5,
     fold: int = 0,
     seed: int = 1,
+    pin_from: Mapping[str, Path] | None = None,
 ) -> tuple[dict[str, pd.DataFrame], dict]:
     """Build every drug's table for one arm → ``({drug: table}, report)``. Writes nothing.
 
     Tables are sorted by ``species`` then ``Sample``. ``report`` holds the per-species genome counts and the per
-    drug × species × split counts that go into ``split_manifest.json``.
+    drug × species × split counts that go into ``split_manifest.json``. ``pin_from`` (``{species: earlier arm's
+    dir}``) keeps that build's split for every genome both hold (:func:`read_pins`, :func:`assign_species_genomes`);
+    the report then records, per species, the pinned-vs-new count of each split and every source genome not here.
     """
     holdout_sts = dict(holdout_sts or {})
     exclusions = dict(exclusions or {})
@@ -374,6 +500,10 @@ def build_arm(
     unknown = sorted(set(holdout_sts) - set(names))
     if unknown:
         raise ValueError(f"--holdout-st names species not given with --species: {unknown}")
+    pin_from = dict(pin_from or {})
+    unknown = sorted(set(pin_from) - set(names))
+    if unknown:
+        raise ValueError(f"--pin-from names species not given with --species: {unknown}")
     if not drugs or len(set(drugs)) != len(drugs):
         raise ValueError(f"--drugs must be non-empty and unique: {list(drugs)}")
     if not 0 < holdout_fraction < 1:
@@ -427,10 +557,15 @@ def build_arm(
     tables_by_species: dict[str, dict[str, pd.DataFrame]] = {}
     for inp in sorted(species_inputs, key=lambda s: s.name):
         keys = eligible_of[inp.name]
+        pins: dict[str, str] = {}
+        if inp.name in pin_from:
+            pins, pin_st, pin_info = read_pins(pin_from[inp.name], inp.name, n_folds=n_folds, fold=fold)
         assignment = assign_species_genomes(
             inp.name, keys, holdout_sts=holdout_sts.get(inp.name, ()), groups=groups,
-            holdout_fraction=holdout_fraction, n_folds=n_folds, fold=fold, seed=seed,
+            holdout_fraction=holdout_fraction, n_folds=n_folds, fold=fold, seed=seed, pinned=pins,
         )
+        if inp.name in pin_from:
+            report["species"][inp.name]["pinned_from"] = _pin_report(assignment, pins, pin_st, pin_info, exclusions)
         labels = read_labels(inp.labels, drugs)
         tables_by_species[inp.name] = drug_tables(assignment, labels, drugs)
         used: dict[str, list[str]] = {}
@@ -554,6 +689,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     ap.add_argument("--out-dir", type=Path, required=True)
     ap.add_argument("--assert-same-as", action="append", default=[], metavar="NAME=DIR",
                     help="repeatable: refuse unless species NAME's rows equal those in DIR's tables, every drug")
+    ap.add_argument("--pin-from", action="append", default=[], metavar="NAME=DIR",
+                    help="repeatable: keep DIR's split for every species-NAME genome both builds hold (read at genome "
+                         "level from all of DIR's tables) and draw only the rest; DIR must share --n-folds/--fold")
     ap.add_argument("--overwrite", action="store_true", help="replace existing tables whose content differs")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -568,11 +706,18 @@ def main(argv: Sequence[str] | None = None) -> None:
             raise SystemExit(f"--assert-same-as {spec!r}: expected NAME=DIR with NAME one of the --species")
         same_as.append((name, Path(dirs[0])))
 
+    pin_from: dict[str, Path] = {}
+    for spec in args.pin_from:
+        name, dirs = _split_name_spec(spec, "--pin-from")
+        if len(dirs) != 1 or name not in {s.name for s in species} or name in pin_from:
+            raise SystemExit(f"--pin-from {spec!r}: expected NAME=DIR, NAME one of the --species, once each")
+        pin_from[name] = Path(dirs[0])
+
     exclusions = read_sample_map(args.exclude, "reason", sep="\t", what="exclusions")
     groups = read_sample_map(args.groups, "group", sep=",", what="groups")
     tables, report = build_arm(species, drugs, holdout_sts=holdout_sts, exclusions=exclusions, groups=groups,
                                holdout_fraction=args.holdout_fraction, n_folds=args.n_folds, fold=args.fold,
-                               seed=args.seed)
+                               seed=args.seed, pin_from=pin_from)
     for name, other in same_as:
         assert_same_as(tables, name, other)
 
@@ -589,6 +734,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             "species": [s.name for s in species], "drugs": drugs, "holdout_sts": holdout_sts,
             "holdout_fraction": args.holdout_fraction, "n_folds": args.n_folds, "fold": args.fold,
             "seed": args.seed, "assert_same_as": {n: str(d.resolve()) for n, d in same_as},
+            "pin_from": {n: str(d.resolve()) for n, d in pin_from.items()},
         },
         "versions": {"numpy": np.__version__, "pandas": pd.__version__},
         "columns": list(TABLE_COLUMNS),
@@ -601,6 +747,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     for name, rep in report["species"].items():
         print(f"{name}: genomes {rep['genome_splits']}; held-out STs {rep['holdout_sts']}; "
               f"excluded {rep['n_excluded']}; groups {len(rep['groups'])}")
+        if "pinned_from" in rep:
+            pf = rep["pinned_from"]
+            print(f"{name}: pinned from {pf['dir']}: {pf['n_pinned_here']} of {pf['n_source']} source genomes here; "
+                  f"pinned/new by split {pf['splits_pinned_vs_new']}; source genomes not here "
+                  f"{ {k: (v['n_excluded'], v['n_absent']) for k, v in pf['source_not_here'].items()} } "
+                  "(excluded, absent)")
 
 
 if __name__ == "__main__":
