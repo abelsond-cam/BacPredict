@@ -2407,8 +2407,10 @@ to the engine only when a second organism needs them.
 ### 3.7 Multi-species AMR — CABBAGE v2 (the second experiment, same procedures at ~2× the data)
 
 **Status.** **Labels built** (stage 1 of 4) for PsA and Enterobacterales, and reviewed by David (§6, 2026-11-21).
-**Genomes (stage 2): PsA built, QC'd and collated** (8,643 genomes pass, below); **Enterobacterales still building** — see
-*In flight*. The Bakta step of stage 2 is written and reviewed, not yet run. CABBAGE v2 is an extension of the data behind the EBI AMR
+**PsA: genomes (stage 2) and ESM-C (stage 3) done** — 9,044 genomes pass QC, each with one Bakta annotation, its
+proteins and an embedding (`check` PASS, below); splits (stage 4) not started. **Enterobacterales: genomes still
+building** (50,571 of 50,584 built; CheckM2, skani and collate to come), Bakta and ESM-C running ahead of QC on the
+genomes built so far — see *In flight*. CABBAGE v2 is an extension of the data behind the EBI AMR
 Portal, given to the project as one CSV, with about twice the BioSamples. **It is a second experiment, not an
 update of §3.6** (David, 2026-11-21: "second test, same procedures"): v2 labels are neither merged with nor
 substituted for §3.6's, which continues on the portal's 2026-07 release ("v1"). Every stage repeats §3.6's procedure —
@@ -2613,6 +2615,12 @@ from worktrees at `86fd4f7`/`6cadddc`, 2026-11-22).
   reextract (job `41657884`): 218 rewritten (191 the same count; the 27 held genomes gain 1–10 proteins each),
   31,670 unchanged → **check-proteins PASS 31,888/31,888** (job `41658673`). No rewritten genome had a `.pt`, linked
   or embedded. `reextract` now also fails on any residue outside the 20, `X`, `U` and `O`.
+- **PsA ESM-C — done.** Array `41656695` (`FLOTO-SL2-GPU`, from a worktree at `9c81041`): 18 of 18 tasks completed,
+  1 h 24 min – 1 h 39 min each (≤ 299 genomes per task), embedding the 5,367 genomes built here. **`check` PASS**
+  (job `41685615` at `6936272`; `/rds/user/dca36/hpc-work/logs/v2-pa_esm_check_20261122_235357/`, `problems.csv` 0
+  rows, `.pass` beside it): of the 9,044 genomes of `genomes/bakta_annotation.csv` (md5 `d4df2c0f…`), every one has
+  a protein parquet whose count is CDS − pseudogenes, contigs unchanged since annotation, and a `.pt` in
+  `$AMR/processed/esm/` (bf16, 960-dim) — the 3,677 reused genomes' being §3.6's own.
 
 **Numbers of record — duplicate assemblies, PsA v2.** `engine/genomes/find_duplicate_assemblies` (§3.6's screen,
 `c94df7f`: same total length and contig count, then contig sequences hashed) over the 9,044 QC-pass genomes of
@@ -2635,25 +2643,35 @@ refuted) — the same 12 as before the DNBSEQ genomes joined.
   `--assert-same-as` against §3.6's PsA tables behaves with it before the v2 PsA splits are built.
 
 **In flight.**
-- **PsA:** **ESM-C array `41656695`** (`FLOTO-SL2-GPU`, 18 tasks of ≤ 299: the 5,367 genomes built here,
-  `genomes/esm_samples_to_embed.txt` md5 `19cd6df2…`); then `check`. (`41647810` was cancelled for the
-  ambiguous-codon re-extraction before it wrote a `.pt`.) Bakta finished (arrays `41621246`, `41624615`,
-  `41644190`, SL2, 0 failed). **DNBSEQ re-plan** (`replan dnbseq drop:shovill,ncbi_gca:shovill` at `5fdd783`: exactly 414 drop → shovill, nothing else moved;
-  old plan in `genomes/_plan_pre_dnbseq/`).
+- **PsA:** nothing — genomes, Bakta and ESM-C are done (above). Splits wait on the exclude list and David's
+  ANI-thinning question (*Next*, 4).
 - **Enterobacterales ESM-C, pre-QC cohort:** **array `41659165`** (`FLOTO-SL2-GPU`, 73 tasks of ≤ 300: 21,852
-  genomes, `genomes/esm_samples_to_embed.txt` md5 `470bde9e…`; the other 10,036 of the 31,888 are Kp links); then
-  `check`. (`41650067` was cancelled for the re-extraction before it started.) Again — `annotated` → collate →
+  genomes, `genomes/esm_samples_to_embed.txt` md5 `470bde9e…`; the other 10,036 of the 31,888 are Kp links; 5 tasks
+  done, 9 running at 2026-11-23 00:04); then `check`. (`41650067` was cancelled for the re-extraction before it started.) Again — `annotated` → collate →
   proteins → `reextract` → check-proteins → link-kp → submit — as the SL3 Bakta runs finish.
 - **Enterobacterales:** the first build round ended with 640 genomes failed: 374 NCBI genomes on six nodes whose
   `/tmp` was full (mlst's temporary FASTA; fixed at `379d415` — v2 build tasks take a node-local `TMPDIR`), 253 NCBI
   503s, 13 fastq downloads truncated or mis-sized, 1 Prodigal error. **DNBSEQ re-plan** at `379d415`: exactly 510
   drop → shovill and 31 `ncbi_gca` → shovill, nothing else moved; the shifted tasks rerun (`41641473` NCBI,
-  `41641474`/`41641507`/`41641515` shovill), the failed tasks in unshifted schemes once those drain; then CheckM2,
-  skani, collate. **Bakta started before QC on SL3** (§6): `41627214` (13,096 genomes built so far and not in BakRep —
+  `41641474`/`41641507`/`41641515` shovill). **After those, 560 genomes were left unbuilt** (every scheme's shards
+  against its `by_scheme/genome_manifest_<scheme>.csv`, 2026-11-22): 296 mlst on a full `/tmp` (before `379d415`),
+  253 NCBI 503s, 10 fastq downloads, 1 Prodigal error. **Their tasks reran at `6936272`** (NCBI `41676706`,
+  `41677334`, `41678246`, `41679256`, at most 4 tasks at a time; shovill `41676723`, `41677647`, `41678595`, then
+  `kaerogenes` task 2) → **50,571 of 50,584 built**, every NCBI genome among them. Of the 13 left: 10 are fastq URLs
+  ENA now answers with a redirect to an empty directory (a 797–802-byte listing, twice), though its filereport still
+  lists the file with its size and md5 — as PsA's SAMN28697289; 2 are rerunning (`ecloacae` 181, `kaerogenes` 2); and
+  **SAMN13829618 is not a genome**: its reads (SRR11267877) assemble to 15,499 bp in 8 contigs, which Prodigal
+  refuses (exit 10), so it is not rerun. **CheckM2 list 02** (`41677127`: the 15,002 genomes built after list 01,
+  8 tasks, done); list 03 for the rerun genomes, then skani, collate.
+  **Bakta started before QC on SL3** (§6): `41627214` (13,096 genomes built so far and not in BakRep —
   6,920 NCBI, 5,704 ATB, 438 shovill, 34 portal; cohort `genomes/bakta/built_genomes_preqc_sl3.csv`, i.e.
   `built_genomes.csv` without the 31 NCBI genomes the re-plan rebuilds) and `41627455` (the 528 refused), 56 tasks at a
-  time (SL3's 448-core cap) — 590 tasks done in the first ~5.3 h, 0 failed (~445 genomes an hour). CheckM2 list 01
-  (35,032 genomes, 18 tasks of 2,000): 80–105 min per task, MaxRSS ≤ 69.5 GB at 100G.
+  time (SL3's 448-core cap) — 590 tasks done in the first ~5.3 h, 0 failed (~445 genomes an hour); 2,036 of 3,274
+  done by 2026-11-23 00:04. **25 tasks (~100 genomes) failed in ~5 s each, every one on `cpu-q-391`**, whose `/tmp`
+  is full (the array runs from `0dd9f51`, before the `TMPDIR=/local` fix): a black-hole node, taking a new task every
+  few minutes. Excluded from the pending tasks of both arrays (`scontrol update … ExcNodeList=cpu-q-391`); its genomes
+  go to the post-QC `submit`. CheckM2 list 01 (35,032 genomes, 18 tasks of 2,000): 80–105 min per task, MaxRSS
+  ≤ 69.5 GB at 100G.
 - **`/tmp` is full on some icelake nodes:** bash 4.4 writes every here-string and here-document to `$TMPDIR`, so a job
   script fails at its first `<<<` (a CheckM2 task, in 3 s). v2's CheckM2, skani and Bakta jobs take `TMPDIR=/local`
   (`94938a3`). §3.6's own drivers do not.
@@ -2697,8 +2715,7 @@ refuted) — the same 12 as before the DNBSEQ genomes joined.
    one. Machinery: `engine/embedding/scripts/build_embeddings_reusing_built.sh` (stages proteins, check-proteins,
    link-kp, submit, check — §3.6's extractor, array, settings and checks; no smoke, the code being §3.6's; every job
    from a pinned clean worktree with `TMPDIR=/local`), configured by `apps/{pa,entero}/scripts/build_*_embeddings_cabbage_v2.sh`.
-   - **PsA:** once Bakta array `41644190` (the 401 DNBSEQ genomes) ends, `annotate collate` →
-     `genomes/bakta_annotation.csv` (9,044) → proteins → check-proteins → submit (~5,400 new genomes, ~25 A100-h).
+   - **PsA — done** (array `41656695`, `check` PASS 9,044/9,044; *Numbers of record*): 18 tasks × ~1.5 h ≈ 27 A100-h.
    - **Enterobacterales, before QC:** `annotate_entero_genomes_cabbage_v2.sh annotated` (re-plans, then
      `reuse_built_genomes bakta-annotated`: genomes built here with exactly one finished record — an ingest, or our run
      of §3.6's fingerprint — newer than their contigs, so a genome the DNBSEQ re-plan rebuilds stays out until
@@ -2727,6 +2744,13 @@ refuted) — the same 12 as before the DNBSEQ genomes joined.
    No duplicate-isolate list exists for any Enterobacterales species; whether one is built before v2's splits (and
    §3.6's Kp arm) is asked of David. Species units name the KpSC species explicitly, never a "Klebsiella" prefix (v2's 424
    *K. aerogenes* are not KpSC); E. coli/Shigella skani calls do not decide any unit (the panel cannot separate them).
+   **Before the v2 splits, put to David** (with §3.6's evidence, not a recommendation): whether the holdout is thinned
+   by ANI and which metric is read — §3.6's clonal nearest-neighbour lookup, no model, reaches mean AUROC 0.684 on the
+   PsA random holdout and 0.516 on ST155 against the fine-tunes' 0.802 and 0.708
+   (`$AMR/processed/paeruginosa/ani/psa_nn_lookup_baseline.csv`, `models/holdout_metrics.csv`; a lower bound on
+   memorisation, not a ceiling — §3.6). **After the v2 models train:** §3.6's breakpoint label-noise measurement on
+   v2 (`apps/pa/{mic_distance_bands,holdout_error_by_mic_distance}.py`, `docs/holdout_clonality_and_label_noise.md`;
+   no engine code) — v2 PsA has 19.8–42.3 % of labels within one dilution of the breakpoint, Enterobacterales 3.9–10.2 %.
 
 **Caveats.**
 - **puffin** — above. A puffin-free label set is a filter on `database`, not a rebuild.
