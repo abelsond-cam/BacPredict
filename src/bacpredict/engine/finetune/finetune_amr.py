@@ -38,6 +38,7 @@ from transformers import (
 
 from bacpredict.engine.config import organism
 from bacpredict.engine.finetune.attention_pool import BacformerAttnPoolForGenomeClassification
+from bacpredict.engine.finetune.checkpoints import tolerate_custom_problem_type
 from bacpredict.engine.finetune.datasets import LabelInjectingFileDataset, PanelInjectingFileDataset
 from bacpredict.engine.finetune.metrics import (
     build_results_payload,
@@ -322,6 +323,46 @@ class PanelBacformerLargeTrainer(BacformerLargeTrainer):
         return loss
 
 
+def _refuse_mismatched_resume(checkpoint: str | Path, patience: int, threshold: float) -> None:
+    """Refuse a resume whose requested early-stopping settings are not the ones the checkpoint was written with.
+
+    With ``restore_callback_states_from_checkpoint`` on, HF rebuilds the callback as ``type(callback)(**args)``
+    from the args stored in the checkpoint (transformers 4.57.6 ``trainer.py:3666-3668``), **not** from this
+    invocation. A resume asking for a different ``--early-stopping-patience`` is therefore silently given the old
+    one, while ``results.json`` still records the value that was asked for — a run whose own provenance would lie
+    about its stopping rule. The flag is what makes the counter survive a wall, so the answer is to keep the flag
+    and refuse the mismatch rather than to accept a silent override.
+
+    Prints the restored counter, which is the one number that says how much patience the segment really starts
+    with, and is otherwise invisible until the run either stops or does not.
+    """
+    state_path = Path(checkpoint) / "trainer_state.json"
+    if not state_path.is_file():
+        raise SystemExit(f"{state_path} is missing: that checkpoint was not fully written (a save was interrupted). "
+                         f"Resume from the newest complete one — engine.finetune.checkpoints.pick_resume_checkpoint")
+    state = json.loads(state_path.read_text())
+    stored = state.get("stateful_callbacks", {}).get("EarlyStoppingCallback")
+    if not stored:
+        raise SystemExit(f"{state_path} records no EarlyStoppingCallback state, so resuming cannot restore the "
+                         f"patience counter and the segment would start it at 0")
+    args_ = stored.get("args", {})
+    mismatch = {k: (v, got) for k, v, got in (
+        ("early_stopping_patience", args_.get("early_stopping_patience"), patience),
+        ("early_stopping_threshold", args_.get("early_stopping_threshold"), threshold),
+    ) if v != got}
+    if mismatch:
+        raise SystemExit(
+            "this resume asks for "
+            + ", ".join(f"{k}={got!r} but {Path(checkpoint).name} was written with {k}={was!r}"
+                        for k, (was, got) in mismatch.items())
+            + ". HF would silently use the checkpoint's value and results.json would record yours. Pass the "
+              "checkpoint's settings, or start a fresh run under a new --output-dir."
+        )
+    counter = stored.get("attributes", {}).get("early_stopping_patience_counter")
+    print(f"Resume: {Path(checkpoint).name} at step {state.get('global_step')}, early-stopping counter "
+          f"{counter}/{patience} restored; best {state.get('best_metric')} at step {state.get('best_global_step')}")
+
+
 ############################################################## Main run function ##############################################################
 
 
@@ -368,9 +409,13 @@ def run(
 
     When ``resume_from_checkpoint`` is set, training continues from that
     checkpoint (HF Trainer restores optimizer state, LR scheduler position,
-    global step, best-metric tracking, and early-stopping counter) and the
-    model is loaded from the checkpoint instead of ``model_name_or_path``.
-    Pass ``output_dir`` = the run dir that already contains that checkpoint.
+    global step and best-metric tracking; the early-stopping patience counter
+    comes back only because this function turns on
+    ``restore_callback_states_from_checkpoint``, which HF defaults to off) and
+    the model is loaded from the checkpoint instead of ``model_name_or_path``.
+    Pass ``output_dir`` = the run dir that already contains that checkpoint, and
+    the same early-stopping settings the checkpoint was written with — a resume
+    that asks for different ones is refused rather than silently overridden.
 
     When ``split_table`` is set (a ``<drug>_split.csv``), the splits and labels come from it alone
     (:func:`resolve_split_table`) and ``ast_sheet_path`` is ignored; ``extra_holdouts`` are scored after
@@ -686,6 +731,18 @@ def run(
 
     if split_source == "smoke" and split_table:
         training_args_dict.update(lr_scheduler_type="constant", load_best_model_at_end=False)
+    if resume_from_checkpoint:
+        # Resume must carry the early-stopping patience counter across the wall, not just the optimizer, the
+        # schedule and best_metric. HF writes the counter into every checkpoint's trainer_state.json
+        # (stateful_callbacks.EarlyStoppingCallback.attributes.early_stopping_patience_counter) unconditionally, but
+        # reads it back only under this flag: Trainer._load_callback_state returns immediately when it is false
+        # (transformers 4.57.6 trainer.py:3651), and TrainingArguments defaults it to false. Without it every
+        # segment restarts the counter at 0, so a cohort whose epoch is longer than one wall can never accumulate
+        # `patience` non-improving evaluations and always trains to max_steps — a different training length from
+        # the single-segment arms it is compared with, arrived at silently. Inert unless resuming: the only call
+        # site is inside `if resume_from_checkpoint is not None` (trainer.py:2536-2541).
+        training_args_dict["restore_callback_states_from_checkpoint"] = True
+        _refuse_mismatched_resume(resume_from_checkpoint, early_stopping_patience, early_stopping_threshold)
     training_args = TrainingArguments(**training_args_dict)
 
     trainer_cls = PanelBacformerLargeTrainer if use_panel else BacformerLargeTrainer
@@ -699,7 +756,15 @@ def run(
         callbacks=[EarlyStoppingCallback(early_stopping_patience=early_stopping_patience,
                                          early_stopping_threshold=early_stopping_threshold)],
     )
-    trainer.train(resume_from_checkpoint=resume_from_checkpoint)
+    if resume_from_checkpoint:
+        # Bacformer's problem_type="binary_classification" is its own extension and selects its loss; the generic
+        # PretrainedConfig that Trainer._load_from_checkpoint reads the checkpoint's config.json with rejects any
+        # value outside HF's three. Measured 2026-09-04 (engine/finetune/checkpoints.py): without this every link
+        # of a chained run after the first dies with "The config parameter 'problem_type' was not understood".
+        with tolerate_custom_problem_type():
+            trainer.train(resume_from_checkpoint=resume_from_checkpoint)
+    else:
+        trainer.train(resume_from_checkpoint=None)
 
     run_config = {
         "precision": precision,
@@ -841,7 +906,7 @@ class ArgumentParser(Tap):
     evaluate_seed: int = 1
     """Seed controlling the fixed holdout set — do not change between folds/seeds in one experiment."""
     resume_from_checkpoint: str | None = None
-    """If set, resume training from this checkpoint dir (true HF resume — preserves optimizer state, LR schedule, step counter, early-stopping counter). Pass --output-dir = the parent run dir."""
+    """If set, resume training from this checkpoint dir (true HF resume — preserves optimizer state, LR schedule, step counter, best-metric tracking, and the early-stopping counter, the last of these only because run() turns on restore_callback_states_from_checkpoint). Pass --output-dir = the parent run dir, and the same --early-stopping-patience/--early-stopping-threshold the checkpoint was written with."""
     split_table: str | None = None
     """A drug's <drug>_split.csv (engine.splits): train/validate/holdout and labels come from it alone, read by
     load_splits. Replaces --ast-sheet-path (do not pass both); cannot be combined with --n-folds."""
