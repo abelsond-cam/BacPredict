@@ -2994,8 +2994,43 @@ training budget rather than the patience window, `MAX_EPOCHS=15` would let it an
   set contains v1's) → the same four fine-tunes into `processed/cross_species_cabbage_v2/models/`. The v2 PsA
   eligible list is written (9,044, each with a `.pt`).
 
+**Numbers of record — two resume defects, found before any job started, fixed at `7c366ba`.** Every
+cross-species drug needs two to four wall segments, so resume is on the critical path rather than a contingency.
+Raised by the §3.6 agent (the counter) and by an adversarial read of transformers 4.57.6 (the crash); both verified
+here against the installed package and a real checkpoint before anything was changed.
+- **Resume crashed outright on every mean-pool run.** A checkpoint's `config.json` carries Bacformer's own
+  `problem_type="binary_classification"`, and the generic `PretrainedConfig` that `Trainer._load_from_checkpoint`
+  reads it with accepts only HF's three values. Run against
+  `processed/paeruginosa/models/ciprofloxacin/checkpoint-2000/config.json`: `ValueError: The config parameter
+  'problem_type' was not understood`. `engine/finetune/checkpoints.py` has carried
+  `tolerate_custom_problem_type` since 2026-09-04, measured against this exact failure, and says in its own
+  docstring that the AMR trainer wants it — but only `kleb_iso_source` ever imported it. **Every resumed AMR
+  fine-tune would have died at its first segment boundary.**
+- **The early-stopping patience counter was saved and never read back.** HF writes it into every checkpoint
+  (`trainer_state.json` → `stateful_callbacks.EarlyStoppingCallback.attributes.early_stopping_patience_counter`,
+  confirmed present in a real one) but `Trainer._load_callback_state` returns immediately unless
+  `restore_callback_states_from_checkpoint` is true (`trainer.py:3651`), and `TrainingArguments` defaults it to
+  false (`training_args.py:1040`). `finetune_amr` never set it, while its own docstrings claimed the counter was
+  restored. `best_metric` does survive, so each resume granted only the saved counter back as extra patience —
+  **but at 30 evaluations of half an epoch a 35 h segment holds ~16 evaluations for ciprofloxacin and ~21 for
+  meropenem, so neither could ever reach 30 in one segment and both would have trained to the 40-epoch cap**
+  (~175 h and ~133 h) against the single-segment baseline's best + 15 epochs.
+- **The fix and its guard.** Both changes sit inside `if resume_from_checkpoint`, so a fresh run is byte-identical
+  and no queued job needed resubmitting. Turning the flag on makes HF rebuild the callback from the args stored in
+  the *checkpoint* (`trainer.py:3666-3668`), not from the invocation, so a resume asking for a different patience
+  would be silently given the old one while `results.json` recorded the new; `_refuse_mismatched_resume` refuses
+  that and prints the restored counter. Tested against the real checkpoint: a matching resume prints
+  `counter 0/15 restored`, and mismatched patience, mismatched threshold, a checkpoint with no
+  `trainer_state.json` and a state with no callback entry are each refused.
+- ⚠ **The v1 arm's first segments run at `a73d2aa` and its later ones at `7c366ba`**, because moving the queued
+  jobs would have cost their reservations on a queue estimating 09:34–16:15 the next day. The non-resume path is
+  unchanged between the two commits, so a run split across them is equivalent to one run at `7c366ba`. The v2 arm
+  is submitted at `7c366ba` throughout.
+
 **Next.**
-1. Confirm each job reaches a training loss, then resume past the wall from the latest checkpoint.
+1. Confirm each job reaches a training loss, then resume past the wall from the newest **complete** checkpoint
+   (`resume_xspecies.sh`, which picks it through `engine.finetune.checkpoints.pick_resume_checkpoint` — a job
+   killed mid-save leaves a directory with a model file and no `trainer_state.json`).
 2. Per-unit holdout and `holdout_st` metrics for each drug, against §3.6's PsA-only `models/holdout_metrics.csv`
    on the identical PsA genomes — the comparison David asked for ("Lets see if it helps the model learn in PsA case").
 3. **For David:** the per-unit ST fractions above the 5 % cap; whether `validate` should stay pooled; whether
