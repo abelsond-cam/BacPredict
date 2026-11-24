@@ -14,7 +14,12 @@
 #   OUT_ROOT        models go to <OUT_ROOT>/<drug>. A task refuses (exit 5) if <OUT_ROOT>/<drug>/results.json exists
 #   N_SAMPLES       optional: 10 is the Stage A/B smoke (a balanced 10 genomes, train = validate = holdout)
 #   EXTRA_HOLDOUTS  splits scored beside the holdout (default holdout_st; set it empty for the holdout only)
-#   MODEL LR EVAL_STEPS MAX_EPOCHS PATIENCE THRESHOLD SEED   optional; defaults are the deployed TB/Kp settings
+#   MODEL LR EVAL_STEPS MAX_STEPS MAX_EPOCHS PATIENCE THRESHOLD SEED   optional; defaults are the deployed TB/Kp
+#                   settings. The trainer runs min(MAX_STEPS, steps_per_epoch * MAX_EPOCHS) and shapes warmup and the
+#                   linear decay on that, so at cross-species scale the 100,000 default is what binds, not MAX_EPOCHS:
+#                   a cohort of ~8,600 optimizer steps per epoch reaches 100,000 after 11.6 epochs, and the schedule
+#                   it was given is then 11.6 epochs long rather than the 40 every single-species arm ran. Raise
+#                   MAX_STEPS to steps_per_epoch * MAX_EPOCHS to keep the schedule the same length in epochs
 #   NUM_WORKERS     DataLoader workers (default: the allocation, SLURM_CPUS_PER_TASK)
 #   REPO            the checkout to run: a detached worktree at the submitting SHA, .venv symlinked to the shared
 #                   env (default ~/workspace/BacPredict); its src/ goes first on PYTHONPATH
@@ -105,7 +110,7 @@ uv run --project "$REPO" --no-sync python -X faulthandler -m bacpredict.engine.f
     --task "$TASK" --drug "$drug" --split-table "$table" --embeddings-dir "$EMBEDDINGS_DIR" --output-dir "$out" \
     --model-name-or-path "${MODEL:-macwiatrak/bacformer-large-masked-complete-genomes}" --precision bf16 \
     --lr "${LR:-0.00015}" --batch-size 1 --grad-accumulation-steps 8 --warmup-proportion 0.1 \
-    --eval-steps "${EVAL_STEPS:-250}" --max-steps 100000 --max-epochs "${MAX_EPOCHS:-40}" \
+    --eval-steps "${EVAL_STEPS:-250}" --max-steps "${MAX_STEPS:-100000}" --max-epochs "${MAX_EPOCHS:-40}" \
     --early-stopping-patience "${PATIENCE:-15}" --early-stopping-threshold "${THRESHOLD:-0.005}" \
     --seed "${SEED:-1}" --num-workers "$workers" ${N_SAMPLES:+--n-samples "$N_SAMPLES"} \
     --extra-holdouts ${extra[@]+"${extra[@]}"}
