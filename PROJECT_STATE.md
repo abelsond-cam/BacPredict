@@ -615,18 +615,24 @@ Two decisions already of record for it (see §6):
 - Kp azithromycin **0.799** is the deployed head (its `results.json`); **0.816066** is the ladder's
   `ft_mean` re-probe (`…/train_kleb_ast/pangena_predict/amr_ladder/azithromycin/azithromycin_amr_ladder_table.csv`,
   rung 1). Both are honest — they are different estimators. Always say which.
-- **⚠ `finetune_amr`'s resume path crashes, unfixed — found 2026-09-04 by the invasion sweep, NOT by
-  an AMR run.** `finetune_amr.py:405` calls `trainer.train(resume_from_checkpoint=...)` on a model
-  built with `problem_type="binary_classification"` (line ~293). HF's
-  `Trainer._load_from_checkpoint` reads the checkpoint's `config.json` through the **generic**
-  `PretrainedConfig`, which rejects that value outright — so **any** `--resume-from-checkpoint` on the
-  stock-head path dies immediately with *"The config parameter `problem_type` was not understood"*.
-  The attention-pooling path may differ and was not tested. **The fix already exists and is tested**:
-  wrap the call in `bacpredict.engine.finetune.checkpoints.tolerate_custom_problem_type()` (one import,
-  one `with`). Deliberately **not applied here** — `finetune_amr.py` is the TB arm's live file and this
-  is the invasion agent's finding; whoever owns that file should apply it. Do not "fix" it by changing
-  `problem_type`: that value selects the loss (`binary_cross_entropy_with_logits`,
+- **~~⚠ `finetune_amr`'s resume path crashes~~ — FIXED 2026-11-24 at `7c366ba`** (§3.8). Found 2026-09-04 by the
+  invasion sweep, not by an AMR run, and left open for the owner of `finetune_amr.py` for eleven weeks; the
+  cross-species arm (§3.8) is the first AMR work that actually needs resume, so it was applied there. HF's
+  `Trainer._load_from_checkpoint` reads the checkpoint's `config.json` through the **generic** `PretrainedConfig`,
+  which rejects Bacformer's `problem_type="binary_classification"` outright, so **any** `--resume-from-checkpoint`
+  on the stock-head path died immediately with *"The config parameter `problem_type` was not understood"* —
+  reproduced 2026-11-24 against `processed/paeruginosa/models/ciprofloxacin/checkpoint-2000/config.json`. The fix
+  is the one the note already prescribed: `trainer.train` wrapped in
+  `bacpredict.engine.finetune.checkpoints.tolerate_custom_problem_type()`. It was never right to "fix" it by
+  changing `problem_type`: that value selects the loss (`binary_cross_entropy_with_logits`,
   `bacformer/modeling/modeling_large.py:1375`), so an HF-legal value is a different estimator.
+  **Two consequences for the TB arm, for its owner:**
+  (i) no TB stage-C resume can ever have succeeded, so any TB run believed to have been continued was not;
+  (ii) `apps/tb/scripts/train_resume_amr_tb_stage_c.sh:86` hardcodes `--early-stopping-patience 30` while
+  `train_on_slurm_amr_tb.sh:45` starts runs at 45, and `7c366ba` now **refuses** a resume whose early-stopping
+  settings differ from the checkpoint's rather than letting HF silently substitute the stored value while
+  `results.json` records the requested one. The refusal names the value to pass. No TB job was live when this
+  landed.
 
 **Owns.** `src/bacpredict/engine/`, `src/bacpredict/apps/`, `src/bacpredict/visualisations/`.
 
