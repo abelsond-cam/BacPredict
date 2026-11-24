@@ -1,7 +1,15 @@
 # BacPredict — project state
 
-> **Last verified: 2026-11-22 @ `19065b7`** (branch `refactor/consolidate-engine`).
-> **Verification scope, this pass (2026-11-22, thirteenth): §3.6 label noise at the breakpoint.** Every PsA AST
+> **Last verified: 2026-11-24 @ `a73d2aa`** (branch `refactor/consolidate-engine`).
+> **Verification scope, this pass (2026-11-24, fourteenth): the ESM-C precision answer, §3.7's Bakta, and §3.8.**
+> Fourteen fine-tunes on fp32-computed ESM-C (ten PsA, four Kp) scored against their bf16 counterparts on identical
+> holdout genomes, with the July Kp checkpoints re-scored first to show they reproduce; Bacformer's own
+> `BacformerEmbeddings.forward` read to find that it casts its input to the weights' dtype. v2's Enterobacterales
+> Bakta confirmed complete from `sacct` (2,346/2,346) and `annotate status` (0 QC-pass genomes without a record).
+> §3.8's v1 split tables built and their PsA rows verified byte-identical to §3.6's by `--assert-same-as`; the
+> stopping rule's conversion checked against the ten §3.6 `trainer_state.json` (9 of 10 stopped on patience).
+>
+> **Thirteenth pass (2026-11-22): §3.6 label noise at the breakpoint.** Every PsA AST
 > test re-banded by `d = log2(MIC / r_gt)` from `ast_tests_called.parquet`, reading the `s_le_mg_l` column no
 > other code reads; the reading that EUCAST v15 gives PsA no S category for 7 drugs checked against
 > `label_provenance.csv` (`n_mic == 0`) and confirmed for all 7; the banding validated by regenerating the
@@ -2686,23 +2694,60 @@ refuted) — the same 12 as before the DNBSEQ genomes joined.
   The Enterobacterales list holds all 5 of §3.6's. PsA's holds SAMN03105472, of the pair §3.6 kept both of: both
   were in §3.6's train, so dropping it moves no §3.6 holdout genome.
 
+**Numbers of record — the ESM-C precision check: fp32-computed ESM-C changes nothing.** Asked by David
+2026-11-23 ("prediction is the only way to do it"), answered 2026-11-24; **his decision: keep the bf16 stores**
+("That confirms that fp 32 did not help. No significant difference overall. We can just use bf16 saved
+embeddings"), which unblocked v2's last ESM-C round.
+- **Every store is bf16-computed.** `bacformer.pp.load_plm`'s ESM-C branch casts the model `.to(torch.bfloat16)`
+  and so did our `load_esmc_pinned`; the older Kp store's *fp32-typed* files hold bf16-computed values (12 of 12
+  sampled `bacformer_processed/esm/klebsiella/*.pt` are bf16-exact throughout). `--esm-dtype float32` (`99ffd0d`,
+  opt-in, default unchanged) was added to make a genuine fp32 store; the pinned ESM-C checkpoint's 308 tensors are F32.
+- **The two stores differ, and not by rounding.** PsA, 100 random genomes (`processed/paeruginosa/precision_check/`
+  `compare_fp32_bf16_sample100.txt`): layout identical in 100/100, per-protein cosine median 0.999981, the worst
+  protein per genome 0.983 (the same protein recurs as worst in 47). Kp, 50 random genomes
+  (`train_kleb_ast/precision_check/compare_fp32_kpstore_sample50.txt`): identical layout, cosine median 0.999981,
+  worst 0.992–0.999. Only 14 % (PsA) / 13.7 % (Kp) of fp32 values round to the stored bf16 value, so bf16 ESM-C is
+  **not** a rounding of fp32 ESM-C. fp32 costs ~33 s per genome against bf16's ~18 s.
+- **Ten PsA fine-tunes retrained on fp32 ESM-C** (array `41760910`, 4.4–8.6 h each; §3.6's array script and trainer
+  at `f595f0d`, its split tables md5 `908fc0af…` and settings, only `EMBEDDINGS_DIR` and `OUT_ROOT` changed) and
+  **four Kp drugs** (array `41782603`, 3.9–5.5 h; July's settings, the 223 genomes whose current protein files no
+  longer match the July embeddings left out of **both** arms by David's instruction). Read from
+  `processed/paeruginosa/precision_check/compare_bf16_vs_fp32_finetunes.csv` and
+  `train_kleb_ast/precision_check/compare_july_vs_fp32_finetunes.csv` (both from `compare_precision_finetunes.py`:
+  each arm scored on identical genomes, paired-bootstrap interval over resampled genomes, Spearman ρ of the two
+  arms' scores, call agreement at 0.5).
+
+| PsA holdout ΔAUROC (fp32 − bf16) | Kp holdout ΔAUROC (fp32 − July) |
+|---|---|
+| amikacin +0.036 [+0.003, +0.069] · ceftazidime +0.037 [+0.010, +0.064] · pip-tazo +0.026 · ciprofloxacin +0.005 · aztreonam −0.006 · imipenem −0.006 · levofloxacin −0.018 · meropenem −0.019 · cefepime −0.020 · tobramycin −0.030 [−0.057, −0.005] | aztreonam +0.013 [−0.029, +0.054] · pip-tazo +0.011 [−0.005, +0.026] · cefoxitin −0.006 [−0.022, +0.008] · amp-sulb −0.007 [−0.024, +0.009] |
+| **mean +0.0004**, five up and five down; rank ρ 0.64–0.87 | **mean +0.003**, every interval covers zero; rank ρ 0.58–0.89 |
+
+- **The July Kp models reproduce**, which is what makes that column readable: re-scored on their own holdouts
+  (job `41758230`) they give 0.8637 / 0.9390 / 0.9210 / 0.9459 against July's 0.8630 / 0.9384 / 0.9207 / 0.9463.
+  On the reduced holdouts the baselines are 0.8623 (aztreonam, n=580) · 0.9363 (pip-tazo, 641) · 0.9255 (cefoxitin,
+  597) · 0.9468 (amp-sulb, 440) — `train_kleb_ast/precision_check/rescore_july/july_auroc_reduced_holdout.csv`.
+- **Held-out ST is a different matter, and is not evidence about precision.** PsA's ST column moves −0.41 to +0.13
+  (mean −0.07) on 47–78 genomes of one lineage; tobramycin falls 0.982 → 0.577 [−0.527, −0.275], its best
+  checkpoint moving from step 2,250 to 4,750. **Hypothesis, untested:** with one lineage and a transferred
+  resistance gene, a single run either learns the gene or a lineage marker, and the input perturbation changes
+  which — i.e. this is run-to-run variance, not a precision effect. ⚠ No replicate seed has ever been run for any
+  arm, so the width of that variance is unmeasured. David: no further runs ("We don't need to run more").
+- **Why the null was expected, found after the fact.** Bacformer casts its input to the weights' dtype on the first
+  line of `BacformerEmbeddings.forward` — `self.linear(self.norm1(protein_embeddings.type_as(self.linear.weight)))` —
+  so with bf16 master weights the fp32 arm's inputs were rounded to bf16 before use. The experiment compared
+  *bf16-computed* against *fp32-computed-then-rounded* embeddings, which is the question that matters for the
+  stores we keep, but it is **not** a test of fp32 input to Bacformer. That would need fp32 master weights, the
+  setting CLAUDE.md §0.2 records as ~5 pp worse on TB rifampin.
+
 **In flight.**
-- **ESM-C precision check (David, 2026-11-23): are PsA's predictions the same with ESM-C run in fp32?** Every store
-  so far ran ESM-C in bf16 — `bacformer.pp.load_plm`'s ESM-C branch casts it `.to(torch.bfloat16)`, and so does our
-  `load_esmc_pinned` — and the older Kp store's fp32 files hold bf16-computed values: in 12 of 12 sampled
-  `bacformer_processed/esm/klebsiella/*.pt` every value is exactly representable in bf16. No fp32-computed ESM-C had
-  existed. `--esm-dtype float32` (`99ffd0d`, opt-in; default unchanged) runs ESM-C's weights and arithmetic in fp32
-  (the pinned checkpoint's 308 tensors are F32 — verified by the §3.6 agent). **Smoke** (job `41744117`, 12 genomes,
-  `$AMR/processed/esm_fp32/`): layout identical to the bf16 store in 12/12; per-protein cosine median 0.999981, the
-  worst protein per genome 0.983–0.9996; per-protein relative difference median 0.66 %, max 21.5 % (one protein recurs
-  as the worst in 9 of 12); only 14 % of fp32 values round to the stored bf16 value, so bf16 ESM-C is not a rounding
-  of fp32 ESM-C. ~33 s per genome in fp32 (bf16 ~18 s). **Array `41746488`** (19 tasks): fp32 ESM-C of exactly the
-  3,662 genomes in §3.6's PsA split tables (`processed/paeruginosa/precision_check/esm_fp32_samples.txt` md5
-  `50177f61…`). Then **the ten PsA fine-tunes retrained on it** — one run per drug (David: "if almost exactly the same,
-  we have an answer; if wildly different, we also have an answer; only rerun if moderately different") — with §3.6's
-  array script and trainer at `f595f0d`, its split tables (`split_manifest.json` md5 `908fc0af…`) and settings; only
-  `EMBEDDINGS_DIR` and `OUT_ROOT` (`precision_check/models_esm_fp32/`) change. Compared drug by drug with §3.6's
-  `models/holdout_metrics.csv`. ~43–70 GPU-h. v2's last ESM-C round waits on the answer.
+- **Enterobacterales Bakta — done.** `submit all` on SL3 (array `41747019`, 9,382 genomes): **2,346 of 2,346
+  tasks COMPLETED**, 2026-11-23 → 2026-11-24, ~30 min each. `annotate status` now shows every one of the
+  117,277 QC-pass genomes with exactly one annotation record (50,083 built here: 27,374 ingest + 22,709 our
+  run; 67,194 reused: 63,196 + 3,998; **0 with neither**). SL3 carried the whole array: nothing moved to SL2.
+- **Enterobacterales ESM-C, the last (post-QC) round — in flight** (2026-11-24, a local chain of the driver's
+  stages from the worktree at `6936272`): `collate` on `embedding_input_unfiltered.csv` (job `41873130`) →
+  proteins → reextract → check-proteins → link-kp → submit → check. ~12,400 of the 50,083 genomes built here
+  were still without a `.pt` when Bakta ended. Precision is settled (above), so this is bf16 as every round has been.
 - **PsA:** nothing — genomes, Bakta and ESM-C are done (above). Splits wait on the exclude list and David's
   ANI-thinning question (*Next*, 4).
 - **Enterobacterales ESM-C, pre-QC cohort.** Array `41659165` (`FLOTO-SL2-GPU`, 73 tasks of ≤ 300, 59–72 min
@@ -2852,6 +2897,121 @@ test), `engine/genomes/scripts/{build_genomes_reusing_built,build_genomes_array_
 the `*_cabbage_v2` run scripts,
 `$AMR/raw/ebi_amr_portal/cabbage_v2_20261121/`, `$AMR/processed/ebi_amr_portal/scoping_cabbage_v2_20261121/`,
 `$AMR/processed/{paeruginosa,enterobacterales}_cabbage_v2/`.
+
+---
+
+### 3.8 Cross-species AMR — *P. aeruginosa* trained with Enterobacterales (both experiments' data)
+
+**Status.** **The v1 arm's split tables are built and its four fine-tunes are submitted** (2026-11-24); the v2 arm
+is chained behind v2's last ESM-C round. David, 2026-11-24: "we are probably ready to kick off the whole
+enterobacteriaceae run … Suggest we choose 4 drugs to start with. Ones that aren't training very well. Maybe
+amikacin, cipro, meropenem, ceftazidime? … Lets see if it helps the model learn in PsA case", then "ideally have
+both fine-tuning on v1 and v2 running overnight for the 4 drugs". This is §3.6's *Next* item 1 (one model per drug,
+PsA-only the baseline, PsA + Enterobacterales the comparison; §6, 2026-11-20) run on **both** experiments' data at
+once, so that the v1-vs-v2 difference is data scale alone. Owned by the §3.7 agent; the §3.6 agent declined to
+claim it for want of a first-hand instruction, and nothing of §3.6's is written — `paeruginosa/`,
+`enterobacterales/` and `kpsc/` are read-only to this arm.
+
+**The species unit is the MLST scheme**, not a taxon. `st_key` is `<mlst_scheme>:<st>` and `holdout_st` is drawn
+from that namespace, so a single "Enterobacterales" unit would pool STs from different schemes into one namespace
+and make the held-out-lineage arm undefined; the scheme unit is the only one under which it is well formed (agreed
+with the §3.6 agent, 2026-11-24). It also lands where §6's decisions already are: `klebsiella` **is** KpSC exactly
+(*K. aerogenes* types on `kaerogenes` and falls outside), and `ecoli_achtman_4` carries *Shigella* with *E. coli*
+as §3.6 pinned it. Units: `paeruginosa`, `salmonella`, `ecoli_shigella`, `kpsc`, `enterobacter`, and one
+`entero_minor` for every scheme too small for David's ≥ 1,000-genome rule (`serratia`, `proteus`, `providencia`,
+`kaerogenes`, untyped).
+
+**Numbers of record — the v1 cross-species split tables.** `$AMR/processed/cross_species_v1/splits/`
+(`split_manifest.json`, `<drug>_split.csv`, `eligible_<unit>.csv`, `unit_summary.csv`), built at `a73d2aa` by
+`engine/splits/build_amr_holdout_splits` with holdout fraction 0.2, 5 folds, fold 0, seed 1 — §3.6's own settings —
+over the 3,662 PsA genomes of §3.6's `splits/eligible_genomes.csv` and all **67,326** QC-pass Enterobacterales
+genomes, **every one of which has a `.pt`** (log `hpc-work/logs/xspecies_v1_prep.log`).
+
+| unit | eligible | train | validate | holdout | held-out ST | n |
+|---|--:|--:|--:|--:|---|--:|
+| salmonella | 32,149 | 19,560 | 4,891 | 6,112 | `salmonella:32` | 1,585 |
+| ecoli_shigella | 23,966 | 14,853 | 3,714 | 4,641 | `ecoli_achtman_4:10` | 757 |
+| kpsc | 9,370 | 5,860 | 1,465 | 1,831 | `klebsiella:37` | 211 |
+| paeruginosa | 3,662 | 2,290 | 574 | 716 | `paeruginosa:155` | 82 |
+| enterobacter | 1,294 | 784 | 196 | 245 | `ecloacae:171` | 69 |
+| entero_minor | 547 | 350 | 88 | 109 | — none — | 0 |
+
+- **The PsA rows are byte-identical to §3.6's baseline tables**, verified by `--assert-same-as` for all four drugs
+  (2,479 amikacin · 3,136 ciprofloxacin · 2,731 meropenem · 2,786 ceftazidime rows equal
+  `processed/paeruginosa/splits/<drug>_split.csv`). So the cross-species arm and the PsA-only baseline score the
+  **same PsA genomes**, and the comparison David asked for is paired rather than two independent draws.
+- Per drug (genomes, all units): amikacin 23,517 (train 14,707) · ciprofloxacin 64,157 (39,359) · meropenem 48,949
+  (29,958) · ceftazidime 28,876 (17,947).
+- **The lineage holdout stays under David's 5 % cap at cohort level** — 2.5 % (amikacin) · 4.0 % (ciprofloxacin) ·
+  4.2 % (meropenem) · 2.9 % (ceftazidime) of each drug's cross-species labelled set. ⚠ **Per unit it does not:**
+  `salmonella:32` is 5.0–7.4 % of that unit's labelled set by drug and `ecloacae:171` 6.5–7.0 %. The cap was set
+  (§6, 2026-11-21) to stop a single-species arm losing a quarter of its training data; here those units' losses are
+  149 and 67 genomes against cohorts of 29,132 and 23,639, so the cap's purpose holds. **Put to David** because he
+  set the number.
+- ⚠ ***Shigella* is 9.4 % of `ecoli_shigella`** (2,264 of 23,966: *S. sonnei* 1,851, *flexneri* 395, *boydii* 12,
+  *dysenteriae* 6). Genomically the scheme is right; epidemiologically *Shigella* AMR has a different breakpoint
+  context, so that unit's holdout is not an *E. coli* result.
+- ⚠ **`entero_minor` is a residual, not a species.** A 20 % holdout within it is proportional to nothing biological;
+  its per-unit number is not reportable as a species result. No ST is held out there, so it carries no
+  held-out-lineage hazard.
+- ⚠ **A pooled cross-species AUROC is largely the biggest unit's number wearing a cross-species label** (*Salmonella*
+  and *E. coli* are 83 % of the cohort). The headline has to be **per unit** — the trainer already scores per species
+  when a table has several — with the pooled figure shown as a weighted mean if at all.
+
+**Numbers of record — the stopping rule, restated in epochs.** The deployed rule (`EVAL_STEPS` 250, `PATIENCE` 15)
+is written in optimizer steps and every arm that has used it was small enough for 250 steps to be about one epoch:
+PsA ciprofloxacin trains on 1,933 genomes = 242 steps/epoch, so 15 × 250 = 3,750 steps is 15.5 epochs. **Read from
+the ten §3.6 `trainer_state.json`: nine of the ten stopped exactly 3,750 steps after their best checkpoint** (the
+patience window), and cefepime alone hit the 40-epoch cap (last step 3,680 = 92 × 40). At cross-species scale the
+same constants stop a run **inside its first epoch** — 3,750 steps is 0.76 of a v1 ciprofloxacin epoch and 0.44 of
+a v2 one — which is the failure David named in advance ("Make sure early stopping is set properly. Probably needs
+15 epochs … before stopping"). So the rule is converted per drug from that drug's own `n_train`, **as `--export`
+values only; no default is changed**:
+
+| | value | why |
+|---|---|---|
+| `EVAL_STEPS` | `steps_per_epoch / 2` | half an epoch. `save_steps` follows `eval_steps`, and a v2 ciprofloxacin epoch is ~7 h, so one eval per epoch would lose up to 7 h on a wall kill |
+| `PATIENCE` | 30 | 30 × half an epoch = **15 epochs without improvement**, §3.6's effective window |
+| `MAX_EPOCHS` | 40 (default) | unchanged |
+| `MAX_STEPS` | `steps_per_epoch × 40` | the trainer runs `min(MAX_STEPS, steps_per_epoch × MAX_EPOCHS)` and shapes warmup and the linear decay on it. The array's hardcoded 100,000 would have made v2 ciprofloxacin's schedule 11.6 epochs against the baseline's 40. `MAX_STEPS` became an env knob at `a73d2aa` (additive, default unchanged, reviewed with the §3.6 agent) |
+
+Warmup is 10 % of the *effective* schedule, so it is 4.0 epochs in both arms and the LR shape matches §3.6's.
+⚠ **This is a protocol difference from §3.6's arm and is David's to ratify.** It is recorded per run in
+`results.json`'s `run` block and is **the same in both arms**, so v1-vs-v2 is unconfounded. ⚠ With a stop at ~15
+epochs of a 40-epoch schedule the LR never anneals — true of §3.6's arm too; if David's "15 epochs" meant the
+training budget rather than the patience window, `MAX_EPOCHS=15` would let it anneal.
+
+**In flight.**
+- **v1 arm, four fine-tunes submitted 2026-11-24 22:5x UTC**, one job per drug (separate jobs, not an array, because
+  each carries its own `EVAL_STEPS`/`MAX_STEPS`): `41873623` amikacin (1,839 steps/epoch) · `41873624` ciprofloxacin
+  (4,920) · `41873625` meropenem (3,745) · `41873626` ceftazidime (2,244). `TASK=pa_entero_ast`, split tables
+  md5-pinned, worktree `xspecies-a73d2aa`, embeddings `$AMR/processed/esm`, output
+  `processed/cross_species_v1/models/<drug>/`. `JOB … | GPU x1 | cpu=32,mem=250G | wall=35:00:00 | ampere |
+  FLOTO-SL2-GPU`. **35 h will not finish them**: at ~3.2 s/step plus the validation passes, ciprofloxacin is ~5 h
+  per epoch, so 15 epochs needs 2–4 jobs and a `--resume-from-checkpoint` continuation, as David expected.
+- **v2 arm, chained** behind §3.7's last ESM-C round: eligible lists → split tables **pinned to the v1 arm**
+  (`--pin-from <unit>=…/cross_species_v1/splits` for all six units, David's 2026-11-21 decision that v2's held-out
+  set contains v1's) → the same four fine-tunes into `processed/cross_species_cabbage_v2/models/`. The v2 PsA
+  eligible list is written (9,044, each with a `.pt`).
+
+**Next.**
+1. Confirm each job reaches a training loss, then resume past the wall from the latest checkpoint.
+2. Per-unit holdout and `holdout_st` metrics for each drug, against §3.6's PsA-only `models/holdout_metrics.csv`
+   on the identical PsA genomes — the comparison David asked for ("Lets see if it helps the model learn in PsA case").
+3. **For David:** the per-unit ST fractions above the 5 % cap; whether `validate` should stay pooled; whether
+   `MAX_EPOCHS` should be 15 so the schedule anneals; and the remaining six drugs.
+
+**Caveats.**
+- **`validate` is pooled across units** — the builder assigns fold 0 per unit and the table is their concatenation,
+  so early stopping tracks a size-weighted average and a small unit can be past its best unseen. This is the code's
+  behaviour, not a choice; §3.6 lists the PsA-only alternative as open for David.
+- The four drugs are David's choice of "ones that aren't training very well" with data at genus level; the other six
+  are untouched.
+- Nothing here changes §3.6's or §3.7's own artifacts; this arm reads them and writes only under
+  `processed/cross_species_{v1,cabbage_v2}/`.
+
+**Owns.** `$AMR/processed/cross_species_v1/`, `$AMR/processed/cross_species_cabbage_v2/`, and the `MAX_STEPS` knob
+in `engine/finetune/scripts/finetune_amr_array.sh`.
 
 ---
 
@@ -3042,6 +3202,8 @@ directory was consolidated. Several of these existed nowhere else.
 | 2026-11-22 | **All v2 GPU work runs on `FLOTO-SL2-GPU`** (David: "The work is too important for the lab. Just run SL2 for all GPU work." — in his experience SL3 never picks up GPU jobs). SL3 is tried only for the Enterobacterales Bakta CPU array, which would cost ~£240 on SL2 (~24,000 core-h at ~£0.01), because SL3 does sometimes pick up CPU work. ESM-C starts on every v2 genome that already has its Bakta annotation, without waiting for the rest. |
 | 2026-11-22 | **v2 translates every codon holding a base other than A, C, G or T as `X`**, as Bakta's own `.faa` does (David: "b) is fine. so few that it doesn't matter."). NCBI GenBank contigs carry IUPAC ambiguity codes; Biopython resolves an ambiguous codon where it can (`ACY` → T, `RAY` → B) and reads `TRA` as a stop, so the extractor's internal-stop rule dropped that CDS (27 Enterobacterales genomes, one protein each). `extract_proteins_from_gff_fna(ambiguous_codons_as_x=True)` / `--ambiguous-codons-as-x`, opt-in: §3.6's stores and drivers are unchanged. v2's parquets written before it are brought up to it by `reextract_proteins`, which rewrites only those that change. |
 | 2026-11-23 | **ESM-C precision check: ten PsA fine-tunes retrained on fp32-computed ESM-C, one run per drug** (David: "Lets just do ten fp32 … If answer is almost exactly same, we have answer, if wildly different, we also have an answer. Only reason to rerun is if answer are moderately different"). Every store so far is bf16-computed ESM-C, including the older Kp store's fp32 files; a fresh bf16 replicate for run-to-run noise was offered and declined for now. |
+| 2026-11-24 | **fp32-computed ESM-C makes no difference; the bf16 stores stand** (David, on the 14 retrained fine-tunes: "That confirms that fp 32 did not help. No significant difference overall. We can just use bf16 saved embeddings" and "We don't need to run more"). Mean ΔAUROC +0.0004 over ten PsA drugs and +0.003 over four Kp drugs, five up and five down on PsA, every Kp interval covering zero (§3.7 *Numbers of record*). This unblocked v2's last ESM-C round, which is bf16. |
+| 2026-11-24 | **The cross-species arm starts on four drugs, on both experiments' data** (David: "we are probably ready to kick off the whole enterobacteriaceae run … Suggest we choose 4 drugs to start with. Ones that aren't training very well. Maybe amikacin, cipro, meropenem, ceftazidime? … Lets see if it helps the model learn in PsA case", then "ideally have both fine-tuning on v1 and v2 running overnight for the 4 drugs"). Early stopping to be set so a run is not cut short — "Probably needs 15 epochs … before stopping" — and continuation from a checkpoint expected, 36 h being too short. §3.8. |
 
 ### Invasion / lab collection
 
