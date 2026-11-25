@@ -3053,6 +3053,13 @@ half-epoch the evaluation overhead is ~11–13 % of wall. A 12 h segment is ther
 | meropenem | 3,744 | 3.2 | **19** | 1,250 |
 | ciprofloxacin | 4,919 | 2.4 | **14.6** | 2,000 |
 
+**What this costs, since the epochs-or-steps question is a money question.** `FLOTO-SL2-GPU` is **~£0.55/GPU-h**
+(§5). Running all four drugs to the 6-segment cap is 4 × 72 h = 288 GPU-h ≈ **£158 per arm**, so ≈ **£317** for v1
+and v2 together, plus ≈ £28 for v2's ESM array (43 tasks × ~1.2 h). Matching the comparator's *epochs* instead
+would mean ciprofloxacin alone running its full 196,760 steps ≈ 197 h ≈ **£108 per arm — for one drug** — and
+amikacin is the only one of the four that reaches 40 epochs inside the current cap. Matching *steps* costs
+essentially nothing extra, because all four passed the comparator's peak step count in their first two hours.
+
 ⚠ **Each segment boundary throws away up to half an epoch, and the table above does not discount it.** The wall
 kills the job; HF does not checkpoint on `SIGTERM`, and `save_steps` follows `eval_steps`, so the resume restarts
 from the last periodic checkpoint — on average half of `eval_steps`, worst case all of it. For ciprofloxacin that
@@ -3067,8 +3074,8 @@ only after a new save completes, so a kill mid-save always leaves a complete ear
 15 epochs is all the cap holds, so it will stop by exhausting segments rather than by converging. The linear decay
 runs to zero at 40 epochs, so where each drug's segments run out it is still at a fraction
 `(max_steps − step) / (max_steps − warmup)` of peak LR: **ciprofloxacin ~70 %**, meropenem ~58 %, ceftazidime
-~22 %, amikacin ~0 % (it finishes the schedule). Amikacin and ceftazidime therefore anneal; ciprofloxacin does
-not anneal at all. This is the concrete form of the open `MAX_EPOCHS=15` question below.
+~22 %, amikacin ~2 % (it all but finishes the schedule). Amikacin and ceftazidime therefore anneal;
+ciprofloxacin does not anneal at all. This is the concrete form of the open `MAX_EPOCHS=15` question below.
 
 ⚠ **A run that never finishes writes no `results.json` and no `eval_scores.npz`, so there is nothing to compare.**
 `engine/finetune/evaluate.py` cannot stand in: it has no `--split-table` and no species awareness (its CLI is the
