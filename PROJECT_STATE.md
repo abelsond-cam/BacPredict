@@ -2771,13 +2771,21 @@ embeddings"), which unblocked v2's last ESM-C round.
   candidates only **46 linked** from the Kp ESM-C store and 5,839 are absent from it, so this round embeds nearly
   all of them itself. **Array `41882828`**, 12,626 genomes (`genomes/esm_samples_to_embed.txt` md5 `2b0fa1d8…`),
   43 tasks of ≤ 294.
-  **Its wall was cut from 4 h to 2 h 30 after it had queued, and that is the difference between v2 training
-  tonight and not.** The previous round's 20 tasks of 290 genomes each took **1:04–1:12** (`sacct`, array
-  `41705160`), so 4 h was 3.4× the measured need, and on an ampere queue 524 deep a long wall is what stops a job
-  backfilling. `scontrol update JobId=41882828 TimeLimit=02:30:00` (a user may lower a wall, not raise one) moved
-  its estimated start from **2026-11-26T02:20 to 2026-11-25T07:40 — 18.7 h earlier**, at unchanged priority (502)
-  and unchanged `ReqTRES`. 2 h 30 is 2.1× the slowest task yet observed. `JOB 41882828 v2-entero-esm-embeddings |
-  GPU x1 | mem=250G | cores=32 | wall=02:30:00 (was 04:00:00) | ampere | FLOTO-SL2-GPU`.
+  **Its wall was cut from 4 h to 2 h 30 after it had queued**, by
+  `scontrol update JobId=41882828 TimeLimit=02:30:00` (a user may lower a wall, not raise one), at unchanged
+  priority (502) and unchanged `ReqTRES`. `JOB 41882828 v2-entero-esm-embeddings | GPU x1 | mem=250G | cores=32 |
+  wall=02:30:00 (was 04:00:00) | ampere | FLOTO-SL2-GPU`. **The justification is the measured task time, not the
+  queue's estimate:** the previous round's 20 tasks of 290 genomes each took **1:04–1:12** (`sacct`, array
+  `41705160`) and this round is 294 per task, so 4 h was 3.4× the need and 2 h 30 is 2.1× the slowest task yet
+  seen — and the §3.8 v1 measurement (35 h estimated a next-day start, 12 h started in ~5 min on the same
+  partition, account and resources) is an *outcome*, which is what says a long wall is what stops a job
+  backfilling on this queue.
+  - ⚠ **`squeue`'s `START_TIME` for a pending array is a backfill projection, not a measurement, and must not be
+    quoted as the effect of a change.** Immediately after the cut it moved from 2026-11-26T02:20 to
+    2026-11-25T07:40; five minutes later, with no further change by us, it had drifted back to 2026-11-26T01:30.
+    An earlier revision of this paragraph recorded the first of those as "18.7 h earlier" — it was a snapshot of a
+    volatile number. The only honest statement is that the request is now correctly sized; when it actually starts
+    is the queue's business.
 - **PsA:** nothing — genomes, Bakta and ESM-C are done (above). Splits wait on the exclude list and David's
   ANI-thinning question (*Next*, 4).
 - **Enterobacterales ESM-C, pre-QC cohort.** Array `41659165` (`FLOTO-SL2-GPU`, 73 tasks of ≤ 300, 59–72 min
