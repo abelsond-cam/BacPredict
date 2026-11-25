@@ -1,7 +1,17 @@
 # BacPredict — project state
 
-> **Last verified: 2026-11-24 @ `a73d2aa`** (branch `refactor/consolidate-engine`).
-> **Verification scope, this pass (2026-11-24, fourteenth): the ESM-C precision answer, §3.7's Bakta, and §3.8.**
+> **Last verified: 2026-11-25 @ `c017216`** (branch `refactor/consolidate-engine`).
+> **Verification scope, this pass (2026-11-25, fifteenth): §3.8's four running fine-tunes and the comparator they
+> will be read against.** Every setting read back from each job's own log rather than from the script that
+> submitted it (steps/epoch, effective `max_steps`, warmup, `eval_steps`, split-table md5), and the four live
+> checkpoints opened to confirm the early-stopping counter is being written and that each `config.json` carries
+> the `problem_type` that would otherwise kill the resume. The PsA↔cross-species row identity re-checked from the
+> two tables themselves on every column, and the tables checked for repeated Samples (none). The comparator's
+> training depth read from the ten §3.6 `trainer_state.json`: all four of these drugs peaked at epoch 6–8 and
+> early-stopped near epoch 24. Throughput measured from elapsed time against logged epoch. **Nothing outside §3.8
+> was re-verified, and §3.6's own text was not edited** — see §3.8's last caveat.
+>
+> **Fourteenth pass (2026-11-24): the ESM-C precision answer, §3.7's Bakta, and §3.8.**
 > Fourteen fine-tunes on fp32-computed ESM-C (ten PsA, four Kp) scored against their bf16 counterparts on identical
 > holdout genomes, with the July Kp checkpoints re-scored first to show they reproduce; Bacformer's own
 > `BacformerEmbeddings.forward` read to find that it casts its input to the weights' dtype. v2's Enterobacterales
@@ -2908,8 +2918,9 @@ the `*_cabbage_v2` run scripts,
 
 ### 3.8 Cross-species AMR — *P. aeruginosa* trained with Enterobacterales (both experiments' data)
 
-**Status.** **The v1 arm's split tables are built and its four fine-tunes are submitted** (2026-11-24); the v2 arm
-is chained behind v2's last ESM-C round. David, 2026-11-24: "we are probably ready to kick off the whole
+**Status.** **The v1 arm's split tables are built and all four fine-tunes are training** (2026-11-25 02:16 UTC,
+2.9–3.1 h in, each on a 12 h wall with an automatic resume supervisor); the v2 arm is chained behind v2's last
+ESM-C round, whose embedding array is queued. David, 2026-11-24: "we are probably ready to kick off the whole
 enterobacteriaceae run … Suggest we choose 4 drugs to start with. Ones that aren't training very well. Maybe
 amikacin, cipro, meropenem, ceftazidime? … Lets see if it helps the model learn in PsA case", then "ideally have
 both fine-tuning on v1 and v2 running overnight for the 4 drugs". This is §3.6's *Next* item 1 (one model per drug,
@@ -2942,12 +2953,20 @@ genomes, **every one of which has a `.pt`** (log `hpc-work/logs/xspecies_v1_prep
 | enterobacter | 1,294 | 784 | 196 | 245 | `ecloacae:171` | 69 |
 | entero_minor | 547 | 350 | 88 | 109 | — none — | 0 |
 
-- **The PsA rows are byte-identical to §3.6's baseline tables**, verified by `--assert-same-as` for all four drugs
-  (2,479 amikacin · 3,136 ciprofloxacin · 2,731 meropenem · 2,786 ceftazidime rows equal
-  `processed/paeruginosa/splits/<drug>_split.csv`). So the cross-species arm and the PsA-only baseline score the
-  **same PsA genomes**, and the comparison David asked for is paired rather than two independent draws.
-- Per drug (genomes, all units): amikacin 23,517 (train 14,707) · ciprofloxacin 64,157 (39,359) · meropenem 48,949
-  (29,958) · ceftazidime 28,876 (17,947).
+- **The PsA rows are byte-identical to §3.6's baseline tables**, asserted at build time by `--assert-same-as` and
+  **re-checked 2026-11-25 from the two tables themselves** — every column (`Sample`, `species`, `st_key`,
+  `ast_label`, `split`), not just the row count: 2,479 amikacin · 3,136 ciprofloxacin · 2,731 meropenem · 2,786
+  ceftazidime rows equal `processed/paeruginosa/splits/<drug>_split.csv`, with the same split assignment
+  (amikacin train 1,555 / validate 385 / holdout 464 / holdout_st 75, and so on). The holdout sizes match
+  §3.6's `holdout_metrics.csv` `n_samples` exactly (464 · 620 · 527 · 543). So the cross-species arm and the
+  PsA-only baseline score the **same PsA genomes**, and the comparison David asked for is **paired** rather than
+  two independent draws — which is what lets it carry a paired-bootstrap interval instead of two loose AUROCs.
+- Per drug (rows in the table, all units): amikacin 23,517 · ciprofloxacin 64,157 · meropenem 48,949 ·
+  ceftazidime 28,876. **The trainer trains on slightly fewer**, because `load_splits` keeps only clean 0/1 labels:
+  14,706 · 39,352 · 29,954 · 17,946 (the table's 14,707 · 39,359 · 29,958 · 17,947 counted the unclean rows too).
+  The gap is 1 · 11 · 5 · 1 rows per drug. **No Sample is repeated in any of the four tables** (0 duplicated rows,
+  so none straddles two splits) — checked because `load_splits` silently keeps the first row per Sample, which
+  would hide a duplicate that disagreed with itself.
 - **The lineage holdout stays under David's 5 % cap at cohort level** — 2.5 % (amikacin) · 4.0 % (ciprofloxacin) ·
   4.2 % (meropenem) · 2.9 % (ceftazidime) of each drug's cross-species labelled set. ⚠ **Per unit it does not:**
   `salmonella:32` is 5.0–7.4 % of that unit's labelled set by drug and `ecloacae:171` 6.5–7.0 %. The cap was set
@@ -2987,14 +3006,116 @@ Warmup is 10 % of the *effective* schedule, so it is 4.0 epochs in both arms and
 epochs of a 40-epoch schedule the LR never anneals — true of §3.6's arm too; if David's "15 epochs" meant the
 training budget rather than the patience window, `MAX_EPOCHS=15` would let it anneal.
 
+**Numbers of record — the comparator's training depth: every PsA-only baseline peaked early and then flatlined.**
+Read 2026-11-25 from each run's own `trainer_state.json` under `$AMR/processed/paeruginosa/models/<drug>/`, with
+steps/epoch derived from that run's `results.json` `split.n_train`. All four ran a 40-epoch schedule
+(`max_steps` 100,000 never bound; `min(100000, steps_per_epoch × 40)` did) and **none reached it**:
+
+| drug | n_train | steps/epoch | best val AUROC | best at step | = epoch | stopped at step | = epoch | 40-epoch cap |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|
+| amikacin | 1,554 | 195 | 0.7968 | 1,250 | 6.4 | 4,750 | 24.4 | 7,800 |
+| ciprofloxacin | 1,933 | 242 | 0.8643 | 2,000 | 8.3 | 5,750 | 23.8 | 9,680 |
+| meropenem | 1,703 | 213 | 0.8187 | 1,250 | 5.9 | 5,000 | 23.5 | 8,520 |
+| ceftazidime | 1,732 | 217 | 0.7995 | 1,500 | 6.9 | 5,250 | 24.2 | 8,680 |
+
+**This reframes "how long is long enough".** The comparator converged by **epoch 6–8** and then spent ~16 more
+epochs not improving before patience ran out. ⚠ It also says the four peaks sit at **1,250–2,000 optimizer
+steps** — which a cross-species run passes inside its first two hours. Whether the cross-species arm should be
+judged on matched *epochs* (it sees each genome as many times) or matched *steps* (it sees far more distinct
+genomes per step) is a real question and **David's to settle**; the two give very different budgets, below.
+
+**Numbers of record — measured throughput, and what the 6-segment cap buys.** Measured 2026-11-25 02:16 UTC from
+each job's elapsed time and the epoch in its last training log line, so it includes startup and the completed
+validation passes — i.e. it is the budgeting rate, not a steady-state one. **3.3–3.7 s/step** (amikacin 3.70,
+ciprofloxacin 3.58, meropenem 3.30, ceftazidime 3.58), consistent with §0.2's ~3 s/step. One validation pass runs
+at ~8.5 genomes/s (435 s amikacin, 1,132 s ciprofloxacin, 878 s meropenem, 526 s ceftazidime), so at one eval per
+half-epoch the evaluation overhead is ~11–13 % of wall. A 12 h segment is therefore **~12,000 steps**, and the
+6-segment cap (72 h) is ~72,000:
+
+| drug | steps/epoch | epochs per 12 h segment | epochs in the 6-segment cap | PsA-only peak, in steps |
+|---|--:|--:|--:|--:|
+| amikacin | 1,838 | 6.5 | **39** (the 40-epoch schedule all but completes) | 1,250 |
+| ceftazidime | 2,243 | 5.4 | **32** | 1,500 |
+| meropenem | 3,744 | 3.2 | **19** | 1,250 |
+| ciprofloxacin | 4,919 | 2.4 | **14.6** | 2,000 |
+
+⚠ **Ciprofloxacin cannot early-stop inside the cap.** Patience is 30 evaluations of half an epoch = 15 epochs, and
+15 epochs is all the cap holds, so it will stop by exhausting segments rather than by converging. The linear decay
+runs to zero at 40 epochs, so where each drug's segments run out it is still at a fraction
+`(max_steps − step) / (max_steps − warmup)` of peak LR: **ciprofloxacin ~70 %**, meropenem ~58 %, ceftazidime
+~22 %, amikacin ~0 % (it finishes the schedule). Amikacin and ceftazidime therefore anneal; ciprofloxacin does
+not anneal at all. This is the concrete form of the open `MAX_EPOCHS=15` question below.
+
+⚠ **A run that never finishes writes no `results.json` and no `eval_scores.npz`, so there is nothing to compare.**
+`engine/finetune/evaluate.py` cannot stand in: it has no `--split-table` and no species awareness (its CLI is the
+pre-split-table k-fold/`train_val_eval` one), so it cannot score a cross-species checkpoint, and reaching for it
+would mean resolving a holdout outside `load_splits`. **The zero-new-code way to harvest a finished evaluation
+from a partly-trained run** is to resume it with `--max-steps` set just above its current step: the trainer ends
+immediately, runs its full final evaluation — holdout, `holdout_st` and the per-species blocks — and writes both
+files. Nothing else about the invocation changes.
+
+**Numbers of record — the resume path, verified against the live checkpoints before it was needed.** Checked
+2026-11-25 on all four running runs' newest checkpoint (amikacin `checkpoint-2757`, ciprofloxacin `2460`,
+meropenem `1872`, ceftazidime `2244`):
+- **Every one carries `config.json` `problem_type="binary_classification"`** — so the `7c366ba` crash fix is
+  load-bearing for this arm tonight, not a precaution. Without `tolerate_custom_problem_type` all four resumes
+  would have died at the first wall.
+- **Every one carries `stateful_callbacks.EarlyStoppingCallback` with `args` `{patience 30, threshold 0.005}` and
+  `attributes.early_stopping_patience_counter`** — i.e. the counter is being written, and matches what
+  `resume_xspecies.sh` will ask for, so `_refuse_mismatched_resume` passes rather than refusing (it was previously
+  exercised only at patience 15). A guard that exits would have taken all four drugs down at once.
+- **The whole path was then run, not just inspected** (job `41899616`, a 40 min GPU job resuming amikacin's live
+  `checkpoint-2757` **read-only** into a scratch `--output-dir`, trained six steps and stopped). The standing
+  lesson is that link 2 is where a chained GPU run fails, and tonight link 2 happens four times at once,
+  unattended, on code that had never been resumed end to end. It printed, in order:
+  `Resume mode: loading model weights from …/checkpoint-2757` (no `problem_type` ValueError — the crash fix
+  holds) · `Resume: checkpoint-2757 at step 2757, early-stopping counter 0/30 restored; best 0.9030557625572808`
+  (the guard passed and the counter came back) · a progress bar that skipped 2,757 steps at 185 it/s and trained
+  only the last 6, at `learning_rate 2.4e-07` — i.e. HF restored the step counter and the LR schedule position
+  rather than restarting them · then the post-training evaluation.
+- **The resume reproduces the original schedule exactly, despite computing `steps/epoch` differently.**
+  `resume_xspecies.sh` derives it from the split table's `train` rows (14,707 → 1,839) while the trainer derives
+  it from clean-label rows (14,706 → 1,838). Both give `eval_steps` 919, and the trainer's
+  `min(max_steps, steps_per_epoch × 40)` turns the resume's 73,560 into the same 73,520 the first segment used.
+  So the discrepancy is cosmetic — but it is in the arithmetic that sets the LR schedule's length, so it is
+  recorded rather than left to be rediscovered as a suspected mismatch.
+
 **In flight.**
-- **v1 arm, four fine-tunes submitted 2026-11-24 22:5x UTC**, one job per drug (separate jobs, not an array, because
-  each carries its own `EVAL_STEPS`/`MAX_STEPS`): `41873623` amikacin (1,839 steps/epoch) · `41873624` ciprofloxacin
-  (4,920) · `41873625` meropenem (3,745) · `41873626` ceftazidime (2,244). `TASK=pa_entero_ast`, split tables
-  md5-pinned, worktree `xspecies-a73d2aa`, embeddings `$AMR/processed/esm`, output
-  `processed/cross_species_v1/models/<drug>/`. `JOB … | GPU x1 | cpu=32,mem=250G | wall=35:00:00 | ampere |
-  FLOTO-SL2-GPU`. **35 h will not finish them**: at ~3.2 s/step plus the validation passes, ciprofloxacin is ~5 h
-  per epoch, so 15 epochs needs 2–4 jobs and a `--resume-from-checkpoint` continuation, as David expected.
+- **v1 arm, all four training**, one job per drug (separate jobs, not an array, because each carries its own
+  `EVAL_STEPS`/`MAX_STEPS`). `TASK=pa_entero_ast`, split tables md5-pinned, worktree `xspecies-a73d2aa`, embeddings
+  `$AMR/processed/esm`, output `processed/cross_species_v1/models/<drug>/`.
+  `JOB … | GPU x1 | cpu=32,mem=250G | wall=12:00:00 | ampere | FLOTO-SL2-GPU`. Settings read back from each job's
+  own log rather than from the submitting script:
+
+  | drug | segment-1 job | train | steps/epoch | `eval_steps` | effective `max_steps` | warmup | split md5 |
+  |---|---|--:|--:|--:|--:|--:|---|
+  | amikacin | `41875170` | 14,706 | 1,838 | 919 | 73,520 (40 ep) | 7,352 (4.0 ep) | `3bd8b966…` |
+  | ciprofloxacin | `41875171` | 39,352 | 4,919 | 2,460 | 196,760 (40 ep) | 19,676 (4.0 ep) | `8f728966…` |
+  | meropenem | `41875172` | 29,954 | 3,744 | 1,872 | 149,760 (40 ep) | 14,976 (4.0 ep) | `42463201…` |
+  | ceftazidime | `41873900` | 17,946 | 2,243 | 1,122 | 89,720 (40 ep) | 8,972 (4.0 ep) | `4d57cd48…` |
+
+  (The first submission's `41873623`–`41873626` were cancelled at the 35 h wall and do not appear in any output
+  directory; `41873900` is ceftazidime's resubmission, the other three went in as `4187517x`. Logs:
+  `hpc-work/logs/xspecies-v1-finetune_<jobid>_0.out`.)
+
+  **The wall is 12 h, not the 35 h first submitted, and the reason is measured.** The first four jobs went in at
+  35 h and the queue estimated starts of 16:15–21:58 the following day (ampere: 515 pending, 96 running, 18 nodes
+  in maintenance); resubmitted at 12 h, on the same partition, account and resources, they started within about
+  five minutes. Since the run needs several segments either way, the shorter wall buys the whole first night.
+- **All four are learning.** First validation points (`eval_auroc`, from each job's log): amikacin 0.8328 → 0.8774
+  (epoch 0.5 → 1.0) · ceftazidime 0.7642 → 0.8463 · meropenem 0.9327 (0.5) · ciprofloxacin 0.8137 (0.5).
+  ⚠ **These are the pooled validate set and are not comparable to anything in §3.6** — the pool is 83 %
+  *Salmonella* and *E. coli*, so this is mostly those two units' number. The PsA comparison needs the per-species
+  block, which only the final evaluation writes.
+- **The segments are continued by a supervisor, not by `--dependency=afterany`.** A CSD3 prolog failure requeues a
+  job and then **holds** it (`PrologFlags=…,ForceRequeueOnFail`, so `--no-requeue` does not reliably prevent it);
+  a held job never ends, so a dependency chain would freeze and the queue would simply look quiet. The supervisor
+  releases anything held, and submits the next segment only once the previous one has actually left the queue. It
+  reads state from `squeue` (the controller) first and consults `sacct` only after the job is gone, because
+  `slurmdbd` refused connections for several minutes at 23:23 UTC on 2026-11-24 while `scontrol` kept answering,
+  and `sacct` printed its error to stdout — read as a job state that is "the segment ended", which would have
+  started a second job writing into a live job's output directory. Any unrecognised state is treated as "still
+  going". Cap: 6 segments per drug, then it stops and says so.
 - **v2 arm, chained** behind §3.7's last ESM-C round: eligible lists → split tables **pinned to the v1 arm**
   (`--pin-from <unit>=…/cross_species_v1/splits` for all six units, David's 2026-11-21 decision that v2's held-out
   set contains v1's) → the same four fine-tunes into `processed/cross_species_cabbage_v2/models/`. The v2 PsA
@@ -3034,13 +3155,25 @@ here against the installed package and a real checkpoint before anything was cha
   is submitted at `7c366ba` throughout.
 
 **Next.**
-1. Confirm each job reaches a training loss, then resume past the wall from the newest **complete** checkpoint
-   (`resume_xspecies.sh`, which picks it through `engine.finetune.checkpoints.pick_resume_checkpoint` — a job
-   killed mid-save leaves a directory with a model file and no `trainer_state.json`).
+1. ✅ Done — all four reach a training loss and the supervisor continues them past the wall from the newest
+   **complete** checkpoint (`resume_xspecies.sh`, which picks it through
+   `engine.finetune.checkpoints.pick_resume_checkpoint` — a job killed mid-save leaves a directory with a model
+   file and no `trainer_state.json`).
 2. Per-unit holdout and `holdout_st` metrics for each drug, against §3.6's PsA-only `models/holdout_metrics.csv`
-   on the identical PsA genomes — the comparison David asked for ("Lets see if it helps the model learn in PsA case").
-3. **For David:** the per-unit ST fractions above the 5 % cap; whether `validate` should stay pooled; whether
-   `MAX_EPOCHS` should be 15 so the schedule anneals; and the remaining six drugs.
+   on the identical PsA genomes — the comparison David asked for ("Lets see if it helps the model learn in PsA
+   case"). The script is written and dry-run (`compare_xspecies_vs_psa.py`): paired-bootstrap ΔAUROC on the shared
+   PsA genomes — the estimator David accepted for the ESM-C precision check — plus every unit's own AUROC. It
+   skips and names runs that have not finished, so a partial sweep still prints.
+3. **For David, in the order they bite:**
+   - **Epochs or steps?** The PsA-only comparator peaked at 1,250–2,000 steps / epoch 6–8. Matched *epochs* costs
+     ciprofloxacin ~5× the current budget; matched *steps* it has already passed. This sets everything below.
+   - **`MAX_EPOCHS` 40 or 15.** At 40 the LR never anneals within a feasible budget for ciprofloxacin (~70 % of
+     peak when the segments run out); at 15 it anneals, and 15 is what David named. A resume can shorten the
+     schedule later — the LR drops to the new position and then decays — so this stays open rather than being
+     lost, but `_refuse_mismatched_resume` checks patience and threshold, **not** `max_steps`, so a shortened
+     resume would be accepted silently and must be deliberate.
+   - The per-unit ST fractions above the 5 % cap; whether `validate` should stay pooled or be PsA-only; and the
+     remaining six drugs.
 
 **Caveats.**
 - **`validate` is pooled across units** — the builder assigns fold 0 per unit and the table is their concatenation,
@@ -3050,6 +3183,12 @@ here against the installed package and a real checkpoint before anything was cha
   are untouched.
 - Nothing here changes §3.6's or §3.7's own artifacts; this arm reads them and writes only under
   `processed/cross_species_{v1,cabbage_v2}/`.
+- ⚠ **§3.6's *Status* paragraph still ends "Splits and training are not started", which is no longer true** —
+  `processed/paeruginosa/splits/` holds ten `<drug>_split.csv` and `models/` holds ten trained runs plus
+  `holdout_metrics.csv` (written 2026-11-22 at `f595f0d`), and §3.6's own numbers sections and this file's header
+  both already cite them. The one stale sentence is the only thing that disagrees. **Left for the §3.6 agent to
+  correct** rather than edited from here, since that layer is theirs and the rest of it is current. Flagged
+  because this arm's entire comparison rests on that artifact.
 
 **Owns.** `$AMR/processed/cross_species_v1/`, `$AMR/processed/cross_species_cabbage_v2/`, and the `MAX_STEPS` knob
 in `engine/finetune/scripts/finetune_amr_array.sh`.
