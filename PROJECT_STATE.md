@@ -3299,6 +3299,20 @@ Fixed, in layers rather than with one patch:
 > idle GPU per attempt. A long timeout is only safe *because* the guard makes a repeat attempt a no-op. The guard
 > also now runs **before** the torch import, so a refusal costs a second rather than four minutes.
 >
+> **Two more name-matching failures of the same family, found the same day.** Both are the single root cause
+> restated: *two scripts name their jobs differently and only one naming scheme was accounted for.*
+> 1. **The supervisor's held-job release matched `xspecies` only.** Segment 1 is `xspecies-<arm>-finetune`; every
+>    *resume* is `xs-<arm>-<drug>`. So from segment 2 onward — the entire span the supervisor exists to cover — a
+>    held job would never have been released, and a held job never *ends*, so the supervisor would have waited on
+>    it forever while that drug silently stopped training. Now matches both schemes, splitting on `|` because a
+>    SLURM reason string can contain spaces (`launch failed requeued held`).
+> 2. **Every script hardcoded `dca36@login.hpc.cam.ac.uk`.** The `ControlMaster` socket is per *login node*, and
+>    a login lands on whichever node the round-robin gives it. Measured 2026-11-25 11:27: David logged in to
+>    **`login-p-1`**, so every script got `Permission denied (keyboard-interactive)` against a cluster that was
+>    perfectly reachable — and the three fine-tunes that hit their 12 h wall at 11:24:43 sat idle for ~20 minutes
+>    until it was spotted. `rssh.sh`, `supervise_xspecies.sh`, `xspecies_v2_chain.sh`, `watch_xspecies_v1.sh` and
+>    `wait_next_event.sh` now resolve the host from whichever socket exists (`CSD3_HOST` overrides).
+>
 > **A failed `squeue` must never read as "nothing is queued."** Both guards take `squeue`'s own exit status and
 > treat "cannot tell" as a hard stop. Piping it into a loop with `2>/dev/null` hides the status: the scheduler
 > being down produces no lines, the loop body never runs, and the guard waves through the duplicate it exists to
@@ -3364,6 +3378,75 @@ This exists because the **only** per-species number so far is the epoch-1.5 one,
 holdout 0.9132 but *P. aeruginosa* **0.6520 against §3.6's PsA-only 0.7900**. At 1.5 epochs that says very little —
 the model had seen each training genome one and a half times, and the PsA-only comparator peaked at epoch 6.4 —
 but it is the only evidence bearing on David's actual question, so a reading three epochs later is worth £0.15.
+
+**Numbers of record — the first per-species read of all four v1 cross-species fine-tunes.** Taken 2026-11-25
+12:00–12:30 UTC at each run's **best-validation** checkpoint, by the scratch-dir method above. Kept at
+`$AMR/processed/cross_species_v1/early_read/<drug>_step<N>/` (`results.json`, `eval_scores.npz`,
+`eval_scores_holdout_st.npz`); the joined table is `early_read/cohort_and_auroc_by_unit.csv`. ⚠ These are
+**holdout** AUROCs. The trainer logs only pooled validation keys (`eval_auroc`, `eval_auprc`,
+`eval_balanced_accuracy`, `eval_f1`, `eval_loss`, `eval_nr_samples`) — **there is no per-species validation
+figure for any drug at any step**, which is why a read had to be run at all.
+
+| unit | amikacin (ep 5.5) | ciprofloxacin (ep 2.5) | meropenem (ep 3.0) | ceftazidime (ep 5.0) |
+|---|---|---|---|---|
+| salmonella | 0.9864 ⚠ | 0.9511 | **— (0 R of 3,792)** | 0.9273 |
+| ecoli_shigella | 0.9595 ⚠ | 0.9535 | 0.9812 ⚠ | 0.9533 |
+| kpsc | 0.9582 | 0.9664 | 0.9541 | 0.9830 |
+| **paeruginosa** | **0.8332** | **0.7825** | **0.7989** | **0.7773** |
+| enterobacter | 0.8501 ⚠ | 0.8876 | 0.7881 ⚠ | 0.7596 |
+| entero_minor | 0.8199 ⚠ | 0.8355 | 0.9517 ⚠ | 0.8471 ⚠ |
+| *pooled* | *0.9650* | *0.9562* | *0.9847* | *0.9596* |
+
+⚠ marks a unit whose minority class is under 20 genomes or under 5 % of its holdout — an AUROC that is mostly
+noise, or undefined. **P. aeruginosa is the weakest unit in all four drugs**, at 0.78–0.83 against 0.95–0.99 for
+the well-populated Enterobacterales, while being only ~10 % of each drug's training set.
+
+**The paired comparison against the single-species arm.** The two arms' PsA rows are byte-identical, so this is
+paired on the same genomes with the same labels; 2,000-resample paired bootstrap of the AUROC difference.
+
+| drug | epoch | PsA-only | cross-species | Δ | 95 % CI |
+|---|---|---|---|---|---|
+| amikacin | 5.5 | 0.7900 | 0.8332 | +0.043 | [−0.006, +0.100] |
+| ceftazidime | 5.0 | 0.7484 | 0.7773 | +0.029 | [−0.005, +0.063] |
+| meropenem | 3.0 | 0.8098 | 0.7989 | −0.011 | [−0.038, +0.015] |
+| ciprofloxacin | 2.5 | 0.8173 | 0.7825 | **−0.035** | **[−0.065, −0.004]** |
+
+⛔ **Do not read the ciprofloxacin result yet.** The ordering of Δ is exactly the ordering of training depth
+(5.5, 5.0, 3.0, 2.5), and amikacin's own history is the warning: the same comparison was **−0.138** at epoch 1.5
+and is **+0.043** at epoch 5.5. Cipro and meropenem are also the two still improving on validation. The confound
+is testable at no extra cost by re-reading both at epoch ~5.5, which the running segments reach anyway.
+
+**⛔ A pooled cross-species AUROC has a floor that owes nothing to resistance, and the floor is large.** Scoring
+every holdout genome with its own species' *training* resistance prevalence — no genome-level information at all
+— gives: **meropenem 0.9066**, ciprofloxacin 0.7181, ceftazidime 0.7423, amikacin 0.7754. Meropenem's observed
+pooled 0.9847 therefore sits only **0.078** above what perfect species recognition alone would score, because
+40 % of its holdout is *Salmonella* with **zero** resistant genomes. Restricted to the units with a real contrast
+(minority class ≥ 20 and ≥ 5 % in both train and holdout) the picture inverts — meropenem becomes model 0.9272
+against a null of **0.5176**, a gap of **0.410, the largest of the four**. Its headline was misleading in both
+directions. (amikacin: 0.9409 vs null 0.5672, gap 0.374.)
+
+**Balance within units is necessary but not sufficient.** Ciprofloxacin's six units are *all* usable and its null
+is still 0.7181, because their prevalences run from *Salmonella* 15.0 % to KpSC 73.2 % — a spread no selection can
+remove, since it is the biology. The shortcut-free statistic is a **within-species AUROC** (R vs S compared only
+within a unit; null 0.5 by construction at any prevalence spread): amikacin **0.9502**, ciprofloxacin **0.9507**,
+meropenem **0.9442**, ceftazidime **0.9513**. ⚠ It is weighted by each unit's R×S pair count, so PsA is ~1 % of
+ciprofloxacin's pairs — it removes the taxonomy shortcut but **not** the size imbalance, and is **not** evidence
+that PsA is fine. Per-species rows remain the honest view. **Decision taken (David, 2026-11-25): the cohort must
+be restricted to species with a real individual R/S contrast before cross-species training means anything.**
+
+**Two data facts found while checking the above, both cheap to re-derive and easy to get wrong.**
+1. **`ast_label` is not strictly binary.** A handful of fractional values (0.5, 0.667) survive where several AST
+   records for one genome disagreed: 1 row (amikacin), 11 (ciprofloxacin), 5 (meropenem), 1 (ceftazidime) out of
+   23k–64k — 0.00–0.02 %. Negligible in size, but a three-valued `y` makes `roc_auc_score` return nothing for the
+   whole drug rather than warn, which reads as "this drug has no number". Drop them explicitly.
+2. **Intermediates are not dropped for *P. aeruginosa*; they are binarised by the breakpoint.** The parser maps
+   `intermediate → NaN`, but PsA's `label_counts.csv` shows `n_no_call` of only 4–17 per drug, while `n_from_mic`
+   is 2,381–3,143 of ~3,000 — i.e. most labels come from an MIC with a breakpoint applied, so a borderline MIC is
+   forced to R or S by where the breakpoint sits. The MICs themselves are already stored
+   (`processed/paeruginosa/ast_tests_called.parquet`, 27,204 rows, `mic_value`/`mic_sign`/`mic_upper`/`mic_units`).
+   ⚠ **MICs are interval-censored** (`mic_sign` carries ≤ and ≥), so predicting MIC means a censored or ordinal
+   model, **not** least-squares regression — a change of estimator, to be agreed before it is built, per the
+   statistical-method rule in `~/.claude/CLAUDE.md`.
 
 **In flight.**
 - **v1 arm, all four training**, one job per drug (separate jobs, not an array, because each carries its own
