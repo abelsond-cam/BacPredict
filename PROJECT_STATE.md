@@ -2433,8 +2433,9 @@ to the engine only when a second organism needs them.
 **Status.** **Labels built** (stage 1 of 4) for PsA and Enterobacterales, and reviewed by David (§6, 2026-11-21).
 **PsA: genomes (stage 2) and ESM-C (stage 3) done** — 9,044 genomes pass QC, each with one Bakta annotation, its
 proteins and an embedding (`check` PASS, below); splits (stage 4) not started. **Enterobacterales: genomes built,
-QC'd and collated** (117,277 pass; 41 duplicate pairs listed for exclusion); Bakta (13,880 QC-pass genomes still
-without an annotation) and ESM-C running — see *In flight*. CABBAGE v2 is an extension of the data behind the EBI AMR
+QC'd, collated and annotated** (117,277 pass, 41 duplicate pairs listed for exclusion; **Bakta is complete** —
+every one of the 117,277 has exactly one annotation record, so the "13,880 still without an annotation" this line
+used to carry is closed); **ESM-C is at its last array** — see *In flight*. CABBAGE v2 is an extension of the data behind the EBI AMR
 Portal, given to the project as one CSV, with about twice the BioSamples. **It is a second experiment, not an
 update of §3.6** (David, 2026-11-21: "second test, same procedures"): v2 labels are neither merged with nor
 substituted for §3.6's, which continues on the portal's 2026-07 release ("v1"). Every stage repeats §3.6's procedure —
@@ -2760,10 +2761,23 @@ embeddings"), which unblocked v2's last ESM-C round.
   tasks COMPLETED**, 2026-11-23 → 2026-11-24, ~30 min each. `annotate status` now shows every one of the
   117,277 QC-pass genomes with exactly one annotation record (50,083 built here: 27,374 ingest + 22,709 our
   run; 67,194 reused: 63,196 + 3,998; **0 with neither**). SL3 carried the whole array: nothing moved to SL2.
-- **Enterobacterales ESM-C, the last (post-QC) round — in flight** (2026-11-24, a local chain of the driver's
+- **Enterobacterales ESM-C, the last (post-QC) round — at the embedding array** (a local chain of the driver's
   stages from the worktree at `6936272`): `collate` on `embedding_input_unfiltered.csv` (job `41873130`) →
-  proteins → reextract → check-proteins → link-kp → submit → check. ~12,400 of the 50,083 genomes built here
-  were still without a `.pt` when Bakta ended. Precision is settled (above), so this is bf16 as every round has been.
+  proteins → reextract → check-proteins → link-kp → submit → check. Precision is settled (above), so this is bf16
+  as every round has been. Through 2026-11-25 02:50 the chain has cleared every stage before the array:
+  **`collate` 117,277 of 117,277** (origin: BakRep 90,570, our Bakta run 26,707) · **`check-proteins` PASS
+  117,277/117,277** (job `41877038`; protein count = CDS − pseudogenes for all of them, contigs unchanged since
+  annotation for all of them, `problems.csv` 0 rows) · **`link-kp`** (job `41880136`): of 5,885 *Klebsiella*
+  candidates only **46 linked** from the Kp ESM-C store and 5,839 are absent from it, so this round embeds nearly
+  all of them itself. **Array `41882828`**, 12,626 genomes (`genomes/esm_samples_to_embed.txt` md5 `2b0fa1d8…`),
+  43 tasks of ≤ 294.
+  **Its wall was cut from 4 h to 2 h 30 after it had queued, and that is the difference between v2 training
+  tonight and not.** The previous round's 20 tasks of 290 genomes each took **1:04–1:12** (`sacct`, array
+  `41705160`), so 4 h was 3.4× the measured need, and on an ampere queue 524 deep a long wall is what stops a job
+  backfilling. `scontrol update JobId=41882828 TimeLimit=02:30:00` (a user may lower a wall, not raise one) moved
+  its estimated start from **2026-11-26T02:20 to 2026-11-25T07:40 — 18.7 h earlier**, at unchanged priority (502)
+  and unchanged `ReqTRES`. 2 h 30 is 2.1× the slowest task yet observed. `JOB 41882828 v2-entero-esm-embeddings |
+  GPU x1 | mem=250G | cores=32 | wall=02:30:00 (was 04:00:00) | ampere | FLOTO-SL2-GPU`.
 - **PsA:** nothing — genomes, Bakta and ESM-C are done (above). Splits wait on the exclude list and David's
   ANI-thinning question (*Next*, 4).
 - **Enterobacterales ESM-C, pre-QC cohort.** Array `41659165` (`FLOTO-SL2-GPU`, 73 tasks of ≤ 300, 59–72 min
@@ -3038,6 +3052,16 @@ half-epoch the evaluation overhead is ~11–13 % of wall. A 12 h segment is ther
 | ceftazidime | 2,243 | 5.4 | **32** | 1,500 |
 | meropenem | 3,744 | 3.2 | **19** | 1,250 |
 | ciprofloxacin | 4,919 | 2.4 | **14.6** | 2,000 |
+
+⚠ **Each segment boundary throws away up to half an epoch, and the table above does not discount it.** The wall
+kills the job; HF does not checkpoint on `SIGTERM`, and `save_steps` follows `eval_steps`, so the resume restarts
+from the last periodic checkpoint — on average half of `eval_steps`, worst case all of it. For ciprofloxacin that
+is ~1.1 h lost per boundary (2.2 h worst case) and ~5.5 h over five boundaries, about 8 % of the 72 h budget; for
+amikacin ~0.45 h. Saving more often would cost more evaluations, and `save_steps` cannot be decoupled from
+`eval_steps` without changing the stopping rule, so this is left as it is and noted rather than tuned.
+`save_total_limit` is 1, which HF raises to 2 once the best checkpoint is no longer the latest; rotation happens
+only after a new save completes, so a kill mid-save always leaves a complete earlier checkpoint for
+`pick_resume_checkpoint` to step back to.
 
 ⚠ **Ciprofloxacin cannot early-stop inside the cap.** Patience is 30 evaluations of half an epoch = 15 epochs, and
 15 epochs is all the cap holds, so it will stop by exhausting segments rather than by converging. The linear decay
