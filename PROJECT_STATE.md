@@ -3111,6 +3111,48 @@ meropenem `1872`, ceftazidime `2244`):
   So the discrepancy is cosmetic — but it is in the arithmetic that sets the LR schedule's length, so it is
   recorded rather than left to be rediscovered as a suspected mismatch.
 
+**An early per-species read — amikacin at epoch 1.5. NOT a result, and it must not be quoted as one.**
+A by-product of the resume validation above: that job ran the trainer's own final evaluation, so it wrote real
+`holdout` / `holdout_st` / `by_species` blocks. Read from
+`$AMR/processed/cross_species_v1/early_read/amikacin_step2763/results.json` (copied off scratch, with a README
+saying what it is). The model had seen each training genome **1.5 times**; the PsA-only comparator peaked at
+**epoch 6.4**. One run, no replicate seed, so run-to-run variance is unmeasured.
+
+| | holdout AUROC | n | | `holdout_st` AUROC | n |
+|---|--:|--:|---|--:|--:|
+| **pooled** | **0.9132** | 4,569 | | 0.8236 | 582 |
+| salmonella | 0.9335 | 727 | | 1.0000 | 95 |
+| ecoli_shigella | 0.9042 | 2,127 | | 0.8150 | 229 |
+| kpsc | 0.8845 | 1,045 | | 0.7947 | 128 |
+| enterobacter | 0.7264 | 139 | | 0.4322 | 55 |
+| entero_minor | 0.6557 | 67 | | — | — |
+| **paeruginosa** | **0.6520** | 464 | | **0.4695** | 75 |
+| *PsA-only baseline (§3.6)* | *0.7900* | *464* | | *0.5924* | *75* |
+| **PsA difference** | **−0.138** | | | **−0.123** | |
+
+**The pooled number is exactly the trap §3.8 predicted.** 0.9132 looks like a strong cross-species model and is
+mostly *Salmonella* and *E. coli*; the unit David actually asked about is 0.138 **below** its own baseline at this
+point. Reporting must stay per unit.
+
+**Hypotheses, offered for direction rather than acted on** (per the standing rule: gather, surface, hypothesise,
+stop):
+1. **Undertrained for PsA.** PsA is 2,290 of 14,706 training genomes (15.6 %), so 1.5 epochs is 1.5 passes over
+   PsA, against a comparator that needed ~6. Predicts the gap narrows with training.
+2. **Pooled validation selects against PsA.** Best-model selection tracks a size-weighted pooled AUROC that is
+   83 % *Salmonella* + *E. coli*, so the checkpoint that is best overall need not be best for PsA. This is the
+   `validate` question already open for David, and it would make the gap partly an artefact of model *selection*
+   rather than of learning.
+3. **Genuine negative transfer.** Amikacin resistance is not the same object across these taxa — AMEs and 16S
+   rRNA methyltransferases dominate in Enterobacterales, while PsA leans more on efflux and permeability — so one
+   head may be fitting the majority mechanism. Predicts the gap persists with training.
+4. **Prevalence shift.** PsA amikacin holdout is 84 R of 464 (18 %). AUROC is threshold-free so this should hurt
+   AUPRC more than AUROC, and AUPRC does fall further (0.304 vs 0.588) — consistent, but not diagnostic.
+
+(1) and (3) are separable just by watching the PsA per-unit number as the runs deepen, which the `--max-steps`
+harvest above buys for ~£0.20 of GPU per drug. **Not done unasked** — it spends David's allocation on a question
+he has not yet set the terms of, and a mid-climb reading invites exactly the premature conclusion the rule warns
+against.
+
 **In flight.**
 - **v1 arm, all four training**, one job per drug (separate jobs, not an array, because each carries its own
   `EVAL_STEPS`/`MAX_STEPS`). `TASK=pa_entero_ast`, split tables md5-pinned, worktree `xspecies-a73d2aa`, embeddings
@@ -3150,7 +3192,18 @@ meropenem `1872`, ceftazidime `2244`):
 - **v2 arm, chained** behind §3.7's last ESM-C round: eligible lists → split tables **pinned to the v1 arm**
   (`--pin-from <unit>=…/cross_species_v1/splits` for all six units, David's 2026-11-21 decision that v2's held-out
   set contains v1's) → the same four fine-tunes into `processed/cross_species_cabbage_v2/models/`. The v2 PsA
-  eligible list is written (9,044, each with a `.pt`).
+  eligible list is written (9,044, each with a `.pt`), the five Enterobacterales ones are built by the chain, and
+  every input it needs exists (`enterobacterales_cabbage_v2/{binary_ast.csv,genomes/genome_qc.csv}`,
+  `paeruginosa_cabbage_v2/` likewise, output dir present).
+  - ⚠ **`launch_cross_species.sh` still defaults `TRAIN_TIME` to 35:00:00**, and the chain was calling it without
+    an override — so v2's four fine-tunes would have been submitted at exactly the wall that had v1 estimated to
+    start the next day. The chain now passes `TRAIN_TIME=12:00:00`, matching v1 segment for segment. The default
+    in the launch script is deliberately left alone: it is shared with any other caller, and the explicit value at
+    the call site is the thing a reader can see.
+  - **The chain now also seeds `supervise_cabbage_v2.state` from the job ids it actually submitted and then
+    becomes the v2 supervisor** (`exec`, so there is one task and one captured log). Without that the v2 jobs
+    would have run a single 12 h segment and stopped unfinished — the same failure the v1 supervisor exists to
+    prevent, which was easy to miss because v1's supervisor was started by hand.
 
 **Numbers of record — two resume defects, found before any job started, fixed at `7c366ba`.** Every
 cross-species drug needs two to four wall segments, so resume is on the critical path rather than a contingency.
