@@ -3161,6 +3161,39 @@ harvest above buys for ~£0.20 of GPU per drug. **Not done unasked** — it spen
 he has not yet set the terms of, and a mid-climb reading invites exactly the premature conclusion the rule warns
 against.
 
+> ### ⛔ 2026-11-25 ~03:01 UTC — the session lost CSD3, and the overnight automation is stopped, not broken
+>
+> **The shared `ControlMaster` for `dca36@login.hpc.cam.ac.uk` died and its socket was removed.** CSD3 authenticates
+> with MFA (`keyboard-interactive`), which an agent session cannot answer, so every ssh since is
+> `Permission denied (keyboard-interactive,hostbased)` and **only David can restore access, by logging in once**.
+>
+> **Nothing on the cluster is affected.** The four v1 fine-tunes and ESM array `41882828` keep running; checkpoints
+> keep being written. What is lost is the ability to *observe or act*. **The v1 12 h boundary at ~11:24 UTC will
+> pass unresumed unless a master exists by then** — no work is destroyed, the segments simply stop and can be
+> resumed whenever, at the cost of idle time.
+>
+> **The automation was stopped deliberately, and that is the important part.** The supervisor, both chains and the
+> watcher all retried on timers; against an MFA wall each retry is a *failed authentication*, and they would have
+> produced on the order of a thousand overnight. That risks rate-limiting or banning the IP — which would block
+> **David's own recovery login**, turning a stall into a lockout. So every ssh-touching task was stopped, and the
+> only thing still running polls a **local file** (`~/.ssh/sockets/…`) and sends no network traffic at all: the
+> socket reappearing *is* the signal that a master exists again. `rs()` in `supervise_xspecies.sh`, `rssh.sh` and
+> the v2 chain now also fail fast on an auth denial instead of retrying (the CSD3 banner contains none of the words
+> they use to recognise a genuinely dropped channel).
+>
+> **Recovery, in order:**
+> 1. David: `ssh dca36@login.hpc.cam.ac.uk` once, answering MFA. That recreates the socket; everything else
+>    multiplexes over it.
+> 2. Restart the v1 supervisor — `ARM=v1 MAX_SEGMENTS=6 bash supervise_xspecies.sh`. Its state file still holds the
+>    four `seg1` lines, so it picks up where it left off and resumes each drug from its newest *complete*
+>    checkpoint.
+> 3. ⚠ **Finish the ESM round with `ARRAY=41882828 bash entero_esm_tail_chain.sh`, NEVER by re-running
+>    `entero_esm_postqc_chain.sh`.** That chain is linear with no stage guards: from the top it would re-run
+>    collate → proteins → reextract → check-proteins → link-kp and then call `submit` **again**, queueing a second
+>    ESM array over genomes the live one is already embedding — two jobs writing the same `.pt` files. Everything
+>    before the array is done and recorded above; only the tail is left.
+> 4. Restart the v2 chain with `ESM_OUT=<the tail chain's output file>` so it sees the completion marker.
+
 **In flight.**
 - **v1 arm, all four training**, one job per drug (separate jobs, not an array, because each carries its own
   `EVAL_STEPS`/`MAX_STEPS`). `TASK=pa_entero_ast`, split tables md5-pinned, worktree `xspecies-a73d2aa`, embeddings
