@@ -3091,7 +3091,14 @@ pre-split-table k-fold/`train_val_eval` one), so it cannot score a cross-species
 would mean resolving a holdout outside `load_splits`. **The zero-new-code way to harvest a finished evaluation
 from a partly-trained run** is to resume it with `--max-steps` set just above its current step: the trainer ends
 immediately, runs its full final evaluation — holdout, `holdout_st` and the per-species blocks — and writes both
-files. Nothing else about the invocation changes.
+files.
+⚠ **It MUST write to a scratch `--output-dir`, never the run's own.** Pointed at the live directory it is
+destructive, not read-only: the trainer ends, `load_best_model_at_end` plus the end-of-training rotation leaves
+only the best checkpoint, and it writes `results.json` — which the supervisor reads as **FINISHED**, so it stops
+resuming that drug. The run would be over, at whatever epoch it had reached. `--resume-from-checkpoint` only ever
+*reads* the checkpoint, so the safe form is the live checkpoint in, a scratch directory out — which is exactly
+what job `41899616` did. (An earlier revision of this paragraph said "nothing else about the invocation changes",
+which was wrong and would have destroyed a live run; found by review, 2026-11-25.)
 
 **Numbers of record — the resume path, verified against the live checkpoints before it was needed.** Checked
 2026-11-25 on all four running runs' newest checkpoint (amikacin `checkpoint-2757`, ciprofloxacin `2460`,
@@ -3184,15 +3191,53 @@ against.
 > **Recovery, in order:**
 > 1. David: `ssh dca36@login.hpc.cam.ac.uk` once, answering MFA. That recreates the socket; everything else
 >    multiplexes over it.
-> 2. Restart the v1 supervisor — `ARM=v1 MAX_SEGMENTS=6 bash supervise_xspecies.sh`. Its state file still holds the
+> 2. ⚠ **Re-stage `resume_xspecies.sh` (and `launch_cross_species.sh`) to `hpc-work/tmp/` before restarting
+>    anything.** The copies on CSD3 are the versions *without* the live-job guard and the split-table pin added
+>    after the review below. The supervisor calls the CSD3 copy, not the local one, so restarting without
+>    re-staging reinstates the duplicate-submission defect at the first segment boundary.
+> 3. Restart the v1 supervisor — `ARM=v1 MAX_SEGMENTS=6 bash supervise_xspecies.sh`. Its state file still holds the
 >    four `seg1` lines, so it picks up where it left off and resumes each drug from its newest *complete*
 >    checkpoint.
-> 3. ⚠ **Finish the ESM round with `ARRAY=41882828 bash entero_esm_tail_chain.sh`, NEVER by re-running
+> 4. ⚠ **Finish the ESM round with `ARRAY=41882828 bash entero_esm_tail_chain.sh`, NEVER by re-running
 >    `entero_esm_postqc_chain.sh`.** That chain is linear with no stage guards: from the top it would re-run
 >    collate → proteins → reextract → check-proteins → link-kp and then call `submit` **again**, queueing a second
 >    ESM array over genomes the live one is already embedding — two jobs writing the same `.pt` files. Everything
 >    before the array is done and recorded above; only the tail is left.
-> 4. Restart the v2 chain with `ESM_OUT=<the tail chain's output file>` so it sees the completion marker.
+> 5. Restart the v2 chain with `ESM_OUT=<the tail chain's output file>` so it sees the completion marker.
+
+**Numbers of record — a multi-agent review of the unattended automation, run while the cluster was unreachable.**
+Six reviewers over distinct scripts and dimensions (supervisor, resume, v2 chain, the comparison statistics,
+execution environment, and cross-script failure modes), each followed by an adversarial verifier told to refuse
+findings it could not demonstrate from the code. **71 raised, 61 survived: 1 critical, 11 high, 27 medium, 22
+low.** The scripts had already produced two real bugs by hand inspection the same night (the 35 h wall default
+and the missing v2 supervisor), and they run unattended for days, which is what justified the pass.
+
+**The critical one, found independently by four of the six reviewers: `rs()` retried a submission.** Resume is not
+idempotent, and `rs()` retries whenever ssh fails with empty or connection-shaped stderr. Several faults occur
+*after* `sbatch` has already queued the job: `scontrol show job` returning Slurm's "Socket timed out on send/recv
+operation" (connection-shaped) under `set -e`; a remote `timeout` killing the wrapper (exit 124, empty stderr);
+the channel dropping post-submit. On the retry `results.json` is still absent and `pick_resume_checkpoint` returns
+the *same* checkpoint, so a second job resumes the same step into the same `--output-dir`. Two writers then save
+checkpoints to the same paths, HF's mtime-ordered rotation has each deleting the other's, `load_best_model_at_end`
+silently falls back when the best checkpoint has vanished, and `results.json` is last-writer-wins — **silently
+wrong numbers, from a model assembled out of two runs**, plus an untracked orphan job the supervisor never sees.
+**This would have fired at the first segment boundary.**
+
+Fixed, in layers rather than with one patch:
+
+| fix | where | what it stops |
+|---|---|---|
+| **Live-job guard** — refuse if a job named `xs-<arm>-<drug>` is already queued or running | `resume_xspecies.sh` | a second writer, whatever retries |
+| **`rs_once`** — submissions get exactly one attempt, both streams kept | `supervise_xspecies.sh` | the retry that creates the duplicate |
+| Job id printed before anything that can fail; `scontrol` no longer fatal | `resume_xspecies.sh` | losing the id and believing nothing was submitted |
+| **Split-table md5 pin** (`.split_table.md5` in the run dir) | `resume_xspecies.sh` | a rebuilt table moving the holdout mid-run — the read-out leak class, across a wall |
+| A failed resume keeps the drug and retries next cycle, giving up after 5 | `supervise_xspecies.sh` | one transient fault ending a drug's training for the rest of the run, silently |
+| `n_seg` no longer emits `0\n0` | `supervise_xspecies.sh` | an integer-expression error in the segment cap |
+| Durable state under `~/.claude/projects/…`, migrated from the scratchpad | `supervise_xspecies.sh` | losing the only record of which job is which segment when `/private/tmp` is cleared |
+| `squeue` must return a sentinel; HELD tasks released; log dir must be newer than a marker | `entero_esm_tail_chain.sh` | a failed `squeue` reading as "the array ended", an infinite wait, and a stale PASS declaring the ESM store complete |
+| Builder's own exit status propagated instead of `tail`'s | `xspecies_v2_chain.sh` | a refused overwrite being masked and v2 training on stale split tables |
+| Remote `timeout 300` | `rssh.sh` | one hung `squeue`/Lustre call freezing a chain with no log line |
+| Pairing mismatch now refuses instead of comparing the overlap; per-comparison RNG seeded by a stable digest; `results.json` required before scores are read; thin cells flagged | `compare_xspecies_vs_psa.py` | a comparison that is not the paired one it claims to be, intervals that change with which drugs happened to be present, and reading scores from a run that will be redone |
 
 **In flight.**
 - **v1 arm, all four training**, one job per drug (separate jobs, not an array, because each carries its own
