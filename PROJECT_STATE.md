@@ -3434,6 +3434,57 @@ ciprofloxacin's pairs — it removes the taxonomy shortcut but **not** the size 
 that PsA is fine. Per-species rows remain the honest view. **Decision taken (David, 2026-11-25): the cohort must
 be restricted to species with a real individual R/S contrast before cross-species training means anything.**
 
+### ⛔ Decision of record, 2026-11-25 — the cross-species cohort is balanced to *P. aeruginosa*'s rate, and v1 is dropped
+
+**The rule (David).** For each drug, the target resistance rate is **PsA's own rate**, and every other species
+unit is thinned to match by dropping at random from whichever class is in excess. Applied **per split, including
+`holdout_st`**. Strict: a unit above the target has its *resistant* genomes thinned rather than being left above.
+
+**Why it is the right shape.** It needs no per-unit cutoffs — units that cannot reach the target collapse by
+themselves (meropenem *Salmonella* 14,362 → **37**; imipenem *Salmonella* 2,383 → **44**), and because every
+retained unit ends at one rate, the **species-identity null is 0.5 exactly**, so the taxonomy shortcut is removed
+by construction rather than argued away. ⚠ **PsA is the reference, so PsA rows are never dropped in any split** —
+which is what keeps the paired PsA comparison against the single-species arm exactly valid.
+
+**Applied to all ten PsA drugs in v2.** Tables at
+`$AMR/processed/cross_species_cabbage_v2_balanced/splits/` (and `cross_species_cabbage_v2/splits_all10_balanced/`),
+with a `split_manifest.json` recording the rule, every unit's before/after, and the per-(drug, split, species)
+seeds, so the cohort rebuilds byte-for-byte. Built from `splits_all10`, where **PsA is pinned from the
+single-species arm's own tables** (`processed/paeruginosa/splits`, 3,661 of 3,662 genomes) rather than
+transitively through v1.
+
+| drug | target %R | train before → after | kept | PsA share | species-null |
+|---|---|---|---|---|---|
+| meropenem | 43.5 | 53,644 → 18,559 | 35 % | 9.0 → 26.0 % | **0.830** → 0.500 |
+| imipenem | 64.2 | 29,479 → 11,475 | 39 % | 12.5 → 32.0 % | **0.783** → 0.500 |
+| piperacillin-tazobactam | 52.7 | 29,469 → 17,988 | 61 % | 13.2 → 21.6 % | 0.747 → 0.500 |
+| amikacin | 21.8 | 33,348 → 20,018 | 60 % | 12.1 → 20.1 % | 0.704 → 0.500 |
+| ceftazidime | 48.4 | 39,713 → 26,931 | 68 % | 11.7 → 17.3 % | 0.681 → 0.500 |
+| ciprofloxacin | 61.8 | 67,269 → 40,696 | 60 % | 6.7 → 11.1 % | 0.662 → 0.500 |
+| cefepime | 48.8 | 25,407 → 20,405 | 80 % | 13.2 → 16.4 % | 0.615 → 0.500 |
+| aztreonam | 44.1 | 22,334 → 19,202 | 86 % | 15.6 → 18.2 % | 0.597 → 0.500 |
+| tobramycin | 35.0 | 20,209 → 17,108 | 85 % | 17.6 → 20.8 % | 0.596 → 0.500 |
+| levofloxacin | 56.2 | 19,310 → 15,904 | 82 % | 13.4 → 16.2 % | 0.582 → 0.500 |
+
+**The pre-balance shortcut tracks drug class.** The carbapenems are worst (meropenem 0.830, imipenem 0.783) —
+carbapenem resistance is near-absent in *Salmonella*/*E. coli* and common in PsA — and they lose the most data
+(65 %, 61 %). The drugs whose Enterobacterales rates naturally sit near PsA's (levofloxacin 0.582, tobramycin
+0.596, aztreonam 0.597) keep 82–86 % and are the **cleanest tests of whether cross-species helps at all**, which
+makes them better candidates than the four originally chosen.
+
+**v1 is dropped** (David, 2026-11-25). Its four fine-tunes are cancelled; the segment-1 checkpoints and the
+per-species reads above remain on disk as the unbalanced record. The balanced v1 arithmetic is why: at the same
+balance v1 retains ~2.8× less than v2 (meropenem 6,510 against 18,535), so a balanced v1 meropenem cohort would
+have been smaller than the single-species arm.
+
+**The control that makes it interpretable.** v2 changed two things at once — it added Enterobacterales *and*
+roughly trebled the PsA cohort (9,017 genomes against the single-species arm's 3,662). So a **v2 PsA-only** arm
+is built at `$AMR/processed/cross_species_psaonly_v2/splits/` (the PsA rows of the same tables, so every genome
+keeps its split), giving three arms scored on the same held-out PsA genomes: *old PsA-only · v2 PsA-only · v2
+balanced cross-species*. Without the middle one a gain cannot be attributed. ⚠ v2's PsA holdout is a **superset**
+of the single-species arm's, so the paired comparison runs on the intersection and must report its n rather than
+silently comparing different sets.
+
 **Two data facts found while checking the above, both cheap to re-derive and easy to get wrong.**
 1. **`ast_label` is not strictly binary.** A handful of fractional values (0.5, 0.667) survive where several AST
    records for one genome disagreed: 1 row (amikacin), 11 (ciprofloxacin), 5 (meropenem), 1 (ceftazidime) out of
