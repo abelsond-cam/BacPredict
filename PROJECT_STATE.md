@@ -1,7 +1,17 @@
 # BacPredict — project state
 
 > **Last verified: 2026-11-25 @ `c017216`** (branch `refactor/consolidate-engine`).
-> **Verification scope, this pass (2026-11-25, fifteenth): §3.8's four running fine-tunes and the comparator they
+> **Verification scope, sixteenth pass (2026-11-25, 07:40–08:40 UTC): the overnight automation, re-tested against
+> the live cluster after CSD3 came back.** All five recovery steps executed and verified (scripts re-staged — CSD3
+> was holding the pre-fix `resume_xspecies.sh` — supervisor restarted with its state migrated to the durable path,
+> ESM tail chain and v2 chain started). **The live-job guard shipped the previous night was proved not to work** by
+> dry-running it against the four RUNNING jobs, and rebuilt on `scontrol show job -d` `--export` matching: verified
+> 4/4 on the cluster (each naming its own job id) and 5/5 synthetically, including the arm-discrimination path the
+> cluster cannot currently show. Three further defects found by the same test and fixed. Throughput and
+> best-metric re-read from each job's own log and newest checkpoint, and the 40-epoch cost of the arm computed from
+> them. **Nothing outside §3.8 and the automation was re-verified this pass.**
+>
+> **Verification scope, fifteenth pass (2026-11-25): §3.8's four running fine-tunes and the comparator they
 > will be read against.** Every setting read back from each job's own log rather than from the script that
 > submitted it (steps/epoch, effective `max_steps`, warmup, `eval_steps`, split-table md5), and the four live
 > checkpoints opened to confirm the early-stopping counter is being written and that each `config.json` carries
@@ -3168,7 +3178,15 @@ harvest above buys for ~£0.20 of GPU per drug. **Not done unasked** — it spen
 he has not yet set the terms of, and a mid-climb reading invites exactly the premature conclusion the rule warns
 against.
 
-> ### ⛔ 2026-11-25 ~03:01 UTC — the session lost CSD3, and the overnight automation is stopped, not broken
+> ### ✅ 2026-11-25 ~03:01–07:40 UTC — the session lost CSD3 for 4 h 39 m. RESOLVED; nothing was lost.
+>
+> **David logged in at 07:40 UTC and the socket returned.** All five recovery steps below were then executed in
+> order and verified: scripts re-staged (CSD3 held the pre-fix `resume_xspecies.sh`, md5 `2121a06…`, now
+> `d001b04…`), the v1 supervisor restarted and its state migrated to the durable path, the ESM tail chain started
+> on array `41882828`, and the v2 chain started pointed at that chain's output. **All four fine-tunes ran straight
+> through the outage** — 8 h 39 m elapsed at 07:40, 3 h 20 m of wall left, so the ~11:25 UTC boundary is met with a
+> supervisor in place. The account of the outage is kept below because the *reason* the automation was stopped is
+> the durable lesson, not the stall itself.
 >
 > **The shared `ControlMaster` for `dca36@login.hpc.cam.ac.uk` died and its socket was removed.** CSD3 authenticates
 > with MFA (`keyboard-interactive`), which an agent session cannot answer, so every ssh since is
@@ -3238,6 +3256,114 @@ Fixed, in layers rather than with one patch:
 | Builder's own exit status propagated instead of `tail`'s | `xspecies_v2_chain.sh` | a refused overwrite being masked and v2 training on stale split tables |
 | Remote `timeout 300` | `rssh.sh` | one hung `squeue`/Lustre call freezing a chain with no log line |
 | Pairing mismatch now refuses instead of comparing the overlap; per-comparison RNG seeded by a stable digest; `results.json` required before scores are read; thin cells flagged | `compare_xspecies_vs_psa.py` | a comparison that is not the paired one it claims to be, intervals that change with which drugs happened to be present, and reading scores from a run that will be redone |
+
+> #### ⚠ 2026-11-25 07:48 UTC — the live-job guard as first shipped did not work, and only running it found that out
+>
+> **Matching on the job name was blind to exactly the jobs worth protecting.** Run as a dry test against all four
+> RUNNING segment-1 jobs, `resume_xspecies.sh` printed `resuming from checkpoint-N` for **every one of them** —
+> no refusal. Only *resume* jobs are named `xs-<arm>-<drug>`; the first segment is submitted by
+> `finetune_amr_array.sh` as `xspecies-<arm>-finetune`, and the drug appears in **no** queue-visible field —
+> not `JobName`, `StdOut`, `WorkDir` or `Command` (checked on all four). So the guard would have waved through a
+> second writer onto a live run, which is the precise failure it was written to stop.
+>
+> **The drug is recoverable from `scontrol show job -d`,** which prints the submission's `--export`, carrying
+> `DRUGS=<drug>` and `OUT_ROOT=<models root>`. The guard now matches on **both** — so a same-named job on the other
+> arm cannot trip it, which matters the moment v2 runs the same four drug names beside v1. Over-matching is the
+> safe direction (the caller adopts the id and waits); under-matching is how two writers land on one directory.
+>
+> **Verified, not assumed** — the first version looked right and was not:
+> - On the cluster, 4/4 drugs refused in 1–2 s, each naming *its own* job id (`amikacin → 41875170_0`,
+>   `ciprofloxacin → 41875171_0`, `meropenem → 41875172_0`, `ceftazidime → 41873900_0`). Loose matching would have
+>   had every drug match all four, so this is the discrimination test as well as the positive one.
+> - Synthetically, 5/5 on the paths the live cluster cannot show: different drug → proceed, **same drug on a
+>   different arm → proceed**, empty queue → proceed, resume job matched by name → refuse.
+> - `launch_cross_species.sh` re-run against the live v1 arm refused all four by `--export`, with no new job queued.
+>
+> **Three further defects fell out of the same test.**
+> 1. **`launch_cross_species.sh` had no live-job guard at all** — only `results.json exists`, which is absent on a
+>    fresh run, so it guarded the one case that cannot happen and none of the ones that can. `xspecies_v2_chain.sh`
+>    called it through a *retrying* `rs()`, so a fault landing after `sbatch` would have queued **a second array per
+>    drug** into the same `OUT_ROOT`. Now guarded per drug, and called through `rs_once`.
+> 2. **`scontrol` under `set -e` after `sbatch`, in the launcher's per-drug loop** — a slow or erroring `scontrol`
+>    aborted the whole script *after* the job was queued, losing that drug's id **and silently skipping every
+>    remaining drug**. The caller saw a short list and no error. Id is now printed first, decoration is non-fatal.
+> 3. **A guard refusal was being counted as a failed submission** by the supervisor. It is the opposite: it means a
+>    job for that drug is already queued, which is what happens when a submission succeeded but its stdout was lost.
+>    Five such cycles and the supervisor would have declared the drug "needs a look" and stopped resuming it, while
+>    the job it declined to duplicate trained on and hit its wall unattended. It now parses the id out of the
+>    refusal and adopts it as that segment.
+>
+> **`rs_once`'s timeout is 900 s, not 300.** `resume_xspecies.sh` imports torch before it can pick a checkpoint,
+> **measured at >3.5 min** on a busy login node (`login-q-3`, cold NFS). At 300 s the submission would be killed on
+> a loaded node — harmlessly, since the kill lands before `sbatch`, but at the cost of a whole supervisor cycle of
+> idle GPU per attempt. A long timeout is only safe *because* the guard makes a repeat attempt a no-op. The guard
+> also now runs **before** the torch import, so a refusal costs a second rather than four minutes.
+>
+> **A failed `squeue` must never read as "nothing is queued."** Both guards take `squeue`'s own exit status and
+> treat "cannot tell" as a hard stop. Piping it into a loop with `2>/dev/null` hides the status: the scheduler
+> being down produces no lines, the loop body never runs, and the guard waves through the duplicate it exists to
+> stop. slurmdbd and the controller have each been unavailable on this cluster inside the last day.
+
+**Numbers of record — measured throughput of the v1 cross-species fine-tunes, and what the 40-epoch schedule
+costs.** Read 2026-11-25 ~07:52 UTC from each job's own tqdm line in
+`/rds/user/dca36/hpc-work/logs/xspecies-v1-finetune_<jobid>_0.err` and from `trainer_state.json` in the newest
+complete checkpoint under `$AMR/processed/cross_species_v1/models/<drug>/`.
+
+| drug | step / 40-epoch total | s/it | epoch | best *validation* metric | best at |
+|---|---|---|---|---|---|
+| amikacin | 8,609 / 73,520 | 2.99 | 4.68 | 0.9587 | step 8,271 (epoch 4.50) |
+| ceftazidime | 8,756 / 89,720 | 2.95 | 3.90 | 0.9547 | step 7,854 (epoch 3.50) |
+| meropenem | 9,057 / 149,760 | 2.80 | 2.42 | 0.9718 | step 7,488 (epoch 2.00) |
+| ciprofloxacin | 9,170 / 196,760 | 2.76 | 1.86 | 0.9404 | step 7,380 (epoch 1.50) |
+
+⚠ Those are **validation** figures used for model selection, on the pooled cross-species `validate` set. They are
+not holdout numbers and are not comparable to §3.6's PsA-only AUROCs.
+
+**None of the four has peaked.** For every drug `best_global_step` *is* the newest checkpoint — all four were
+still improving at 8.5 h. So any statement about where they will stop is an assumption, not a measurement.
+
+**Wall-clock epoch rate** (epochs ÷ elapsed, so eval and startup overhead are included — the honest planning
+number): amikacin **0.569 ep/h** · ceftazidime **0.474** · meropenem **0.299** · ciprofloxacin **0.230**.
+Ciprofloxacin's cohort gives 4,919 steps/epoch against amikacin's 1,838 — **2.7×** — so a fixed *epoch* budget
+costs it 2.7× the wall time. That ratio, not the GPU, is what makes the four drugs cost wildly different amounts.
+
+| | amikacin | ceftazidime | meropenem | ciprofloxacin | total |
+|---|---|---|---|---|---|
+| to the 40-epoch cap | 70 h | 84 h | 134 h | 174 h | **462 GPU-h ≈ £254** |
+| reached by the 6-segment cap (72 h) | completes | epoch ~34 | epoch ~21.5 | epoch ~16.6 | **286 GPU-h ≈ £158** |
+
+(£0.55/GPU-h on `FLOTO-SL2-GPU`; **per arm** — v2 repeats it.)
+
+**Early stopping cannot fire inside the 6-segment cap for the two slow drugs.** Patience is 30 evaluations at
+half-epoch intervals = **15 epochs without improvement**, so a run stops at *peak + 15*. Even assuming
+cross-species peaks where the PsA-only comparator did (epoch 6–8): amikacin stops ~epoch 22 ≈ 39 h (4 segments ✓),
+ceftazidime ~46 h (4 ✓), meropenem ~74 h (**just over**), ciprofloxacin ~96 h (**8 segments**). Ciprofloxacin
+could only early-stop within the cap by having peaked before epoch 1.6, and it was still rising at 1.86.
+
+⛔ **The epoch cap cannot be lowered on a live run.** `MAX_STEPS = steps_per_epoch × 40` *is* the linear-decay
+horizon, and `resume_xspecies.sh` recomputes it identically so a resume continues the same schedule. Resuming with
+a smaller value re-shapes the decay from the current step onward — **a different run, not a continuation**, and
+not comparable to the segments already trained. So 40 epochs is fixed for these four unless they are restarted
+from scratch. This is a decision for David, not a default to change: the three live options are (a) let the cap
+stop meropenem and ciprofloxacin at ~epoch 21/17 and harvest their evaluation with the scratch-dir read below,
+(b) raise `MAX_SEGMENTS` for those two to ~8–9 so they can early-stop (+≈£40–60), or (c) stop every drug at a
+common epoch, which costs least but compares four models at different distances from their own peaks.
+
+**In flight — a second per-species read of amikacin, at epoch 4.5 instead of 1.5.** `early_read_xspecies.sh`
+(scratchpad) generalises the method that produced `early_read/amikacin_step2763`: resume the current checkpoint
+into a **scratch** output dir with `--max-steps` set just above it, so the trainer ends at once and runs its own
+full final evaluation — `holdout`, `holdout_st` and the `by_species` block, resolved through `load_splits` like
+every other arm, with no bespoke scorer. Two things make it safe and both are easy to get wrong: the output dir is
+scratch (pointed at the live run it is **destructive** — the run ends, rotation strips its checkpoints, and the
+`results.json` it writes reads to the supervisor as FINISHED), and **the checkpoint is copied first**, because
+`save_total_limit` is 1 and each save deletes the previous directory on a ~46 min cycle for amikacin, which a
+queued job can easily outlast. It reads a copy; the live run is untouched. The six training steps run under a
+compressed LR schedule, which is why this is a read and not a checkpoint worth keeping.
+
+This exists because the **only** per-species number so far is the epoch-1.5 one, and it was *negative*: pooled
+holdout 0.9132 but *P. aeruginosa* **0.6520 against §3.6's PsA-only 0.7900**. At 1.5 epochs that says very little —
+the model had seen each training genome one and a half times, and the PsA-only comparator peaked at epoch 6.4 —
+but it is the only evidence bearing on David's actual question, so a reading three epochs later is worth £0.15.
 
 **In flight.**
 - **v1 arm, all four training**, one job per drug (separate jobs, not an array, because each carries its own
