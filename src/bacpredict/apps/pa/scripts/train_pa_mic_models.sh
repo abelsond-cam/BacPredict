@@ -81,6 +81,10 @@ ARM0=$BASE/models
 # The MIC intervals come from the CABBAGE v2 test table, which covers 100 % of those split tables (the older
 # processed/paeruginosa one covers 35 %, so it is the wrong cohort and would silently drop two thirds of them).
 TESTS=$ROOT/processed/paeruginosa_cabbage_v2/ast_tests_called.parquet
+# The test tables name species by BINOMIAL; the split tables name the same species by unit ("paeruginosa").
+# Passing the unit here selects no rows at all, so the builder refuses a species it cannot find rather than
+# writing empty interval tables that would read downstream as drugs with no data.
+SPECIES=${SPECIES:-"Pseudomonas aeruginosa"}
 ESM=$ROOT/processed/esm
 T=$ROOT/processed/psaonly_mic
 INTERVALS=$T/intervals
@@ -169,14 +173,14 @@ intervals)
     fi
     # light: one parquet filter plus pandas over ~73k test rows. NOT `python -I`, which ignores PYTHONPATH
     uv run --no-sync python -m bacpredict.engine.ast_labels.mic_intervals \
-        --tests "$TESTS" --split-dir "$SPLITS" --species paeruginosa \
+        --tests "$TESTS" --split-dir "$SPLITS" --species "$SPECIES" \
         --drugs "${PA_DRUGS[@]}" --out-dir "$INTERVALS"
     # how many cells the breakpoint-straddling censored MICs would add — not used here (see the header), counted
     uv run --no-sync python - "$TESTS" "${PA_DRUGS[@]}" <<'EOF'
 import sys
 import pandas as pd
 t = pd.read_parquet(sys.argv[1])
-t = t[t.drug.isin(sys.argv[2:]) & (t.species.astype(str) == "paeruginosa")]
+t = t[t.drug.isin(sys.argv[2:])]
 u = t[t.basis.astype(str) == "mic_undecided"]
 print(f"\nnot in this experiment: {len(u)} mic_undecided tests over "
       f"{u.groupby(['Sample', 'drug']).ngroups} (genome, drug) cells — censored MICs that straddle the "

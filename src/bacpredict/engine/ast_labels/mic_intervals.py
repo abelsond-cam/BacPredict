@@ -254,10 +254,21 @@ def main(argv: list[str] | None = None) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     tests = pd.read_parquet(args.tests)
+    # A filter that matches nothing must say so. The test tables name species by binomial ("Pseudomonas
+    # aeruginosa") while the split tables name them by unit ("paeruginosa"), so a filter written with the wrong
+    # one silently selects no rows and every output below is then an empty table that looks like a finished run.
     if args.species:
+        present = sorted(tests["species"].astype(str).unique())
+        if args.species not in present:
+            raise SystemExit(f"--species {args.species!r} matches no row of {args.tests}; it has {present[:10]}")
         tests = tests[tests["species"].astype(str) == args.species]
+    missing_drugs = sorted(set(args.drugs) - set(tests["drug"].astype(str)))
+    if missing_drugs:
+        raise SystemExit(f"{missing_drugs} have no rows in {args.tests}")
     tests = tests[tests["drug"].astype(str).isin(args.drugs)]
     per_test = ast_tests_to_intervals(tests, load_breakpoints(args.breakpoints))
+    if per_test.empty:
+        raise SystemExit(f"no usable test rows in {args.tests} for {args.drugs}")
     cells = collapse_to_cells(per_test)
 
     out_dir = Path(args.out_dir)
@@ -268,6 +279,9 @@ def main(argv: list[str] | None = None) -> int:
         if not table.is_file():
             raise SystemExit(f"no split table {table}: the cohort of a MIC arm is the split table's, not the tests'")
         kept, conflicts = check_against_split_table(cells[cells["drug"] == drug], table)
+        if kept.empty:
+            raise SystemExit(f"{drug}: no cell of {table} has a usable MIC interval — an empty table would "
+                             f"read downstream as a drug with no data rather than as this failure")
         kept.to_csv(out_dir / f"{drug}_mic_intervals.csv", index=False)
         logger.info("%s: %d cells (%d conflicts dropped) -> %s", drug, len(kept), len(conflicts),
                     out_dir / f"{drug}_mic_intervals.csv")

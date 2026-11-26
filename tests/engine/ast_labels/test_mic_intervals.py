@@ -194,3 +194,55 @@ def test_an_undecided_interval_keeps_the_tables_label(tmp_path):
     cells = pd.DataFrame([{"Sample": "A", "drug": "meropenem", "interval_label": np.nan}])
     kept, conflicts = check_against_split_table(cells, _split_table(tmp_path, [("A", 1)]))
     assert list(kept["Sample"]) == ["A"] and kept["ast_label"].iloc[0] == 1.0 and conflicts.empty
+
+
+# ------------------------------------------------------------------ a filter that matches nothing must say so
+
+
+def _parquet(tmp_path, species: str = "Pseudomonas aeruginosa"):
+    """A two-row tests parquet and the split table that goes with it."""
+    pd.DataFrame([
+        {"Sample": "A", "species": species, "drug": "meropenem", "mic_sign": "=", "mic_value": 32.0,
+         "mic_upper": np.nan, "basis": "mic", "y_test": 1.0, "r_gt_mg_l": 8.0},
+        {"Sample": "B", "species": species, "drug": "meropenem", "mic_sign": "<=", "mic_value": 0.5,
+         "mic_upper": np.nan, "basis": "mic", "y_test": 0.0, "r_gt_mg_l": 8.0},
+    ]).to_parquet(tmp_path / "tests.parquet")
+    pd.DataFrame([{"Sample": "A", "ast_label": 1, "split": "train"},
+                  {"Sample": "B", "ast_label": 0, "split": "holdout"}]).to_csv(
+        tmp_path / "meropenem_split.csv", index=False)
+    return tmp_path
+
+
+def _argv(tmp_path, species=None):
+    return ["--tests", str(tmp_path / "tests.parquet"), "--split-dir", str(tmp_path),
+            "--drugs", "meropenem", "--out-dir", str(tmp_path / "out")] + (
+        ["--species", species] if species else [])
+
+
+def test_a_species_that_matches_no_row_is_refused_not_silently_empty(tmp_path):
+    """The tests name species by binomial and the split tables by unit; the wrong one selects nothing.
+
+    Silently writing empty interval tables is the failure this guards: downstream they read as drugs with no
+    MIC data rather than as a filter typed with the wrong vocabulary.
+    """
+    from bacpredict.engine.ast_labels.mic_intervals import main
+    with pytest.raises(SystemExit, match="matches no row"):
+        main(_argv(_parquet(tmp_path), species="paeruginosa"))
+
+
+def test_the_right_species_runs(tmp_path):
+    from bacpredict.engine.ast_labels.mic_intervals import main
+    assert main(_argv(_parquet(tmp_path), species="Pseudomonas aeruginosa")) == 0
+    out = pd.read_csv(tmp_path / "out" / "meropenem_mic_intervals.csv")
+    assert sorted(out["Sample"]) == ["A", "B"]
+    assert out.set_index("Sample").loc["A", "lo"] == 1.0      # = 32 against R = 8 is (2^4, 2^5] -> (1, 2]
+    assert out.set_index("Sample").loc["B", "hi"] == -4.0     # <= 0.5 against R = 8 is (-inf, -4]
+
+
+def test_a_drug_with_no_rows_is_refused(tmp_path):
+    """A drug asked for and absent is a mistake in the call, not a drug with no data."""
+    from bacpredict.engine.ast_labels.mic_intervals import main
+    argv = _argv(_parquet(tmp_path))
+    argv[argv.index("--drugs") + 1] = "colistin"
+    with pytest.raises(SystemExit, match="colistin"):
+        main(argv)
