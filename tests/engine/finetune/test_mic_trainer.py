@@ -210,3 +210,31 @@ def test_the_least_squares_arm_refuses_a_cell_with_no_point(tmp_path):
               "labels": torch.tensor([[1.0, 1.0, 2.0, 2.0], [0.0, -INF, 0.0, float("nan")]])}
     with pytest.raises(ValueError, match="no imputed point"):
         t.compute_loss(t.model, inputs)
+
+
+def test_sigma_is_on_the_training_device_before_the_optimizer_captures_it(tmp_path):
+    """Moving a parameter after the optimizer holds it strands its Adam state on the old device."""
+    t = _trainer(tmp_path)
+    t.log_sigma.data = t.log_sigma.data.to("cpu")
+    opt = t.create_optimizer()
+    assert t.log_sigma.device == torch.device(t.args.device)
+    group = next(g for g in opt.param_groups if g["params"] and g["params"][0] is t.log_sigma)
+    assert group["params"][0].device == t.log_sigma.device
+
+
+def test_a_censored_step_runs_end_to_end_and_moves_sigma(tmp_path):
+    """One real optimizer step on the tiny model: the loss is finite and sigma actually changes."""
+    t = _trainer(tmp_path)
+    opt = t.create_optimizer()
+    inputs = {"protein_embeddings": torch.randn(3, 5, 8), "attention_mask": torch.ones(3, 5),
+              "contig_ids": torch.zeros(3, 5, dtype=torch.long),
+              "labels": torch.tensor([[1.0, 1.0, 2.0, 2.0],          # exact, resistant
+                                      [0.0, -INF, -1.0, -1.0],       # left-censored, susceptible
+                                      [1.0, 0.0, INF, float("nan")]])}  # a bare R call: an open interval
+    before = t.sigma
+    loss = t.compute_loss(t.model, dict(inputs))
+    assert torch.isfinite(loss)
+    loss.backward()
+    assert t.log_sigma.grad is not None and torch.isfinite(t.log_sigma.grad)
+    opt.step()
+    assert t.sigma != before

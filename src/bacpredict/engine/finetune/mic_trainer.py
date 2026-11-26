@@ -178,6 +178,9 @@ class MicBacformerTrainer(BacformerLargeTrainer):
     # ---- HF hooks -------------------------------------------------------------------------------------
 
     def create_optimizer(self):  # noqa: D102 — HF hook
+        # Place sigma on the training device BEFORE the optimizer captures it. Moving a parameter after the
+        # optimizer holds it leaves its Adam state on the old device, which fails on the first step.
+        self.log_sigma.data = self.log_sigma.data.to(self.args.device)
         optimizer = super().create_optimizer()
         if self.objective == "censored":
             optimizer.add_param_group({"params": [self.log_sigma], "lr": self.sigma_lr, "weight_decay": 0.0})
@@ -200,7 +203,8 @@ class MicBacformerTrainer(BacformerLargeTrainer):
         mu = logits.reshape(-1).float()
         labels = labels.reshape(-1, 4)
         if self.objective == "censored":
-            self.log_sigma.data = self.log_sigma.data.to(mu.device)
+            # .to() is differentiable, so on the inference path (where create_optimizer never ran and sigma is
+            # still on the CPU) the gradient would still reach the leaf; here it is simply a no-op.
             loss = interval_censored_gaussian_nll(mu, self.log_sigma.to(mu.device), labels[:, 1], labels[:, 2])
         else:
             point = labels[:, 3].float()
