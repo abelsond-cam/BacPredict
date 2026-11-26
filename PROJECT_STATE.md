@@ -2,6 +2,12 @@
 
 > **Last verified: 2026-11-26 @ `1087718`** (branch `refactor/consolidate-engine`).
 >
+> **Added 2026-11-26 (§3.8 *MIC rather than R/S*): the censored-MIC arms.** The interval tables and the
+> per-arm cohort sizes were read on CSD3 from `psaonly_mic/intervals/mic_interval_summary.csv` and from
+> `train_pa_mic_models.sh check-intervals` over `cross_species_psaonly_v2/splits`. The simulation figures are
+> from `tests/engine/finetune/test_mic_estimator_recovery.py`, not from data. **No MIC model has been trained
+> yet** — only the Stage A/B smoke has been submitted.
+>
 > **Verification scope, this pass (2026-11-26, later): §3.8's PsA-only v2 arm, the paired v1 → v2
 > comparison and the ST155 result only.** Every number read on CSD3 from the artifact named beside it:
 > the ten `cross_species_psaonly_v2/models/<drug>/results.json` and their `eval_scores*.npz`, the ten v1
@@ -3517,8 +3523,9 @@ silently comparing different sets.
    forced to R or S by where the breakpoint sits. The MICs themselves are already stored
    (`processed/paeruginosa/ast_tests_called.parquet`, 27,204 rows, `mic_value`/`mic_sign`/`mic_upper`/`mic_units`).
    ⚠ **MICs are interval-censored** (`mic_sign` carries ≤ and ≥), so predicting MIC means a censored or ordinal
-   model, **not** least-squares regression — a change of estimator, to be agreed before it is built, per the
-   statistical-method rule in `~/.claude/CLAUDE.md`.
+   model, **not** least-squares regression. ✅ **Agreed and built, 2026-11-26** — the interval-censored Gaussian
+   likelihood, with point imputation kept as the comparator. See *MIC rather than R/S* at the end of this
+   section, and the two §6 decisions of record dated 2026-11-26.
 
 **In flight.**
 - **v1 arm, all four training**, one job per drug (separate jobs, not an array, because each carries its own
@@ -3693,9 +3700,10 @@ and phylum and domain together at most ~50 % on one drug.
 1. **MIC as a second head, after the binary model.** The difficulty in PsA is the grey band where intermediate
    flips to resistant; predicting the actual MIC on the same genomes is more gradiented data and a harder
    question. ⚠ The MICs are **interval-censored** (`mic_sign` carries ≤ and ≥), so this is a censored or ordinal
-   model, **not** least-squares regression — a change of estimator, to be agreed before it is built (same caveat
-   as the one recorded above under the balancing decision).
-2. **Training on MIC only, not on the binary label at all.**
+   model, **not** least-squares regression. ✅ **Agreed and built, 2026-11-26** (*MIC rather than R/S*, end of
+   this section).
+2. **Training on MIC only, not on the binary label at all.** ✅ That is what arms A and B do: their loss never
+   sees the R/S call, which is used only to score them.
 3. **Thinning the balanced cohort further**, to trim phylogenetically near-identical genomes.
 
 **Caveats.**
@@ -3820,6 +3828,138 @@ baseline it will be read against is already computed from the v2 arm's `trainer_
 
 ---
 
+### MIC rather than R/S — the censored-regression arms (PsA-only, built 2026-11-26)
+
+**The question.** A binary AST label is a continuous measurement cut at one threshold. Cox's 1957 grouping
+result puts the information a dichotomised Gaussian keeps at 2/π ≈ 64 %, against ~97–98 % for ~10 ordered
+bins, so the MIC carries more about each genome than the call derived from it. Whether a model *trained* on
+the MIC is better **at the call** is a separate, empirical question — this arm asks it.
+
+**⚠ The axis is censoring, not continuity.** Maciek's earlier MIC run on Bacformer produced a regression
+value, i.e. least squares on a point MIC. But a reported MIC is an interval: `≤ 2` means "at or below 2",
+`> 8` means "above 8", and even a bare `= 4` means "growth at 2, none at 4" — the assay reads a doubling
+ladder, so an exact MIC is itself one dilution wide. 18.7–45.4 % of PsA tests per drug carry `≤` or `≥`
+(`processed/paeruginosa_cabbage_v2/ast_tests_called.parquet`). Replacing those bounds with points is the
+estimator change under test, not the switch from binary to continuous.
+
+**⛔ Decision of record, 2026-11-26 (David).** Four arms, five drugs, one seed. Every arm reads the **same**
+`cross_species_psaonly_v2/splits/<drug>_split.csv`, so no genome changes split and the holdouts are nested.
+
+| arm | objective | cells | where |
+|---|---|---|---|
+| 0 | binary cross-entropy | every cell | **already trained** — `cross_species_psaonly_v2/models/<drug>` |
+| 0′ | binary cross-entropy | MIC-bearing only | `psaonly_mic/models/bce_mic_cells/<drug>` |
+| A | least squares on a hand-imputed point | MIC-bearing only | `psaonly_mic/models/mse_imputed_point/<drug>` |
+| B | interval-censored Gaussian on log₂ MIC | every cell | `psaonly_mic/models/censored_interval/<drug>` |
+
+- **Arm 0 is not re-run** — same trainer, same tables, same seed; re-running would only add noise.
+- **Arm 0′ exists because the cohort change is confounded with the loss change.** Restricting to MIC-bearing
+  cells moves the resistant share by −1.6 to +2.7 points (table below). Without 0′, a difference between
+  arm 0 and arms A/B could be either.
+- **Arm A is David's long-standing hand rule** (`≥X`→X, `>X`→one dilution up, mirrored below), kept as the
+  comparator censoring is tested against.
+- **σ is re-fitted once, on *validate*, at the selected checkpoint.** David's correction to the first design,
+  which read it from holdout: that is leakage. Reading it from train inherits the weights' own
+  over-confidence. Re-fitting one scale parameter on held-out data is temperature scaling, and it is provably
+  safe here because σ cannot move a ranking metric — `P(R) = Φ(μ/σ)` is monotone in μ and crosses 0.5 at
+  μ = 0 for every σ. **Checkpoint selection stays `eval_auroc` for all four arms**, so the comparison varies
+  the objective and not the stopping rule.
+- **Five drugs, one seed** (David): seed-to-seed differences are small next to the effect sought. Chosen where
+  v1→v2 PsA-only AUROC was moderate/poor → moderate/good, so there is room to move: amikacin (0.790→0.895),
+  cefepime (0.714→0.820), ceftazidime (0.748→0.827), ciprofloxacin (0.817→0.866), meropenem (0.810→0.881).
+  Excluded: tobramycin (0.933→0.941, David's instruction) and imipenem (0.884→0.915), both already strong.
+- **Essential agreement (±1 dilution, ISO 20776-2) is reported, never optimised.** It is the assay's own
+  reproducibility ceiling, not a lowered bar; absolute agreement and the R/S call are the headline.
+
+**The interval table** (agreed with David; `engine/ast_labels/mic_intervals`). Bounds are log₂ mg/L, shifted
+so 0 is the EUCAST R breakpoint; intervals are half-open `(lo, hi]`, matching "resistant iff MIC > R".
+
+| reported | latent interval | imputed point (arm A only) |
+|---|---|---|
+| `= X` | (next doubling below X, X] | X |
+| `> X` | (X, ∞) | 2X |
+| `≥ X` | (next doubling below X, ∞) | X |
+| `≤ X` | (−∞, X] | X |
+| `< X` | (−∞, X] | X/2 |
+| bare R / bare S | (R, ∞) / (−∞, R] | none |
+
+A value within 0.1 in log₂ of a power of two **is** that power of two: the stores hold `16.001` and `4.001`,
+and unsnapped `log₂(16.001) = 4.00009` puts an amikacin test on the resistant side of its own R = 16
+breakpoint. Off-ladder values (0.19, 0.094, 640 …) keep their real log₂ and take `(floor, ceil]`. The tests of
+a cell are **intersected**, which is also what deduplicates the two ingests of one assay (99 % of PsA repeat
+cells are one `amr_gnn_nguyen2026` row and one `cabbage_v2` row of the same measurement); an empty
+intersection takes the hull and is flagged.
+
+**Numbers of record — the interval tables**, read from
+`$AMR/processed/psaonly_mic/intervals/mic_interval_summary.csv` (built 2026-11-26 at `5d2d7d2`):
+
+| drug | cells | exact | left-cens. | right-cens. | bare call | MIC cells | % censored of MIC | % R |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|
+| amikacin | 6,313 | 2,994 | 1,405 | 597 | 1,309 | 5,004 | 40.2 | 21.5 |
+| cefepime | 5,365 | 3,503 | 240 | 974 | 646 | 4,719 | 25.8 | 48.7 |
+| ceftazidime | 7,492 | 5,116 | 252 | 1,049 | 1,072 | 6,420 | 20.3 | 47.5 |
+| ciprofloxacin | 7,183 | 3,877 | 616 | 1,671 | 1,010 | 6,173 | 37.2 | 62.2 |
+| meropenem | 7,739 | 4,320 | 579 | 1,716 | 1,116 | 6,623 | 34.8 | 43.2 |
+
+**The correctness gate passed: 1 conflict in 34,093 cells.** The interval's own call (R iff `lo ≥ 0`, S iff
+`hi ≤ 0`) agrees with the split table's EUCAST label for all but one amikacin cell, which is dropped from every
+MIC arm and written to `intervals/mic_interval_conflicts.csv`. Two ciprofloxacin cells needed the hull. The
+module never redefines a label: `engine.splits` stays the one authority.
+
+**Numbers of record — what each arm trains on**, from `train_pa_mic_models.sh check-intervals` against
+`cross_species_psaonly_v2/splits` + `psaonly_mic/intervals` (2026-11-26). Every genome has its `.pt`.
+
+| drug | arm 0 train / holdout (% R) | arms 0′ & A train / holdout (% R) | arm B train / holdout (% R) |
+|---|---|---|---|
+| amikacin | 4,030 / 1,200 (21.5) | 3,200 / 940 (23.5) | 4,030 / 1,200 (21.5) |
+| cefepime | 3,343 / 1,019 (50.1) | 2,928 / 907 (50.1) | 3,343 / 1,019 (50.1) |
+| ceftazidime | 4,658 / 1,472 (46.3) | 3,987 / 1,261 (48.5) | 4,658 / 1,472 (46.3) |
+| ciprofloxacin | 4,522 / 1,393 (63.3) | 3,890 / 1,199 (66.0) | 4,522 / 1,393 (63.3) |
+| meropenem | 4,822 / 1,507 (42.8) | 4,119 / 1,286 (41.2) | 4,822 / 1,507 (42.8) |
+
+Arm B equals arm 0 everywhere but amikacin's validate split, which loses the one conflicting cell.
+
+**⚠ Why the read-out is not AUROC alone.** On known-truth simulation driven through the shipped interval
+builder and losses (`tests/engine/finetune/test_mic_estimator_recovery.py`; truth σ = 1.5 dilutions, two label
+sources with different tested ranges, 25 % bare calls), regressing each fit's μ on the true latent mean gives:
+
+| arm | slope vs truth | AUROC | balanced accuracy | ECE | fitted σ |
+|---|--:|--:|--:|--:|--:|
+| 0 BCE all cells | — (logit scale) | 0.9234 | 0.8431 | 0.0457 | — |
+| 0′ BCE MIC cells | — | 0.9204 | 0.8473 | 0.0515 | — |
+| **A MSE imputed** | **0.584** | **0.9250** | **0.7207** | **0.2105** | 2.16 |
+| **B censored all** | **0.989** | **0.9301** | **0.8490** | **0.0364** | **1.535** |
+| oracle (true μ) | 1.000 | 0.9377 | 0.8620 | 0.0276 | 1.500 |
+
+(n = 2,000, 6 signal + 60 noise features, mean of 3 seeds; the same pattern holds at n = 800 and n = 6,000.)
+**Point imputation recovers barely half the latent MIC scale and its AUROC is within 0.005 of the censored
+fit's** — ranking survives a monotone distortion. What it costs shows up only in the call (balanced accuracy
+−0.13) and the calibration (ECE ×5.8). So every arm is reported on: AUROC and AUPRC; the R/S call (balanced
+accuracy, sensitivity, specificity); calibration (Brier, ECE, and for the MIC arms ECE at the *training* σ as
+well, so the size of the temperature correction is visible); and for the MIC arms the censored NLL, interval
+coverage, and absolute and essential agreement. `apps/pa/collect_mic_arms` reports each arm **twice** — on its
+own holdout and on the **intersection every arm scored**, because the holdouts are nested and a difference
+computed on two different sets is not a difference between arms.
+
+**Caveats.**
+- **`mic_undecided` cells are out of this experiment.** 101 PsA tests (101 cells over the five drugs) are
+  censored MICs straddling the breakpoint: no binary label, so no split-table row, so no arm. The censored
+  likelihood *could* use them — their interval is informative even when their call is not — but adding them
+  would change the cohort and break the pairing with arm 0. Counted by `train_pa_mic_models.sh intervals`.
+- **The gain, if any, may be mostly calibration.** The simulation's AUROC gain for arm B over arm 0 shrinks
+  with n (+0.019 at n=800, +0.007 at n=2,000, +0.002 at n=6,000) while the calibration gain does not. The real
+  drugs train on 2,928–4,822 cells.
+- **σ at a bound is not an estimate.** When every interval already contains its μ the likelihood is flat and σ
+  is unidentified; `fit_sigma` returns `at_bound: True` and the number must be read as a bound.
+- **This is PsA-only by design** (David): decide here before touching the cross-species arms.
+
+**Owns.** `engine/ast_labels/mic_intervals` (the interval table) · `engine/finetune/censored_mic_loss` (the
+likelihood and the MIC read-outs) · `engine/finetune/mic_trainer` (the objectives and σ) ·
+`finetune_amr --mic-objective/--mic-table/--mic-cells` · `apps/pa/scripts/train_pa_mic_models.sh` ·
+`apps/pa/collect_mic_arms` · `$AMR/processed/psaonly_mic/`.
+
+---
+
 ## 4. Artifact dependency table
 
 Every shared artifact, once. **This is the table whose absence caused the drift this file exists to
@@ -3859,6 +3999,8 @@ correct.**
 | `$AMR/processed/bakta_vs_bakrep_validation/` | `engine/genomes/scripts/validate_bakta_against_bakrep.sh` | the decision to annotate BakRep-less genomes with our own run | — (evidence only) |
 | `$AMR/processed/paeruginosa/ani/{psa_heldout_max_ani_to_train,psa_nn_lookup_baseline}.csv` (+ `psa_heldout_split_ids.txt`) | `skani dist` (job `41644484`) → `engine/splits/holdout_lookup_baseline` | the ANI-thinning threshold decision; how much of §3.6's random-holdout AUROC is clonal lookup | — (evidence only). ⚠ Tied to the ST155 split tables: rebuild the splits and these describe a holdout that no longer exists. The 599 MB pairwise TSV behind them is **not** kept (`hpc-work` scratch, swept) — it regenerates in ~10 min on 32 cores |
 | `$AMR/processed/paeruginosa/mic_bands/<drug>_mic_bands.csv` + `mic_band_summary.csv` | `apps/pa/mic_distance_bands` over `ast_tests_called.parquet` + `eucast_v15_breakpoints.csv` | `apps/pa/holdout_error_by_mic_distance`; the exclude-vs-multi-class-head decision | — (evidence only). Rebuilt if the breakpoint table or the labels change |
+| `$AMR/processed/psaonly_mic/intervals/<drug>_mic_intervals.csv` (+ `mic_interval_summary.csv`, `mic_interval_conflicts.csv`) | `engine/ast_labels/mic_intervals` over `paeruginosa_cabbage_v2/ast_tests_called.parquet` + `cross_species_psaonly_v2/splits` | `finetune_amr --mic-table` (arms 0′, A, B) and `apps/pa/collect_mic_arms` | Every MIC arm. ⚠ Its cohort is the split tables': rebuild those and this is stale. Pinned per run by the md5 printed in each task's log |
+| `$AMR/processed/psaonly_mic/models/<arm>/<drug>/{results.json,eval_scores*.npz,mic_sigma.json}` | `apps/pa/scripts/train_pa_mic_models.sh submit` → `finetune_amr --mic-objective` | `apps/pa/collect_mic_arms` → `models/mic_arm_metrics.csv` | — (results). The npz carries `mu`, `lo`, `hi` and `sigma` beside the usual `y_true`/`y_prob`, so existing readers work unchanged |
 | `$AMR/processed/paeruginosa/mic_bands/error_by_distance/{error_by_band,near_vs_far,error_concentration,conditional_logit,per_drug_vs_auroc,per_drug_correlations,leave_out_ceiling}.csv` | `apps/pa/holdout_error_by_mic_distance` over `models/<drug>/eval_scores*.npz` + `results.json` | [`docs/holdout_clonality_and_label_noise.md`](docs/holdout_clonality_and_label_noise.md) | — (evidence only). ⚠ Tied to **these** checkpoints and **these** split tables: retrain or re-split and every row is stale |
 
 **`catalogue_ceiling_panel.csv` is reproducible.** It was hand-assembled once, which was itself the
@@ -3949,6 +4091,8 @@ directory was consolidated. Several of these existed nowhere else.
 | — | **Kept as a warning:** an earlier unilateral swap to *celer* silently changed the estimator to squared-loss group lasso. That was **wrong and was reverted.** A package change *is* a change of statistical method. |
 | 2026-11-18 | **Gene attribution is run on the LOGIT, with each genome's base logit stored beside it.** Attributing `sigmoid(logit)` directly is what the published Bacformer code does, and it **saturates**: 1,895 of 4,242 Salmonella genomes came back with zero attribution variance, contributing nothing. Our two models are more confident still. Storing the logit shift loses nothing because `delta_probability()` reconstructs the bounded −1..1 probability score exactly, so one run yields both scales. |
 | 2026-11-18 | **Attribution's primary statistic is per-genome-normalised \|attribution\|; resistant-vs-susceptible per gene is secondary.** David's choice. Per-genome normalisation also makes the logit and probability scales interchangeable for ranking. Zero-variance genomes are **counted and reported**, never silently zeroed — that count is the saturation diagnostic. |
+| 2026-11-26 | **Predicting MIC means a censored estimator, not least squares.** A reported MIC is an interval — `≤`/`≥` bound it on one side, and even an exact `= X` means "growth at X/2, none at X" on a doubling ladder. 18.7–45.4 % of PsA tests per drug are censored. The estimator is an **interval-censored Gaussian (Tobit) likelihood on log₂ MIC** in dilutions from the EUCAST R breakpoint; a bare R/S call is the open interval on its side of the breakpoint, which makes **binary cross-entropy the all-censored special case of the same loss** (verified bit-for-bit, `tests/engine/finetune/test_censored_mic_loss.py`). Point imputation is kept **as the comparator** (arm A), not as the method: on known-truth simulation it recovers ~0.58 of the latent MIC scale while its AUROC stays within 0.005 of the censored fit's, so the harm is invisible to AUROC and shows only in the call and the calibration. |
+| 2026-11-26 | **σ is re-fitted once, on *validate*, at the selected checkpoint — never on train, never on holdout.** David's correction to the first design, which read it from holdout (leakage). Train would inherit the weights' own over-confidence. Re-fitting one scale parameter on held-out data is temperature scaling, and it is safe because σ provably cannot move a ranking metric: `P(R) = Φ(μ/σ)` is monotone in μ and crosses 0.5 at μ = 0 for every σ, so AUROC, AUPRC and the R/S call are identical whatever σ is. **Checkpoint selection stays `eval_auroc` for every arm**, so the comparison varies the objective and not the stopping rule. The training σ is kept and reported beside the re-fitted one, so the size of the correction is on the record. |
 | 2026-11-18 | **A within-lineage repeat of the R-vs-S contrast is what licenses any causal reading of attribution.** A determinant signal survives stratification by TB lineage / Kp sublineage; a lineage marker collapses. Until it is read, attribution is descriptive only. This is why the cohort is stratified on lineage at selection time rather than sampled at random. |
 
 ### Embedding and representation

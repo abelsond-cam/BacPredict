@@ -78,6 +78,33 @@ amikacin, imipenem, piperacillin-tazobactam, aztreonam, levofloxacin, cefepime.
 
 `genome_route` in `cohort.csv` is `assembly`, `reads` or `none`.
 
+## MIC rather than R/S
+
+[`scripts/train_pa_mic_models.sh`](scripts/train_pa_mic_models.sh) runs the four-arm comparison that asks
+whether training on the **MIC** beats training on the call derived from it. Its header is the full mechanics;
+the status, the cohort sizes and the decisions of record live in
+[`PROJECT_STATE.md`](../../../../PROJECT_STATE.md) §3.8 (*MIC rather than R/S*) and §6.
+
+The pieces are engine, not app, because nothing in them is PsA-specific:
+
+| Module | What it does |
+|---|---|
+| [`engine/ast_labels/mic_intervals`](../../engine/ast_labels/mic_intervals.py) | Each `(Sample, drug)` MIC as the interval its latent log₂ MIC lies in, in doubling dilutions from the EUCAST R breakpoint. Intersects a cell's tests (which is also what deduplicates the two ingests of one assay), snaps to the doubling ladder, and checks its own call against the split table without ever redefining a label |
+| [`engine/finetune/censored_mic_loss`](../../engine/finetune/censored_mic_loss.py) | The interval-censored Gaussian likelihood, the validate σ re-fit, and the MIC read-outs (coverage, absolute and essential agreement, Brier/ECE) |
+| [`engine/finetune/mic_trainer`](../../engine/finetune/mic_trainer.py) | The three objectives on one network, and σ's life across a checkpoint |
+| [`collect_mic_arms.py`](collect_mic_arms.py) | The arms side by side — each on its own holdout **and** on the intersection every arm scored |
+
+Two things to know before reading any of it:
+
+- **A reported MIC is never a point.** `≤ 2` is an interval, `> 8` is an interval, and even `= 4` is `(2, 4]`
+  because the assay reads a doubling ladder. Imputing a point throws that away and attenuates the fitted MIC
+  scale by about half — invisibly to AUROC, which is rank-only.
+- **σ is re-fitted on *validate*, once, at the selected checkpoint.** It is a residual spread in dilutions,
+  not a property of the data you can measure up front. It cannot move AUROC, AUPRC or the R/S call.
+
+Nothing in the binary path changes: without `--mic-table`, `finetune_amr` behaves exactly as before.
+
+
 ## Genomes
 
 Every genome comes from one of two places:
