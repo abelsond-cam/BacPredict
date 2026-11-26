@@ -9,6 +9,7 @@
 #   bash src/bacpredict/apps/pa/scripts/train_pa_mic_models.sh overfit         # Stage B: the smoke's loss -> ~0
 #   ARRAY_REPO=<worktree> bash …/train_pa_mic_models.sh submit                 # Stage C: one GPU array per arm
 #   ARRAY_REPO=<worktree> bash …/train_pa_mic_models.sh arm0-validate          # arm 0's validate logits (see below)
+#   bash src/bacpredict/apps/pa/scripts/train_pa_mic_models.sh check-arm0-validate  # did it load the right model?
 #   bash src/bacpredict/apps/pa/scripts/train_pa_mic_models.sh collect         # every arm x drug, side by side
 #
 # ---------------------------------------------------------------------------------------------------------
@@ -371,6 +372,41 @@ arm0-validate)
         "$array_repo/$SCORE_ARRAY"
     echo "drugs (array index order): ${PA_DRUGS[*]}"
     echo "arm 0 validate logits -> $ARM0_VALIDATE/<drug>_validate_scores.npz (the incumbent's own dir is not touched)"
+    ;;
+check-arm0-validate)
+    # An exact reference, free: `best_metric` in a run's trainer_state.json IS its eval_auroc at the selected
+    # checkpoint, computed on validate. So re-scoring validate with that checkpoint must reproduce it. If
+    # score_split loaded the wrong checkpoint, or loaded it in the wrong dtype (the config says bfloat16 and
+    # `torch_dtype="auto"` must honour it), this is where that shows up — not in a calibration number nobody
+    # can check.
+    uv run --no-sync python -I - "$ARM0" "$ARM0_VALIDATE" "${PA_DRUGS[@]}" <<'EOF'
+import json, sys
+from pathlib import Path
+import numpy as np
+from sklearn.metrics import roc_auc_score
+arm0, scores_dir, *drugs = sys.argv[1:]
+bad = 0
+print(f"{'drug':<16}{'n':>6}{'AUROC re-scored':>17}{'best_metric':>14}{'diff':>10}  checkpoint")
+for d in drugs:
+    npz = Path(scores_dir) / f"{d}_validate_scores.npz"
+    state = Path(arm0) / d / "trainer_state.json"
+    if not npz.exists():
+        print(f"{d:<16}  no {npz.name}: the array has not finished (or failed; read its log)"); bad += 1; continue
+    z = np.load(npz)
+    got = roc_auc_score(z["y_true"], z["y_prob"])
+    st = json.loads(state.read_text())
+    want = st.get("best_metric")
+    ckpt = Path(st.get("best_model_checkpoint") or "?").name
+    diff = abs(got - want) if want is not None else float("nan")
+    ok = want is not None and diff < 2e-3
+    bad += (not ok)
+    print(f"{d:<16}{len(z['y_true']):>6}{got:>17.6f}{(want if want is not None else float('nan')):>14.6f}"
+          f"{diff:>10.2e}  {ckpt}{'' if ok else '   <-- MISMATCH'}")
+    if not np.isfinite(z["score"]).all():
+        print(f"{'':<16}  non-finite logits in {npz.name}"); bad += 1
+print("arm 0 validate scores: PASS" if not bad else "arm 0 validate scores: FAIL")
+sys.exit(1 if bad else 0)
+EOF
     ;;
 collect)
     uv run --no-sync python -m bacpredict.apps.pa.collect_mic_arms \
