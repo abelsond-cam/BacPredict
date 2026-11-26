@@ -191,12 +191,16 @@ EOF
 check-intervals)
     need_tables "${PA_DRUGS[@]}"
     # exactly what each array task will read: resolve_split_table -> resolve_mic_cells -> missing_embeddings
-    uv run --no-sync python - "$SPLITS" "$INTERVALS" "$ESM" "$(IFS=,; echo "${ARM_ORDER[*]}")" \
-        "$(for a in "${ARM_ORDER[@]}"; do arm_spec "$a" | tr ' ' ':'; echo -n ","; done)" "${PA_DRUGS[@]}" <<'EOF'
+    specs=""
+    for a in "${ARM_ORDER[@]}"; do
+        read -r objective cells <<<"$(arm_spec "$a")"
+        specs+="$a:$objective:$cells,"
+    done
+    uv run --no-sync python - "$SPLITS" "$INTERVALS" "$ESM" "$specs" "${PA_DRUGS[@]}" <<'EOF'
 import sys
 from bacpredict.engine.finetune.finetune_amr import missing_embeddings, resolve_mic_cells, resolve_split_table
-splits, intervals, esm, arm_names, arm_specs, *drugs = sys.argv[1:]
-arms = list(zip(arm_names.split(","), [s for s in arm_specs.split(",") if s], strict=True))
+splits, intervals, esm, specs, *drugs = sys.argv[1:]
+arms = [spec.split(":") for spec in specs.split(",") if spec.strip()]
 bad = 0
 print(f"{'drug':<16}{'arm':<20}{'train':>7}{'valid':>7}{'hold':>7}{'%R':>7}{'ST':>5}  missing .pt")
 for d in drugs:
@@ -204,9 +208,8 @@ for d in drugs:
     pct = lambda ids: 100 * sum(s.label_map[i] for i in ids) / len(ids) if ids else float("nan")
     print(f"{d:<16}{'0  (incumbent)':<20}{len(s.train):>7}{len(s.validate):>7}{len(s.holdout):>7}"
           f"{pct(s.holdout):>7.1f}{len(s.extra['holdout_st']):>5}")
-    for name, spec in arms:
-        objective, cells = spec.split(":")
-        f, intervals_map, _, _ = resolve_mic_cells(s, f"{intervals}/{d}_mic_intervals.csv", objective, cells)
+    for name, objective, cells in arms:
+        f, _, _, _ = resolve_mic_cells(s, f"{intervals}/{d}_mic_intervals.csv", objective, cells)
         miss = missing_embeddings(f.train + f.validate + f.holdout + f.extra["holdout_st"], esm)
         bad += bool(miss)
         print(f"{'':<16}{name:<20}{len(f.train):>7}{len(f.validate):>7}{len(f.holdout):>7}"
