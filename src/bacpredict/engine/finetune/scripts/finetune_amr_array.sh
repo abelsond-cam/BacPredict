@@ -13,6 +13,12 @@
 #   EMBEDDINGS_DIR  directory of <Sample>_esm_embeddings.pt (bf16 and fp32 files may mix; the dataset upcasts)
 #   OUT_ROOT        models go to <OUT_ROOT>/<drug>. A task refuses (exit 5) if <OUT_ROOT>/<drug>/results.json exists
 #   N_SAMPLES       optional: 10 is the Stage A/B smoke (a balanced 10 genomes, train = validate = holdout)
+#   MIC_OBJECTIVE   optional: 'bce' (default, the incumbent binary loss), 'mse' or 'censored' - train on the MIC
+#                   rather than on the R/S call (engine/finetune/mic_trainer). Needs MIC_DIR
+#   MIC_DIR         directory of <drug>_mic_intervals.csv (engine/ast_labels/mic_intervals). Set with
+#                   MIC_OBJECTIVE=bce it only restricts which cells the incumbent loss sees (the control arm)
+#   MIC_CELLS       optional: 'all' (default; bare R/S calls kept as open intervals) or 'mic_only'
+#   MIC_SIGMA_LR    optional: learning rate for the drug's log sigma alone (MIC_OBJECTIVE=censored)
 #   EXTRA_HOLDOUTS  splits scored beside the holdout (default holdout_st; set it empty for the holdout only)
 #   MODEL LR EVAL_STEPS MAX_STEPS MAX_EPOCHS PATIENCE THRESHOLD SEED   optional; defaults are the deployed TB/Kp
 #                   settings. The trainer runs min(MAX_STEPS, steps_per_epoch * MAX_EPOCHS) and shapes warmup and the
@@ -94,6 +100,12 @@ table=$SPLIT_DIR/${drug}_split.csv
 out=$OUT_ROOT/$drug
 [[ ! -e $out/results.json ]] || { echo "$out/results.json exists: move the old run aside first"; exit 5; }
 workers=${NUM_WORKERS:-${SLURM_CPUS_PER_TASK:-8}}
+# the MIC interval table is per drug, like the split table, and must exist before the GPU is held for hours
+mic_table=
+if [[ -n ${MIC_DIR:-} ]]; then
+    mic_table=$MIC_DIR/${drug}_mic_intervals.csv
+    [[ -s $mic_table ]] || { echo "no MIC interval table $mic_table"; exit 4; }
+fi
 # extra holdouts: unset → holdout_st; set but empty → none (the flag with no value)
 read -r -a extra <<<"${EXTRA_HOLDOUTS-holdout_st}"
 
@@ -103,7 +115,8 @@ mkdir -p "$RUN_DIR" "$OUT_ROOT"
 cd "$RUN_DIR"
 echo "[$(date -Is)] host=$(hostname) gpu=${CUDA_VISIBLE_DEVICES:-none} task=$TASK drug=$drug table=$table" \
      "md5=$(md5sum < "$table" | cut -d' ' -f1) out=$out workers=$workers repo=$REPO@${head:0:7}" \
-     "${N_SAMPLES:+n_samples=$N_SAMPLES} extra_holdouts=${extra[*]+${extra[*]}}"
+     "${N_SAMPLES:+n_samples=$N_SAMPLES} extra_holdouts=${extra[*]+${extra[*]}}" \
+     "${MIC_DIR:+mic_objective=${MIC_OBJECTIVE:-bce} cells=${MIC_CELLS:-all} mic_md5=$(md5sum < "$mic_table" | cut -d' ' -f1)}"
 nvidia-smi -L || true
 
 uv run --project "$REPO" --no-sync python -X faulthandler -m bacpredict.engine.finetune.finetune_amr \
@@ -113,5 +126,7 @@ uv run --project "$REPO" --no-sync python -X faulthandler -m bacpredict.engine.f
     --eval-steps "${EVAL_STEPS:-250}" --max-steps "${MAX_STEPS:-100000}" --max-epochs "${MAX_EPOCHS:-40}" \
     --early-stopping-patience "${PATIENCE:-15}" --early-stopping-threshold "${THRESHOLD:-0.005}" \
     --seed "${SEED:-1}" --num-workers "$workers" ${N_SAMPLES:+--n-samples "$N_SAMPLES"} \
+    ${MIC_OBJECTIVE:+--mic-objective "$MIC_OBJECTIVE"} ${MIC_DIR:+--mic-table "$mic_table"} \
+    ${MIC_CELLS:+--mic-cells "$MIC_CELLS"} ${MIC_SIGMA_LR:+--mic-sigma-lr "$MIC_SIGMA_LR"} \
     --extra-holdouts ${extra[@]+"${extra[@]}"}
 echo "[$(date -Is)] done"

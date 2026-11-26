@@ -14,6 +14,14 @@ metrics in ``metrics`` and adds a ``holdouts`` block with every holdout's metric
 table holds more than one species, per-species metrics. Per-sample scores go to ``eval_scores.npz`` (holdout)
 and ``eval_scores_<split>.npz`` (each extra holdout), and the whole run's training history to ``trainer_state.json``
 (the surviving checkpoint's own copy stops at the best step). Without ``--split-table`` the trainer is unchanged.
+
+**MIC mode** (``--mic-objective mse|censored`` with ``--mic-table <drug>_mic_intervals.csv``, the PsA MIC
+comparison). The same network predicts ``mu``, the log2 MIC in doubling dilutions from the drug's EUCAST R
+breakpoint, trained either by least squares on a hand-imputed point or by the interval-censored Gaussian
+likelihood on the interval the assay actually reports. The R/S call is ``mu > 0`` and the probability is
+``Phi(mu/sigma)``, with ``sigma`` re-fitted once on **validate** at the selected checkpoint
+(:mod:`bacpredict.engine.finetune.mic_trainer`). ``--mic-table`` with the default ``--mic-objective bce``
+leaves the incumbent loss alone and only restricts which cells it trains on, which is the control arm.
 """
 import hashlib
 import json
@@ -38,14 +46,34 @@ from transformers import (
 
 from bacpredict.engine.config import organism
 from bacpredict.engine.finetune.attention_pool import BacformerAttnPoolForGenomeClassification
+from bacpredict.engine.finetune.censored_mic_loss import (
+    ASSAY_REPRODUCIBILITY_DILUTIONS,
+    calibration_scores,
+    censored_log_likelihood,
+    fit_sigma,
+    mic_agreement,
+    prob_resistant,
+)
 from bacpredict.engine.finetune.checkpoints import tolerate_custom_problem_type
-from bacpredict.engine.finetune.datasets import LabelInjectingFileDataset, PanelInjectingFileDataset
+from bacpredict.engine.finetune.datasets import (
+    IntervalInjectingFileDataset,
+    LabelInjectingFileDataset,
+    PanelInjectingFileDataset,
+)
 from bacpredict.engine.finetune.metrics import (
     build_results_payload,
     compute_full_metrics,
     compute_metrics_binary_genome_pred,
     per_class_metrics,
     write_results_json,
+)
+from bacpredict.engine.finetune.mic_trainer import (
+    MIC_OBJECTIVES,
+    MicBacformerTrainer,
+    MicEvalMetrics,
+    censor_map,
+    interval_map,
+    load_interval_table,
 )
 from bacpredict.engine.finetune.split_utils import generate_kfold_splits
 from bacpredict.engine.splits.load_splits import load_split_ids, load_split_species, load_splits
@@ -59,6 +87,10 @@ _SPLIT_TABLE_ONLY_TASKS = {"pa_ast"}
 # The extra holdouts scored by default in split-table mode: the zero-shot held-out ST.
 DEFAULT_EXTRA_HOLDOUTS = ("holdout_st",)
 _HOLDOUT = "holdout"
+# Which cells of a split table a MIC run keeps: every cell that has a usable interval row, or only those whose
+# interval came from a measured MIC. The second is what makes the BCE and least-squares arms comparable, since
+# neither can use a bare R/S call as anything but a label.
+MIC_CELL_SETS = ("all", "mic_only")
 
 
 ############################################################## Split-table mode ##############################################################
@@ -290,6 +322,204 @@ def write_split_table_results(
     return payload
 
 
+############################################################## MIC arms ##############################################################
+
+
+def resolve_mic_cells(
+    splits: SplitTableSplits,
+    table_path: str | Path,
+    objective: str,
+    cells: str,
+) -> tuple[SplitTableSplits, dict[str, tuple[float, float, float, float]], dict[str, str], dict]:
+    """Restrict a split table's cells to those a MIC arm can use, and build its interval and censoring maps.
+
+    **Nothing here reassigns a split.** Each genome keeps the train / validate / holdout slot
+    ``engine.splits`` gave it; a MIC arm only drops genomes, so every arm is scored on a subset of the same
+    holdout and the comparison stays paired. What is dropped is reported per split, because the drop is not
+    random: a cell with no measured MIC is a cell whose label came from a disk zone or a bare call, and those
+    are not spread evenly over the resistant and susceptible genomes.
+
+    ``cells="mic_only"`` keeps cells whose interval came from a measured MIC — the set the least-squares arm
+    can use at all, and therefore the set the BCE control (arm 0') must be restricted to for the two to be
+    comparable. ``cells="all"`` keeps every cell with a usable interval, bare calls included as the open
+    interval on one side of the breakpoint.
+
+    Returns
+    -------
+    splits : SplitTableSplits
+        The same table with every split filtered.
+    intervals : dict
+        ``Sample -> (ast_label, lo, hi, point)``.
+    censor : dict
+        ``Sample -> censor class``.
+    report : dict
+        Per-split kept/dropped counts and the resistant share before and after, for ``results.json``.
+    """
+    if cells not in MIC_CELL_SETS:
+        raise ValueError(f"--mic-cells must be one of {MIC_CELL_SETS}, got {cells!r}")
+    if objective == "mse" and cells != "mic_only":
+        raise ValueError("--mic-objective mse imputes a point MIC, which a bare R/S call does not have: "
+                         "run it with --mic-cells mic_only")
+    table = load_interval_table(table_path)
+    if cells == "mic_only":
+        table = table[table["basis"].astype(str) == "mic"]
+    intervals = interval_map(table, "mse" if objective == "mse" else "censored")
+    censor = censor_map(table)
+
+    def _keep(ids: list[str]) -> list[str]:
+        return [i for i in ids if i in intervals]
+
+    def _pct_r(ids: list[str]) -> float:
+        return round(100.0 * sum(splits.label_map[i] for i in ids) / len(ids), 2) if ids else float("nan")
+
+    report = {"table": str(table_path), "cells": cells, "objective": objective, "by_split": {}}
+    kept: dict[str, list[str]] = {}
+    for name, ids in {"train": splits.train, "validate": splits.validate, **splits.holdouts}.items():
+        kept[name] = _keep(ids)
+        report["by_split"][name] = {"n_before": len(ids), "n_after": len(kept[name]),
+                                    "pct_resistant_before": _pct_r(ids), "pct_resistant_after": _pct_r(kept[name])}
+        print(f"  {name}: {len(ids)} -> {len(kept[name])} cells "
+              f"({report['by_split'][name]['pct_resistant_before']}% R -> "
+              f"{report['by_split'][name]['pct_resistant_after']}% R)")
+    empty = [n for n in ("train", "validate", _HOLDOUT) if not kept[n]]
+    if empty:
+        raise RuntimeError(f"{table_path}: no usable MIC cells left in {empty}")
+    filtered = SplitTableSplits(
+        path=splits.path, md5=splits.md5, label_map=splits.label_map, train=kept["train"],
+        validate=kept["validate"], holdout=kept[_HOLDOUT],
+        extra={n: kept[n] for n in splits.extra}, species=splits.species, smoke=splits.smoke)
+    return filtered, intervals, censor, report
+
+
+def predict_mic(trainer, dataset, sample_ids: list[str], intervals: dict) -> tuple[np.ndarray, ...]:
+    """``(mu, y_true, lo, hi)`` for ``sample_ids`` in order, from ``trainer.predict`` on their dataset.
+
+    Row i must be ``sample_ids[i]`` (the scores file pairs them by position), so this checks the returned
+    binary labels against the interval map's, exactly as :func:`predict_holdout` checks them against the split
+    table's.
+    """
+    preds = trainer.predict(dataset)
+    mu = np.asarray(preds.predictions, dtype=float).reshape(-1)
+    labels = np.asarray(preds.label_ids, dtype=float).reshape(-1, 4)
+    if mu.size != len(sample_ids) or labels.shape[0] != len(sample_ids):
+        raise RuntimeError(f"predict returned {mu.size} scores and {labels.shape[0]} labels for "
+                           f"{len(sample_ids)} samples")
+    expected = np.asarray([intervals[s][0] for s in sample_ids], dtype=float)
+    if not np.array_equal(labels[:, 0], expected):
+        raise RuntimeError("predict's labels are not the interval table's, in order: scores would mis-pair")
+    return mu, labels[:, 0].astype(int), labels[:, 1], labels[:, 2]
+
+
+def write_mic_scores(path: str | Path, sample_ids: list[str], y_true, y_prob, mu, lo, hi, *,
+                     drug: str, split: str, species: dict[str, str], sigma: float) -> None:
+    """Per-sample scores of one MIC holdout: the ``eval_scores.npz`` layout plus ``mu``, the interval and ``sigma``.
+
+    Every existing reader of ``eval_scores.npz`` wants ``y_true``/``y_prob``/``sample_ids`` and finds them
+    unchanged; the MIC columns are additional, so the ladder, the attribution and the band read-outs keep
+    working on a MIC arm's output without knowing it is one.
+    """
+    np.savez(
+        path,
+        y_true=np.asarray(y_true).astype(int), y_prob=np.asarray(y_prob).astype(float),
+        sample_ids=np.asarray(sample_ids, dtype=np.str_), drug=np.array(drug),
+        split=np.asarray([split] * len(sample_ids), dtype=np.str_),
+        species=np.asarray([species.get(s, "") for s in sample_ids], dtype=np.str_),
+        operating_threshold=np.array(np.nan),
+        mu=np.asarray(mu).astype(float), lo=np.asarray(lo).astype(float), hi=np.asarray(hi).astype(float),
+        sigma=np.array(float(sigma)),
+    )
+
+
+def write_mic_split_table_results(
+    trainer,
+    make_dataset,
+    splits: SplitTableSplits,
+    *,
+    intervals: dict,
+    censor: dict,
+    cell_report: dict,
+    output_dir: str,
+    task: str,
+    drug: str,
+    model_name_or_path: str,
+    model_revision: str | None,
+    split_source: str,
+    run_config: dict,
+) -> dict:
+    """Score a MIC arm: re-fit ``sigma`` on validate, then write every holdout's metrics, MIC block and npz.
+
+    The order matters and is the decision of record. ``sigma`` is fitted **once**, on **validate**, with the
+    selected checkpoint's ``mu`` held fixed — a single scale parameter on a split the training loss never saw,
+    which is temperature scaling. It is then used for every holdout. Fitting it on each holdout would make the
+    reported calibration unfalsifiable; fitting it on train would inherit the weights' own over-confidence.
+
+    Each holdout block carries, beside the usual §0.4 metrics, a ``mic`` block with ``sigma``, the censored
+    NLL, interval coverage, essential and absolute agreement, and the calibration the *training* ``sigma``
+    would have given — so the size of the temperature-scaling correction is on the record rather than hidden
+    inside the headline number.
+    """
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    print(f"Re-fitting sigma on validate ({len(splits.validate)} genomes) at the selected checkpoint.")
+    mu_v, _, lo_v, hi_v = predict_mic(trainer, make_dataset(splits.validate), splits.validate, intervals)
+    fit = fit_sigma(mu_v, lo_v, hi_v)
+    sigma, sigma_train = fit["sigma"], trainer.sigma
+    print(f"  sigma: train {sigma_train:.4f} -> validate re-fit {sigma:.4f} dilutions "
+          f"(validate mean NLL {fit['mean_nll']:.4f}, n={fit['n']}, at_bound={fit['at_bound']}; "
+          f"assay floor {ASSAY_REPRODUCIBILITY_DILUTIONS} would give {fit['sigma_assay_floor']:.4f})")
+
+    blocks: dict[str, dict] = {}
+    for name, ids in splits.holdouts.items():
+        scores_file = scores_filename(name)
+        if ids:
+            print(f"Running post-training evaluation on {name}: {len(ids)} samples.")
+            mu, y_true, lo, hi = predict_mic(trainer, make_dataset(ids), ids, intervals)
+        else:
+            print(f"No {name} samples for {drug}: recorded with n_samples 0.")
+            mu, y_true, lo, hi = (np.zeros(0) for _ in range(4))
+            y_true = y_true.astype(int)
+        y_prob = prob_resistant(mu, sigma) if len(ids) else np.zeros(0)
+        write_mic_scores(out / scores_file, ids, y_true, y_prob, mu, lo, hi,
+                         drug=drug, split=name, species=splits.species, sigma=sigma)
+        block = holdout_report(ids, y_true, y_prob, splits.species, splits.multi_species, scores_file)
+        block["mic"] = {
+            "sigma": sigma, "sigma_train": sigma_train, "sigma_validate_fit": fit,
+            "censored_nll": -float(np.mean(censored_log_likelihood(mu, sigma, lo, hi))) if len(ids) else float("nan"),
+            "censored_nll_at_sigma_train": (
+                -float(np.mean(censored_log_likelihood(mu, sigma_train, lo, hi))) if len(ids) else float("nan")),
+            **mic_agreement(mu, lo, hi, np.asarray([censor.get(s, "") for s in ids], dtype=object)),
+            "calibration": calibration_scores(y_true, y_prob),
+            "calibration_at_sigma_train": calibration_scores(
+                y_true, prob_resistant(mu, sigma_train) if len(ids) else np.zeros(0)),
+            "censor_counts": pd.Series([censor.get(s, "") for s in ids]).value_counts().to_dict(),
+        }
+        blocks[name] = block
+
+    payload = build_results_payload(
+        task=task, drug=drug, model_name_or_path=model_name_or_path,
+        checkpoint_dir=str(out.resolve()), split_source=split_source,
+        metrics=blocks[_HOLDOUT]["metrics"], n_evaluate=len(splits.holdout), model_revision=model_revision,
+        run_config=run_config, versions={"torch": torch.__version__, "transformers": transformers.__version__},
+    )
+    payload["split"].update({"table": splits.path, "table_md5": splits.md5, "n_train": len(splits.train),
+                             "n_validate": len(splits.validate), "extra_holdouts": list(splits.extra)})
+    if splits.species:
+        payload["species"] = sorted(set(splits.species.values()))
+    payload["holdouts"] = blocks
+    payload["mic"] = {**cell_report, "sigma": sigma, "sigma_train": sigma_train, "sigma_validate_fit": fit}
+    write_results_json(out / "results.json", payload)
+    print(f"Wrote results JSON: {out / 'results.json'}")
+    for name, block in blocks.items():
+        m, mic = block["metrics"], block["mic"]
+        print(f"  {name}: AUROC={m['auroc']:.4f} AUPRC={m['auprc']:.4f} bal_acc={m['balanced_accuracy']:.4f} "
+              f"n={m['n_samples']} | NLL={mic['censored_nll']:.4f} ECE={mic['calibration']['ece']:.4f} "
+              f"(sigma_train ECE {mic['calibration_at_sigma_train']['ece']:.4f}) "
+              f"EA={mic['essential_agreement']:.4f} AA={mic['absolute_agreement']:.4f} "
+              f"coverage={mic['interval_coverage']:.4f}")
+    return payload
+
+
 ############################################################## Panel-aware trainer ##############################################################
 
 
@@ -404,6 +634,10 @@ def run(
     *,
     split_table: str | None = None,
     extra_holdouts: tuple[str, ...] | list[str] = DEFAULT_EXTRA_HOLDOUTS,
+    mic_objective: str = "bce",
+    mic_table: str | None = None,
+    mic_cells: str = "all",
+    mic_sigma_lr: float = 0.01,
 ):
     """Fine-tune Bacformer on TB AMR data with dynamic label injection.
 
@@ -453,6 +687,18 @@ def run(
     if split_table is not None and n_folds is not None:
         raise ValueError("--split-table fixes the splits itself; do not combine it with --n-folds.")
 
+    if mic_objective not in MIC_OBJECTIVES:
+        raise ValueError(f"--mic-objective must be one of {MIC_OBJECTIVES}, got {mic_objective!r}")
+    use_mic_loss = mic_objective != "bce"
+    use_mic_table = bool(mic_table)
+    if use_mic_loss and not mic_table:
+        raise ValueError(f"--mic-objective {mic_objective} needs --mic-table <drug>_mic_intervals.csv "
+                         "(engine.ast_labels.mic_intervals)")
+    if use_mic_table and split_table is None:
+        raise ValueError("--mic-table restricts a split table's cells: pass --split-table too")
+    if use_mic_loss and use_panel:
+        raise ValueError("--mic-objective and --panel-mode are two different heads on one run: pick one")
+
     if n_folds is not None:
         output_dir = f"{output_dir}_fold{fold:02d}_seed{seed}"
 
@@ -479,6 +725,9 @@ def run(
     print("------------------------------------------------\n")
 
     splits: SplitTableSplits | None = None
+    intervals: dict = {}
+    censor: dict = {}
+    cell_report: dict = {}
     if split_table is not None:
         splits = resolve_split_table(split_table, extra_holdouts, n_samples=n_samples, seed=seed)
         label_map = splits.label_map
@@ -495,6 +744,11 @@ def run(
                 f"{len(missing)} genome(s) of {splits.path} have no <Sample>_esm_embeddings.pt in {embeddings_path}: "
                 f"{missing[:10]}"
             )
+        if use_mic_table:
+            print(f"MIC arm: objective {mic_objective}, cells {mic_cells}, table {mic_table}")
+            splits, intervals, censor, cell_report = resolve_mic_cells(
+                splits, mic_table, mic_objective, mic_cells)
+            train_ids, val_ids, evaluate_ids = splits.train, splits.validate, splits.holdout
         if splits.smoke:
             print("Using dummy test mode with 10 samples (class-balanced; train = validate = holdout).")
             split_source = "smoke"
@@ -583,7 +837,9 @@ def run(
     print(f"Number of validation samples: {len(val_ids)}")
 
     def make_dataset(ids: list[str]):
-        """Build a label dataset, augmented with the surprisal panel when panel-mode is on."""
+        """Build a label dataset: the MIC interval 4-vector for a MIC-loss arm, else the 0/1 label."""
+        if use_mic_loss:
+            return IntervalInjectingFileDataset(ids, embeddings_path, intervals, drug)
         if use_panel:
             return PanelInjectingFileDataset(
                 ids, embeddings_path, label_map, drug, Path(panel_store), panel_standardization
@@ -599,7 +855,7 @@ def run(
         print(f"Sample keys: {list(sample.keys())}")
         emb = sample["protein_embeddings"]
         print(f"protein_embeddings shape: {emb.shape if hasattr(emb, 'shape') else len(emb)}")
-        print(f"labels shape: {sample['labels'].shape}, value: {sample['labels'].item()}")
+        print(f"labels shape: {sample['labels'].shape}, value: {sample['labels'].tolist()}")
     except Exception as e:  # noqa: BLE001 (debug inspection only — warn and continue on any failure)
         print(f"WARNING: Could not inspect sample: {e}")
 
@@ -745,17 +1001,31 @@ def run(
         _refuse_mismatched_resume(resume_from_checkpoint, early_stopping_patience, early_stopping_threshold)
     training_args = TrainingArguments(**training_args_dict)
 
-    trainer_cls = PanelBacformerLargeTrainer if use_panel else BacformerLargeTrainer
-    trainer = trainer_cls(
-        model=bacformer_model,
-        data_collator=collate_fn,
-        train_dataset=train_dataset,
-        eval_dataset=val_dataset,
-        args=training_args,
-        compute_metrics=compute_metrics_binary_genome_pred,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=early_stopping_patience,
-                                         early_stopping_threshold=early_stopping_threshold)],
-    )
+    callbacks = [EarlyStoppingCallback(early_stopping_patience=early_stopping_patience,
+                                       early_stopping_threshold=early_stopping_threshold)]
+    if use_mic_loss:
+        # eval_auroc stays metric_for_best_model for every arm, so what the comparison varies is the
+        # objective and not the stopping rule; MicEvalMetrics emits the same keys plus sigma and the NLL.
+        trainer_ref: list = [None]
+        trainer = MicBacformerTrainer(
+            model=bacformer_model, data_collator=collate_fn, train_dataset=train_dataset,
+            eval_dataset=val_dataset, args=training_args, compute_metrics=MicEvalMetrics(trainer_ref),
+            callbacks=callbacks, objective=mic_objective, sigma_lr=mic_sigma_lr,
+        )
+        trainer_ref[0] = trainer
+        if resume_from_checkpoint:
+            trainer.load_sigma(resume_from_checkpoint)
+    else:
+        trainer_cls = PanelBacformerLargeTrainer if use_panel else BacformerLargeTrainer
+        trainer = trainer_cls(
+            model=bacformer_model,
+            data_collator=collate_fn,
+            train_dataset=train_dataset,
+            eval_dataset=val_dataset,
+            args=training_args,
+            compute_metrics=compute_metrics_binary_genome_pred,
+            callbacks=callbacks,
+        )
     if resume_from_checkpoint:
         # Bacformer's problem_type="binary_classification" is its own extension and selects its loss; the generic
         # PretrainedConfig that Trainer._load_from_checkpoint reads the checkpoint's config.json with rejects any
@@ -777,6 +1047,25 @@ def run(
         "warmup_proportion": warmup_proportion,
         "max_steps": max_steps,
     }
+    if use_mic_loss and trainer.state.best_model_checkpoint:
+        # load_best_model_at_end restores the weights of the best checkpoint but knows nothing about sigma,
+        # so without this the reported training sigma would be the LAST step's, not the selected model's.
+        trainer.load_sigma(trainer.state.best_model_checkpoint, required=False)
+
+    if splits is not None and use_mic_loss:
+        trainer.save_state()
+        trainer.save_sigma(output_dir)
+        write_mic_split_table_results(
+            trainer, make_dataset, splits, intervals=intervals, censor=censor, cell_report=cell_report,
+            output_dir=output_dir, task=task, drug=drug, model_name_or_path=model_name_or_path,
+            model_revision=model_revision, split_source=split_source,
+            run_config={**run_config, "max_epochs": max_epochs, "batch_size": batch_size,
+                        "grad_accumulation_steps": grad_accumulation_steps, "n_samples": n_samples,
+                        "mic_objective": mic_objective, "mic_cells": mic_cells, "mic_table": mic_table,
+                        "mic_sigma_lr": mic_sigma_lr},
+        )
+        return
+
     if splits is not None:
         # The whole run's log history, as <output_dir>/trainer_state.json. No checkpoint holds it: with
         # save_total_limit=1 and load_best_model_at_end, HF deletes all but the best checkpoint at the end of train(),
@@ -913,6 +1202,20 @@ class ArgumentParser(Tap):
     extra_holdouts: list[str] = list(DEFAULT_EXTRA_HOLDOUTS)
     """With --split-table: further splits scored with the best model after training, beside the holdout
     (default holdout_st, the zero-shot held-out ST). Pass the flag with no value to score the holdout only."""
+    mic_objective: str = "bce"
+    """What the network's scalar output means and what loss trains it: 'bce' (the incumbent binary arm),
+    'mse' (least squares on a hand-imputed point MIC) or 'censored' (the interval-censored Gaussian likelihood
+    on log2 MIC). 'mse' and 'censored' need --mic-table. See engine/finetune/mic_trainer."""
+    mic_table: str | None = None
+    """A drug's <drug>_mic_intervals.csv (engine.ast_labels.mic_intervals). Required by --mic-objective
+    mse/censored, and usable with 'bce' to restrict the incumbent loss to the MIC-bearing cells (arm 0')."""
+    mic_cells: str = "all"
+    """Which cells of the split table a --mic-table run keeps: 'all' (every cell with a usable interval, bare
+    R/S calls included as open intervals) or 'mic_only' (cells with a measured MIC). Splits are never
+    reassigned — cells are only dropped — so every arm is scored on a subset of the same holdout."""
+    mic_sigma_lr: float = 0.01
+    """Learning rate for the drug's log sigma alone (--mic-objective censored). The network's 1.5e-4 would
+    move one scalar by ~0.5 in log-space over a whole run, so sigma would never reach its optimum."""
 
 
 def resolve_task_paths(
@@ -987,4 +1290,8 @@ if __name__ == "__main__":
         resume_from_checkpoint=args.resume_from_checkpoint,
         split_table=args.split_table,
         extra_holdouts=args.extra_holdouts,
+        mic_objective=args.mic_objective,
+        mic_table=args.mic_table,
+        mic_cells=args.mic_cells,
+        mic_sigma_lr=args.mic_sigma_lr,
     )

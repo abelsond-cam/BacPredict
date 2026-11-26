@@ -159,3 +159,47 @@ class PanelInjectingFileDataset(LabelInjectingFileDataset):
         panel = np.nan_to_num(panel, nan=0.0, posinf=0.0, neginf=0.0)
         sample["panel"] = torch.from_numpy(panel).unsqueeze(0)  # [1, n_proteins, panel_dim]
         return sample
+
+
+class IntervalInjectingFileDataset(LabelInjectingFileDataset):
+    """:class:`LabelInjectingFileDataset` whose label is the **censored MIC interval**, not a bare 0/1.
+
+    ``sample["labels"]`` is a length-4 float tensor ``(ast_label, lo, hi, point)``:
+
+    * ``ast_label`` — the split table's binary phenotype, carried through unchanged so every R/S metric is
+      computed against the same labels as the BCE arm and the two are directly comparable;
+    * ``lo``, ``hi`` — the half-open interval ``(lo, hi]`` the latent log2 MIC lies in, in doubling dilutions
+      from the drug's EUCAST R breakpoint (:mod:`bacpredict.engine.ast_labels.mic_intervals`). Either may be
+      ``-inf`` / ``+inf``; the collate function and the censored loss both carry infinities;
+    * ``point`` — the hand-imputed point MIC for the least-squares arm, ``nan`` where the cell has no MIC.
+
+    Four numbers rather than a dict because HF's ``Trainer.prediction_step`` reads ``inputs["labels"]`` as the
+    ``label_ids`` it hands to ``compute_metrics``: anything not in that tensor never reaches the metrics.
+
+    Parameters
+    ----------
+    sample_ids, embeddings_dir, label_column
+        As :class:`LabelInjectingFileDataset`.
+    interval_map : dict[str, tuple[float, float, float, float]]
+        ``sample_id -> (ast_label, lo, hi, point)``.
+    """
+
+    def __init__(
+        self,
+        sample_ids: list[str],
+        embeddings_dir: Path,
+        interval_map: dict[str, tuple[float, float, float, float]],
+        label_column: str,
+    ) -> None:
+        missing = [s for s in sample_ids if s not in interval_map]
+        if missing:
+            raise KeyError(f"{len(missing)} sample(s) have no MIC interval row: {missing[:10]}")
+        # the base class attaches one scalar per sample; the placeholder it reads is overwritten below with the
+        # 4-vector, so it is never seen by the loss or the metrics
+        super().__init__(sample_ids, embeddings_dir, dict.fromkeys(sample_ids, 0), label_column)
+        self.interval_map = interval_map
+
+    def __getitem__(self, idx: int) -> dict:
+        sample = super().__getitem__(idx)
+        sample["labels"] = torch.tensor(self.interval_map[self.sample_ids[idx]], dtype=torch.float32)
+        return sample
