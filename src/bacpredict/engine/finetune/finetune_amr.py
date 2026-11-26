@@ -210,22 +210,30 @@ def write_scores(
     drug: str,
     split: str,
     species: dict[str, str],
+    score: np.ndarray | None = None,
 ) -> None:
     """Per-sample scores of one holdout, in the ``eval_scores.npz`` layout (row i is ``sample_ids[i]``).
 
     Adds ``split`` (per row, as ``score_cohort`` does) and ``species`` (``""`` when the table has none). There is
     no tuned threshold here, so ``operating_threshold`` is NaN.
+
+    ``score`` is the model's **raw scalar output** before any link — the logit for a binary arm, ``mu`` for a
+    MIC arm. It is what a post-hoc calibration fit needs: a probability that has saturated to 1.0 in float
+    cannot be inverted back to the logit that produced it. Added as an extra array, so every existing reader
+    of this file is unaffected.
     """
-    np.savez(
-        path,
-        y_true=np.asarray(y_true).astype(int),
-        y_prob=np.asarray(y_prob).astype(float),
-        sample_ids=np.asarray(sample_ids, dtype=np.str_),
-        drug=np.array(drug),
-        split=np.asarray([split] * len(sample_ids), dtype=np.str_),
-        species=np.asarray([species.get(s, "") for s in sample_ids], dtype=np.str_),
-        operating_threshold=np.array(np.nan),
-    )
+    arrays = {
+        "y_true": np.asarray(y_true).astype(int),
+        "y_prob": np.asarray(y_prob).astype(float),
+        "sample_ids": np.asarray(sample_ids, dtype=np.str_),
+        "drug": np.array(drug),
+        "split": np.asarray([split] * len(sample_ids), dtype=np.str_),
+        "species": np.asarray([species.get(s, "") for s in sample_ids], dtype=np.str_),
+        "operating_threshold": np.array(np.nan),
+    }
+    if score is not None:
+        arrays["score"] = np.asarray(score).astype(float)
+    np.savez(path, **arrays)
 
 
 def scores_filename(split: str) -> str:
@@ -235,8 +243,8 @@ def scores_filename(split: str) -> str:
 
 def predict_holdout(
     trainer, dataset, sample_ids: list[str], label_map: dict[str, int]
-) -> tuple[np.ndarray, np.ndarray]:
-    """``(y_true, y_prob)`` for ``sample_ids`` in order, from ``trainer.predict`` on their dataset.
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """``(y_true, y_prob, logits)`` for ``sample_ids`` in order, from ``trainer.predict`` on their dataset.
 
     Row i must be ``sample_ids[i]``: the scores file pairs them by position. So nothing is dropped (the trainer
     path's ``-100`` filter would shift every later row) and the predicted labels must equal the table's, in order.
@@ -251,7 +259,8 @@ def predict_holdout(
     expected = np.asarray([label_map[s] for s in sample_ids], dtype=int)
     if not np.array_equal(y_true, expected):
         raise RuntimeError("predict's labels are not the split table's, in order: scores would mis-pair with samples")
-    return y_true, torch.sigmoid(logits.float()).cpu().numpy().astype(float)
+    return (y_true, torch.sigmoid(logits.float()).cpu().numpy().astype(float),
+            logits.float().cpu().numpy().astype(float))
 
 
 def write_split_table_results(
@@ -268,6 +277,7 @@ def write_split_table_results(
     n_train: int,
     n_validate: int,
     run_config: dict,
+    validate_ids: list[str] | None = None,
 ) -> dict:
     """Score every holdout of a split table with the trained (best) model; write the npz files and ``results.json``.
 
@@ -281,12 +291,22 @@ def write_split_table_results(
         scores_file = scores_filename(name)
         if ids:
             print(f"Running post-training evaluation on {name}: {len(ids)} samples.")
-            y_true, y_prob = predict_holdout(trainer, make_dataset(ids), ids, splits.label_map)
+            y_true, y_prob, logits = predict_holdout(trainer, make_dataset(ids), ids, splits.label_map)
         else:
             print(f"No {name} samples for {drug}: recorded with n_samples 0.")
-            y_true, y_prob = np.zeros(0, dtype=int), np.zeros(0, dtype=float)
-        write_scores(out / scores_file, ids, y_true, y_prob, drug=drug, split=name, species=splits.species)
+            y_true, y_prob, logits = (np.zeros(0, dtype=int), np.zeros(0), np.zeros(0))
+        write_scores(out / scores_file, ids, y_true, y_prob, drug=drug, split=name, species=splits.species,
+                     score=logits)
         blocks[name] = holdout_report(ids, y_true, y_prob, splits.species, splits.multi_species, scores_file)
+    if validate_ids:
+        # Validate scores, so this arm's probabilities can be temperature-scaled post hoc on the same split a
+        # MIC arm re-fits its sigma on. Without them a binary arm can only be compared untempered against a
+        # tempered one, which would credit the estimator with the scaling.
+        print(f"Scoring validate for post-hoc calibration: {len(validate_ids)} samples.")
+        v_true, v_prob, v_logits = predict_holdout(trainer, make_dataset(validate_ids), validate_ids,
+                                                   splits.label_map)
+        write_scores(out / "eval_scores_validate.npz", validate_ids, v_true, v_prob, drug=drug,
+                     split="validate", species=splits.species, score=v_logits)
 
     payload = build_results_payload(
         task=task,
@@ -427,6 +447,8 @@ def write_mic_scores(path: str | Path, sample_ids: list[str], y_true, y_prob, mu
         operating_threshold=np.array(np.nan),
         mu=np.asarray(mu).astype(float), lo=np.asarray(lo).astype(float), hi=np.asarray(hi).astype(float),
         sigma=np.array(float(sigma)),
+        # the same key a binary arm writes: the model's raw scalar output, before any link
+        score=np.asarray(mu).astype(float),
     )
 
 
@@ -465,6 +487,11 @@ def write_mic_split_table_results(
     mu_v, _, lo_v, hi_v = predict_mic(trainer, make_dataset(splits.validate), splits.validate, intervals)
     fit = fit_sigma(mu_v, lo_v, hi_v)
     sigma, sigma_train = fit["sigma"], trainer.sigma
+    # the same file a binary arm writes, so the collector applies one rule to every arm
+    write_mic_scores(out / "eval_scores_validate.npz", splits.validate,
+                     np.asarray([intervals[s][0] for s in splits.validate], dtype=int),
+                     prob_resistant(mu_v, sigma), mu_v, lo_v, hi_v,
+                     drug=drug, split="validate", species=splits.species, sigma=sigma)
     print(f"  sigma: train {sigma_train:.4f} -> validate re-fit {sigma:.4f} dilutions "
           f"(validate mean NLL {fit['mean_nll']:.4f}, n={fit['n']}, at_bound={fit['at_bound']}; "
           f"assay floor {ASSAY_REPRODUCIBILITY_DILUTIONS} would give {fit['sigma_assay_floor']:.4f})")
@@ -1083,6 +1110,7 @@ def run(
             split_source=split_source,
             n_train=len(train_ids),
             n_validate=len(val_ids),
+            validate_ids=val_ids if use_mic_table else None,
             run_config={
                 **run_config,
                 "max_epochs": max_epochs,

@@ -7,11 +7,11 @@ import pandas as pd
 import pytest
 
 from bacpredict.engine.ast_labels.mic_intervals import (
+    ast_tests_to_intervals,
     check_against_split_table,
     collapse_to_cells,
-    snap_to_ladder,
     intervals_from_reported_mic,
-    ast_tests_to_intervals,
+    snap_to_ladder,
 )
 
 INF = float("inf")

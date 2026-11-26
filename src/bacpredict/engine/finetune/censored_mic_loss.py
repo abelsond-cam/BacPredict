@@ -47,6 +47,9 @@ BIG = 1.0e4
 #: bound is reported as such rather than silently used.
 SIGMA_MIN, SIGMA_MAX = 0.02, 50.0
 
+#: Bounds on the binary arms' temperature, the same role SIGMA_MIN/SIGMA_MAX play for the MIC arms.
+TEMPERATURE_MIN, TEMPERATURE_MAX = 0.02, 50.0
+
 #: ISO 20776-2 essential agreement is +-1 doubling dilution: the assay's own reproducibility, so a residual SD
 #: below it is measuring noise the assay cannot resolve. Reported beside the fitted value, never imposed on it.
 ASSAY_REPRODUCIBILITY_DILUTIONS = 1.0
@@ -177,6 +180,48 @@ def fit_sigma(mu: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> dict:
     sigma = float(math.exp(best_log_sigma))
     return {"sigma": sigma, "mean_nll": float(best_nll / mu.size), "n": int(mu.size), "at_bound": at_bound,
             "sigma_assay_floor": float(max(sigma, ASSAY_REPRODUCIBILITY_DILUTIONS))}
+
+
+def fit_logit_temperature(logits: np.ndarray, y_true: np.ndarray) -> dict:
+    """Maximum-likelihood temperature ``T`` for a **binary** arm's logits, fitted on validate.
+
+    The binary arms have no ``sigma`` — their probability is ``sigmoid(z)`` straight from the head — so
+    comparing their calibration with a MIC arm whose ``sigma`` was re-fitted on validate would be comparing a
+    temperature-scaled model with an untempered one, and would credit the estimator with the scaling. This is
+    the same one-parameter fit on the same split (Guo et al. 2017), so every arm can be reported both ways.
+
+    ``T`` is exactly analogous to ``sigma``: ``sigmoid(z/T)`` is monotone in ``z`` and crosses 0.5 where ``z``
+    does, so it moves calibration and nothing else. ``T > 1`` means the model was over-confident.
+
+    Returns
+    -------
+    dict
+        ``temperature``, ``mean_nll`` at it, ``n``, and ``at_bound``.
+    """
+    z = np.asarray(logits, dtype=float).ravel()
+    y = np.asarray(y_true, dtype=float).ravel()
+    ok = np.isfinite(z) & np.isfinite(y)
+    z, y = z[ok], y[ok]
+    if z.size == 0 or len(np.unique(y)) < 2:
+        return {"temperature": float("nan"), "mean_nll": float("nan"), "n": int(z.size), "at_bound": False}
+
+    def neg_ll(log_t: float) -> float:
+        a = z / math.exp(log_t)
+        # log sigmoid(a) and log sigmoid(-a), both written stably
+        return float(np.sum(np.logaddexp(0.0, -a) * y + np.logaddexp(0.0, a) * (1.0 - y)))
+
+    lo_b, hi_b = math.log(TEMPERATURE_MIN), math.log(TEMPERATURE_MAX)
+    res = minimize_scalar(neg_ll, bounds=(lo_b, hi_b), method="bounded", options={"xatol": 1e-6})
+    best_nll, best = min([(res.fun, float(res.x)), (neg_ll(lo_b), lo_b), (neg_ll(hi_b), hi_b)], key=lambda c: c[0])
+    at_bound = bool(min(neg_ll(lo_b), neg_ll(hi_b)) <= best_nll + 1e-6 * max(z.size, 1))
+    return {"temperature": float(math.exp(best)), "mean_nll": float(best_nll / z.size), "n": int(z.size),
+            "at_bound": at_bound}
+
+
+def prob_resistant_tempered(logits: np.ndarray, temperature: float) -> np.ndarray:
+    """``sigmoid(z / T)`` — a binary arm's probability after the validate temperature fit."""
+    z = np.asarray(logits, dtype=float).ravel() / float(np.clip(temperature, TEMPERATURE_MIN, TEMPERATURE_MAX))
+    return 1.0 / (1.0 + np.exp(-z))
 
 
 def prob_resistant(mu: np.ndarray, sigma: float) -> np.ndarray:

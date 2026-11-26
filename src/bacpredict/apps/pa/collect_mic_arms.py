@@ -42,7 +42,14 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from bacpredict.engine.finetune.censored_mic_loss import calibration_scores, censored_log_likelihood, mic_agreement
+from bacpredict.engine.finetune.censored_mic_loss import (
+    calibration_scores,
+    censored_log_likelihood,
+    fit_logit_temperature,
+    mic_agreement,
+    prob_resistant,
+    prob_resistant_tempered,
+)
 from bacpredict.engine.finetune.metrics import compute_full_metrics
 
 logger = logging.getLogger(__name__)
@@ -50,11 +57,16 @@ logger = logging.getLogger(__name__)
 METRICS = ("auroc", "auprc", "sensitivity", "specificity", "balanced_accuracy", "f1", "prevalence")
 MIC_KEYS = ("sigma", "sigma_train", "censored_nll", "censored_nll_at_sigma_train", "interval_coverage",
             "absolute_agreement", "essential_agreement", "bias_log2", "rmse_log2", "n_exact")
+CALIBRATION_KEYS = ("brier", "ece", "brier_raw", "ece_raw", "temperature")
 
 
 def _scores(run: Path, scores_file: str) -> dict | None:
     """One holdout's per-sample scores, or ``None`` when the arm has not written them."""
-    path = run / scores_file
+    return _load_npz(run / scores_file)
+
+
+def _load_npz(path: Path) -> dict | None:
+    """An npz as a plain dict of arrays, or ``None`` when it is not there."""
     if not path.exists():
         return None
     with np.load(path, allow_pickle=False) as z:
@@ -63,22 +75,41 @@ def _scores(run: Path, scores_file: str) -> dict | None:
     return out
 
 
-def _row(arm: str, drug: str, holdout: str, subset: str, z: dict, mic_block: dict | None, base: dict) -> dict:
-    """Metrics for one arm on one set of samples, recomputed here so every arm is scored by one code path."""
+def _row(arm: str, drug: str, holdout: str, subset: str, z: dict, mic_block: dict | None, base: dict,
+         temperature: float = float("nan")) -> dict:
+    """Metrics for one arm on one set of samples, recomputed here so every arm is scored by one code path.
+
+    **Calibration is reported twice for every arm, raw and tempered, and the two mean the same thing in each.**
+    ``*_raw`` is the model's own probability, straight from its head; ``brier``/``ece`` are after the
+    one-parameter scale fitted on **validate** — ``sigma`` for a MIC arm, a logit temperature for a binary one
+    (:func:`~bacpredict.engine.finetune.censored_mic_loss.fit_logit_temperature`). Reporting a tempered MIC arm
+    against an untempered binary one would credit the estimator with the scaling. Neither scale can move
+    ``auroc``, ``auprc`` or the R/S call, so those columns are the same number either way.
+    """
     y_true, y_prob = z["y_true"].astype(int), z["y_prob"].astype(float)
     full = compute_full_metrics(y_true, y_prob)
-    cal = calibration_scores(y_true, y_prob)
     row = {**base, "arm": arm, "drug": drug, "holdout": holdout, "subset": subset,
            "n_samples": int(y_true.size), "n_resistant": int(y_true.sum()),
-           **{m: full[m] for m in METRICS}, "brier": cal["brier"], "ece": cal["ece"]}
+           **{m: full[m] for m in METRICS}}
     if "mu" not in z:
-        return {**row, **dict.fromkeys(MIC_KEYS), "ece_at_sigma_train": np.nan}
+        raw = calibration_scores(y_true, y_prob)                      # sigmoid(z), the head's own probability
+        if np.isfinite(temperature) and "score" in z and y_true.size:
+            tempered = calibration_scores(y_true, prob_resistant_tempered(z["score"], temperature))
+        else:
+            tempered = {"brier": np.nan, "ece": np.nan}               # no validate scores: cannot be tempered
+        return {**row, **dict.fromkeys(MIC_KEYS), "brier": tempered["brier"], "ece": tempered["ece"],
+                "brier_raw": raw["brier"], "ece_raw": raw["ece"], "temperature": float(temperature)}
     mu, lo, hi = z["mu"].astype(float), z["lo"].astype(float), z["hi"].astype(float)
     sigma = float(z["sigma"])
     sigma_train = float((mic_block or {}).get("sigma_train", np.nan))
     censor = np.asarray((mic_block or {}).get("censor_classes", [""] * mu.size), dtype=object)
     agree = mic_agreement(mu, lo, hi, censor)
+    tempered = calibration_scores(y_true, y_prob)                     # y_prob is already Phi(mu/sigma_validate)
+    raw = (calibration_scores(y_true, prob_resistant(mu, sigma_train))
+           if np.isfinite(sigma_train) and mu.size else {"brier": np.nan, "ece": np.nan})
     row |= {
+        "brier": tempered["brier"], "ece": tempered["ece"],
+        "brier_raw": raw["brier"], "ece_raw": raw["ece"], "temperature": float("nan"),
         "sigma": sigma, "sigma_train": sigma_train,
         "censored_nll": -float(np.mean(censored_log_likelihood(mu, sigma, lo, hi))) if mu.size else np.nan,
         "censored_nll_at_sigma_train": (
@@ -88,11 +119,6 @@ def _row(arm: str, drug: str, holdout: str, subset: str, z: dict, mic_block: dic
         "essential_agreement": agree["essential_agreement"], "bias_log2": agree["bias_log2"],
         "rmse_log2": agree["rmse_log2"], "n_exact": agree["n_exact"],
     }
-    if np.isfinite(sigma_train) and mu.size:
-        from scipy.special import ndtr
-        row["ece_at_sigma_train"] = calibration_scores(y_true, ndtr(mu / sigma_train))["ece"]
-    else:
-        row["ece_at_sigma_train"] = np.nan
     return row
 
 
@@ -112,7 +138,8 @@ def _censor_classes(intervals_dir: Path | None, drug: str, sample_ids: np.ndarra
 
 
 def collect(arms: dict[str, Path], drugs: list[str], holdouts: tuple[str, ...],
-            intervals_dir: Path | None = None) -> pd.DataFrame:
+            intervals_dir: Path | None = None,
+            validate_scores: dict[str, Path] | None = None) -> pd.DataFrame:
     """One row per arm x drug x holdout x subset, with the paired ``common`` subset computed per drug."""
     rows: list[dict] = []
     for drug in drugs:
@@ -129,7 +156,20 @@ def collect(arms: dict[str, Path], drugs: list[str], holdouts: tuple[str, ...],
                     "split_table_md5": r["split"].get("table_md5"), "git_sha": r["model"].get("git_sha"),
                     "objective": (r.get("mic") or {}).get("objective", "bce"),
                     "cells": (r.get("mic") or {}).get("cells", "all"), "results_json": str(results)}
-            loaded[arm] = {"run": run, "results": r, "base": base}
+            # a binary arm's temperature, fitted on ITS OWN validate scores (the same split a MIC arm
+            # re-fits sigma on). Absent for a run written before validate scores were saved — the incumbent
+            # arm 0 — whose tempered calibration is then NaN rather than silently its raw one.
+            v = _scores(run, "eval_scores_validate.npz")
+            if v is None and (validate_scores or {}).get(arm):
+                # an arm trained before validate scores were saved, re-scored afterwards by
+                # engine/finetune/score_split into a directory of its own
+                v = _load_npz(Path(validate_scores[arm]) / f"{drug}_validate_scores.npz")
+            temperature = float("nan")
+            if v is not None and "score" in v and "mu" not in v:
+                fit = fit_logit_temperature(v["score"], v["y_true"])
+                temperature = fit["temperature"]
+                base = {**base, "temperature_fit_n": fit["n"], "temperature_at_bound": fit["at_bound"]}
+            loaded[arm] = {"run": run, "results": r, "base": base, "temperature": temperature}
 
         for holdout in holdouts:
             present = {}
@@ -143,19 +183,19 @@ def collect(arms: dict[str, Path], drugs: list[str], holdouts: tuple[str, ...],
                 mic_block = dict(block.get("mic") or {})
                 if "mu" in z:
                     mic_block["censor_classes"] = _censor_classes(intervals_dir, drug, z["sample_ids"])
-                present[arm] = (z, mic_block, info["base"])
+                present[arm] = (z, mic_block, info["base"], info["temperature"])
             if not present:
                 continue
-            common = set.intersection(*(set(z["sample_ids"]) for z, _, _ in present.values()))
-            for arm, (z, mic_block, base) in present.items():
-                rows.append(_row(arm, drug, holdout, "own", z, mic_block, base))
+            common = set.intersection(*(set(z["sample_ids"]) for z, _, _, _ in present.values()))
+            for arm, (z, mic_block, base, temperature) in present.items():
+                rows.append(_row(arm, drug, holdout, "own", z, mic_block, base, temperature))
                 keep = np.isin(z["sample_ids"], list(common))
                 sub = {k: (v[keep] if isinstance(v, np.ndarray) and v.shape[:1] == z["y_true"].shape else v)
                        for k, v in z.items()}
                 if mic_block.get("censor_classes") is not None:
                     mic_block = {**mic_block,
                                  "censor_classes": list(np.asarray(mic_block["censor_classes"])[keep])}
-                rows.append(_row(arm, drug, holdout, "common", sub, mic_block, base))
+                rows.append(_row(arm, drug, holdout, "common", sub, mic_block, base, temperature))
     return pd.DataFrame(rows)
 
 
@@ -168,6 +208,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--holdouts", nargs="+", default=["holdout", "holdout_st"])
     p.add_argument("--intervals-dir", help="directory of <drug>_mic_intervals.csv, for the censoring classes "
                                            "the agreement rates need (without it they are NaN, not wrong)")
+    p.add_argument("--validate-scores", action="append", default=[], metavar="NAME=DIR",
+                   help="for an arm whose run dir has no eval_scores_validate.npz (one trained before they "
+                        "were saved): a directory of <drug>_validate_scores.npz from engine/finetune/"
+                        "score_split. Without it that arm's tempered calibration is NaN, never its raw one")
     p.add_argument("--out", required=True)
     args = p.parse_args(argv)
 
@@ -178,15 +222,21 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"--arm wants NAME=DIR, got {spec!r}")
         name, directory = spec.split("=", 1)
         arms[name] = Path(directory)
+    extra_validate: dict[str, Path] = {}
+    for spec in args.validate_scores:
+        if "=" not in spec:
+            raise SystemExit(f"--validate-scores wants NAME=DIR, got {spec!r}")
+        name, directory = spec.split("=", 1)
+        extra_validate[name] = Path(directory)
     df = collect(arms, args.drugs, tuple(args.holdouts),
-                 Path(args.intervals_dir) if args.intervals_dir else None)
+                 Path(args.intervals_dir) if args.intervals_dir else None, extra_validate)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(args.out, index=False)
     logger.info("wrote %s (%d rows)", args.out, len(df))
 
     show = df[(df["holdout"] == "holdout") & (df["subset"] == "common")]
-    cols = ["drug", "arm", "n_samples", "auroc", "auprc", "balanced_accuracy", "brier", "ece",
-            "ece_at_sigma_train", "sigma", "censored_nll", "essential_agreement", "absolute_agreement"]
+    cols = ["drug", "arm", "n_samples", "auroc", "auprc", "balanced_accuracy", "brier", "ece", "ece_raw",
+            "temperature", "sigma", "censored_nll", "essential_agreement", "absolute_agreement"]
     if not show.empty:
         print("\n=== holdout, on the subset every arm scored (the paired comparison) ===")
         with pd.option_context("display.width", 240, "display.max_columns", 30):

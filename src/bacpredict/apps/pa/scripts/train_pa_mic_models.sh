@@ -8,6 +8,7 @@
 #   bash src/bacpredict/apps/pa/scripts/train_pa_mic_models.sh check-smoke     # Stage A: every output written
 #   bash src/bacpredict/apps/pa/scripts/train_pa_mic_models.sh overfit         # Stage B: the smoke's loss -> ~0
 #   ARRAY_REPO=<worktree> bash …/train_pa_mic_models.sh submit                 # Stage C: one GPU array per arm
+#   ARRAY_REPO=<worktree> bash …/train_pa_mic_models.sh arm0-validate          # arm 0's validate logits (see below)
 #   bash src/bacpredict/apps/pa/scripts/train_pa_mic_models.sh collect         # every arm x drug, side by side
 #
 # ---------------------------------------------------------------------------------------------------------
@@ -60,6 +61,16 @@
 # the cohort and break the pairing with arm 0. `intervals` counts them so the size of that future gain is on
 # the record.
 #
+# CALIBRATION MUST BE DONE THE SAME WAY IN EVERY ARM, or the comparison credits the estimator with it. The
+# MIC arms re-fit sigma on validate; a binary arm has no sigma, so it gets the exactly analogous thing — a
+# logit temperature fitted on the same split (Guo et al. 2017). Arms 0' A and B save their own validate scores
+# as they train. Arm 0 finished before those were saved, so `arm0-validate` scores its surviving checkpoints
+# on validate after the fact (engine/finetune/score_split, inference only, nothing written into its run dir).
+# Until that has run, arm 0's tempered calibration is reported as NaN — never as its raw number.
+#
+# Every arm is therefore reported twice: `*_raw` is the model's own probability, `brier`/`ece` are after the
+# validate-fitted scale. Neither scale can move AUROC, AUPRC or the R/S call.
+#
 # Settings: SMOKE_DRUG / SMOKE_ARM, ONLY (comma-separated drugs), ARMS (comma-separated arm names),
 # ARRAY_CONCURRENT (a %N throttle), SMOKE_TIME / TRAIN_TIME (walls), OVERWRITE=1 (rebuild interval tables).
 set -euo pipefail
@@ -104,9 +115,12 @@ SMOKE_DRUG=${SMOKE_DRUG:-ciprofloxacin}
 SMOKE_ARM=${SMOKE_ARM:-censored_interval}
 TASK_LABEL=pa_mic_ast
 
+ARM0_VALIDATE=$T/arm0_validate
 ARRAY=src/bacpredict/engine/finetune/scripts/finetune_amr_array.sh
+SCORE_ARRAY=src/bacpredict/engine/finetune/scripts/score_split_array.sh
 # what the array runs in ARRAY_REPO: it must be this driver's own copy of each (same_array_code)
-ARRAY_CODE=("$ARRAY" src/bacpredict/engine/finetune/finetune_amr.py src/bacpredict/engine/finetune/datasets.py
+ARRAY_CODE=("$ARRAY" "$SCORE_ARRAY" src/bacpredict/engine/finetune/score_split.py
+            src/bacpredict/engine/finetune/finetune_amr.py src/bacpredict/engine/finetune/datasets.py
             src/bacpredict/engine/finetune/metrics.py src/bacpredict/engine/finetune/attention_pool.py
             src/bacpredict/engine/finetune/mic_trainer.py
             src/bacpredict/engine/finetune/censored_mic_loss.py
@@ -337,10 +351,32 @@ submit)
     echo "drugs (array index order): ${PA_DRUGS[*]}"
     echo "arm 0 (the incumbent) is NOT re-run: it is at $ARM0/<drug>/results.json"
     ;;
+arm0-validate)
+    array_repo=${ARRAY_REPO:?set ARRAY_REPO to a detached worktree at the SHA to run (see the header)}
+    same_array_code "$array_repo"
+    need_tables "${PA_DRUGS[@]}"
+    no_live pa-mic-arm0-validate
+    for d in "${PA_DRUGS[@]}"; do
+        [[ -d $ARM0/$d ]] || { echo "no incumbent run at $ARM0/$d"; exit 1; }
+        [[ ! -e $ARM0_VALIDATE/${d}_validate_scores.npz ]] || {
+            echo "$ARM0_VALIDATE/${d}_validate_scores.npz exists: move it aside (or set ONLY)"; exit 1; }
+    done
+    sha=$(git -C "$array_repo" rev-parse HEAD)
+    drugs=$(IFS=:; echo "${PA_DRUGS[*]}")
+    # Inference over 821-1,203 validate genomes per drug: minutes, so a tight 40 min wall (the array's own).
+    # Independent of everything else — it reads only the incumbent's existing checkpoints — so it can run
+    # alongside the training arms rather than after them.
+    submit --array=0-$((${#PA_DRUGS[@]} - 1)) --job-name=pa-mic-arm0-validate \
+        --export="ALL,REPO=$array_repo,EXPECT_SHA=$sha,DRUGS=$drugs,SPLIT_DIR=$SPLITS,CHECKPOINT_ROOT=$ARM0,EMBEDDINGS_DIR=$ESM,OUT_DIR=$ARM0_VALIDATE,SPLIT=validate" \
+        "$array_repo/$SCORE_ARRAY"
+    echo "drugs (array index order): ${PA_DRUGS[*]}"
+    echo "arm 0 validate logits -> $ARM0_VALIDATE/<drug>_validate_scores.npz (the incumbent's own dir is not touched)"
+    ;;
 collect)
     uv run --no-sync python -m bacpredict.apps.pa.collect_mic_arms \
         --arm "0_bce_all_cells=$ARM0" \
         $(for a in "${ARM_ORDER[@]}"; do echo --arm "$a=$MODELS/$a"; done) \
+        --validate-scores "0_bce_all_cells=$ARM0_VALIDATE" \
         --drugs "${PA_DRUGS[@]}" --intervals-dir "$INTERVALS" --out "$MODELS/mic_arm_metrics.csv"
     ;;
 *)

@@ -139,7 +139,9 @@ def test_sigma_moves_calibration_and_cannot_move_ranking():
 
 def test_censored_log_likelihood_matches_the_torch_loss():
     """The numpy read-out path and the torch training path must not be two different models."""
-    mu = np.array([-2.0, 0.3, 4.0]); lo = np.array([-INF, 0.0, 3.0]); hi = np.array([-1.0, 1.0, INF])
+    mu = np.array([-2.0, 0.3, 4.0])
+    lo = np.array([-INF, 0.0, 3.0])
+    hi = np.array([-1.0, 1.0, INF])
     np_nll = -censored_log_likelihood(mu, 1.3, lo, hi)
     torch_nll = interval_censored_gaussian_nll(
         torch.tensor(mu), torch.tensor(math.log(1.3)), torch.tensor(lo), torch.tensor(hi), reduction="none")
@@ -157,7 +159,8 @@ def test_the_predicted_ladder_point_is_the_one_whose_interval_contains_mu():
 def test_agreement_rates_use_only_the_uncensored_cells():
     """A censored observation has no MIC to agree with, so it contributes to coverage and nothing else."""
     mu = np.array([0.4, 3.4, 9.0])
-    lo = np.array([0.0, 1.0, 3.0]); hi = np.array([1.0, 2.0, INF])
+    lo = np.array([0.0, 1.0, 3.0])
+    hi = np.array([1.0, 2.0, INF])
     out = mic_agreement(mu, lo, hi, np.array(["exact", "exact", "right"]))
     assert out["n"] == 3 and out["n_exact"] == 2
     assert out["interval_coverage"] == pytest.approx(2 / 3)      # the right-censored one is covered
@@ -169,3 +172,41 @@ def test_a_holdout_with_no_uncensored_cell_reports_nan_not_zero():
     """An agreement rate over nothing is unknown, which is not the same number as nought."""
     out = mic_agreement(np.array([1.0]), np.array([0.0]), np.array([INF]), np.array(["right"]))
     assert out["n_exact"] == 0 and math.isnan(out["absolute_agreement"])
+
+
+# ------------------------------------------------------------------ the binary arms' temperature
+
+
+def test_the_temperature_fit_recovers_an_injected_over_confidence():
+    """A binary arm has no sigma, so this is what makes its calibration comparable with a MIC arm's."""
+    from bacpredict.engine.finetune.censored_mic_loss import fit_logit_temperature, prob_resistant_tempered
+    rng = np.random.default_rng(0)
+    z = rng.normal(0, 1.5, 20000)
+    y = (rng.random(20000) < 1 / (1 + np.exp(-z))).astype(int)   # calibrated at T = 1 by construction
+    for injected in (0.4, 1.0, 2.5):
+        fit = fit_logit_temperature(z * injected, y)
+        assert fit["temperature"] == pytest.approx(injected, rel=0.05)
+        before = calibration_scores(y, 1 / (1 + np.exp(-z * injected)))["ece"]
+        after = calibration_scores(y, prob_resistant_tempered(z * injected, fit["temperature"]))["ece"]
+        assert after <= before + 1e-9
+
+
+def test_the_temperature_cannot_move_ranking_or_the_call():
+    """Same guarantee as sigma's: sigmoid(z/T) is monotone in z and crosses 0.5 where z does."""
+    from sklearn.metrics import roc_auc_score
+
+    from bacpredict.engine.finetune.censored_mic_loss import prob_resistant_tempered
+    rng = np.random.default_rng(1)
+    z = rng.normal(0, 2, 3000)
+    y = (rng.random(3000) < 1 / (1 + np.exp(-z))).astype(int)
+    aurocs = [roc_auc_score(y, prob_resistant_tempered(z, t)) for t in (0.5, 1.0, 3.0)]
+    assert aurocs[0] == pytest.approx(aurocs[1]) == pytest.approx(aurocs[2])
+    for t in (0.5, 1.0, 3.0):
+        assert np.array_equal((prob_resistant_tempered(z, t) >= 0.5).astype(int), (z >= 0).astype(int))
+
+
+def test_a_single_class_validate_split_has_no_temperature_to_fit():
+    """Returning 1.0 there would assert a calibration nobody measured."""
+    from bacpredict.engine.finetune.censored_mic_loss import fit_logit_temperature
+    out = fit_logit_temperature(np.array([1.0, 2.0, 3.0]), np.array([1, 1, 1]))
+    assert math.isnan(out["temperature"])
