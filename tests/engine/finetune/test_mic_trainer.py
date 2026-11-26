@@ -238,3 +238,27 @@ def test_a_censored_step_runs_end_to_end_and_moves_sigma(tmp_path):
     assert t.log_sigma.grad is not None and torch.isfinite(t.log_sigma.grad)
     opt.step()
     assert t.sigma != before
+
+
+class _BacformerShapedModel(_TinyModel):
+    """Returns the real ``BacformerModelOutput``, not a plain dict — the thing the GPU run actually produces."""
+
+    def forward(self, protein_embeddings=None, labels=None, attention_mask=None, contig_ids=None, **_):
+        from bacformer.modeling.modeling_large import BacformerModelOutput
+        return BacformerModelOutput(loss=None, logits=self.head(protein_embeddings.float().mean(dim=1)))
+
+
+def test_the_logits_are_found_in_the_real_output_type_with_no_loss_in_it(tmp_path):
+    """``labels=None`` makes Bacformer return ``loss=None``, and a ``ModelOutput`` drops its None fields.
+
+    If the extraction reached for ``outputs["loss"]`` or indexed by position it would break here, on the GPU,
+    hours in — and only for the MIC arms, because they are the ones that suppress the model's own loss.
+    """
+    t = _trainer(tmp_path)
+    t.model = _BacformerShapedModel()
+    inputs = {"protein_embeddings": torch.randn(2, 5, 8), "attention_mask": torch.ones(2, 5),
+              "contig_ids": torch.zeros(2, 5, dtype=torch.long),
+              "labels": torch.tensor([[1.0, 1.0, 2.0, 2.0], [0.0, -INF, -1.0, -1.0]])}
+    loss, outputs = t.compute_loss(t.model, dict(inputs), return_outputs=True)
+    assert torch.isfinite(loss)
+    assert outputs["logits"].shape == (2, 1)
