@@ -229,7 +229,13 @@ smoke)
     # and a checkpoint each epoch: well under an hour, so a tight wall. PATIENCE=1000 turns early stopping off —
     # on train = validate the AUROC saturates within a few epochs and patience 15 would end the run before the
     # loss had fallen, which is the thing Stage B is there to see.
+    # The smoke is 10 genomes, and its measured peak RSS is 16.0 GB (job 41545259) and 26.5 GB (41546555) --
+    # the array's 32 cores / 250 GB is the 4-7 h full run's footprint (measured peak 42-67 GB), not this one's.
+    # On ampere MaxMemPerCPU == DefMemPerCPU == 8,000 MB, so memory is bought with cores: 12 cores = 96 GB,
+    # ~3.5x the measured peak and a quarter of the node slice, which is what gets a short job backfilled on a
+    # queue 691 deep. sbatch's own flags override the array script's #SBATCH directives.
     submit --array=0 --time="${SMOKE_TIME:-01:00:00}" --job-name=pa-mic-finetune-smoke \
+        --cpus-per-task="${SMOKE_CPUS:-12}" --mem="${SMOKE_MEM:-96G}" \
         --export="ALL,REPO=$array_repo,EXPECT_SHA=$sha,TASK=$TASK_LABEL,DRUGS=$SMOKE_DRUG,SPLIT_DIR=$SPLITS,SPLIT_MANIFEST_MD5=$md5,EMBEDDINGS_DIR=$ESM,OUT_ROOT=$out_root,N_SAMPLES=10,PATIENCE=1000,MIC_DIR=$INTERVALS,MIC_OBJECTIVE=$objective,MIC_CELLS=$cells" \
         "$array_repo/$ARRAY"
     mkdir -p "$MODELS/smoke"
