@@ -1,6 +1,14 @@
 # BacPredict — project state
 
-> **Last verified: 2026-11-26 @ `5b5d6df`** (branch `refactor/consolidate-engine`).
+> **Last verified: 2026-11-26 @ `1087718`** (branch `refactor/consolidate-engine`).
+>
+> **Verification scope, this pass (2026-11-26, later): §3.8's PsA-only v2 arm, the paired v1 → v2
+> comparison and the ST155 result only.** Every number read on CSD3 from the artifact named beside it:
+> the ten `cross_species_psaonly_v2/models/<drug>/results.json` and their `eval_scores*.npz`, the ten v1
+> counterparts under `paeruginosa/models/`, and both arms' `<drug>_split.csv` (ST identity and the
+> v1 ⊆ v2 subset check read from the tables' `st_key` and `split` columns). Paired deltas recomputed from
+> the npz score files, never copied from a panel. The balanced arm was still training and is recorded as
+> in flight, with no numbers of record. **Nothing else was re-verified this pass.**
 >
 > **Verification scope, this pass (2026-11-26): §3.8's new wider-phylogeny scoping block only.** Every figure
 > read from `$AMR/processed/ebi_amr_portal/scoping_wider_phylogeny_20261126/` (job `42003829`), whose
@@ -3710,6 +3718,105 @@ and phylum and domain together at most ~50 % on one drug.
 
 **Owns.** `$AMR/processed/ebi_amr_portal/scoping_wider_phylogeny_20261126/` and
 `src/bacpredict/docs/ast_wider_phylogeny/`.
+
+**Numbers of record — the PsA-only arm on v2 data is complete, all ten drugs.** Read from
+`$AMR/processed/cross_species_psaonly_v2/models/<drug>/results.json` (`holdouts.holdout`,
+`holdouts.holdout_st`); split tables `.../cross_species_psaonly_v2/splits/<drug>_split.csv`. This is the
+single-species comparator rebuilt on v2's larger PsA cohort — the rung between §3.6's baseline and the
+balanced cross-species arm, and the control that says how much of any cross-species gain is simply more data.
+
+| drug | n | prev | AUROC | AUPRC | sens | spec | bal acc | `holdout_st` AUROC (n) |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|
+| tobramycin | 1,092 | 0.350 | 0.9406 | 0.9148 | 0.835 | 0.948 | 0.891 | 0.9116 (113) |
+| imipenem | 1,122 | 0.619 | 0.9152 | 0.9427 | 0.875 | 0.862 | 0.868 | 0.8721 (106) |
+| amikacin | 1,200 | 0.215 | 0.8946 | 0.7895 | 0.601 | 0.963 | 0.782 | 0.6792 (117) |
+| levofloxacin | 789 | 0.559 | 0.8860 | 0.9162 | 0.846 | 0.756 | 0.801 | 0.8305 (172) |
+| meropenem | 1,507 | 0.428 | 0.8809 | 0.8528 | 0.780 | 0.809 | 0.794 | 0.7778 (207) |
+| ciprofloxacin | 1,393 | 0.633 | 0.8659 | 0.9259 | 0.861 | 0.624 | 0.742 | 0.8316 (123) |
+| piperacillin-tazobactam | 1,199 | 0.540 | 0.8601 | 0.8854 | 0.728 | 0.844 | 0.786 | 0.5559 (106) |
+| ceftazidime | 1,472 | 0.463 | 0.8268 | 0.8101 | 0.779 | 0.733 | 0.756 | 0.7031 (205) |
+| cefepime | 1,019 | 0.501 | 0.8204 | 0.8283 | 0.716 | 0.762 | 0.739 | 0.7055 (182) |
+| aztreonam | 1,097 | 0.449 | 0.7552 | 0.7572 | 0.663 | 0.715 | 0.689 | 0.6236 (99) |
+
+**Mean holdout AUROC 0.8646**, range 0.7552–0.9406. All ten used `EVAL_STEPS = steps/epoch ÷ 2` with
+`PATIENCE = 30` as this section's stopping rule prescribes, and **all ten early-stopped**, reaching epoch
+19.96–23.50; none hit the 40-epoch cap and none was cut by a wall. So this arm's numbers are converged
+figures, not snapshots.
+
+**Numbers of record — v1 → v2 PsA-only, paired on the genomes both arms held out.** Both arms'
+`eval_scores.npz` intersected on `sample_ids` (v1 `$AMR/processed/paeruginosa/models/<drug>/`). The v2 tables
+were built `--pin-from` the v1 ones, so v1's holdout ⊆ v2's holdout and **no v1 holdout genome moved into v2
+training** — the comparison is paired on identical genomes with identical labels (asserted row-wise).
+
+| drug | shared n | v1 | v2 | Δ |
+|---|--:|--:|--:|--:|
+| piperacillin-tazobactam | 386 | 0.7529 | 0.8339 | +0.0810 |
+| amikacin | 464 | 0.7900 | 0.8588 | +0.0688 |
+| cefepime | 229 | 0.7138 | 0.7672 | +0.0534 |
+| ciprofloxacin | 619 | 0.8173 | 0.8564 | +0.0392 |
+| levofloxacin | 292 | 0.8227 | 0.8462 | +0.0235 |
+| ceftazidime | 543 | 0.7484 | 0.7692 | +0.0208 |
+| tobramycin | 507 | 0.9325 | 0.9437 | +0.0112 |
+| imipenem | 410 | 0.8845 | 0.8910 | +0.0065 |
+| meropenem | 527 | 0.8098 | 0.8153 | +0.0056 |
+| aztreonam | 357 | 0.7456 | 0.7113 | −0.0343 |
+
+**Mean +0.0276, nine of ten positive**, and the gain is largest where v1 was weakest (pip-tazo, amikacin,
+cefepime) and ~zero where v1 was already strong (tobramycin, imipenem, meropenem). The four drugs this
+section's v1 cross-species arm also ran are directly comparable: amikacin +0.069, ciprofloxacin +0.039,
+ceftazidime +0.021, meropenem +0.006 from data scale alone.
+
+**⛔ The headline v1-vs-v2 difference overstates this by ~2.7×, and the same trap applies to every later
+rung.** v2 scores **0.8860** on its full 789-genome levofloxacin holdout but **0.8462** on the 292 genomes v1
+also held out: the genomes v2 *added* to its holdout are easier. Naive 0.8860 − 0.8227 = +0.063 against the
+honest paired +0.024. **Compare arms only on shared genomes.**
+
+**⛔ Numbers of record — more PsA data did NOT improve held-out-lineage generalisation.** The held-out ST is
+`paeruginosa:155` in the v1 baseline, the v2 PsA-only arm and the balanced arm alike, and **v1's ST holdout is
+a perfect subset of v2's** (0 genomes in v1 not in v2), so this is like-for-like on identical genomes
+(`eval_scores_holdout_st.npz`, both arms).
+
+| drug | n (R / S) | v1 | v2 | Δ |
+|---|--:|--:|--:|--:|
+| levofloxacin | 54 (42 / 12) | 0.6865 | 0.9008 | +0.2143 |
+| ciprofloxacin | 78 (56 / 22) | 0.6615 | 0.8182 | +0.1567 |
+| amikacin | 75 (7 / 68) | 0.5924 | 0.7416 | +0.1492 |
+| imipenem | 69 (48 / 21) | 0.7649 | 0.8710 | +0.1062 |
+| meropenem | 75 (20 / 55) | 0.6673 | 0.7382 | +0.0709 |
+| tobramycin | 75 (26 / 49) | 0.9819 | 0.9545 | −0.0275 |
+| ceftazidime | 77 (33 / 44) | 0.6856 | 0.6391 | −0.0465 |
+| cefepime | 47 (25 / 22) | 0.6664 | 0.6055 | −0.0609 |
+| aztreonam | 66 (21 / 45) | 0.6899 | 0.5894 | −0.1005 |
+| piperacillin-tazobactam | 66 (36 / 30) | 0.6796 | 0.5282 | −0.1514 |
+
+**Five of ten positive.** The unweighted mean (+0.0310) is carried by the two drugs with the smallest minority
+classes. Pooling all ten drugs' scores (n = 682; 314 R, 368 S) gives **0.8164 → 0.8049, Δ −0.0115** (95 % CI
+−0.0416 to +0.0181), and weighting each drug by its minority-class count gives **≈ +0.002**. So the within-
+distribution gain above does **not** transfer to an unseen lineage. ⚠ Per-drug minority classes are 7–33
+genomes, so each row is imprecise and the swings are large in both directions; treat any single-drug ST155
+movement as a lead, not a result. This is the cell the balanced cross-species arm is most interesting for,
+since it adds *breadth* (other species) where v2 added only *density* (more PsA).
+
+**⚠ `best_model_checkpoint` and the early-stopping counter disagree by design — do not read a run as
+truncated.** HF updates `best_model_checkpoint` on **any** improvement but resets
+`early_stopping_patience_counter` only on one exceeding `early_stopping_threshold` (0.005). "Evaluations since
+the best checkpoint" therefore **undercounts** the real counter whenever the best was reached by a
+sub-threshold improvement. Three of the ten v2 runs looked short by that measure (cefepime 28, pip-tazo 27,
+ceftazidime 19 of 30) and all three in fact stopped at exactly 30 when the counter is replayed from
+`log_history`. The same explains the two §3.6 baselines (amikacin, tobramycin) previously recorded as having
+stopped for an unknown reason. **Replay the counter before concluding anything about training length.**
+
+**In flight — the balanced cross-species arm, ten drugs.** `$AMR/processed/cross_species_cabbage_v2_balanced/models/`,
+36 h walls under the resume supervisor with `MAX_SEGMENTS=6`. At 2026-11-26 ~19:00 UTC all ten were at epoch
+3.0–10.5 of the 40-epoch schedule and **every one was 0–2 evaluations past its best**, i.e. still improving;
+none will reach `max_steps` inside a segment. Budget at ~4 s/step: ~780 GPU-h (~£430) if they stop near epoch
+25, ~1,160 GPU-h (~£640) if they run the full 40; ciprofloxacin is the long pole at ~4 further segments.
+⚠ **Its `.err` `eval_auroc` is mixed-species** (0.92–0.96) and is **not** comparable to the 0.86 mean above —
+only the `by_species` block of its holdout report, or a PsA-restricted re-score, is. A probe job scores its
+current best checkpoints on the PsA rows alone (`load_splits(..., species="paeruginosa")` over the balanced
+split table, whose PsA rows are byte-identical to the v2 PsA-only arm's) into
+`.../cross_species_cabbage_v2_balanced/psa_probe/psa_scores.json`. The matched-epoch PsA-only validation
+baseline it will be read against is already computed from the v2 arm's `trainer_state.json` `log_history`.
 
 ---
 
