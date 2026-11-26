@@ -1,6 +1,19 @@
 # BacPredict — project state
 
-> **Last verified: 2026-11-25 @ `c017216`** (branch `refactor/consolidate-engine`).
+> **Last verified: 2026-11-26 @ `5b5d6df`** (branch `refactor/consolidate-engine`).
+>
+> **Verification scope, this pass (2026-11-26): §3.8's new wider-phylogeny scoping block only.** Every figure
+> read from `$AMR/processed/ebi_amr_portal/scoping_wider_phylogeny_20261126/` (job `42003829`), whose
+> `manifest.json` records the input md5 `98a46302…` and the breakpoint md5 `e328b50b…` — the latter checked
+> here against `engine/ast_labels/eucast_v15_breakpoints.csv` **in this tree**. The tables are snapshotted
+> into `src/bacpredict/docs/ast_wider_phylogeny/` so they are diffable. The run executed on CSD3's checkout
+> at `9a813f0`; `ast_tests.py` and `breakpoints.py` are byte-identical between that commit and this one, so
+> the rule applied is this tree's rule. **Reconciliation, the check that makes the rest quotable:** the same
+> run restricted to the Enterobacterales build's 21 genera reproduces
+> `enterobacterales_cabbage_v2/label_counts.csv` exactly — 493,801 against 493,801, difference 0.
+> **Nothing else was re-verified this pass**, including everything else in §3.8, which carries the stamp below.
+>
+> **Stamp before this one: 2026-11-25 @ `c017216`.**
 > **Verification scope, sixteenth pass (2026-11-25, 07:40–08:40 UTC): the overnight automation, re-tested against
 > the live cluster after CSD3 came back.** All five recovery steps executed and verified (scripts re-staged — CSD3
 > was holding the pre-fix `resume_xspecies.sh` — supervisor restarted with its state migrated to the durable path,
@@ -3622,6 +3635,81 @@ here against the installed package and a real checkpoint before anything was cha
 
 **Owns.** `$AMR/processed/cross_species_v1/`, `$AMR/processed/cross_species_cabbage_v2/`, and the `MAX_STEPS` knob
 in `engine/finetune/scripts/finetune_amr_array.sh`.
+
+### Scoping, 2026-11-26 — what a wider phylogenetic level would add, balanced to PsA
+
+**Numbers of record.** Measured 2026-11-26 from `cabbage_v2_20261121/phenotype.parquet` (md5 `98a46302…`, the
+same input §3.7 labelled) through the **unchanged** `engine/ast_labels` rule, then thinned to PsA's own %R per
+drug by the decision above. Artifacts: `$AMR/processed/ebi_amr_portal/scoping_wider_phylogeny_20261126/`
+(job `42003829`), snapshotted in the repo with the method and the full per-species tables at
+[`src/bacpredict/docs/ast_wider_phylogeny/`](src/bacpredict/docs/ast_wider_phylogeny/README.md).
+**Harness check: restricted to the 21 genera the Enterobacterales build uses, this run gives 493,801 clean
+labels — exactly `enterobacterales_cabbage_v2/label_counts.csv`, difference 0.**
+
+Each tier is what that widening **adds**. Moraxellaceae sits inside Pseudomonadales, so *Acinetobacter* enters
+at PsA's **own order**, not at class. `today` is what the pipeline labels as it stands; `ceiling` is what it
+would label if the breakpoint table were extended to the added taxa, with the source's own call standing in for
+the MIC-derived one — **an estimate, not a count**.
+
+| tier | species | genomes | labels today → ceiling | balanced today → ceiling | balanced per genome |
+|---|--:|--:|--:|--:|--:|
+| *P. aeruginosa* (reference, never thinned) | 1 | 8,151 | 52,990 → 53,125 | 52,990 → 53,125 | 6.52 |
+| family: Enterobacteriaceae — **the arm now training** | 73 | 116,938 | 483,274 → 485,943 | **265,537 → 266,153** | 2.28 |
+| genus: other *Pseudomonas* | 19 | 126 | 967 | 214 | 1.70 |
+| **order**: rest of Enterobacterales + Moraxellaceae | 47 | 4,070 → 6,024 | 22,373 → 34,578 | **9,329 → 16,415** | 2.72 |
+| class: rest of Gammaproteobacteria | 18 | 239 → 499 | 288 → 1,121 | 38 → 192 | 0.38 |
+| phylum: rest of Pseudomonadota | 17 | 4,495 → 21,306 | 5,212 → 22,360 | **2,845 → 15,106** | 0.71 |
+| domain: all other bacteria | 77 | 19,546 → 46,230 | 28,908 → 74,251 | **12,686 → 29,380** | 0.64 |
+| *domain, excluding* M. tuberculosis | 76 | 24,828 | — | *6,883 → 12,866* | 0.52 |
+
+- **Everything wider than the family, excluding *M. tuberculosis*, is +17 % of the family arm's balanced labels
+  at the ceiling and +7 % as the pipeline stands.** Per drug at the ceiling: ciprofloxacin **+46 %**, imipenem
+  +30 %, levofloxacin +17 %, meropenem +10 %, amikacin +9 %, tobramycin +8 %, cefepime +5 %, ceftazidime +5 %,
+  piperacillin-tazobactam +4 %, aztreonam +2 %.
+- **Four species carry 86 % of the gain above the family level:** *A. baumannii* (order; the only species added
+  anywhere tested on all ten drugs at scale — 4,096 genomes, balanced 3,757 → 10,645), *N. gonorrhoeae* (phylum;
+  20,305 genomes, ciprofloxacin only, balanced 2,743 → 14,872), *M. tuberculosis* (domain; 21,402 genomes, AMK
+  and LVX, balanced 5,803 → 16,514) and *S. aureus* (domain; 7,954 genomes, CIP and LVX, balanced 4,781 → 6,058).
+- **The order tier is the only widening that holds the family arm's label density** (2.72 balanced labels per
+  genome against 2.28). Class, phylum and domain run at 0.38–0.71 — many genomes, one or two drugs each.
+
+**Decision of record, 2026-11-26 (David).** The order-level addition makes sense and will be run. Phylum and
+domain are **"a wild idea" worth trying anyway** — a lift where AMR mechanisms are not expected to be shared
+would be a genuine surprise, and Bacformer training across species is itself untested, so it is worth running
+and comparing against the family arm. Training cost is not the gate ("in the scheme of our total lab costs,
+trivial"). **None of it starts until the family-level arm lands**, because the data gain is incremental rather
+than transformative — the order tier adds 3–6 % of the family cohort's genomes (imipenem, +30 %, the exception)
+and phylum and domain together at most ~50 % on one drug.
+
+**Three questions come first, in David's order:**
+1. **MIC as a second head, after the binary model.** The difficulty in PsA is the grey band where intermediate
+   flips to resistant; predicting the actual MIC on the same genomes is more gradiented data and a harder
+   question. ⚠ The MICs are **interval-censored** (`mic_sign` carries ≤ and ≥), so this is a censored or ordinal
+   model, **not** least-squares regression — a change of estimator, to be agreed before it is built (same caveat
+   as the one recorded above under the balancing decision).
+2. **Training on MIC only, not on the binary label at all.**
+3. **Thinning the balanced cohort further**, to trim phylogenetically near-identical genomes.
+
+**Caveats.**
+- **These are labels, not a cohort.** Nothing here has been fetched, assembled, QC'd, annotated or embedded.
+  §3.6 lost ~6 % of labelled PsA genomes to QC; species with no AllTheBacteria coverage would attrite harder.
+- **Reaching the `ceiling` is a statistical-method decision.** EUCAST has no row for several added taxon × drug
+  pairs — *Acinetobacter* has none for ceftazidime, cefepime, aztreonam or piperacillin-tazobactam — so those
+  labels would rest on the source's (largely CLSI) call while the rest of the cohort is re-derived against
+  EUCAST v15. Two estimators in one cohort, to be agreed, not assumed.
+- **The species unit of this arm is the MLST scheme, not the taxon.** `abaumannii`, `ngonorrhoeae`,
+  `campylobacter` and `saureus` schemes exist in `mlst`; a species with no scheme can only join a residual unit,
+  whose per-unit number is not reportable as a species result.
+- **Balancing is applied per species over the whole set here, not per split.** Splits are random within a unit
+  so the totals agree to rounding, but `holdout_st` is an ST-based group with its own prevalence, so a per-split
+  build will not reproduce these counts exactly.
+- *M. tuberculosis* is most of the amikacin and levofloxacin gain and is **a different resistance biology**
+  (*rrs*/*eis*, *gyrA*, critical concentrations rather than clinical breakpoints), already trained in §3.3.
+- The PsA row here is portal-only (53,125 labels); §3.7's 64,281 includes the AMR-GNN supplement. The balancing
+  target rates are the decision of record's, which do.
+
+**Owns.** `$AMR/processed/ebi_amr_portal/scoping_wider_phylogeny_20261126/` and
+`src/bacpredict/docs/ast_wider_phylogeny/`.
 
 ---
 

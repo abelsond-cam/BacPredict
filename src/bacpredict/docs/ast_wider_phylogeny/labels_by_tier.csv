@@ -1,0 +1,17 @@
+variant,tier,n_species,n_labelled,n_balanced,n_genomes,balanced_per_genome
+ceiling,0 P. aeruginosa (reference),1,53125,53125,8151,6.52
+ceiling,1 family: Enterobacteriaceae,73,485943,266153,116938,2.28
+ceiling,2 genus: other Pseudomonas,19,967,214,126,1.7
+ceiling,3 order: rest of Enterobacterales + Moraxellaceae,47,34578,16415,6024,2.72
+ceiling,4 class: rest of Gammaproteobacteria,18,1121,192,499,0.38
+ceiling,5 phylum: rest of Pseudomonadota,17,22360,15106,21306,0.71
+ceiling,6 domain: all other bacteria,77,74251,29380,46230,0.64
+ceiling,X excluded: not a bacterial taxon,9,1752,565,506,1.12
+today,0 P. aeruginosa (reference),1,52990,52990,8151,6.5
+today,1 family: Enterobacteriaceae,73,483274,265537,116908,2.27
+today,2 genus: other Pseudomonas,19,967,214,126,1.7
+today,3 order: rest of Enterobacterales + Moraxellaceae,45,22373,9329,4070,2.29
+today,4 class: rest of Gammaproteobacteria,9,288,38,239,0.16
+today,5 phylum: rest of Pseudomonadota,16,5212,2845,4495,0.63
+today,6 domain: all other bacteria,56,28908,12686,19546,0.65
+today,X excluded: not a bacterial taxon,9,1454,428,209,2.05

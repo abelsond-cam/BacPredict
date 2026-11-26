@@ -1,0 +1,490 @@
+tier,phylum,class,order,family,genus,species,n_genomes,n_genomes_with_route,variant
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Salmonella,Salmonella enterica,46261,46261,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Escherichia,Escherichia coli,37461,37461,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella,Klebsiella pneumoniae,25253,25253,ceiling
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Mycobacteriaceae,Mycobacterium,Mycobacterium tuberculosis,21402,21402,ceiling
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Neisseriales,Neisseriaceae,Neisseria,Neisseria gonorrhoeae,20305,20305,ceiling
+0 P. aeruginosa (reference),Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas aeruginosa,8151,8151,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Staphylococcaceae,Staphylococcus,Staphylococcus aureus,7954,7954,ceiling
+6 domain: all other bacteria,Campylobacterota,Epsilonproteobacteria,Campylobacterales,Campylobacteraceae,Campylobacter,Campylobacter jejuni,6744,6744,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Moraxellaceae,Acinetobacter,Acinetobacter baumannii,4096,4096,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Lactobacillales,Streptococcaceae,Streptococcus,Streptococcus pneumoniae,3940,3940,ceiling
+6 domain: all other bacteria,Campylobacterota,Epsilonproteobacteria,Campylobacterales,Campylobacteraceae,Campylobacter,Campylobacter coli,2239,2239,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Shigella,Shigella sonnei,2087,2087,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter hormaechei,1286,1286,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Lactobacillales,Enterococcaceae,Enterococcus,Enterococcus faecium,831,831,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter cloacae,723,723,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Shigella,Shigella flexneri,710,710,ceiling
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Neisseriales,Neisseriaceae,Neisseria,Neisseria meningitidis,593,593,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Staphylococcaceae,Staphylococcus,Staphylococcus pseudintermedius,538,538,ceiling
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Corynebacteriaceae,Corynebacterium,Corynebacterium diphtheriae,507,507,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella,Klebsiella aerogenes,424,424,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Lactobacillales,Streptococcaceae,Streptococcus,Streptococcus pyogenes,405,405,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Serratia,Serratia marcescens,399,399,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella,Klebsiella quasipneumoniae,360,360,ceiling
+X excluded: not a bacterial taxon,NON_BACTERIAL,NON_BACTERIAL,NON_BACTERIAL,NON_BACTERIAL,Homo,Homo sapiens,299,299,ceiling
+6 domain: all other bacteria,Campylobacterota,Epsilonproteobacteria,Campylobacterales,Helicobacteraceae,Helicobacter,Helicobacter pylori,289,289,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Yersinia,Yersinia enterocolitica,288,288,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Lactobacillales,Enterococcaceae,Enterococcus,Enterococcus faecalis,275,275,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Providencia,Providencia sp.,266,266,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Morganella,Morganella morganii,261,261,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Staphylococcaceae,Staphylococcus,Staphylococcus,240,240,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Citrobacter,Citrobacter freundii,233,233,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Proteus,Proteus mirabilis,224,224,ceiling
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Burkholderiales,Burkholderiaceae,Burkholderia,Burkholderia pseudomallei,217,217,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella,Klebsiella variicola,187,187,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella,Klebsiella oxytoca,175,175,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Salmonella,Salmonella sp.,165,165,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Staphylococcaceae,Staphylococcus,Staphylococcus haemolyticus,154,154,ceiling
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Pasteurellales,Pasteurellaceae,Haemophilus,Haemophilus influenzae,143,143,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter kobei,140,140,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter roggenkampii,132,132,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Salmonella,Salmonella,132,132,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Escherichia,Escherichia,131,131,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella,Klebsiella michiganensis,131,131,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter asburiae,121,121,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter sp.,120,120,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Serratia,Serratia sp.,110,110,ceiling
+6 domain: all other bacteria,Campylobacterota,Epsilonproteobacteria,Campylobacterales,Campylobacteraceae,Aliarcobacter,Aliarcobacter butzleri,109,109,ceiling
+X excluded: not a bacterial taxon,UNMAPPED,UNMAPPED,UNMAPPED,UNMAPPED,NON_TAXON,metagenome,102,102,ceiling
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Vibrionales,Vibrionaceae,Vibrio,Vibrio cholerae,98,98,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Lactobacillales,Streptococcaceae,Streptococcus,Streptococcus agalactiae,98,98,ceiling
+6 domain: all other bacteria,Bacteroidota,Flavobacteriia,Flavobacteriales,Flavobacteriaceae,Ornithobacterium,Ornithobacterium rhinotracheale,94,94,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Moraxellaceae,Acinetobacter,Acinetobacter pittii,90,90,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Shigella,Shigella sp.,68,68,ceiling
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Pasteurellales,Pasteurellaceae,Pasteurella,Pasteurella multocida,57,57,ceiling
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Burkholderiales,Alcaligenaceae,Achromobacter,Achromobacter xylosoxidans,56,56,ceiling
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Corynebacteriaceae,Corynebacterium,Corynebacterium pseudodiphtheriticum,55,55,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter ludwigii,54,54,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Moraxellaceae,Acinetobacter,Acinetobacter sp.,50,50,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter bugandensis,48,48,ceiling
+X excluded: not a bacterial taxon,UNMAPPED,UNMAPPED,UNMAPPED,UNMAPPED,NON_TAXON,bacterium,48,48,ceiling
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Aeromonadales,Aeromonadaceae,Aeromonas,Aeromonas,47,47,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter,45,45,ceiling
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Neisseriales,Neisseriaceae,Laribacter,Laribacter hongkongensis,45,45,ceiling
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Xanthomonadales,Xanthomonadaceae,Stenotrophomonas,Stenotrophomonas maltophilia,43,43,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella,Klebsiella ornithinolytica,39,39,ceiling
+X excluded: not a bacterial taxon,UNMAPPED,UNMAPPED,UNMAPPED,UNMAPPED,NON_TAXON,mixed sample,39,39,ceiling
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Vibrionales,Vibrionaceae,Vibrio,Vibrio parahaemolyticus,37,37,ceiling
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Burkholderiales,Burkholderiaceae,Burkholderia,Burkholderia cenocepacia,34,34,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella/Raoultella,Klebsiella/Raoultella group,33,33,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Lactobacillales,Enterococcaceae,Enterococcus,Enterococcus lactis,33,33,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Moraxellaceae,Acinetobacter,Acinetobacter haemolyticus,32,32,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Citrobacter,Citrobacter braakii,31,31,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Providencia,Providencia rettgeri,31,31,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella,Klebsiella sp.,30,30,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Citrobacter,Citrobacter,29,29,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Bacillaceae,Bacillus,Bacillus cereus,29,29,ceiling
+6 domain: all other bacteria,Bacteroidota,Flavobacteriia,Flavobacteriales,Flavobacteriaceae,Elizabethkingia,Elizabethkingia anophelis,29,29,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Staphylococcaceae,Staphylococcus,Staphylococcus epidermidis,27,27,ceiling
+6 domain: all other bacteria,Campylobacterota,Epsilonproteobacteria,Campylobacterales,Campylobacteraceae,Aliarcobacter,Aliarcobacter cryaerophilus,27,27,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Citrobacter,Citrobacter portucalensis,26,26,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Escherichia,Escherichia fergusonii,26,26,ceiling
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas alloputida,26,26,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Providencia,Providencia huaxiensis,26,26,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Listeriaceae,Listeria,Listeria monocytogenes,26,26,ceiling
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Mycobacteriaceae,Mycobacteroides,Mycobacteroides abscessus,24,24,ceiling
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas sp.,22,22,ceiling
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Mycobacteriaceae,Mycobacteroides,Mycobacteroides chelonae,22,22,ceiling
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Alphaproteobacteria,Hyphomicrobiales,Brucellaceae,Brucella,Brucella melitensis,21,21,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Citrobacter,Citrobacter farmeri,19,19,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Citrobacter,Citrobacter koseri,19,19,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Escherichia,Escherichia sp.,19,19,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Shigella,Shigella boydii,19,19,ceiling
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Burkholderiales,Alcaligenaceae,Bordetella,Bordetella bronchiseptica,19,19,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Providencia,Providencia stuartii,18,18,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Serratia,Serratia ureilytica,17,17,ceiling
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas monteilii,16,16,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Citrobacter,Citrobacter amalonaticus,15,15,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella,Klebsiella grimontii,15,15,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter chengduensis,14,14,ceiling
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Xanthomonadales,Xanthomonadaceae,Stenotrophomonas,Stenotrophomonas geniculata,14,14,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Escherichia,Escherichia albertii,13,13,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Shigella,Shigella dysenteriae,13,13,ceiling
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas asiatica,13,13,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Proteus,Proteus vulgaris,13,13,ceiling
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Xanthomonadales,Xanthomonadaceae,Stenotrophomonas,Stenotrophomonas sepilia,13,13,ceiling
+X excluded: not a bacterial taxon,NON_BACTERIAL,NON_BACTERIAL,NON_BACTERIAL,NON_BACTERIAL,human,human gut,13,13,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Citrobacter,Citrobacter werkmanii,12,12,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella,Klebsiella planticola,12,12,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Serratia,Serratia rubidaea,12,12,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Bacillaceae,Bacillus,Bacillus paranthracis,12,12,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella,Klebsiella pasteurii,11,11,ceiling
+6 domain: all other bacteria,Campylobacterota,Epsilonproteobacteria,Campylobacterales,Campylobacteraceae,Campylobacter,Campylobacter lari,11,11,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Plesiomonas,Plesiomonas shigelloides,10,10,ceiling
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas paraeruginosa,10,10,ceiling
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Alteromonadales,Shewanellaceae,Shewanella,Shewanella algae,10,10,ceiling
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Xanthomonadales,Xanthomonadaceae,Stenotrophomonas,Stenotrophomonas sp.,10,10,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Lactobacillales,Streptococcaceae,Lactococcus,Lactococcus petauri,10,10,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Citrobacter,Citrobacter youngae,9,9,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Pluralibacter,Pluralibacter gergoviae,9,9,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Proteus,Proteus terrae,9,9,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter mori,8,8,ceiling
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas,8,8,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Moraxellaceae,Acinetobacter,Acinetobacter nosocomialis,8,8,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Listeriaceae,Listeria,Listeria innocua,8,8,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Staphylococcaceae,Staphylococcus,Staphylococcus delphini,8,8,ceiling
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas kurunegalensis,7,7,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Yersinia,Yersinia pseudotuberculosis,7,7,ceiling
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Corynebacteriaceae,Corynebacterium,Corynebacterium amycolatum,7,7,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Bacillaceae,Bacillus,Bacillus pacificus,7,7,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Lelliottia,Lelliottia amnigena,6,6,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Lelliottia,Lelliottia nimipressuralis,6,6,ceiling
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas mosselii,6,6,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Hafniaceae,Hafnia,Hafnia alvei,6,6,ceiling
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Pasteurellales,Pasteurellaceae,Gallibacterium,Gallibacterium anatis,6,6,ceiling
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Burkholderiales,Burkholderiaceae,Burkholderia,Burkholderia cepacia,6,6,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Kluyvera,Kluyvera,5,5,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Proteus,Proteus columbae,5,5,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Providencia,Providencia hangzhouensis,5,5,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Providencia,Providencia vermicola,5,5,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Serratia,Serratia liquefaciens,5,5,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Serratia,Serratia nevei,5,5,ceiling
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Corynebacteriaceae,Corynebacterium,Corynebacterium belfantii,5,5,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Staphylococcaceae,Staphylococcus,Staphylococcus argenteus,5,5,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Kluyvera,Kluyvera georgiana,4,4,ceiling
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas putida,4,4,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Providencia,Providencia huashanensis,4,4,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Providencia,Providencia manganoxydans,4,4,ceiling
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Aeromonadales,Aeromonadaceae,Aeromonas,Aeromonas hydrophila,4,4,ceiling
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Xanthomonadales,Xanthomonadaceae,Stenotrophomonas,Stenotrophomonas hibiscicola,4,4,ceiling
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Xanthomonadales,Xanthomonadaceae,Stenotrophomonas,Stenotrophomonas muris,4,4,ceiling
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Xanthomonadales,Xanthomonadaceae,Stenotrophomonas,Stenotrophomonas pavanii,4,4,ceiling
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Mycobacteriaceae,Mycolicibacter,Mycolicibacter kumamotonensis,4,4,ceiling
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Mycobacteriaceae,Mycolicibacterium,Mycolicibacterium neoaurum,4,4,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter quasihormaechei,3,3,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter sichuanensis,3,3,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella,Klebsiella quasivariicola,3,3,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Phytobacter,Phytobacter,3,3,ceiling
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas tritici,3,3,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Proteus,Proteus faecis,3,3,ceiling
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Vibrionales,Vibrionaceae,Vibrio,Vibrio metschnikovii,3,3,ceiling
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Burkholderiales,Burkholderiaceae,Burkholderia,Burkholderia pyrrocinia,3,3,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Bacillaceae,Bacillus,Bacillus wiedmannii,3,3,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Staphylococcaceae,Staphylococcus,Staphylococcus saprophyticus,3,3,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Lactobacillales,Streptococcaceae,Lactococcus,Lactococcus garvieae,3,3,ceiling
+6 domain: all other bacteria,Campylobacterota,Epsilonproteobacteria,Campylobacterales,Campylobacteraceae,Campylobacter,Campylobacter upsaliensis,3,3,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Citrobacter,Citrobacter sedlakii,2,2,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Citrobacter,Citrobacter sp.,2,2,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Citrobacter,Citrobacter telavivensis,2,2,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter cancerogenus,2,2,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter quasiroggenkampii,2,2,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter soli,2,2,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Kluyvera,Kluyvera ascorbata,2,2,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Leclercia,Leclercia adecarboxylata,2,2,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Salmonella,Salmonella bongori,2,2,ceiling
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas soli,2,2,ceiling
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas vlassakiae,2,2,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Hafniaceae,Hafnia,Hafnia paralvei,2,2,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Proteus,Proteus sp.,2,2,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Providencia,Providencia alcalifaciens,2,2,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Providencia,Providencia xihuensis,2,2,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Rahnella,Rahnella aceris,2,2,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Serratia,Serratia nematodiphila,2,2,ceiling
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Mycobacteriaceae,Mycolicibacter,Mycolicibacter heraklionensis,2,2,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Bacillaceae,Bacillus,Bacillus anthracis,2,2,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Bacillaceae,Bacillus,Bacillus mobilis,2,2,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Bacillaceae,Bacillus,Bacillus thuringiensis,2,2,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Staphylococcaceae,Staphylococcus,Staphylococcus capitis,2,2,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Lactobacillales,Enterococcaceae,Enterococcus,Enterococcus sp.,2,2,ceiling
+6 domain: all other bacteria,Campylobacterota,Epsilonproteobacteria,Campylobacterales,Campylobacteraceae,Campylobacter,Campylobacter fetus,2,2,ceiling
+6 domain: all other bacteria,UNMAPPED,UNMAPPED,UNMAPPED,UNMAPPED,Huaxiibacter,Huaxiibacter chinensis,2,2,ceiling
+6 domain: all other bacteria,UNMAPPED,UNMAPPED,UNMAPPED,UNMAPPED,Paenalcaligenes,Paenalcaligenes sp.,2,2,ceiling
+X excluded: not a bacterial taxon,NON_BACTERIAL,NON_BACTERIAL,NON_BACTERIAL,NON_BACTERIAL,Saccharomyces,Saccharomyces cerevisiae,2,2,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Atlantibacter,Atlantibacter,1,1,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Cronobacter,Cronobacter,1,1,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Cronobacter,Cronobacter sakazakii,1,1,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter genomosp.,1,1,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter intestinihominis,1,1,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Escherichia,Escherichia marmotae,1,1,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella,Klebsiella,1,1,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Kluyvera,Kluyvera sichuanensis,1,1,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Leclercia,Leclercia,1,1,ceiling
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas antarctica,1,1,ceiling
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas fildesensis,1,1,ceiling
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas fulva,1,1,ceiling
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas grimontii,1,1,ceiling
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas juntendi,1,1,ceiling
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas lundensis,1,1,ceiling
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas prosekii,1,1,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Erwiniaceae,Erwinia,Erwinia persicina,1,1,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Erwiniaceae,Pantoea,Pantoea ananatis,1,1,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Proteus,Proteus alimentorum,1,1,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Proteus,Proteus penneri,1,1,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Serratia,Serratia bockelmannii,1,1,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Serratia,Serratia fonticola,1,1,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Serratia,Serratia odorifera,1,1,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Yersinia,Yersinia kristensenii,1,1,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Moraxellaceae,Acinetobacter,Acinetobacter,1,1,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Moraxellaceae,Acinetobacter,Acinetobacter gyllenbergii,1,1,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Moraxellaceae,Acinetobacter,Acinetobacter lactucae,1,1,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Moraxellaceae,Acinetobacter,Acinetobacter radioresistens,1,1,ceiling
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Moraxellaceae,Acinetobacter,Acinetobacter seifertii,1,1,ceiling
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Aeromonadales,Aeromonadaceae,Aeromonas,Aeromonas caviae,1,1,ceiling
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Vibrionales,Vibrionaceae,Vibrio,Vibrio anguillarum,1,1,ceiling
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Alphaproteobacteria,Hyphomicrobiales,Brucellaceae,Brucella,Brucella anthropi,1,1,ceiling
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Burkholderiales,Alcaligenaceae,Alcaligenes,Alcaligenes ammonioxydans,1,1,ceiling
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Burkholderiales,Alcaligenaceae,Alcaligenes,Alcaligenes aquatilis,1,1,ceiling
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Burkholderiales,Alcaligenaceae,Alcaligenes,Alcaligenes sp.,1,1,ceiling
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Burkholderiales,Burkholderiaceae,Burkholderia,Burkholderia ambifaria,1,1,ceiling
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Burkholderiales,Burkholderiaceae,Burkholderia,Burkholderia contaminans,1,1,ceiling
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Burkholderiales,Burkholderiaceae,Burkholderia,Burkholderia multivorans,1,1,ceiling
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Corynebacteriaceae,Corynebacterium,Corynebacterium faecium,1,1,ceiling
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Corynebacteriaceae,Corynebacterium,Corynebacterium intestinale,1,1,ceiling
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Corynebacteriaceae,Corynebacterium,Corynebacterium propinquum,1,1,ceiling
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Corynebacteriaceae,Corynebacterium,Corynebacterium stercoris,1,1,ceiling
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Mycobacteriaceae,Mycobacterium,Mycobacterium branderi,1,1,ceiling
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Mycobacteriaceae,Mycobacterium,Mycobacterium celatum,1,1,ceiling
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Mycobacteriaceae,Mycobacterium,Mycobacterium intracellulare,1,1,ceiling
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Mycobacteriaceae,Mycobacterium,Mycobacterium lentiflavum,1,1,ceiling
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Mycobacteriaceae,Mycobacterium,Mycobacterium ostraviense,1,1,ceiling
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Mycobacteriaceae,Mycobacterium,Mycobacterium persicum,1,1,ceiling
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Mycobacteriaceae,Mycobacteroides,Mycobacteroides franklinii,1,1,ceiling
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Mycobacteriaceae,Mycobacteroides,Mycobacteroides saopaulense,1,1,ceiling
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Mycobacteriaceae,Mycolicibacterium,Mycolicibacterium fluoranthenivorans,1,1,ceiling
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Mycobacteriaceae,Mycolicibacterium,Mycolicibacterium setense,1,1,ceiling
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Mycobacteriaceae,Mycolicibacterium,Mycolicibacterium wolinskyi,1,1,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Bacillaceae,Bacillus,Bacillus bombysepticus,1,1,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Bacillaceae,Bacillus,Bacillus tropicus,1,1,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Bacillaceae,Lysinibacillus,Lysinibacillus capsici,1,1,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Listeriaceae,Listeria,Listeria seeligeri,1,1,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Staphylococcaceae,Staphylococcus,Staphylococcus hominis,1,1,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Staphylococcaceae,Staphylococcus,Staphylococcus lugdunensis,1,1,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Staphylococcaceae,Staphylococcus,Staphylococcus warneri,1,1,ceiling
+6 domain: all other bacteria,Bacillota,Bacilli,Lactobacillales,Lactobacillaceae,Lacticaseibacillus,Lacticaseibacillus parakribbianus,1,1,ceiling
+6 domain: all other bacteria,Bacteroidota,Flavobacteriia,Flavobacteriales,Flavobacteriaceae,Chryseobacterium,Chryseobacterium sp.,1,1,ceiling
+6 domain: all other bacteria,Bacteroidota,Flavobacteriia,Flavobacteriales,Flavobacteriaceae,Myroides,Myroides odoratus,1,1,ceiling
+6 domain: all other bacteria,UNMAPPED,UNMAPPED,UNMAPPED,UNMAPPED,Alcaligenaceae,Alcaligenaceae bacterium,1,1,ceiling
+6 domain: all other bacteria,UNMAPPED,UNMAPPED,UNMAPPED,UNMAPPED,Metapseudomonas,Metapseudomonas otitidis,1,1,ceiling
+6 domain: all other bacteria,UNMAPPED,UNMAPPED,UNMAPPED,UNMAPPED,Tsukamurella,Tsukamurella tyrosinosolvens,1,1,ceiling
+X excluded: not a bacterial taxon,NON_BACTERIAL,NON_BACTERIAL,NON_BACTERIAL,NON_BACTERIAL,Macaca,Macaca hecki,1,1,ceiling
+X excluded: not a bacterial taxon,NON_BACTERIAL,NON_BACTERIAL,NON_BACTERIAL,NON_BACTERIAL,Macaca,Macaca nigrescens,1,1,ceiling
+X excluded: not a bacterial taxon,UNMAPPED,UNMAPPED,UNMAPPED,UNMAPPED,sediment,sediment metagenome,1,1,ceiling
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Salmonella,Salmonella enterica,46250,46250,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Escherichia,Escherichia coli,37460,37460,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella,Klebsiella pneumoniae,25253,25253,today
+0 P. aeruginosa (reference),Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas aeruginosa,8151,8151,today
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Mycobacteriaceae,Mycobacterium,Mycobacterium tuberculosis,7316,7316,today
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Staphylococcaceae,Staphylococcus,Staphylococcus aureus,6928,6928,today
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Neisseriales,Neisseriaceae,Neisseria,Neisseria gonorrhoeae,4035,4035,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Moraxellaceae,Acinetobacter,Acinetobacter baumannii,2239,2239,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Shigella,Shigella sonnei,2087,2087,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter hormaechei,1286,1286,today
+6 domain: all other bacteria,Campylobacterota,Epsilonproteobacteria,Campylobacterales,Campylobacteraceae,Campylobacter,Campylobacter jejuni,1225,1225,today
+6 domain: all other bacteria,Bacillota,Bacilli,Lactobacillales,Streptococcaceae,Streptococcus,Streptococcus pneumoniae,1179,1179,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter cloacae,723,723,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Shigella,Shigella flexneri,710,710,today
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Staphylococcaceae,Staphylococcus,Staphylococcus pseudintermedius,468,468,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella,Klebsiella aerogenes,424,424,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Serratia,Serratia marcescens,399,399,today
+6 domain: all other bacteria,Bacillota,Bacilli,Lactobacillales,Enterococcaceae,Enterococcus,Enterococcus faecium,398,398,today
+6 domain: all other bacteria,Bacillota,Bacilli,Lactobacillales,Streptococcaceae,Streptococcus,Streptococcus pyogenes,391,391,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella,Klebsiella quasipneumoniae,360,360,today
+6 domain: all other bacteria,Campylobacterota,Epsilonproteobacteria,Campylobacterales,Campylobacteraceae,Campylobacter,Campylobacter coli,337,337,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Yersinia,Yersinia enterocolitica,288,288,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Providencia,Providencia sp.,266,266,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Morganella,Morganella morganii,261,261,today
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Corynebacteriaceae,Corynebacterium,Corynebacterium diphtheriae,248,248,today
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Staphylococcaceae,Staphylococcus,Staphylococcus,240,240,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Citrobacter,Citrobacter freundii,233,233,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Proteus,Proteus mirabilis,224,224,today
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Burkholderiales,Burkholderiaceae,Burkholderia,Burkholderia pseudomallei,217,217,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella,Klebsiella variicola,187,187,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella,Klebsiella oxytoca,175,175,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Salmonella,Salmonella sp.,165,165,today
+6 domain: all other bacteria,Campylobacterota,Epsilonproteobacteria,Campylobacterales,Helicobacteraceae,Helicobacter,Helicobacter pylori,165,165,today
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Staphylococcaceae,Staphylococcus,Staphylococcus haemolyticus,154,154,today
+6 domain: all other bacteria,Bacillota,Bacilli,Lactobacillales,Enterococcaceae,Enterococcus,Enterococcus faecalis,153,153,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter kobei,140,140,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter roggenkampii,132,132,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Salmonella,Salmonella,132,132,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Escherichia,Escherichia,131,131,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella,Klebsiella michiganensis,131,131,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter asburiae,121,121,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter sp.,120,120,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Serratia,Serratia sp.,110,110,today
+X excluded: not a bacterial taxon,UNMAPPED,UNMAPPED,UNMAPPED,UNMAPPED,NON_TAXON,metagenome,102,102,today
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Vibrionales,Vibrionaceae,Vibrio,Vibrio cholerae,96,96,today
+6 domain: all other bacteria,Bacteroidota,Flavobacteriia,Flavobacteriales,Flavobacteriaceae,Ornithobacterium,Ornithobacterium rhinotracheale,94,94,today
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Pasteurellales,Pasteurellaceae,Haemophilus,Haemophilus influenzae,92,92,today
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Neisseriales,Neisseriaceae,Neisseria,Neisseria meningitidis,79,79,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Shigella,Shigella sp.,68,68,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter ludwigii,54,54,today
+6 domain: all other bacteria,Bacillota,Bacilli,Lactobacillales,Streptococcaceae,Streptococcus,Streptococcus agalactiae,50,50,today
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Burkholderiales,Alcaligenaceae,Achromobacter,Achromobacter xylosoxidans,49,49,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter bugandensis,48,48,today
+X excluded: not a bacterial taxon,UNMAPPED,UNMAPPED,UNMAPPED,UNMAPPED,NON_TAXON,bacterium,48,48,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter,45,45,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Moraxellaceae,Acinetobacter,Acinetobacter sp.,45,45,today
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Neisseriales,Neisseriaceae,Laribacter,Laribacter hongkongensis,45,45,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella,Klebsiella ornithinolytica,39,39,today
+X excluded: not a bacterial taxon,UNMAPPED,UNMAPPED,UNMAPPED,UNMAPPED,NON_TAXON,mixed sample,39,39,today
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Burkholderiales,Burkholderiaceae,Burkholderia,Burkholderia cenocepacia,33,33,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Moraxellaceae,Acinetobacter,Acinetobacter haemolyticus,32,32,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Citrobacter,Citrobacter braakii,31,31,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Providencia,Providencia rettgeri,31,31,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella,Klebsiella sp.,30,30,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Citrobacter,Citrobacter,29,29,today
+6 domain: all other bacteria,Bacteroidota,Flavobacteriia,Flavobacteriales,Flavobacteriaceae,Elizabethkingia,Elizabethkingia anophelis,29,29,today
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Vibrionales,Vibrionaceae,Vibrio,Vibrio parahaemolyticus,28,28,today
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Staphylococcaceae,Staphylococcus,Staphylococcus epidermidis,27,27,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Citrobacter,Citrobacter portucalensis,26,26,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Escherichia,Escherichia fergusonii,26,26,today
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas alloputida,26,26,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Providencia,Providencia huaxiensis,26,26,today
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Mycobacteriaceae,Mycobacteroides,Mycobacteroides abscessus,23,23,today
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas sp.,22,22,today
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Alphaproteobacteria,Hyphomicrobiales,Brucellaceae,Brucella,Brucella melitensis,21,21,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Citrobacter,Citrobacter farmeri,19,19,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Citrobacter,Citrobacter koseri,19,19,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Escherichia,Escherichia sp.,19,19,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Shigella,Shigella boydii,19,19,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Providencia,Providencia stuartii,18,18,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Serratia,Serratia ureilytica,17,17,today
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas monteilii,16,16,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Citrobacter,Citrobacter amalonaticus,15,15,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella,Klebsiella grimontii,15,15,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella/Raoultella,Klebsiella/Raoultella group,15,15,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter chengduensis,14,14,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Escherichia,Escherichia albertii,13,13,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Shigella,Shigella dysenteriae,13,13,today
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas asiatica,13,13,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Proteus,Proteus vulgaris,13,13,today
+X excluded: not a bacterial taxon,NON_BACTERIAL,NON_BACTERIAL,NON_BACTERIAL,NON_BACTERIAL,human,human gut,13,13,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Citrobacter,Citrobacter werkmanii,12,12,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella,Klebsiella planticola,12,12,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Serratia,Serratia rubidaea,12,12,today
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Bacillaceae,Bacillus,Bacillus cereus,12,12,today
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Bacillaceae,Bacillus,Bacillus paranthracis,12,12,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella,Klebsiella pasteurii,11,11,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Plesiomonas,Plesiomonas shigelloides,10,10,today
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas paraeruginosa,10,10,today
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Alteromonadales,Shewanellaceae,Shewanella,Shewanella algae,10,10,today
+6 domain: all other bacteria,Bacillota,Bacilli,Lactobacillales,Streptococcaceae,Lactococcus,Lactococcus petauri,10,10,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Citrobacter,Citrobacter youngae,9,9,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Pluralibacter,Pluralibacter gergoviae,9,9,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Proteus,Proteus terrae,9,9,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter mori,8,8,today
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas,8,8,today
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Listeriaceae,Listeria,Listeria innocua,8,8,today
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Staphylococcaceae,Staphylococcus,Staphylococcus delphini,8,8,today
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas kurunegalensis,7,7,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Yersinia,Yersinia pseudotuberculosis,7,7,today
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Corynebacteriaceae,Corynebacterium,Corynebacterium amycolatum,7,7,today
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Bacillaceae,Bacillus,Bacillus pacificus,7,7,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Lelliottia,Lelliottia amnigena,6,6,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Lelliottia,Lelliottia nimipressuralis,6,6,today
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas mosselii,6,6,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Hafniaceae,Hafnia,Hafnia alvei,6,6,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Moraxellaceae,Acinetobacter,Acinetobacter pittii,6,6,today
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Pasteurellales,Pasteurellaceae,Gallibacterium,Gallibacterium anatis,6,6,today
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Burkholderiales,Burkholderiaceae,Burkholderia,Burkholderia cepacia,6,6,today
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Listeriaceae,Listeria,Listeria monocytogenes,6,6,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Kluyvera,Kluyvera,5,5,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Proteus,Proteus columbae,5,5,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Providencia,Providencia hangzhouensis,5,5,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Providencia,Providencia vermicola,5,5,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Serratia,Serratia liquefaciens,5,5,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Serratia,Serratia nevei,5,5,today
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Corynebacteriaceae,Corynebacterium,Corynebacterium belfantii,5,5,today
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Staphylococcaceae,Staphylococcus,Staphylococcus argenteus,5,5,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Kluyvera,Kluyvera georgiana,4,4,today
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas putida,4,4,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Providencia,Providencia huashanensis,4,4,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Providencia,Providencia manganoxydans,4,4,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter quasihormaechei,3,3,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter sichuanensis,3,3,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella,Klebsiella quasivariicola,3,3,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Phytobacter,Phytobacter,3,3,today
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas tritici,3,3,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Proteus,Proteus faecis,3,3,today
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Aeromonadales,Aeromonadaceae,Aeromonas,Aeromonas hydrophila,3,3,today
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Burkholderiales,Burkholderiaceae,Burkholderia,Burkholderia pyrrocinia,3,3,today
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Bacillaceae,Bacillus,Bacillus wiedmannii,3,3,today
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Staphylococcaceae,Staphylococcus,Staphylococcus saprophyticus,3,3,today
+6 domain: all other bacteria,Bacillota,Bacilli,Lactobacillales,Streptococcaceae,Lactococcus,Lactococcus garvieae,3,3,today
+6 domain: all other bacteria,Campylobacterota,Epsilonproteobacteria,Campylobacterales,Campylobacteraceae,Campylobacter,Campylobacter lari,3,3,today
+X excluded: not a bacterial taxon,NON_BACTERIAL,NON_BACTERIAL,NON_BACTERIAL,NON_BACTERIAL,Homo,Homo sapiens,3,3,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Citrobacter,Citrobacter sedlakii,2,2,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Citrobacter,Citrobacter sp.,2,2,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Citrobacter,Citrobacter telavivensis,2,2,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter cancerogenus,2,2,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter quasiroggenkampii,2,2,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter soli,2,2,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Kluyvera,Kluyvera ascorbata,2,2,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Leclercia,Leclercia adecarboxylata,2,2,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Salmonella,Salmonella bongori,2,2,today
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas soli,2,2,today
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas vlassakiae,2,2,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Hafniaceae,Hafnia,Hafnia paralvei,2,2,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Proteus,Proteus sp.,2,2,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Providencia,Providencia alcalifaciens,2,2,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Providencia,Providencia xihuensis,2,2,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Rahnella,Rahnella aceris,2,2,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Serratia,Serratia nematodiphila,2,2,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Moraxellaceae,Acinetobacter,Acinetobacter nosocomialis,2,2,today
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Xanthomonadales,Xanthomonadaceae,Stenotrophomonas,Stenotrophomonas maltophilia,2,2,today
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Bacillaceae,Bacillus,Bacillus mobilis,2,2,today
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Bacillaceae,Bacillus,Bacillus thuringiensis,2,2,today
+6 domain: all other bacteria,Bacillota,Bacilli,Lactobacillales,Enterococcaceae,Enterococcus,Enterococcus sp.,2,2,today
+6 domain: all other bacteria,UNMAPPED,UNMAPPED,UNMAPPED,UNMAPPED,Huaxiibacter,Huaxiibacter chinensis,2,2,today
+6 domain: all other bacteria,UNMAPPED,UNMAPPED,UNMAPPED,UNMAPPED,Paenalcaligenes,Paenalcaligenes sp.,2,2,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Atlantibacter,Atlantibacter,1,1,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Cronobacter,Cronobacter,1,1,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Cronobacter,Cronobacter sakazakii,1,1,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter genomosp.,1,1,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Enterobacter,Enterobacter intestinihominis,1,1,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Escherichia,Escherichia marmotae,1,1,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Klebsiella,Klebsiella,1,1,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Kluyvera,Kluyvera sichuanensis,1,1,today
+1 family: Enterobacteriaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Enterobacteriaceae,Leclercia,Leclercia,1,1,today
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas antarctica,1,1,today
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas fildesensis,1,1,today
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas fulva,1,1,today
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas grimontii,1,1,today
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas juntendi,1,1,today
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas lundensis,1,1,today
+2 genus: other Pseudomonas,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Pseudomonadaceae,Pseudomonas,Pseudomonas prosekii,1,1,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Erwiniaceae,Erwinia,Erwinia persicina,1,1,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Erwiniaceae,Pantoea,Pantoea ananatis,1,1,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Proteus,Proteus alimentorum,1,1,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Morganellaceae,Proteus,Proteus penneri,1,1,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Serratia,Serratia bockelmannii,1,1,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Serratia,Serratia fonticola,1,1,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Serratia,Serratia odorifera,1,1,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Enterobacterales,Yersiniaceae,Yersinia,Yersinia kristensenii,1,1,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Moraxellaceae,Acinetobacter,Acinetobacter,1,1,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Moraxellaceae,Acinetobacter,Acinetobacter gyllenbergii,1,1,today
+3 order: rest of Enterobacterales + Moraxellaceae,Pseudomonadota,Gammaproteobacteria,Pseudomonadales,Moraxellaceae,Acinetobacter,Acinetobacter seifertii,1,1,today
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Aeromonadales,Aeromonadaceae,Aeromonas,Aeromonas caviae,1,1,today
+4 class: rest of Gammaproteobacteria,Pseudomonadota,Gammaproteobacteria,Vibrionales,Vibrionaceae,Vibrio,Vibrio anguillarum,1,1,today
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Alphaproteobacteria,Hyphomicrobiales,Brucellaceae,Brucella,Brucella anthropi,1,1,today
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Burkholderiales,Alcaligenaceae,Alcaligenes,Alcaligenes ammonioxydans,1,1,today
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Burkholderiales,Alcaligenaceae,Alcaligenes,Alcaligenes aquatilis,1,1,today
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Burkholderiales,Alcaligenaceae,Alcaligenes,Alcaligenes sp.,1,1,today
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Burkholderiales,Burkholderiaceae,Burkholderia,Burkholderia ambifaria,1,1,today
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Burkholderiales,Burkholderiaceae,Burkholderia,Burkholderia contaminans,1,1,today
+5 phylum: rest of Pseudomonadota,Pseudomonadota,Betaproteobacteria,Burkholderiales,Burkholderiaceae,Burkholderia,Burkholderia multivorans,1,1,today
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Corynebacteriaceae,Corynebacterium,Corynebacterium faecium,1,1,today
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Corynebacteriaceae,Corynebacterium,Corynebacterium intestinale,1,1,today
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Corynebacteriaceae,Corynebacterium,Corynebacterium stercoris,1,1,today
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Mycobacteriaceae,Mycobacterium,Mycobacterium ostraviense,1,1,today
+6 domain: all other bacteria,Actinomycetota,Actinomycetes,Mycobacteriales,Mycobacteriaceae,Mycobacterium,Mycobacterium persicum,1,1,today
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Bacillaceae,Bacillus,Bacillus anthracis,1,1,today
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Bacillaceae,Bacillus,Bacillus bombysepticus,1,1,today
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Bacillaceae,Bacillus,Bacillus tropicus,1,1,today
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Bacillaceae,Lysinibacillus,Lysinibacillus capsici,1,1,today
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Listeriaceae,Listeria,Listeria seeligeri,1,1,today
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Staphylococcaceae,Staphylococcus,Staphylococcus capitis,1,1,today
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Staphylococcaceae,Staphylococcus,Staphylococcus hominis,1,1,today
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Staphylococcaceae,Staphylococcus,Staphylococcus lugdunensis,1,1,today
+6 domain: all other bacteria,Bacillota,Bacilli,Bacillales,Staphylococcaceae,Staphylococcus,Staphylococcus warneri,1,1,today
+6 domain: all other bacteria,Bacteroidota,Flavobacteriia,Flavobacteriales,Flavobacteriaceae,Chryseobacterium,Chryseobacterium sp.,1,1,today
+6 domain: all other bacteria,Bacteroidota,Flavobacteriia,Flavobacteriales,Flavobacteriaceae,Myroides,Myroides odoratus,1,1,today
+6 domain: all other bacteria,Campylobacterota,Epsilonproteobacteria,Campylobacterales,Campylobacteraceae,Campylobacter,Campylobacter fetus,1,1,today
+6 domain: all other bacteria,UNMAPPED,UNMAPPED,UNMAPPED,UNMAPPED,Alcaligenaceae,Alcaligenaceae bacterium,1,1,today
+6 domain: all other bacteria,UNMAPPED,UNMAPPED,UNMAPPED,UNMAPPED,Metapseudomonas,Metapseudomonas otitidis,1,1,today
+X excluded: not a bacterial taxon,NON_BACTERIAL,NON_BACTERIAL,NON_BACTERIAL,NON_BACTERIAL,Macaca,Macaca hecki,1,1,today
+X excluded: not a bacterial taxon,NON_BACTERIAL,NON_BACTERIAL,NON_BACTERIAL,NON_BACTERIAL,Macaca,Macaca nigrescens,1,1,today
+X excluded: not a bacterial taxon,NON_BACTERIAL,NON_BACTERIAL,NON_BACTERIAL,NON_BACTERIAL,Saccharomyces,Saccharomyces cerevisiae,1,1,today
+X excluded: not a bacterial taxon,UNMAPPED,UNMAPPED,UNMAPPED,UNMAPPED,sediment,sediment metagenome,1,1,today

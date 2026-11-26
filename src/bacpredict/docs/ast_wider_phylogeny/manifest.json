@@ -1,0 +1,32 @@
+{
+  "phenotype": "/rds/project/rds-4k08a2yyQLw/david/amr_prediction/processed/ebi_amr_portal/cabbage_v2_20261121/phenotype.parquet",
+  "phenotype_md5": "98a46302805ab37ae56a97c1fb84871d",
+  "breakpoints_md5": "e328b50bca016123379539bc71ee3c95",
+  "drugs": [
+    "ciprofloxacin",
+    "ceftazidime",
+    "meropenem",
+    "tobramycin",
+    "amikacin",
+    "imipenem",
+    "piperacillin-tazobactam",
+    "aztreonam",
+    "levofloxacin",
+    "cefepime"
+  ],
+  "target_pct_R": {
+    "meropenem": 43.5,
+    "imipenem": 64.2,
+    "piperacillin-tazobactam": 52.7,
+    "amikacin": 21.8,
+    "ceftazidime": 48.4,
+    "ciprofloxacin": 61.8,
+    "cefepime": 48.8,
+    "aztreonam": 44.1,
+    "tobramycin": 35.0,
+    "levofloxacin": 56.2
+  },
+  "git_sha": "9a813f0009f32fdf7b6c596cd42c9e212e7e2cb5",
+  "n_test_rows": 782871,
+  "n_biosamples": 240205
+}

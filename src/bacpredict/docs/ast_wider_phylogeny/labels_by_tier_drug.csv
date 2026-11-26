@@ -1,0 +1,159 @@
+variant,tier,drug,n_species,n_labelled,n_balanced
+ceiling,0 P. aeruginosa (reference),amikacin,1,5317,5317
+ceiling,0 P. aeruginosa (reference),aztreonam,1,4593,4593
+ceiling,0 P. aeruginosa (reference),cefepime,1,5027,5027
+ceiling,0 P. aeruginosa (reference),ceftazidime,1,6590,6590
+ceiling,0 P. aeruginosa (reference),ciprofloxacin,1,6364,6364
+ceiling,0 P. aeruginosa (reference),imipenem,1,4762,4762
+ceiling,0 P. aeruginosa (reference),levofloxacin,1,3783,3783
+ceiling,0 P. aeruginosa (reference),meropenem,1,6831,6831
+ceiling,0 P. aeruginosa (reference),piperacillin-tazobactam,1,5190,5190
+ceiling,0 P. aeruginosa (reference),tobramycin,1,4668,4668
+ceiling,1 family: Enterobacteriaceae,amikacin,66,47294,24344
+ceiling,1 family: Enterobacteriaceae,aztreonam,60,30026,24262
+ceiling,1 family: Enterobacteriaceae,cefepime,63,35459,26965
+ceiling,1 family: Enterobacteriaceae,ceftazidime,66,56226,35173
+ceiling,1 family: Enterobacteriaceae,ciprofloxacin,72,102302,58714
+ceiling,1 family: Enterobacteriaceae,imipenem,55,41064,12480
+ceiling,1 family: Enterobacteriaceae,levofloxacin,47,26617,21228
+ceiling,1 family: Enterobacteriaceae,meropenem,70,79212,22107
+ceiling,1 family: Enterobacteriaceae,piperacillin-tazobactam,61,41103,21177
+ceiling,1 family: Enterobacteriaceae,tobramycin,50,26640,19703
+ceiling,2 genus: other Pseudomonas,amikacin,13,99,51
+ceiling,2 genus: other Pseudomonas,aztreonam,17,103,14
+ceiling,2 genus: other Pseudomonas,cefepime,13,97,29
+ceiling,2 genus: other Pseudomonas,ceftazidime,16,113,18
+ceiling,2 genus: other Pseudomonas,ciprofloxacin,14,99,20
+ceiling,2 genus: other Pseudomonas,imipenem,11,88,6
+ceiling,2 genus: other Pseudomonas,levofloxacin,12,90,23
+ceiling,2 genus: other Pseudomonas,meropenem,13,102,10
+ceiling,2 genus: other Pseudomonas,piperacillin-tazobactam,13,92,12
+ceiling,2 genus: other Pseudomonas,tobramycin,11,84,31
+ceiling,3 order: rest of Enterobacterales + Moraxellaceae,amikacin,37,3847,1701
+ceiling,3 order: rest of Enterobacterales + Moraxellaceae,aztreonam,32,1824,432
+ceiling,3 order: rest of Enterobacterales + Moraxellaceae,cefepime,34,2738,1218
+ceiling,3 order: rest of Enterobacterales + Moraxellaceae,ceftazidime,39,3946,1318
+ceiling,3 order: rest of Enterobacterales + Moraxellaceae,ciprofloxacin,44,4932,2688
+ceiling,3 order: rest of Enterobacterales + Moraxellaceae,imipenem,33,4782,3577
+ceiling,3 order: rest of Enterobacterales + Moraxellaceae,levofloxacin,33,3083,1530
+ceiling,3 order: rest of Enterobacterales + Moraxellaceae,meropenem,41,4134,1654
+ceiling,3 order: rest of Enterobacterales + Moraxellaceae,piperacillin-tazobactam,34,2687,866
+ceiling,3 order: rest of Enterobacterales + Moraxellaceae,tobramycin,30,2605,1431
+ceiling,4 class: rest of Gammaproteobacteria,amikacin,5,80,27
+ceiling,4 class: rest of Gammaproteobacteria,aztreonam,2,48,15
+ceiling,4 class: rest of Gammaproteobacteria,cefepime,5,196,28
+ceiling,4 class: rest of Gammaproteobacteria,ceftazidime,9,134,66
+ceiling,4 class: rest of Gammaproteobacteria,ciprofloxacin,8,243,27
+ceiling,4 class: rest of Gammaproteobacteria,imipenem,5,170,1
+ceiling,4 class: rest of Gammaproteobacteria,levofloxacin,10,135,16
+ceiling,4 class: rest of Gammaproteobacteria,meropenem,7,67,5
+ceiling,4 class: rest of Gammaproteobacteria,piperacillin-tazobactam,3,44,7
+ceiling,4 class: rest of Gammaproteobacteria,tobramycin,3,4,0
+ceiling,5 phylum: rest of Pseudomonadota,amikacin,8,50,4
+ceiling,5 phylum: rest of Pseudomonadota,aztreonam,4,112,2
+ceiling,5 phylum: rest of Pseudomonadota,cefepime,5,127,16
+ceiling,5 phylum: rest of Pseudomonadota,ceftazidime,12,362,69
+ceiling,5 phylum: rest of Pseudomonadota,ciprofloxacin,12,20974,14909
+ceiling,5 phylum: rest of Pseudomonadota,imipenem,4,180,13
+ceiling,5 phylum: rest of Pseudomonadota,levofloxacin,8,295,33
+ceiling,5 phylum: rest of Pseudomonadota,meropenem,11,142,49
+ceiling,5 phylum: rest of Pseudomonadota,piperacillin-tazobactam,6,57,1
+ceiling,5 phylum: rest of Pseudomonadota,tobramycin,7,61,10
+ceiling,6 domain: all other bacteria,amikacin,30,20754,10198
+ceiling,6 domain: all other bacteria,aztreonam,7,9,1
+ceiling,6 domain: all other bacteria,cefepime,13,2728,67
+ceiling,6 domain: all other bacteria,ceftazidime,13,1209,123
+ceiling,6 domain: all other bacteria,ciprofloxacin,59,18892,9561
+ceiling,6 domain: all other bacteria,imipenem,28,1619,152
+ceiling,6 domain: all other bacteria,levofloxacin,22,23095,8568
+ceiling,6 domain: all other bacteria,meropenem,21,4452,505
+ceiling,6 domain: all other bacteria,piperacillin-tazobactam,11,1105,51
+ceiling,6 domain: all other bacteria,tobramycin,11,388,154
+ceiling,X excluded: not a bacterial taxon,amikacin,4,179,31
+ceiling,X excluded: not a bacterial taxon,aztreonam,1,98,89
+ceiling,X excluded: not a bacterial taxon,cefepime,4,186,84
+ceiling,X excluded: not a bacterial taxon,ceftazidime,6,186,47
+ceiling,X excluded: not a bacterial taxon,ciprofloxacin,8,493,226
+ceiling,X excluded: not a bacterial taxon,imipenem,2,145,7
+ceiling,X excluded: not a bacterial taxon,levofloxacin,2,139,70
+ceiling,X excluded: not a bacterial taxon,meropenem,5,200,11
+ceiling,X excluded: not a bacterial taxon,piperacillin-tazobactam,2,87,0
+ceiling,X excluded: not a bacterial taxon,tobramycin,1,39,0
+today,0 P. aeruginosa (reference),amikacin,1,5317,5317
+today,0 P. aeruginosa (reference),aztreonam,1,4593,4593
+today,0 P. aeruginosa (reference),cefepime,1,5027,5027
+today,0 P. aeruginosa (reference),ceftazidime,1,6590,6590
+today,0 P. aeruginosa (reference),ciprofloxacin,1,6274,6274
+today,0 P. aeruginosa (reference),imipenem,1,4762,4762
+today,0 P. aeruginosa (reference),levofloxacin,1,3783,3783
+today,0 P. aeruginosa (reference),meropenem,1,6822,6822
+today,0 P. aeruginosa (reference),piperacillin-tazobactam,1,5189,5189
+today,0 P. aeruginosa (reference),tobramycin,1,4633,4633
+today,1 family: Enterobacteriaceae,amikacin,63,46966,24310
+today,1 family: Enterobacteriaceae,aztreonam,57,29990,24256
+today,1 family: Enterobacteriaceae,cefepime,60,35385,26890
+today,1 family: Enterobacteriaceae,ceftazidime,63,56184,35167
+today,1 family: Enterobacteriaceae,ciprofloxacin,72,101457,58715
+today,1 family: Enterobacteriaceae,imipenem,55,40945,12395
+today,1 family: Enterobacteriaceae,levofloxacin,47,26354,21225
+today,1 family: Enterobacteriaceae,meropenem,67,78991,21852
+today,1 family: Enterobacteriaceae,piperacillin-tazobactam,55,40583,21073
+today,1 family: Enterobacteriaceae,tobramycin,43,26419,19654
+today,2 genus: other Pseudomonas,amikacin,13,99,51
+today,2 genus: other Pseudomonas,aztreonam,17,103,14
+today,2 genus: other Pseudomonas,cefepime,13,97,29
+today,2 genus: other Pseudomonas,ceftazidime,16,113,18
+today,2 genus: other Pseudomonas,ciprofloxacin,14,99,20
+today,2 genus: other Pseudomonas,imipenem,11,88,6
+today,2 genus: other Pseudomonas,levofloxacin,12,90,23
+today,2 genus: other Pseudomonas,meropenem,13,102,10
+today,2 genus: other Pseudomonas,piperacillin-tazobactam,13,92,12
+today,2 genus: other Pseudomonas,tobramycin,11,84,31
+today,3 order: rest of Enterobacterales + Moraxellaceae,amikacin,35,2340,936
+today,3 order: rest of Enterobacterales + Moraxellaceae,aztreonam,32,1078,423
+today,3 order: rest of Enterobacterales + Moraxellaceae,cefepime,31,1870,802
+today,3 order: rest of Enterobacterales + Moraxellaceae,ceftazidime,39,2748,854
+today,3 order: rest of Enterobacterales + Moraxellaceae,ciprofloxacin,43,3152,1740
+today,3 order: rest of Enterobacterales + Moraxellaceae,imipenem,31,2977,1340
+today,3 order: rest of Enterobacterales + Moraxellaceae,levofloxacin,33,1975,1019
+today,3 order: rest of Enterobacterales + Moraxellaceae,meropenem,40,2659,795
+today,3 order: rest of Enterobacterales + Moraxellaceae,piperacillin-tazobactam,33,2096,652
+today,3 order: rest of Enterobacterales + Moraxellaceae,tobramycin,28,1478,768
+today,4 class: rest of Gammaproteobacteria,amikacin,4,31,27
+today,4 class: rest of Gammaproteobacteria,cefepime,4,96,6
+today,4 class: rest of Gammaproteobacteria,ceftazidime,1,1,0
+today,4 class: rest of Gammaproteobacteria,ciprofloxacin,6,131,1
+today,4 class: rest of Gammaproteobacteria,imipenem,2,16,0
+today,4 class: rest of Gammaproteobacteria,levofloxacin,2,5,3
+today,4 class: rest of Gammaproteobacteria,meropenem,3,5,1
+today,4 class: rest of Gammaproteobacteria,tobramycin,3,3,0
+today,5 phylum: rest of Pseudomonadota,amikacin,6,45,4
+today,5 phylum: rest of Pseudomonadota,aztreonam,3,93,2
+today,5 phylum: rest of Pseudomonadota,cefepime,3,124,16
+today,5 phylum: rest of Pseudomonadota,ceftazidime,11,306,16
+today,5 phylum: rest of Pseudomonadota,ciprofloxacin,10,4074,2752
+today,5 phylum: rest of Pseudomonadota,imipenem,3,161,13
+today,5 phylum: rest of Pseudomonadota,levofloxacin,7,275,33
+today,5 phylum: rest of Pseudomonadota,meropenem,11,92,8
+today,5 phylum: rest of Pseudomonadota,piperacillin-tazobactam,5,37,1
+today,5 phylum: rest of Pseudomonadota,tobramycin,5,5,0
+today,6 domain: all other bacteria,amikacin,17,6844,4145
+today,6 domain: all other bacteria,aztreonam,7,9,1
+today,6 domain: all other bacteria,cefepime,12,1296,55
+today,6 domain: all other bacteria,ceftazidime,11,1178,73
+today,6 domain: all other bacteria,ciprofloxacin,42,9010,5056
+today,6 domain: all other bacteria,imipenem,24,1578,85
+today,6 domain: all other bacteria,levofloxacin,20,6148,2981
+today,6 domain: all other bacteria,meropenem,13,1412,111
+today,6 domain: all other bacteria,piperacillin-tazobactam,10,1099,49
+today,6 domain: all other bacteria,tobramycin,7,334,130
+today,X excluded: not a bacterial taxon,amikacin,4,179,31
+today,X excluded: not a bacterial taxon,aztreonam,1,98,89
+today,X excluded: not a bacterial taxon,cefepime,4,186,84
+today,X excluded: not a bacterial taxon,ceftazidime,6,186,47
+today,X excluded: not a bacterial taxon,ciprofloxacin,8,196,89
+today,X excluded: not a bacterial taxon,imipenem,2,145,7
+today,X excluded: not a bacterial taxon,levofloxacin,2,139,70
+today,X excluded: not a bacterial taxon,meropenem,4,199,11
+today,X excluded: not a bacterial taxon,piperacillin-tazobactam,2,87,0
+today,X excluded: not a bacterial taxon,tobramycin,1,39,0
