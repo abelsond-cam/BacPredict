@@ -98,7 +98,9 @@ def snap_to_ladder(value: np.ndarray | pd.Series) -> tuple[np.ndarray, np.ndarra
     on_ladder : numpy.ndarray
         Whether each value snapped.
     """
-    v = np.asarray(value, dtype=float)
+    # The test stores hold MICs in pandas' nullable Float64, whose pd.NA does not survive asarray(float).
+    v = pd.to_numeric(pd.Series(np.asarray(value, dtype=object)).reset_index(drop=True),
+                      errors="coerce").to_numpy(dtype=float)
     with np.errstate(divide="ignore", invalid="ignore"):
         l2 = np.where(v > 0, np.log2(np.where(v > 0, v, 1.0)), np.nan)
     k = np.round(l2)
@@ -124,7 +126,9 @@ def intervals_from_reported_mic(
         step_hi = np.where(on, k, np.ceil(l2))
     l2u, _ = snap_to_ladder(upper)
 
-    s = np.asarray(sign, dtype=object)
+    # ``mic_sign`` is a nullable string column: a pd.NA inside an object array makes ``s == "="`` return an
+    # array of pd.NA, and the first boolean use of it raises "truth value of NA is ambiguous" rows later.
+    s = pd.Series(np.asarray(sign, dtype=object)).fillna("").astype(str).to_numpy(dtype=object)
     neg_inf, pos_inf = np.full(l2.shape, -np.inf), np.full(l2.shape, np.inf)
     is_eq, is_gt, is_ge = s == "=", s == ">", s == ">="
     is_le, is_lt, is_both = s == "<=", s == "<", s == ">,<"

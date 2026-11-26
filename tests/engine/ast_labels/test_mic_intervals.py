@@ -246,3 +246,22 @@ def test_a_drug_with_no_rows_is_refused(tmp_path):
     argv[argv.index("--drugs") + 1] = "colistin"
     with pytest.raises(SystemExit, match="colistin"):
         main(argv)
+
+
+# ------------------------------------------------------------------ the stores' nullable dtypes
+
+
+def test_nullable_string_and_float_columns_are_handled():
+    """``ast_tests_called`` holds ``mic_sign`` as nullable string and the MICs as nullable Float64.
+
+    A ``pd.NA`` inside an object array makes ``s == "="`` an array of ``pd.NA``, and the first boolean use of
+    it raises far from the cause. Rows with a missing sign or value carry no interval and must come back NaN.
+    """
+    sign = pd.Series(["=", pd.NA, ">"], dtype="string")
+    value = pd.Series([4.0, 8.0, pd.NA], dtype="Float64")
+    upper = pd.Series([pd.NA] * 3, dtype="Float64")
+    lo, hi, point = intervals_from_reported_mic(sign, value, upper)
+    assert (lo[0], hi[0]) == (1.0, 2.0)
+    assert np.isnan(lo[1]) and np.isnan(hi[1])      # no sign -> no interval
+    assert np.isnan(lo[2]) and np.isnan(hi[2])      # no value -> no interval
+    assert point[0] == 2.0 and np.isnan(point[1]) and np.isnan(point[2])
