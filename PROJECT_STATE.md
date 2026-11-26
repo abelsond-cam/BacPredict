@@ -3941,6 +3941,36 @@ coverage, and absolute and essential agreement. `apps/pa/collect_mic_arms` repor
 own holdout and on the **intersection every arm scored**, because the holdouts are nested and a difference
 computed on two different sets is not a difference between arms.
 
+**Numbers of record — arm 0's holdout calibration**, recomputed by `apps/pa/collect_mic_arms` from
+`$AMR/processed/cross_species_psaonly_v2/models/<drug>/eval_scores.npz` (2026-11-26). The AUROCs reproduce
+the §3.8 table above, which is the check that the right files are being read. *Brier skill* is
+`1 − Brier / (p(1−p))`: how far the probabilities get from "quote the base rate" to perfect.
+
+| drug | prevalence | AUROC | AUPRC | bal. acc. | Brier | base-rate Brier | **Brier skill** | **ECE** |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|
+| amikacin | 0.215 | 0.895 | 0.790 | 0.782 | 0.098 | 0.169 | 0.42 | 0.081 |
+| meropenem | 0.428 | 0.881 | 0.853 | 0.794 | 0.154 | 0.245 | 0.37 | 0.116 |
+| ciprofloxacin | 0.633 | 0.866 | 0.926 | 0.742 | 0.168 | 0.232 | 0.28 | 0.128 |
+| cefepime | 0.502 | 0.820 | 0.828 | 0.739 | 0.194 | 0.250 | 0.22 | 0.136 |
+| **ceftazidime** | 0.463 | 0.827 | 0.810 | 0.756 | **0.223** | 0.249 | **0.10** | **0.213** |
+
+⚠ These are the model's **own** probabilities, untempered — arm 0 finished before validate scores were saved,
+so it has no fitted scale yet (`arm0-validate` supplies one; see the calibration decision in §6). They are
+*not* comparable with a tempered arm's ECE until it has run.
+
+**Ceftazidime's probabilities are barely better than the base rate** — Brier skill 0.10 at AUROC 0.827 —
+and its ECE of 0.213 means its stated probabilities are off by 21 points on average. On the held-out ST155
+it is worse again (ECE 0.222 of a 0.159–0.222 range). This is **the same drug** whose
+`trainer_state.json` shows validate loss bottoming at 0.533 (epoch 4.5) while AUROC peaked at epoch 11.5
+where the loss had already climbed to 1.424, 2.7× its minimum, rising to 2.58 by epoch 21 with AUROC flat at
+0.80–0.81. Two independent artifacts, one conclusion.
+
+⚠ **Hypothesis, not a finding.** `eval_auroc` checkpoint selection is rank-based and cannot see calibration,
+so it may be selecting checkpoints well past the point where calibration has degraded. If that is the
+mechanism, the censored arm's validate-σ — a post-hoc scale that does not change *which* checkpoint is
+selected — should repair most of it, and arm B's visible gain should be largest on ceftazidime's calibration
+while its AUROC barely moves. That is a prediction this experiment tests, not a result.
+
 **Caveats.**
 - **`mic_undecided` cells are out of this experiment.** 101 PsA tests (101 cells over the five drugs) are
   censored MICs straddling the breakpoint: no binary label, so no split-table row, so no arm. The censored
@@ -4000,6 +4030,7 @@ correct.**
 | `$AMR/processed/paeruginosa/ani/{psa_heldout_max_ani_to_train,psa_nn_lookup_baseline}.csv` (+ `psa_heldout_split_ids.txt`) | `skani dist` (job `41644484`) → `engine/splits/holdout_lookup_baseline` | the ANI-thinning threshold decision; how much of §3.6's random-holdout AUROC is clonal lookup | — (evidence only). ⚠ Tied to the ST155 split tables: rebuild the splits and these describe a holdout that no longer exists. The 599 MB pairwise TSV behind them is **not** kept (`hpc-work` scratch, swept) — it regenerates in ~10 min on 32 cores |
 | `$AMR/processed/paeruginosa/mic_bands/<drug>_mic_bands.csv` + `mic_band_summary.csv` | `apps/pa/mic_distance_bands` over `ast_tests_called.parquet` + `eucast_v15_breakpoints.csv` | `apps/pa/holdout_error_by_mic_distance`; the exclude-vs-multi-class-head decision | — (evidence only). Rebuilt if the breakpoint table or the labels change |
 | `$AMR/processed/psaonly_mic/intervals/<drug>_mic_intervals.csv` (+ `mic_interval_summary.csv`, `mic_interval_conflicts.csv`) | `engine/ast_labels/mic_intervals` over `paeruginosa_cabbage_v2/ast_tests_called.parquet` + `cross_species_psaonly_v2/splits` | `finetune_amr --mic-table` (arms 0′, A, B) and `apps/pa/collect_mic_arms` | Every MIC arm. ⚠ Its cohort is the split tables': rebuild those and this is stale. Pinned per run by the md5 printed in each task's log |
+| `$AMR/processed/psaonly_mic/arm0_validate/<drug>_validate_scores.npz` | `engine/finetune/score_split` via `train_pa_mic_models.sh arm0-validate` (inference only over the incumbent's surviving `checkpoint-<step>`) | `apps/pa/collect_mic_arms --validate-scores`, to fit arm 0's logit temperature | — (calibration only). Without it arm 0's tempered calibration is NaN, never its raw number |
 | `$AMR/processed/psaonly_mic/models/<arm>/<drug>/{results.json,eval_scores*.npz,mic_sigma.json}` | `apps/pa/scripts/train_pa_mic_models.sh submit` → `finetune_amr --mic-objective` | `apps/pa/collect_mic_arms` → `models/mic_arm_metrics.csv` | — (results). The npz carries `mu`, `lo`, `hi` and `sigma` beside the usual `y_true`/`y_prob`, so existing readers work unchanged |
 | `$AMR/processed/paeruginosa/mic_bands/error_by_distance/{error_by_band,near_vs_far,error_concentration,conditional_logit,per_drug_vs_auroc,per_drug_correlations,leave_out_ceiling}.csv` | `apps/pa/holdout_error_by_mic_distance` over `models/<drug>/eval_scores*.npz` + `results.json` | [`docs/holdout_clonality_and_label_noise.md`](docs/holdout_clonality_and_label_noise.md) | — (evidence only). ⚠ Tied to **these** checkpoints and **these** split tables: retrain or re-split and every row is stale |
 
@@ -4092,6 +4123,7 @@ directory was consolidated. Several of these existed nowhere else.
 | 2026-11-18 | **Gene attribution is run on the LOGIT, with each genome's base logit stored beside it.** Attributing `sigmoid(logit)` directly is what the published Bacformer code does, and it **saturates**: 1,895 of 4,242 Salmonella genomes came back with zero attribution variance, contributing nothing. Our two models are more confident still. Storing the logit shift loses nothing because `delta_probability()` reconstructs the bounded −1..1 probability score exactly, so one run yields both scales. |
 | 2026-11-18 | **Attribution's primary statistic is per-genome-normalised \|attribution\|; resistant-vs-susceptible per gene is secondary.** David's choice. Per-genome normalisation also makes the logit and probability scales interchangeable for ranking. Zero-variance genomes are **counted and reported**, never silently zeroed — that count is the saturation diagnostic. |
 | 2026-11-26 | **Predicting MIC means a censored estimator, not least squares.** A reported MIC is an interval — `≤`/`≥` bound it on one side, and even an exact `= X` means "growth at X/2, none at X" on a doubling ladder. 18.7–45.4 % of PsA tests per drug are censored. The estimator is an **interval-censored Gaussian (Tobit) likelihood on log₂ MIC** in dilutions from the EUCAST R breakpoint; a bare R/S call is the open interval on its side of the breakpoint, which makes **binary cross-entropy the all-censored special case of the same loss** (verified bit-for-bit, `tests/engine/finetune/test_censored_mic_loss.py`). Point imputation is kept **as the comparator** (arm A), not as the method: on known-truth simulation it recovers ~0.58 of the latent MIC scale while its AUROC stays within 0.005 of the censored fit's, so the harm is invisible to AUROC and shows only in the call and the calibration. |
+| 2026-11-26 | **Calibration is fitted the same way in every arm, or the comparison credits the estimator with the scaling.** The MIC arms re-fit σ on validate; a binary arm has no σ, so it gets the exact analogue — a **logit temperature** fitted on the same split (Guo et al. 2017, from recall). Like σ it is monotone in the score and crosses 0.5 where the score does, so it cannot move AUROC, AUPRC or the R/S call; it recovers injected over-confidences of 0.4/1.0/2.5 to within 5 % (`tests/engine/finetune/test_censored_mic_loss.py`). **Every arm reports calibration twice** — `*_raw` from the model's own probability, `brier`/`ece` after the validate-fitted scale. An arm with no validate scores reports the tempered figures as **NaN**, never its raw numbers. Storing only `y_prob` would not have sufficed: float32 `sigmoid` saturates to exactly 1.0 from a logit of ~17, so the raw score is saved as `score` in every npz. |
 | 2026-11-26 | **σ is re-fitted once, on *validate*, at the selected checkpoint — never on train, never on holdout.** David's correction to the first design, which read it from holdout (leakage). Train would inherit the weights' own over-confidence. Re-fitting one scale parameter on held-out data is temperature scaling, and it is safe because σ provably cannot move a ranking metric: `P(R) = Φ(μ/σ)` is monotone in μ and crosses 0.5 at μ = 0 for every σ, so AUROC, AUPRC and the R/S call are identical whatever σ is. **Checkpoint selection stays `eval_auroc` for every arm**, so the comparison varies the objective and not the stopping rule. The training σ is kept and reported beside the re-fitted one, so the size of the correction is on the record. |
 | 2026-11-18 | **A within-lineage repeat of the R-vs-S contrast is what licenses any causal reading of attribution.** A determinant signal survives stratification by TB lineage / Kp sublineage; a lineage marker collapses. Until it is read, attribution is descriptive only. This is why the cohort is stratified on lineage at selection time rather than sampled at random. |
 
