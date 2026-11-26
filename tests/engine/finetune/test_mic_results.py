@@ -100,6 +100,18 @@ def test_sigma_is_fitted_on_validate_and_both_values_are_recorded(written):
         assert block["mic"]["sigma"] == mic["sigma"]  # one sigma, used for every holdout
 
 
+def test_validate_scores_are_written_so_the_arm_can_be_calibrated(written):
+    """Every arm must be temperature-comparable, which needs the split the scale is fitted on, saved."""
+    out, payload = written
+    path = out / "eval_scores_validate.npz"
+    assert path.exists()
+    with np.load(path) as z:
+        assert len(z["sample_ids"]) == payload["mic"]["sigma_validate_fit"]["n"]
+        assert {"score", "mu", "lo", "hi", "sigma", "y_true", "y_prob"} <= set(z)
+        assert np.array_equal(z["score"], z["mu"])      # one key, whatever the arm's link
+        assert set(z["split"]) == {"validate"}
+
+
 def test_the_npz_keeps_the_old_layout_and_adds_the_mic_scale(written):
     """Every existing reader of eval_scores.npz must keep working on a MIC arm's output."""
     out, _ = written
