@@ -3954,7 +3954,10 @@ own holdout and on the **intersection every arm scored**, because the holdouts a
 computed on two different sets is not a difference between arms.
 
 **Status (2026-11-27).** Arms 0′ and A **done**, all five drugs. Arm B **re-running** at `57f3082` with σ
-fixed (array 42096812, 12 h wall), behind a fresh Stage A smoke (42096807). Arm 0 was never re-run.
+fixed (array 42097876, **18 h** wall), behind a fresh Stage A smoke (42096807). ⚠ The wall was raised from
+12 h before arm B started: arms 0'/A ran 7:38–11:35 at 4.7–5.1 s/step, so the slowest was 25 minutes inside a
+12 h wall, and arm B trains on 14–26 % more cells per epoch (it keeps the bare calls), projecting ~13.1 h on
+ceftazidime and meropenem. There is no wall-aware stop, so a timeout writes no `results.json`. Arm 0 was never re-run.
 
 **Numbers of record — the trained arms' holdout metrics**, each read from its own
 `$AMR/processed/.../<drug>/results.json` (2026-11-27). ⚠ **Arm 0's holdout is a different, larger set**

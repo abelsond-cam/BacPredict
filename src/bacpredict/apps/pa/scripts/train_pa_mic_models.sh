@@ -352,16 +352,28 @@ submit)
     # One array per arm, not one array over arm x drug: each arm needs its own MIC_OBJECTIVE/MIC_CELLS/OUT_ROOT,
     # and a separate job name per arm is what makes the queue readable.
     #
-    # The wall is 12 h. The measured PsA-only v2 fine-tunes took 4.0-7.2 h per drug on these cohorts, and arms
-    # 0'/A train on FEWER cells than that, so 12 h is ~1.7x the slowest measured run. It is deliberately not
-    # 35 h: on 2026-11-24 four jobs asking 35 h on ampere were given start estimates a day out and the same
-    # jobs at 12 h started within five minutes. A run that does hit the wall resumes from its checkpoint
-    # (finetune_amr --resume-from-checkpoint), it does not restart.
+    # The wall is 18 h. ⚠ It was 12 h, sized against the PsA-only v2 fine-tunes' 4.0-7.2 h per drug, and that
+    # estimate was WRONG for these runs. Arms 0'/A actually took 7:38 to 11:35 (`sacct -j 42045861,42045862`),
+    # so the slowest came within 25 minutes of the 12 h wall — at a steady 4.7-5.1 s/step across every drug
+    # and both objectives, i.e. ~8,800 steps is all that fits in 12 h and they used 5,750-8,250.
+    #
+    # Arm B keeps the bare R/S calls, so it trains on 14-26% MORE cells per epoch than 0'/A (amikacin
+    # 4,030 vs 3,200; meropenem 4,822 vs 4,119). At the same convergence epoch its worst drugs project to
+    # ~9,650 steps = ~13.1 h, over the old wall. 18 h covers that with ~37% headroom and is still half the
+    # 36 h band that 101 other ampere jobs sat in on 2026-11-27. It is deliberately not 35 h: on 2026-11-24
+    # four jobs asking 35 h were given start estimates a day out and the same jobs at 12 h started within
+    # five minutes.
+    #
+    # ⛔ There is NO wall-aware graceful stop — no trap, no signal handler, no deadline check. A job that hits
+    # the wall is killed TIMEOUT and writes **no results.json at all**. It resumes from its checkpoint
+    # (finetune_amr --resume-from-checkpoint, which preserves the early-stopping counter) rather than
+    # restarting, but that is a manual resubmission and another full queue wait. Size the wall; do not rely
+    # on the resume.
     for a in "${ARM_ORDER[@]}"; do
         read -r objective cells <<<"$(arm_spec "$a")"
         echo "arm $a: --mic-objective $objective --mic-cells $cells -> $MODELS/$a/<drug>"
         submit --array=0-$((${#PA_DRUGS[@]} - 1))${ARRAY_CONCURRENT:+%$ARRAY_CONCURRENT} \
-            --time="${TRAIN_TIME:-12:00:00}" --job-name=pa-mic-finetune \
+            --time="${TRAIN_TIME:-18:00:00}" --job-name=pa-mic-finetune \
             --export="ALL,REPO=$array_repo,EXPECT_SHA=$sha,TASK=$TASK_LABEL,DRUGS=$drugs,SPLIT_DIR=$SPLITS,SPLIT_MANIFEST_MD5=$md5,EMBEDDINGS_DIR=$ESM,OUT_ROOT=$MODELS/$a,MIC_DIR=$INTERVALS,MIC_OBJECTIVE=$objective,MIC_CELLS=$cells" \
             "$array_repo/$ARRAY"
     done
