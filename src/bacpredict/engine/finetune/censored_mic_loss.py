@@ -50,9 +50,16 @@ SIGMA_MIN, SIGMA_MAX = 0.02, 50.0
 #: Bounds on the binary arms' temperature, the same role SIGMA_MIN/SIGMA_MAX play for the MIC arms.
 TEMPERATURE_MIN, TEMPERATURE_MAX = 0.02, 50.0
 
-#: ISO 20776-2 essential agreement is +-1 doubling dilution: the assay's own reproducibility, so a residual SD
-#: below it is measuring noise the assay cannot resolve. Reported beside the fitted value, never imposed on it.
+#: ISO 20776-2 essential agreement is +-1 doubling dilution: the assay's own reproducibility.
 ASSAY_REPRODUCIBILITY_DILUTIONS = 1.0
+
+#: The residual SD that span implies, read as a +-2 sigma interval: 95.4% of replicates within +-1 dilution
+#: (David's decision, 2026-11-27). Reading +-1 dilution as +-1 sigma instead (sigma = 1.0) puts only 68% inside
+#: it, far looser than the assay, and it is also what let the optimizer run away: the pull an exact cell two
+#: dilutions out exerts on mu, relative to a bare call already two dilutions past the breakpoint, is 1.8e4x at
+#: sigma = 0.5, 25x at sigma = 1.0 and 2.6x at sigma = 2.0. Once sigma grows, the open-ended cells outvote the
+#: finite ones and nothing bounds mu. This is the value training holds FIXED; see mic_trainer.INIT_LOG_SIGMA.
+ASSAY_SIGMA_DILUTIONS = ASSAY_REPRODUCIBILITY_DILUTIONS / 2.0
 
 
 def _log1mexp(x: torch.Tensor) -> torch.Tensor:
@@ -156,7 +163,7 @@ def fit_sigma(mu: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> dict:
         bound of :data:`SIGMA_MIN`/:data:`SIGMA_MAX` fits as well as the optimum, which happens when every
         interval lies on the correct side of its ``mu`` — the likelihood is then flat and ``sigma`` is **not
         identified**, so the returned number is a bound, not an estimate. ``sigma_assay_floor`` is the same
-        value raised to :data:`ASSAY_REPRODUCIBILITY_DILUTIONS`, reported for comparison and not used.
+        value raised to :data:`ASSAY_SIGMA_DILUTIONS`, reported for comparison and not used.
     """
     mu, lo, hi = (np.asarray(x, dtype=float).ravel() for x in (mu, lo, hi))
     ok = np.isfinite(mu) & ~(np.isnan(lo) | np.isnan(hi))
@@ -179,7 +186,7 @@ def fit_sigma(mu: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> dict:
     at_bound = bool(min(neg_ll(lo_b), neg_ll(hi_b)) <= best_nll + 1e-6 * max(mu.size, 1))
     sigma = float(math.exp(best_log_sigma))
     return {"sigma": sigma, "mean_nll": float(best_nll / mu.size), "n": int(mu.size), "at_bound": at_bound,
-            "sigma_assay_floor": float(max(sigma, ASSAY_REPRODUCIBILITY_DILUTIONS))}
+            "sigma_assay_floor": float(max(sigma, ASSAY_SIGMA_DILUTIONS))}
 
 
 def fit_logit_temperature(logits: np.ndarray, y_true: np.ndarray) -> dict:

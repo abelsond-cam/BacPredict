@@ -47,7 +47,7 @@ from transformers import (
 from bacpredict.engine.config import organism
 from bacpredict.engine.finetune.attention_pool import BacformerAttnPoolForGenomeClassification
 from bacpredict.engine.finetune.censored_mic_loss import (
-    ASSAY_REPRODUCIBILITY_DILUTIONS,
+    ASSAY_SIGMA_DILUTIONS,
     calibration_scores,
     censored_log_likelihood,
     fit_sigma,
@@ -494,7 +494,7 @@ def write_mic_split_table_results(
                      drug=drug, split="validate", species=splits.species, sigma=sigma)
     print(f"  sigma: train {sigma_train:.4f} -> validate re-fit {sigma:.4f} dilutions "
           f"(validate mean NLL {fit['mean_nll']:.4f}, n={fit['n']}, at_bound={fit['at_bound']}; "
-          f"assay floor {ASSAY_REPRODUCIBILITY_DILUTIONS} would give {fit['sigma_assay_floor']:.4f})")
+          f"assay floor {ASSAY_SIGMA_DILUTIONS} would give {fit['sigma_assay_floor']:.4f})")
 
     blocks: dict[str, dict] = {}
     for name, ids in splits.holdouts.items():
@@ -664,7 +664,7 @@ def run(
     mic_objective: str = "bce",
     mic_table: str | None = None,
     mic_cells: str = "all",
-    mic_sigma_lr: float = 0.01,
+    mic_sigma_lr: float = 0.0,
 ):
     """Fine-tune Bacformer on TB AMR data with dynamic label injection.
 
@@ -1241,9 +1241,10 @@ class ArgumentParser(Tap):
     """Which cells of the split table a --mic-table run keeps: 'all' (every cell with a usable interval, bare
     R/S calls included as open intervals) or 'mic_only' (cells with a measured MIC). Splits are never
     reassigned — cells are only dropped — so every arm is scored on a subset of the same holdout."""
-    mic_sigma_lr: float = 0.01
-    """Learning rate for the drug's log sigma alone (--mic-objective censored). The network's 1.5e-4 would
-    move one scalar by ~0.5 in log-space over a whole run, so sigma would never reach its optimum."""
+    mic_sigma_lr: float = 0.0
+    """Learning rate for the drug's log sigma alone (--mic-objective censored). **0 = held fixed**, which is
+    the default and what the experiment runs: mu and sigma are jointly non-identified by the bare R/S cells, so
+    a free sigma marches off (measured: 1.18 -> 2.5e5 on PsA amikacin). See mic_trainer's module docstring."""
 
 
 def resolve_task_paths(

@@ -155,18 +155,19 @@ class _TinyModel(torch.nn.Module):
         return {"logits": self.head(protein_embeddings.float().mean(dim=1))}
 
 
-def _trainer(tmp_path, objective="censored"):
+def _trainer(tmp_path, objective="censored", sigma_lr=0.0):
     from transformers import TrainingArguments
 
     from bacpredict.engine.finetune.mic_trainer import MicBacformerTrainer
     args = TrainingArguments(output_dir=str(tmp_path / "out"), report_to=[], use_cpu=True,
                              per_device_train_batch_size=2, remove_unused_columns=False)
-    return MicBacformerTrainer(model=_TinyModel(), args=args, objective=objective)
+    return MicBacformerTrainer(model=_TinyModel(), args=args, objective=objective, sigma_lr=sigma_lr)
 
 
-def test_sigma_starts_at_one_dilution(tmp_path):
-    """The assay's own reproducibility: "the model explains nothing the assay could not have mismeasured"."""
-    assert _trainer(tmp_path).sigma == pytest.approx(math.exp(INIT_LOG_SIGMA))
+def test_sigma_is_the_assay_scale(tmp_path):
+    """ISO 20776-2's +-1 doubling dilution read as the +-2 sigma span: 95.4% of replicates inside it."""
+    assert math.exp(INIT_LOG_SIGMA) == pytest.approx(0.5)
+    assert _trainer(tmp_path).sigma == pytest.approx(0.5)
 
 
 def test_sigma_round_trips_through_a_checkpoint(tmp_path):
@@ -188,9 +189,19 @@ def test_resuming_a_checkpoint_with_no_sigma_is_loud(tmp_path):
         _trainer(tmp_path).load_sigma(tmp_path / "ckpt")
 
 
-def test_sigma_gets_its_own_optimizer_group(tmp_path):
+def test_sigma_is_frozen_by_default(tmp_path):
+    """A bare R/S call's likelihood is Phi(+-mu/sigma), so joint scaling of the pair is exactly free: with
+    sigma learned, PsA amikacin went 1.18 -> 2.5e5 with the NLL flat. The optimizer must not hold it."""
+    t = _trainer(tmp_path)
+    assert t.sigma_lr == 0.0
+    assert not t.log_sigma.requires_grad
+    groups = t.create_optimizer().param_groups
+    assert not any(g["params"] and g["params"][0] is t.log_sigma for g in groups)
+
+
+def test_sigma_gets_its_own_optimizer_group_when_asked_to_learn_it(tmp_path):
     """At the network's 1.5e-4 one scalar would move ~0.5 in log-space over a whole run and never arrive."""
-    t = _trainer(tmp_path, "censored")
+    t = _trainer(tmp_path, "censored", sigma_lr=0.01)
     groups = t.create_optimizer().param_groups
     assert any(g["params"] and g["params"][0] is t.log_sigma and g["lr"] == t.sigma_lr for g in groups)
 
@@ -214,7 +225,7 @@ def test_the_least_squares_arm_refuses_a_cell_with_no_point(tmp_path):
 
 def test_sigma_is_on_the_training_device_before_the_optimizer_captures_it(tmp_path):
     """Moving a parameter after the optimizer holds it strands its Adam state on the old device."""
-    t = _trainer(tmp_path)
+    t = _trainer(tmp_path, sigma_lr=0.01)
     t.log_sigma.data = t.log_sigma.data.to("cpu")
     opt = t.create_optimizer()
     assert t.log_sigma.device == torch.device(t.args.device)
@@ -222,17 +233,34 @@ def test_sigma_is_on_the_training_device_before_the_optimizer_captures_it(tmp_pa
     assert group["params"][0].device == t.log_sigma.device
 
 
-def test_a_censored_step_runs_end_to_end_and_moves_sigma(tmp_path):
-    """One real optimizer step on the tiny model: the loss is finite and sigma actually changes."""
+def _censored_batch():
+    """One batch covering all three cell kinds the censored loss has to handle."""
+    return {"protein_embeddings": torch.randn(3, 5, 8), "attention_mask": torch.ones(3, 5),
+            "contig_ids": torch.zeros(3, 5, dtype=torch.long),
+            "labels": torch.tensor([[1.0, 1.0, 2.0, 2.0],          # exact, resistant
+                                    [0.0, -INF, -1.0, -1.0],       # left-censored, susceptible
+                                    [1.0, 0.0, INF, float("nan")]])}  # a bare R call: an open interval
+
+
+def test_a_censored_step_runs_end_to_end_and_leaves_sigma_alone(tmp_path):
+    """The default arm: one real optimizer step, a finite loss, and sigma exactly where it started."""
     t = _trainer(tmp_path)
     opt = t.create_optimizer()
-    inputs = {"protein_embeddings": torch.randn(3, 5, 8), "attention_mask": torch.ones(3, 5),
-              "contig_ids": torch.zeros(3, 5, dtype=torch.long),
-              "labels": torch.tensor([[1.0, 1.0, 2.0, 2.0],          # exact, resistant
-                                      [0.0, -INF, -1.0, -1.0],       # left-censored, susceptible
-                                      [1.0, 0.0, INF, float("nan")]])}  # a bare R call: an open interval
     before = t.sigma
-    loss = t.compute_loss(t.model, dict(inputs))
+    loss = t.compute_loss(t.model, _censored_batch())
+    assert torch.isfinite(loss)
+    loss.backward()
+    assert t.log_sigma.grad is None          # not in the graph at all, so nothing can nudge it
+    opt.step()
+    assert t.sigma == before == pytest.approx(0.5)
+
+
+def test_a_censored_step_moves_sigma_when_it_is_learned(tmp_path):
+    """The opt-in path still works — it is the one that must not be the default."""
+    t = _trainer(tmp_path, sigma_lr=0.01)
+    opt = t.create_optimizer()
+    before = t.sigma
+    loss = t.compute_loss(t.model, _censored_batch())
     assert torch.isfinite(loss)
     loss.backward()
     assert t.log_sigma.grad is not None and torch.isfinite(t.log_sigma.grad)

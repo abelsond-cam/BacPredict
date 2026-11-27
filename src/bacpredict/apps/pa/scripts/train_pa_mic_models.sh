@@ -40,8 +40,14 @@
 # in v1 and moderate-or-good in v2, where there is room to move. Excluded: tobramycin (0.933 -> 0.941, David's
 # instruction — already excellent) and imipenem (0.884 -> 0.915, already strong).
 #
-# SIGMA. The censored model needs a residual spread for log2 MIC, in doubling dilutions. It is learned during
-# training and then **re-fitted once, on validate, at the selected checkpoint** (David, 2026-11-26). Fitting it
+# SIGMA. The censored model needs a residual spread for log2 MIC, in doubling dilutions. It is FIXED at 0.5
+# during training (David, 2026-11-27): ISO 20776-2 essential agreement is +-1 doubling dilution, and reading
+# that as the +-2 sigma span puts 95.4% of replicates inside it. One dilution off the observed cell then still
+# keeps 15.7% of the density in that cell (a 1.47-nat penalty, not a verdict) while two dilutions off costs
+# 6.2 nats — the cliff sits exactly at the assay's resolution. It is fixed and not learned because mu and
+# sigma are jointly non-identified by the bare R/S cells, which are 20-40% of the data: that pair marched to
+# sigma = 2.5e5 with the NLL flat on the first attempt (2026-11-27, quarantined under models/_void_*).
+# It is then **re-fitted once, on validate, at the selected checkpoint** (David, 2026-11-26). Fitting it
 # on train reads the scale of residuals the weights are already fitted to; fitting it on holdout is leakage.
 # Re-fitting one scale parameter on held-out data is temperature scaling, and it provably cannot move AUROC,
 # AUPRC or the R/S call — only the calibration. engine/finetune/mic_trainer says why in full.
@@ -315,9 +321,19 @@ EOF
 overfit)
     run=$(latest_smoke)
     # engine/finetune/check_overfit: the whole run's history (<run>/trainer_state.json), the full schedule run,
-    # last train loss <= OVERFIT_MAX_LOSS, train = holdout AUROC >= 0.99. The censored NLL reaches ~0 on an
-    # overfit for the same reason BCE does — the interval probability goes to 1 as sigma shrinks onto mu.
-    uv run --no-sync python -m bacpredict.engine.finetune.check_overfit "$run" --max-loss "${OVERFIT_MAX_LOSS:-0.1}"
+    # last train loss <= OVERFIT_MAX_LOSS, train = holdout AUROC >= 0.99.
+    #
+    # The censored arm cannot reach ~0 and must not be asked to. Its sigma is FIXED at 0.5, so a width-1 exact
+    # cell floors at -log(Phi(1) - Phi(-1)) = 0.3817 however perfect mu is, while an open-ended cell floors at
+    # 0. An all-exact run is the worst case at 0.3817, so 0.45 clears every achievable floor by 0.07 and still
+    # sits far below the 1.74 an unconverged run showed. Going below it would need a shrinking sigma, which is
+    # the thing this design removed; what replaces "loss -> 0" as the real check is the AUROC >= 0.99 arm.
+    max_loss=${OVERFIT_MAX_LOSS:-}
+    if [[ -z $max_loss ]]; then
+        read -r overfit_objective _ <<<"$(arm_spec "$SMOKE_ARM")"
+        [[ $overfit_objective == censored ]] && max_loss=0.45 || max_loss=0.1
+    fi
+    uv run --no-sync python -m bacpredict.engine.finetune.check_overfit "$run" --max-loss "$max_loss"
     ;;
 submit)
     array_repo=${ARRAY_REPO:?set ARRAY_REPO to a detached worktree at the SHA to run (see the header)}

@@ -15,11 +15,21 @@ all in doubling dilutions from the drug's EUCAST R breakpoint, so ``mu > 0`` is 
 and the R/S metrics are computed the same way throughout.
 
 **``sigma`` — what it is and when it moves.** ``sigma`` is the residual standard deviation of log2 MIC around
-``mu``, in doubling dilutions: one scalar per drug, not per genome. It is *not* a property of the data that can
-be measured up front; it is part of the fit, so during training it is a single learned parameter
-(:data:`INIT_LOG_SIGMA`, one dilution — the assay's own reproducibility — as the neutral start) carried beside
-the network's weights, stepped by the optimizer like any other, and saved into every checkpoint as
-:data:`SIGMA_FILE` so a resumed run continues from it rather than restarting it.
+``mu``, in doubling dilutions: one scalar per drug, not per genome. **During training it is held FIXED** at
+:data:`INIT_LOG_SIGMA` — 0.5 dilutions, the assay's own +-1-dilution reproducibility read as a +-2 sigma span
+(David's decision, 2026-11-27) — and it is still saved into every checkpoint as :data:`SIGMA_FILE` so a resumed
+run continues from the same value.
+
+It is fixed because ``mu`` and ``sigma`` are **jointly non-identified** by the cells that carry no MIC. A bare
+R/S call is the interval ``(0, inf)`` or ``(-inf, 0]``, so its likelihood is ``Phi(+-mu/sigma)`` — a function of
+the *ratio* alone, identical at ``(mu, sigma)``, ``(2mu, 2sigma)``, ``(50mu, 50sigma)``. 20-40% of cells are
+bare calls, and the only cells that resist joint scaling are the width-1 exact ones, whose cost grows merely as
+``log sigma``. AdamW then normalises gradient magnitude away, so that logarithmically weak restoring force buys
+no protection at all and the pair marches the flat valley at ~lr per step: measured on PsA amikacin, sigma went
+1.18 -> 48.6 -> 2.5e5 while the NLL sat flat at 2.54 and ``mu``'s SD reached 17.3 dilutions. Freezing ``sigma``
+cuts that valley; it is also the standard identification constraint for an ordered probit, where the scale is
+conventionally pinned for exactly this reason. Set ``sigma_lr`` above 0 to learn it anyway, and read the two
+paragraphs above first.
 
 It is then **re-fitted once, on validate, at the selected checkpoint** (David's decision, 2026-11-26). Fitting
 it on train would read the scale of residuals the weights have already been fitted to, which at the measured
@@ -51,6 +61,7 @@ import torch.nn.functional as F
 from bacformer.modeling.trainer import BacformerLargeTrainer
 
 from bacpredict.engine.finetune.censored_mic_loss import (
+    ASSAY_SIGMA_DILUTIONS,
     censored_log_likelihood,
     interval_censored_gaussian_nll,
     prob_resistant,
@@ -63,9 +74,12 @@ logger = logging.getLogger(__name__)
 MIC_OBJECTIVES = ("bce", "mse", "censored")
 MIC_OBJECTIVES_HERE = ("mse", "censored")
 
-#: ``log sigma`` at the start of training: ``log 1`` — one doubling dilution, ISO 20776-2 essential agreement,
-#: i.e. "the model explains nothing the assay could not have mismeasured anyway".
-INIT_LOG_SIGMA = 0.0
+#: ``log sigma`` during training, held fixed: ``log 0.5``. ISO 20776-2 essential agreement is +-1 doubling
+#: dilution, and taking that as the +-2 sigma span (95.4% of replicates inside it) gives sigma = 0.5. Its
+#: practical meaning: a prediction one dilution off the observed cell still keeps 15.7% of the density in that
+#: cell — a real 1.47-nat penalty, not a verdict — while two dilutions off costs 6.2 nats. That cliff between
+#: one and two dilutions is the assay's resolution, and sigma = 0.5 is what puts it there.
+INIT_LOG_SIGMA = math.log(ASSAY_SIGMA_DILUTIONS)
 
 #: Where a checkpoint's ``sigma`` lives. Not in the safetensors: a key the base model does not have is exactly
 #: what ``from_pretrained``/``load_state_dict`` drop with a warning nobody reads.
@@ -137,14 +151,14 @@ class MicBacformerTrainer(BacformerLargeTrainer):
         parameter group gets its own, and still rides the warmup and linear decay.
     """
 
-    def __init__(self, *args, objective: str = "censored", sigma_lr: float = 0.01, **kwargs):
+    def __init__(self, *args, objective: str = "censored", sigma_lr: float = 0.0, **kwargs):
         if objective not in MIC_OBJECTIVES_HERE:
             raise ValueError(f"objective must be one of {MIC_OBJECTIVES_HERE}, got {objective!r}")
         super().__init__(*args, **kwargs)
         self.objective = objective
         self.sigma_lr = sigma_lr
         self.log_sigma = torch.nn.Parameter(
-            torch.tensor(float(INIT_LOG_SIGMA)), requires_grad=objective == "censored")
+            torch.tensor(float(INIT_LOG_SIGMA)), requires_grad=objective == "censored" and sigma_lr > 0)
 
     # ---- sigma ----------------------------------------------------------------------------------------
 
@@ -182,9 +196,12 @@ class MicBacformerTrainer(BacformerLargeTrainer):
         # optimizer holds it leaves its Adam state on the old device, which fails on the first step.
         self.log_sigma.data = self.log_sigma.data.to(self.args.device)
         optimizer = super().create_optimizer()
-        if self.objective == "censored":
+        if self.objective == "censored" and self.sigma_lr > 0:
             optimizer.add_param_group({"params": [self.log_sigma], "lr": self.sigma_lr, "weight_decay": 0.0})
             logger.info("sigma is parameter group %d, lr %g", len(optimizer.param_groups) - 1, self.sigma_lr)
+        else:
+            logger.info("sigma held FIXED at %.4f dilutions (sigma_lr=%g): mu and sigma are jointly "
+                        "non-identified by the bare R/S cells", self.sigma, self.sigma_lr)
         return optimizer
 
     def _save(self, output_dir: str | None = None, state_dict=None):
