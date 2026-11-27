@@ -363,6 +363,46 @@ def _refuse_mismatched_resume(checkpoint: str | Path, patience: int, threshold: 
           f"{counter}/{patience} restored; best {state.get('best_metric')} at step {state.get('best_global_step')}")
 
 
+def freeze_backbone_layernorm_gains(model: torch.nn.Module) -> int:
+    """Hold every backbone LayerNorm gain at its loaded value, and report how many were frozen.
+
+    Separates "bf16 regularises" from "bf16 is less precise". Measured on the deployed rifampin
+    checkpoints against the base weights: under bf16 master weights 90 of the 92 backbone LayerNorm gains
+    never moved at all, because each optimiser step is ~1e-4 against a bf16 half-ULP of ~2e-3 near 1.0, so
+    every update rounds straight back; under fp32 none of the 92 stood still. Freezing them in fp32
+    reproduces that constraint without changing the arithmetic.
+
+    Gains only. Biases and matrix weights did move under bf16 and keep training. The classifier head is
+    excluded by the ``bacformer.`` prefix: it is freshly initialised, so pinning it would be a different
+    intervention, not this one.
+
+    Parameters
+    ----------
+    model
+        The loaded model, whose backbone is its ``bacformer`` submodule.
+
+    Returns
+    -------
+    int
+        Number of LayerNorm gain vectors frozen.
+
+    Raises
+    ------
+    RuntimeError
+        If no backbone LayerNorm module was found — a silent zero would make the arm meaningless.
+    """
+    frozen = 0
+    for name, module in model.named_modules():
+        if not name.startswith("bacformer."):
+            continue
+        if isinstance(module, torch.nn.LayerNorm) and getattr(module, "weight", None) is not None:
+            module.weight.requires_grad_(False)
+            frozen += 1
+    if frozen == 0:
+        raise RuntimeError("--freeze-layernorm-gains found no backbone LayerNorm modules to freeze.")
+    return frozen
+
+
 ############################################################## Main run function ##############################################################
 
 
@@ -379,6 +419,8 @@ def run(
     max_n_proteins: int = 6000,
     freeze_encoder: bool = False,
     precision: str = "bf16",
+    model_revision: str | None = None,
+    freeze_layernorm_gains: bool = False,
     pooling: str = "mean",
     attn_dim: int = 128,
     panel_mode: str = "none",
@@ -630,12 +672,22 @@ def run(
         )
     else:
         print("Pooling: mask-normalised mean (stock genome head)")
+        # --model-revision pins the hub revision. Nothing pinned it before, so a rerun silently took
+        # whatever refs/main pointed at: the complete-genomes repo has three revisions whose
+        # modeling_bacformer.py differ (aeb56c93 28 Apr, ab3a91a2 25 May, 84f85c37 11 Aug), and the
+        # Apr->May one MOVED norm1 from after the projection to before it. The weights blob is shared by
+        # all three, so only the code moves — which is exactly the kind of drift a comparison cannot
+        # absorb. Meaningless against a local checkpoint dir, so it is only passed on a hub load.
+        hub_kwargs = {"revision": model_revision} if (model_revision and not resume_from_checkpoint) else {}
+        if hub_kwargs:
+            print(f"Base revision pinned: {model_revision}")
         bacformer_model = AutoModelForSequenceClassification.from_pretrained(
             load_from,
             num_labels=1,
             problem_type="binary_classification",
             return_dict=True,
             trust_remote_code=True,
+            **hub_kwargs,
         )
         if freeze_encoder:
             for param in bacformer_model.bacformer.parameters():
@@ -648,7 +700,24 @@ def run(
     # (fp32 also re-enables CPU Stage-A smokes).
     if precision == "bf16":
         bacformer_model = bacformer_model.to(torch.bfloat16)
-    model_revision = getattr(getattr(bacformer_model, "config", None), "_commit_hash", None)
+
+    # What was asked for vs what HF actually resolved. A pin that silently did not take is worse than no
+    # pin, because the results file would still record a revision and look authoritative.
+    requested_revision = model_revision
+    model_revision = getattr(getattr(bacformer_model, "config", None), "_commit_hash", None) or requested_revision
+    if requested_revision and model_revision and not model_revision.startswith(requested_revision):
+        raise RuntimeError(
+            f"--model-revision asked for {requested_revision!r} but the loaded config reports "
+            f"{model_revision!r}. Refusing to train against a base other than the pinned one."
+        )
+
+    # The arm that separates "bf16 regularises" from "bf16 is less precise" — see
+    # freeze_backbone_layernorm_gains for what it does and the measurement behind it.
+    frozen_layernorm_gains = 0
+    if freeze_layernorm_gains:
+        frozen_layernorm_gains = freeze_backbone_layernorm_gains(bacformer_model)
+        print(f"Froze {frozen_layernorm_gains} backbone LayerNorm gain vectors "
+              "(biases and matrix weights still train)")
 
     print(f"Precision (master weights): {precision}")
     print("Nr of parameters:", sum(p.numel() for p in bacformer_model.parameters()))
@@ -768,6 +837,9 @@ def run(
 
     run_config = {
         "precision": precision,
+        "model_revision_requested": requested_revision,
+        "freeze_layernorm_gains": freeze_layernorm_gains,
+        "n_frozen_layernorm_gains": frozen_layernorm_gains,
         "pooling": pooling,
         "seed": seed,
         "lr": lr,
@@ -875,6 +947,14 @@ class ArgumentParser(Tap):
     precision: str = "bf16"
     """Master-weight precision: 'bf16' (default, deployed setting) or 'fp32' (native weights + bf16 AMP,
     the pre-b047ed8 / CSD3 condition). fp32-vs-bf16 isolates the master-weight cast for the precision ablation."""
+    model_revision: str | None = None
+    """Hub revision (commit sha) to pin the base model to. Unpinned, a run silently takes whatever refs/main
+    points at, and the complete-genomes repo's modeling_bacformer.py differs across its three revisions —
+    the Apr->May one moved norm1 from after the projection to before it. Ignored when resuming."""
+    freeze_layernorm_gains: bool = False
+    """Hold every backbone LayerNorm gain at its pretrained value (biases and matrix weights still train).
+    Separates 'bf16 regularises' from 'bf16 is less precise': under bf16 master weights 90 of the 92
+    backbone gains never move, because each update is far below the bf16 ULP at that magnitude."""
     pooling: str = "mean"
     """Genome pooling head: 'mean' (stock mask-normalised mean) or 'attention' (gated-attention MIL pool)."""
     attn_dim: int = 128
@@ -966,6 +1046,8 @@ if __name__ == "__main__":
         max_n_proteins=args.max_n_proteins,
         freeze_encoder=args.freeze_encoder,
         precision=args.precision,
+        model_revision=args.model_revision,
+        freeze_layernorm_gains=args.freeze_layernorm_gains,
         pooling=args.pooling,
         attn_dim=args.attn_dim,
         panel_mode=args.panel_mode,

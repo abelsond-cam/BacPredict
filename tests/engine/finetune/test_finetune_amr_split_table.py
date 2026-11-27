@@ -71,14 +71,16 @@ class _FakeTrainer:
 def fakes(monkeypatch):
     _FakeTrainer.instances = []
     loads: list[str] = []
+    load_kwargs: list[dict] = []
 
     def _from_pretrained(path, **kwargs):
         loads.append(path)
+        load_kwargs.append(kwargs)
         return _FakeModel()
 
     monkeypatch.setattr(ft.AutoModelForSequenceClassification, "from_pretrained", _from_pretrained)
     monkeypatch.setattr(ft, "BacformerLargeTrainer", _FakeTrainer)
-    return SimpleNamespace(loads=loads, trainers=_FakeTrainer.instances)
+    return SimpleNamespace(loads=loads, load_kwargs=load_kwargs, trainers=_FakeTrainer.instances)
 
 
 # --------------------------------------------------------------------------- data
@@ -308,7 +310,13 @@ def test_kfold_path_unchanged(tmp_path, fakes):
                             "n_evaluate": len(evaluate)}
     assert "holdouts" not in res and "species" not in res and "per_class" not in res["metrics"]
     assert set(res["run"]) == {"precision", "pooling", "seed", "lr", "early_stopping_patience",
-                               "early_stopping_threshold", "eval_steps", "warmup_proportion", "max_steps"}
+                               "early_stopping_threshold", "eval_steps", "warmup_proportion", "max_steps",
+                               "model_revision_requested", "freeze_layernorm_gains",
+                               "n_frozen_layernorm_gains"}
+    # Unset by default: an unpinned run must not look pinned, and a run that froze nothing must say so.
+    assert res["run"]["model_revision_requested"] is None
+    assert res["run"]["freeze_layernorm_gains"] is False
+    assert res["run"]["n_frozen_layernorm_gains"] == 0
     assert not list(run_dir.glob("eval_scores*.npz"))
     assert "save_state" not in trainer.calls  # AST-sheet runs write nothing new
 
@@ -327,3 +335,60 @@ def test_csv_and_smoke_paths_unchanged(tmp_path, fakes):
     assert trainer.train_dataset.sample_ids == df.loc[df.train_val_eval == "train", "Sample"].tolist()[:10]
     assert "save_state" not in trainer.calls
     assert json.loads((out / "results.json").read_text())["split"]["source"] == "smoke"
+
+
+# ------------------------------------------------- precision-ablation knobs (rifampicin three-arm experiment)
+
+
+class _ToyBackboneModel(torch.nn.Module):
+    """A model shaped like Bacformer's: a ``bacformer`` backbone with LayerNorms, plus a classifier head."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.bacformer = torch.nn.Module()
+        self.bacformer.embeddings = torch.nn.LayerNorm(4)
+        self.bacformer.encoder = torch.nn.Module()
+        self.bacformer.encoder.final_ln = torch.nn.LayerNorm(4)
+        self.bacformer.encoder.ffn = torch.nn.Sequential(torch.nn.LayerNorm(4), torch.nn.Linear(4, 4))
+        self.classifier = torch.nn.Module()
+        self.classifier.norm = torch.nn.LayerNorm(4)
+
+
+def test_freeze_backbone_layernorm_gains_scope():
+    """Backbone gains freeze; their biases, backbone matrices and the classifier head keep training."""
+    model = _ToyBackboneModel()
+    assert ft.freeze_backbone_layernorm_gains(model) == 3  # embeddings, final_ln, ffn.0 — not classifier.norm
+
+    assert model.bacformer.embeddings.weight.requires_grad is False
+    assert model.bacformer.encoder.final_ln.weight.requires_grad is False
+    assert model.bacformer.encoder.ffn[0].weight.requires_grad is False
+    # Biases are not gains, and were seen to move under bf16 — they must still train.
+    assert model.bacformer.embeddings.bias.requires_grad is True
+    assert model.bacformer.encoder.ffn[0].bias.requires_grad is True
+    # A backbone matrix weight is not a LayerNorm gain.
+    assert model.bacformer.encoder.ffn[1].weight.requires_grad is True
+    # The freshly-initialised head is out of scope — pinning it would be a different intervention.
+    assert model.classifier.norm.weight.requires_grad is True
+
+
+def test_freeze_backbone_layernorm_gains_refuses_silent_zero():
+    """A model with no backbone LayerNorm must raise, not quietly freeze nothing and train as the control."""
+    with pytest.raises(RuntimeError, match="no backbone LayerNorm"):
+        ft.freeze_backbone_layernorm_gains(_FakeModel())
+
+
+def test_model_revision_is_pinned_on_a_hub_load(tmp_path, fakes):
+    """The requested revision reaches from_pretrained and is recorded as requested in results.json."""
+    table = _split_table(tmp_path)
+    out = _run(tmp_path, table, model_revision="fake")  # _FakeModel resolves to "fake-revision"
+    assert fakes.load_kwargs[0]["revision"] == "fake"
+    res = json.loads((Path(out) / "results.json").read_text())
+    assert res["run"]["model_revision_requested"] == "fake"
+    assert res["model"]["revision"] == "fake-revision"
+
+
+def test_model_revision_mismatch_refuses_to_train(tmp_path, fakes):
+    """A pin that did not take must stop the run — a results file naming the wrong base looks authoritative."""
+    table = _split_table(tmp_path)
+    with pytest.raises(RuntimeError, match="Refusing to train"):
+        _run(tmp_path, table, model_revision="deadbeef")
