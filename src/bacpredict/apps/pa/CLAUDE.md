@@ -99,10 +99,67 @@ Two things to know before reading any of it:
 - **A reported MIC is never a point.** `≤ 2` is an interval, `> 8` is an interval, and even `= 4` is `(2, 4]`
   because the assay reads a doubling ladder. Imputing a point throws that away and attenuates the fitted MIC
   scale by about half — invisibly to AUROC, which is rank-only.
-- **σ is re-fitted on *validate*, once, at the selected checkpoint.** It is a residual spread in dilutions,
-  not a property of the data you can measure up front. It cannot move AUROC, AUPRC or the R/S call.
+- **σ is fixed at 0.4 in training and re-fitted on *validate*, once, at the selected checkpoint.** The
+  training value is the assay's own measured reproducibility (below); the re-fit is the model's actual
+  residual spread. Neither can move AUROC, AUPRC or the R/S call — σ only rescales `P(R) = Φ(μ/σ)`, which is
+  monotone in μ and crosses 0.5 at μ = 0 for every σ.
 
 Nothing in the binary path changes: without `--mic-table`, `finetune_amr` behaves exactly as before.
+
+### Why σ = 0.4, and the references behind it
+
+σ is held at the PsA MIC assay's **analytical reproducibility** — what a repeat test of the same isolate
+would disagree by — rather than at the model's residual spread. Essential agreement (EA) compares two
+independent reads, so their difference carries √2 × the single-read SD; inverting the published PsA rates:
+
+| source | reported EA (within ±1 doubling dilution) | implied single-read σ |
+|---|--:|--:|
+| Chen *et al.*, "Variability of beta-lactam broth microdilution for *P. aeruginosa*", *Antimicrob. Agents Chemother.* 2021, [doi:10.1128/aac.00640-21](https://journals.asm.org/doi/10.1128/aac.00640-21) | ≥ 90 % for every beta-lactam tested | 0.430 |
+| Digital dispense-assisted BMD for *P. aeruginosa*, 2021, [PMC8080699](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8080699/) | 92.7 % | 0.394 |
+| Two readout methods, commercial panel, CF isolates, *Infect. Dis.* 2018, [doi:10.1080/23744235.2018.1500705](https://www.tandfonline.com/doi/full/10.1080/23744235.2018.1500705) | 98 % at 24 h (colistin; exact agreement only 82 %) | 0.304 |
+| CLSI M07-A9 — acceptable reproducibility is within one twofold dilution, and "even under the best of controlled conditions, a dilution test may not yield the same end point each time" | — (the standard, not a rate) | — |
+
+**0.4 spans the two PsA-specific figures and round-trips onto them**: two reads at σ = 0.4 agree within one
+dilution 92.3 % of the time, against the 90–92.7 % measured. `tests/engine/finetune/test_mic_trainer.py`
+asserts that round trip, so a constant that stops matching the literature fails the suite rather than leaving
+this table as decoration. (The first value tried, 0.5 — from reading ±1 dilution as a ±2σ span — round-trips
+to 84.3 % EA, looser than the assay actually is.)
+
+⚠ **Say "analytical reproducibility", not "biological uncertainty".** The EA literature measures inoculum,
+operator and reading variability. Biological variation and everything the genome does not determine show up
+in the *re-fitted* σ, which arm A measured at 1.74–2.49 dilutions on held-out data — four to six times the
+assay scale. Holding training-σ at the assay scale is therefore a deliberate weighting choice, not the MLE.
+
+### How the MIC arms will be assessed (David, 2026-11-27)
+
+Three read-outs, **in this order**. (c) is explicitly downstream of (a) and (b) and is not run before them.
+
+**(a) The R/S call, as AUROC — the primary question, and the one the experiment exists to answer.**
+Translate the predicted MIC into a EUCAST R/S call and score it against the binary-trained arms. *Does
+training on the MIC produce a better predictor of the call than training on the call?* In this
+parameterisation it costs nothing to compute: μ is in dilutions **from the EUCAST R breakpoint**, so μ > 0
+*is* the R call and `P(R) = Φ(μ/σ)`. `collect_mic_arms` already reports it, against arms 0, 0′ and A, on each
+arm's own holdout and on the intersection every arm scored. The intersection column is the comparable one.
+
+**(b) Accuracy on the MIC scale itself, against a point model.** How well the predicted MIC tracks the
+observed one, compared with least squares on an imputed point (arm A) and with Maciek's published frozen
+point model. ⚠ **Two gaps, both small, neither blocking:**
+- `mic_agreement` currently returns `interval_coverage`, `absolute_agreement`, `essential_agreement`,
+  `bias_log2` and `rmse_log2` — but **no correlation and no slope**. Both are needed here, and *slope matters
+  more than correlation*: an attenuated model keeps its correlation while losing the scale, which is exactly
+  arm A's failure mode (it recovers 0.584 of the latent scale in simulation while its AUROC stays within
+  0.005 of the censored fit's). Report Pearson r **and** the regression slope of μ on the observed midpoint,
+  on `censor == "exact"` cells only — a censored cell has no MIC to correlate against.
+- Comparing to **Maciek's frozen point model needs his predictions on our holdout**, or at minimum his
+  reported metric on a cohort we can match. We do not have either yet.
+- Neither gap delays anything: the npz files carry `mu`, `lo`, `hi` and `sigma` per cell, so both statistics
+  can be added to the collector after the runs finish and recomputed over the saved artifacts.
+
+**(c) The same, allowing ±1 dilution — essential agreement. A downstream check only.** It is the field's
+convention and `collect_mic_arms` already computes it, so it costs nothing, **but it is a fudge**: it scores
+as correct a prediction a clinician would not accept, and it flatters every arm by construction — the ceiling
+it measures against is the assay's own reproducibility, which is precisely what σ was set to. Report it
+because the field expects it; never lead with it, and never let it stand in for (a) or (b).
 
 
 ## Genomes
