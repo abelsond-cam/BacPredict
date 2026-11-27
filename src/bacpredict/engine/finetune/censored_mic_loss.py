@@ -53,13 +53,24 @@ TEMPERATURE_MIN, TEMPERATURE_MAX = 0.02, 50.0
 #: ISO 20776-2 essential agreement is +-1 doubling dilution: the assay's own reproducibility.
 ASSAY_REPRODUCIBILITY_DILUTIONS = 1.0
 
-#: The residual SD that span implies, read as a +-2 sigma interval: 95.4% of replicates within +-1 dilution
-#: (David's decision, 2026-11-27). Reading +-1 dilution as +-1 sigma instead (sigma = 1.0) puts only 68% inside
-#: it, far looser than the assay, and it is also what let the optimizer run away: the pull an exact cell two
-#: dilutions out exerts on mu, relative to a bare call already two dilutions past the breakpoint, is 1.8e4x at
-#: sigma = 0.5, 25x at sigma = 1.0 and 2.6x at sigma = 2.0. Once sigma grows, the open-ended cells outvote the
-#: finite ones and nothing bounds mu. This is the value training holds FIXED; see mic_trainer.INIT_LOG_SIGMA.
-ASSAY_SIGMA_DILUTIONS = ASSAY_REPRODUCIBILITY_DILUTIONS / 2.0
+#: The residual SD the training loss is held at, in doubling dilutions: the MIC assay's own **analytical
+#: reproducibility** for *P. aeruginosa*, taken from measured essential agreement rather than a rule of thumb
+#: (David's decision, 2026-11-27). EA compares two independent reads, so their difference carries sqrt(2) x
+#: the single-read SD; inverting the published PsA figures gives 0.430 at EA >= 90% (beta-lactam broth
+#: microdilution, Antimicrob. Agents Chemother. 2021, doi:10.1128/aac.00640-21) and 0.394 at EA = 92.7%
+#: (digital-dispense BMD, PMC8080699). 0.4 is the round value spanning them, and it round-trips: two reads at
+#: sigma = 0.4 agree within one dilution 92.3% of the time against the 90-92.7% measured. (The earlier 0.5,
+#: from reading +-1 dilution as a +-2 sigma span, round-trips to 84.3% EA — looser than the assay really is.)
+#:
+#: ⚠ This is ANALYTICAL reproducibility, not biological variation, and it is emphatically **not** the model's
+#: residual SD: arm A's validate re-fit measured that at 1.74-2.49 dilutions. Holding sigma here is therefore
+#: a deliberate weighting choice and not the MLE. It penalises a miss by what the assay could plausibly have
+#: mismeasured, and leaves "how much is still unexplained" to the validate re-fit, which is where it belongs
+#: and where it is reported. Setting sigma to the true residual instead would flatten the loss until the
+#: open-ended bare-call cells outvote the exact ones -- an exact cell two dilutions out pulls 1.8e4x harder on
+#: mu than a satisfied bare call at sigma = 0.5 but only 2.6x at sigma = 2.0 -- washing out the dilution
+#: structure this experiment exists to test. See mic_trainer.INIT_LOG_SIGMA.
+ASSAY_SIGMA_DILUTIONS = 0.4
 
 
 def _log1mexp(x: torch.Tensor) -> torch.Tensor:

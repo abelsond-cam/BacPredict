@@ -164,10 +164,14 @@ def _trainer(tmp_path, objective="censored", sigma_lr=0.0):
     return MicBacformerTrainer(model=_TinyModel(), args=args, objective=objective, sigma_lr=sigma_lr)
 
 
-def test_sigma_is_the_assay_scale(tmp_path):
-    """ISO 20776-2's +-1 doubling dilution read as the +-2 sigma span: 95.4% of replicates inside it."""
-    assert math.exp(INIT_LOG_SIGMA) == pytest.approx(0.5)
-    assert _trainer(tmp_path).sigma == pytest.approx(0.5)
+def test_sigma_is_the_measured_assay_scale(tmp_path):
+    """Inverting published PsA essential agreement over two reads gives 0.430 (EA>=90%) and 0.394 (EA=92.7%)."""
+    assert math.exp(INIT_LOG_SIGMA) == pytest.approx(0.4)
+    assert _trainer(tmp_path).sigma == pytest.approx(0.4)
+    # The round trip the number is justified by. Two independent reads differ with SD sigma*sqrt(2), so
+    # P(|difference| <= 1 dilution) = erf(1 / (2 sigma)); it must land in the published 90-92.7% range, or
+    # the constant is not the assay's reproducibility and the docstring's derivation is a story.
+    assert 0.90 <= math.erf(1 / (2 * math.exp(INIT_LOG_SIGMA))) <= 0.93
 
 
 def test_sigma_round_trips_through_a_checkpoint(tmp_path):
@@ -252,7 +256,7 @@ def test_a_censored_step_runs_end_to_end_and_leaves_sigma_alone(tmp_path):
     loss.backward()
     assert t.log_sigma.grad is None          # not in the graph at all, so nothing can nudge it
     opt.step()
-    assert t.sigma == before == pytest.approx(0.5)
+    assert t.sigma == before == pytest.approx(0.4)
 
 
 def test_a_censored_step_moves_sigma_when_it_is_learned(tmp_path):

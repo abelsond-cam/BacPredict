@@ -16,7 +16,7 @@ and the R/S metrics are computed the same way throughout.
 
 **``sigma`` — what it is and when it moves.** ``sigma`` is the residual standard deviation of log2 MIC around
 ``mu``, in doubling dilutions: one scalar per drug, not per genome. **During training it is held FIXED** at
-:data:`INIT_LOG_SIGMA` — 0.5 dilutions, the assay's own +-1-dilution reproducibility read as a +-2 sigma span
+:data:`INIT_LOG_SIGMA` — 0.4 dilutions, the PsA MIC assay's measured analytical reproducibility
 (David's decision, 2026-11-27) — and it is still saved into every checkpoint as :data:`SIGMA_FILE` so a resumed
 run continues from the same value.
 
@@ -74,11 +74,12 @@ logger = logging.getLogger(__name__)
 MIC_OBJECTIVES = ("bce", "mse", "censored")
 MIC_OBJECTIVES_HERE = ("mse", "censored")
 
-#: ``log sigma`` during training, held fixed: ``log 0.5``. ISO 20776-2 essential agreement is +-1 doubling
-#: dilution, and taking that as the +-2 sigma span (95.4% of replicates inside it) gives sigma = 0.5. Its
-#: practical meaning: a prediction one dilution off the observed cell still keeps 15.7% of the density in that
-#: cell — a real 1.47-nat penalty, not a verdict — while two dilutions off costs 6.2 nats. That cliff between
-#: one and two dilutions is the assay's resolution, and sigma = 0.5 is what puts it there.
+#: ``log sigma`` during training, held fixed: ``log 0.4`` — the measured analytical reproducibility of the PsA
+#: MIC assay, derived in :data:`ASSAY_SIGMA_DILUTIONS` from published essential-agreement rates rather than
+#: from a rule of thumb. Its practical meaning: with ``mu`` in the right dilution cell, the latent value is in
+#: that cell 78.9% of the time, in an adjacent one 10.6%, and two or more cells away 0.02%. A prediction one
+#: dilution off the observed cell therefore costs 2.01 nats — a real penalty, not a verdict — and the cliff
+#: between one and two dilutions is the assay's own resolution.
 INIT_LOG_SIGMA = math.log(ASSAY_SIGMA_DILUTIONS)
 
 #: Where a checkpoint's ``sigma`` lives. Not in the safetensors: a key the base model does not have is exactly

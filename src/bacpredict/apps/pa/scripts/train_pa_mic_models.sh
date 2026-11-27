@@ -40,13 +40,19 @@
 # in v1 and moderate-or-good in v2, where there is room to move. Excluded: tobramycin (0.933 -> 0.941, David's
 # instruction — already excellent) and imipenem (0.884 -> 0.915, already strong).
 #
-# SIGMA. The censored model needs a residual spread for log2 MIC, in doubling dilutions. It is FIXED at 0.5
-# during training (David, 2026-11-27): ISO 20776-2 essential agreement is +-1 doubling dilution, and reading
-# that as the +-2 sigma span puts 95.4% of replicates inside it. One dilution off the observed cell then still
-# keeps 15.7% of the density in that cell (a 1.47-nat penalty, not a verdict) while two dilutions off costs
-# 6.2 nats — the cliff sits exactly at the assay's resolution. It is fixed and not learned because mu and
-# sigma are jointly non-identified by the bare R/S cells, which are 20-40% of the data: that pair marched to
-# sigma = 2.5e5 with the NLL flat on the first attempt (2026-11-27, quarantined under models/_void_*).
+# SIGMA. The censored model needs a residual spread for log2 MIC, in doubling dilutions. It is FIXED at 0.4
+# during training (David, 2026-11-27) — the PsA MIC assay's own measured analytical reproducibility, not a
+# rule of thumb. Essential agreement compares two reads, so their difference carries sqrt(2) x the single-read
+# SD; inverting the published PsA rates gives 0.430 at EA >= 90% (AAC 2021, doi:10.1128/aac.00640-21) and
+# 0.394 at EA = 92.7% (digital-dispense BMD, PMC8080699), and 0.4 round-trips to 92.3% EA. At it, the latent
+# value sits in mu's own dilution cell 78.9% of the time, an adjacent cell 10.6%, two-or-more 0.02%, and a
+# one-dilution miss costs 2.01 nats — a real penalty, not a verdict. NB this is ANALYTICAL reproducibility,
+# not the model's residual SD, which arm A's validate re-fit measured at 1.74-2.49: holding sigma here is a
+# weighting choice, and what is still unexplained is what the re-fit reports.
+#
+# It is fixed rather than learned because mu and sigma are jointly non-identified by the bare R/S cells,
+# which are 20-40% of the data: that pair marched to sigma = 2.5e5 with the NLL flat on the first attempt
+# (2026-11-27, quarantined under models/_void_*).
 # It is then **re-fitted once, on validate, at the selected checkpoint** (David, 2026-11-26). Fitting it
 # on train reads the scale of residuals the weights are already fitted to; fitting it on holdout is leakage.
 # Re-fitting one scale parameter on held-out data is temperature scaling, and it provably cannot move AUROC,
