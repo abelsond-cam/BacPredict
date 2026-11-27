@@ -20,6 +20,11 @@
 #                   a cohort of ~8,600 optimizer steps per epoch reaches 100,000 after 11.6 epochs, and the schedule
 #                   it was given is then 11.6 epochs long rather than the 40 every single-species arm ran. Raise
 #                   MAX_STEPS to steps_per_epoch * MAX_EPOCHS to keep the schedule the same length in epochs
+#   PRECISION       master weights: bf16 (default, the deployed setting) or fp32 (native weights + bf16 AMP)
+#   MODEL_REVISION  optional: pin the base model to this hub revision. Unpinned, a run takes whatever refs/main
+#                   points at, and the complete-genomes repo's modeling_bacformer.py differs across its revisions
+#   FREEZE_LAYERNORM_GAINS  optional, set non-empty: hold every backbone LayerNorm gain at its pretrained value.
+#                   The arm that separates "bf16 regularises" from "bf16 is less precise" (finetune_amr)
 #   NUM_WORKERS     DataLoader workers (default: the allocation, SLURM_CPUS_PER_TASK)
 #   REPO            the checkout to run: a detached worktree at the submitting SHA, .venv symlinked to the shared
 #                   env (default ~/workspace/BacPredict); its src/ goes first on PYTHONPATH
@@ -93,6 +98,21 @@ table=$SPLIT_DIR/${drug}_split.csv
 [[ -s $table ]] || { echo "no split table $table"; exit 4; }
 out=$OUT_ROOT/$drug
 [[ ! -e $out/results.json ]] || { echo "$out/results.json exists: move the old run aside first"; exit 5; }
+# A partially-populated embedding store is the dangerous case: a missing .pt does not fail at submit, it fails
+# hours in. Opt-in (one stat per genome, ~1.5 ms warm) because the stores are normally complete; set it when the
+# store was just restored or rebuilt. The TB store was moved to RDV on 2026-11-02 and restored from a login node.
+if [[ -n "${REQUIRE_ALL_EMBEDDINGS:-}" ]]; then
+    n_missing=0
+    while IFS= read -r s; do
+        if [[ ! -s "$EMBEDDINGS_DIR/${s}_esm_embeddings.pt" ]]; then
+            n_missing=$((n_missing + 1))
+            if (( n_missing <= 3 )); then echo "missing embedding: $s"; fi
+        fi
+    done < <(awk -F, 'NR>1{print $1}' "$table")
+    (( n_missing == 0 )) || {
+        echo "$n_missing of $table's genomes have no .pt in $EMBEDDINGS_DIR — refusing to train a different cohort"
+        exit 6; }
+fi
 workers=${NUM_WORKERS:-${SLURM_CPUS_PER_TASK:-8}}
 # extra holdouts: unset → holdout_st; set but empty → none (the flag with no value)
 read -r -a extra <<<"${EXTRA_HOLDOUTS-holdout_st}"
@@ -108,7 +128,9 @@ nvidia-smi -L || true
 
 uv run --project "$REPO" --no-sync python -X faulthandler -m bacpredict.engine.finetune.finetune_amr \
     --task "$TASK" --drug "$drug" --split-table "$table" --embeddings-dir "$EMBEDDINGS_DIR" --output-dir "$out" \
-    --model-name-or-path "${MODEL:-macwiatrak/bacformer-large-masked-complete-genomes}" --precision bf16 \
+    --model-name-or-path "${MODEL:-macwiatrak/bacformer-large-masked-complete-genomes}" \
+    --precision "${PRECISION:-bf16}" ${MODEL_REVISION:+--model-revision "$MODEL_REVISION"} \
+    ${FREEZE_LAYERNORM_GAINS:+--freeze-layernorm-gains} \
     --lr "${LR:-0.00015}" --batch-size 1 --grad-accumulation-steps 8 --warmup-proportion 0.1 \
     --eval-steps "${EVAL_STEPS:-250}" --max-steps "${MAX_STEPS:-100000}" --max-epochs "${MAX_EPOCHS:-40}" \
     --early-stopping-patience "${PATIENCE:-15}" --early-stopping-threshold "${THRESHOLD:-0.005}" \
