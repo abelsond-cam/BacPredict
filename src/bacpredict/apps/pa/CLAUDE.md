@@ -94,6 +94,13 @@ The pieces are engine, not app, because nothing in them is PsA-specific:
 | [`engine/finetune/mic_trainer`](../../engine/finetune/mic_trainer.py) | The three objectives on one network, and σ's life across a checkpoint |
 | [`collect_mic_arms.py`](collect_mic_arms.py) | The arms side by side — each on its own holdout **and** on the intersection every arm scored |
 
+**Interactive explainer of the likelihood** — slide μ and σ over the dilution ladder and watch the mass that
+falls in the observed window, for an exact cell, a censored one and a bare R/S call, with the loss and
+`∂loss/∂μ` live: <https://claude.ai/artifact/9gTtQnq5WA5uNPiZquWs1m?sk=OYBiyQhZGtk734bvHgCZ6w>
+(worked on meropenem, EUCAST R > 8 mg/L; its arithmetic is cross-checked against
+`interval_censored_gaussian_nll` to < 2e-4). ⚠ The `?sk=` is a share token — anyone who can read this repo
+can open the page.
+
 Two things to know before reading any of it:
 
 - **A reported MIC is never a point.** `≤ 2` is an interval, `> 8` is an interval, and even `= 4` is `(2, 4]`
@@ -142,18 +149,22 @@ parameterisation it costs nothing to compute: μ is in dilutions **from the EUCA
 arm's own holdout and on the intersection every arm scored. The intersection column is the comparable one.
 
 **(b) Accuracy on the MIC scale itself, against a point model.** How well the predicted MIC tracks the
-observed one, compared with least squares on an imputed point (arm A) and with Maciek's published frozen
-point model. ⚠ **Two gaps, both small, neither blocking:**
-- `mic_agreement` currently returns `interval_coverage`, `absolute_agreement`, `essential_agreement`,
-  `bias_log2` and `rmse_log2` — but **no correlation and no slope**. Both are needed here, and *slope matters
-  more than correlation*: an attenuated model keeps its correlation while losing the scale, which is exactly
-  arm A's failure mode (it recovers 0.584 of the latent scale in simulation while its AUROC stays within
-  0.005 of the censored fit's). Report Pearson r **and** the regression slope of μ on the observed midpoint,
-  on `censor == "exact"` cells only — a censored cell has no MIC to correlate against.
-- Comparing to **Maciek's frozen point model needs his predictions on our holdout**, or at minimum his
-  reported metric on a cohort we can match. We do not have either yet.
-- Neither gap delays anything: the npz files carry `mu`, `lo`, `hi` and `sigma` per cell, so both statistics
-  can be added to the collector after the runs finish and recomputed over the saved artifacts.
+observed one, compared with least squares on an imputed point (arm A) and with Maciek's frozen point model.
+`mic_agreement` reports **`pearson_r` and `slope_log2`** beside `bias_log2` and `rmse_log2`, over
+`censor == "exact"` cells only — a censored cell has no MIC to correlate against.
+
+**Read the slope before the correlation.** An attenuated model keeps its correlation while losing the scale,
+and that is arm A's measured failure mode: 0.584 of the latent scale on known-truth simulation with its AUROC
+still within 0.005 of the censored fit's. `tests/engine/finetune/test_censored_mic_loss.py` pins the case
+directly — a prediction shrunk to half scale scores `r = 1.000` and `slope = 0.500`. A correlation quoted
+without a slope would call that model fine.
+
+**The comparator is a re-run, not a quoted number** (David, 2026-11-27). Maciek's frozen point model is run
+on *our* holdout rather than compared against his published figure, so cohort, split and metric are identical
+and the estimator is the only thing that differs. ⚠ Still to build: it needs the frozen checkpoint, an
+inference pass writing the same npz schema (`mu`, `lo`, `hi`, `sigma`, `y_true`, `score`), and its own row in
+`collect_mic_arms`. Nothing blocks it — it can be built while arm B trains, and because the npz files carry
+everything per cell, every statistic here is recomputable over saved artifacts after the fact.
 
 **(c) The same, allowing ±1 dilution — essential agreement. A downstream check only.** It is the field's
 convention and `collect_mic_arms` already computes it, so it costs nothing, **but it is a fudge**: it scores

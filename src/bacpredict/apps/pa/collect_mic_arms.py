@@ -56,7 +56,8 @@ logger = logging.getLogger(__name__)
 
 METRICS = ("auroc", "auprc", "sensitivity", "specificity", "balanced_accuracy", "f1", "prevalence")
 MIC_KEYS = ("sigma", "sigma_train", "censored_nll", "censored_nll_at_sigma_train", "interval_coverage",
-            "absolute_agreement", "essential_agreement", "bias_log2", "rmse_log2", "n_exact")
+            "absolute_agreement", "essential_agreement", "bias_log2", "rmse_log2", "pearson_r",
+            "slope_log2", "n_exact")
 CALIBRATION_KEYS = ("brier", "ece", "brier_raw", "ece_raw", "temperature")
 
 
@@ -117,7 +118,8 @@ def _row(arm: str, drug: str, holdout: str, subset: str, z: dict, mic_block: dic
             if mu.size and np.isfinite(sigma_train) else np.nan),
         "interval_coverage": agree["interval_coverage"], "absolute_agreement": agree["absolute_agreement"],
         "essential_agreement": agree["essential_agreement"], "bias_log2": agree["bias_log2"],
-        "rmse_log2": agree["rmse_log2"], "n_exact": agree["n_exact"],
+        "rmse_log2": agree["rmse_log2"], "pearson_r": agree["pearson_r"],
+        "slope_log2": agree["slope_log2"], "n_exact": agree["n_exact"],
     }
     return row
 
@@ -236,10 +238,11 @@ def main(argv: list[str] | None = None) -> int:
 
     show = df[(df["holdout"] == "holdout") & (df["subset"] == "common")]
     cols = ["drug", "arm", "n_samples", "auroc", "auprc", "balanced_accuracy", "brier", "ece", "ece_raw",
-            "temperature", "sigma", "censored_nll", "essential_agreement", "absolute_agreement"]
+            "temperature", "sigma", "censored_nll", "pearson_r", "slope_log2", "rmse_log2",
+            "essential_agreement", "absolute_agreement"]
     if not show.empty:
         print("\n=== holdout, on the subset every arm scored (the paired comparison) ===")
-        with pd.option_context("display.width", 240, "display.max_columns", 30):
+        with pd.option_context("display.width", 300, "display.max_columns", 40):
             print(show[cols].round(4).to_string(index=False))
     missing = df[df["status"] == "missing"]
     if not missing.empty:

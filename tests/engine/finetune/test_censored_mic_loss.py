@@ -168,6 +168,40 @@ def test_agreement_rates_use_only_the_uncensored_cells():
     assert out["essential_agreement"] == pytest.approx(0.5)      # |4-2| = 2 is outside +-1
 
 
+def test_the_slope_catches_an_attenuated_fit_that_the_correlation_misses():
+    """Why read-out (b) reports a slope and not just r: a shrunk prediction keeps r and loses the scale.
+
+    This is arm A's measured failure mode -- it recovers 0.584 of the latent scale on known-truth simulation
+    while its AUROC stays within 0.005 of the censored fit's. A correlation alone would call it fine.
+    """
+    rng = np.random.default_rng(0)
+    k = rng.integers(-4, 5, 400).astype(float)          # reported ladder points
+    lo, hi = k - 1.0, k
+    mid = k - 0.5
+    censor = np.array(["exact"] * k.size, dtype=object)
+
+    honest = mic_agreement(mid.copy(), lo, hi, censor)
+    assert honest["pearson_r"] == pytest.approx(1.0)
+    assert honest["slope_log2"] == pytest.approx(1.0)
+
+    shrunk = mic_agreement(0.5 * mid, lo, hi, censor)   # half the scale, same ordering
+    assert shrunk["pearson_r"] == pytest.approx(1.0)    # r is blind to it
+    assert shrunk["slope_log2"] == pytest.approx(0.5)   # the slope is not
+
+    noisy = mic_agreement(mid + rng.normal(0, 0.4, k.size), lo, hi, censor)
+    assert 0.9 < noisy["slope_log2"] < 1.1 and noisy["pearson_r"] < 1.0
+
+
+def test_mic_scale_statistics_are_nan_without_spread_to_regress_on():
+    """One exact cell, or a cohort whose exact MICs are all the same point, has no slope -- not a slope of 0."""
+    one = mic_agreement(np.array([0.5, 9.0]), np.array([0.0, 3.0]), np.array([1.0, INF]),
+                        np.array(["exact", "right"], dtype=object))
+    assert one["n_exact"] == 1 and math.isnan(one["slope_log2"]) and math.isnan(one["pearson_r"])
+    flat = mic_agreement(np.array([0.4, 0.6]), np.array([0.0, 0.0]), np.array([1.0, 1.0]),
+                         np.array(["exact", "exact"], dtype=object))
+    assert flat["n_exact"] == 2 and math.isnan(flat["slope_log2"])
+
+
 def test_a_holdout_with_no_uncensored_cell_reports_nan_not_zero():
     """An agreement rate over nothing is unknown, which is not the same number as nought."""
     out = mic_agreement(np.array([1.0]), np.array([0.0]), np.array([INF]), np.array(["right"]))

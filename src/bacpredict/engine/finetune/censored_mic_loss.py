@@ -277,6 +277,14 @@ def mic_agreement(mu: np.ndarray, lo: np.ndarray, hi: np.ndarray, censor: np.nda
 
     ``bias_log2`` and ``rmse_log2`` compare ``mu`` with the midpoint of the observed interval, ``k - 0.5``,
     which is the unbiased point summary of "somewhere in ``(k-1, k]``".
+
+    ``pearson_r`` and ``slope_log2`` are the MIC-scale read-out proper: ``r`` between ``mu`` and that
+    midpoint, and the OLS slope of ``mu`` **on** it. **The slope is the discriminating one.** An attenuated
+    fit keeps its correlation while losing the scale -- on known-truth simulation the point-imputed arm scores
+    ``r`` close to the censored arm's while recovering a slope of only 0.584
+    (``tests/engine/finetune/test_mic_estimator_recovery.py``) -- so a correlation reported without a slope
+    hides exactly the failure this experiment is testing for. Both are over ``censor == "exact"`` cells only,
+    and both are ``nan`` below two such cells or when either side has no spread.
     """
     mu, lo, hi = (np.asarray(x, dtype=float).ravel() for x in (mu, lo, hi))
     censor = np.asarray(censor, dtype=object).ravel()
@@ -284,13 +292,15 @@ def mic_agreement(mu: np.ndarray, lo: np.ndarray, hi: np.ndarray, censor: np.nda
     out: dict[str, float] = {"n": int(mu.size)}
     if mu.size == 0:
         return {**out, "interval_coverage": nan, "n_exact": 0, "absolute_agreement": nan,
-                "essential_agreement": nan, "bias_log2": nan, "rmse_log2": nan}
+                "essential_agreement": nan, "bias_log2": nan, "rmse_log2": nan, "pearson_r": nan,
+                "slope_log2": nan}
 
     out["interval_coverage"] = float(np.mean((mu > lo) & (mu <= hi)))
     exact = censor == "exact"
     out["n_exact"] = int(exact.sum())
     if not exact.any():
-        return {**out, "absolute_agreement": nan, "essential_agreement": nan, "bias_log2": nan, "rmse_log2": nan}
+        return {**out, "absolute_agreement": nan, "essential_agreement": nan, "bias_log2": nan,
+                "rmse_log2": nan, "pearson_r": nan, "slope_log2": nan}
     k = hi[exact]
     k_hat = predicted_ladder_mic(mu[exact])
     resid = mu[exact] - (k - 0.5)
@@ -298,6 +308,16 @@ def mic_agreement(mu: np.ndarray, lo: np.ndarray, hi: np.ndarray, censor: np.nda
     out["essential_agreement"] = float(np.mean(np.abs(k_hat - k) <= 1.0))
     out["bias_log2"] = float(np.mean(resid))
     out["rmse_log2"] = float(np.sqrt(np.mean(resid ** 2)))
+    # The MIC-scale read-out: mu against the observed midpoint. Guarded three ways, because each of these is
+    # nan rather than a number: fewer than two exact cells, a cohort whose exact MICs are all the same ladder
+    # point (no spread to regress on), and a cell mislabelled 'exact' whose bound is non-finite.
+    pred, obs = mu[exact], k - 0.5
+    ok = np.isfinite(pred) & np.isfinite(obs)
+    if ok.sum() >= 2 and np.std(obs[ok]) > 0 and np.std(pred[ok]) > 0:
+        out["pearson_r"] = float(np.corrcoef(pred[ok], obs[ok])[0, 1])
+        out["slope_log2"] = float(np.cov(pred[ok], obs[ok], ddof=1)[0, 1] / np.var(obs[ok], ddof=1))
+    else:
+        out["pearson_r"] = out["slope_log2"] = nan
     return out
 
 
