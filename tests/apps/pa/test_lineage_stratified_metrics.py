@@ -7,9 +7,20 @@ import pytest
 
 from bacpredict.apps.pa.lineage_stratified_metrics import (
     _auc,
+    _score_of,
     stratified_auroc,
     within_stratum_mic,
 )
+
+
+def test_an_arm_with_no_raw_score_falls_back_to_y_prob_and_declares_its_saturation():
+    """Arm 0 predates the `score` key. y_prob is rank-equivalent, but float32 sigmoid saturates to 1.0."""
+    saturated = {"y_prob": np.array([1.0, 1.0, 1.0, 0.2, 0.1])}
+    s, key, tied = _score_of(saturated)
+    assert key == "y_prob" and tied == pytest.approx(0.6)
+    raw = {"y_prob": np.array([0.9, 0.1]), "score": np.array([2.2, -2.2])}
+    s, key, tied = _score_of(raw)
+    assert key == "score" and list(s) == [2.2, -2.2]
 
 
 def test_a_model_that_only_knows_the_lineage_scores_well_overall_and_chance_within():

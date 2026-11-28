@@ -145,6 +145,22 @@ def _load_npz(path: Path) -> dict | None:
     return out
 
 
+def _score_of(z: dict) -> tuple[np.ndarray, str, float]:
+    """The arm's raw scalar output where it exists, else ``y_prob``, with the tie rate at the top value.
+
+    AUROC is invariant under the sigmoid, so ``y_prob`` is a correct fallback for an arm trained before
+    ``score`` was saved (arm 0 is one). It is not a *free* fallback: float32 ``sigmoid`` saturates to exactly
+    1.0 from a logit of about 17, and ranks tied between a resistant and a susceptible genome count half a
+    win each, so a saturating arm's AUROC is a slight underestimate. The tie rate is returned so the report
+    can show it rather than let it pass as signal.
+    """
+    key = "score" if "score" in z else "y_prob"
+    s = np.asarray(z[key], dtype=float)
+    top = float(np.max(s)) if s.size else float("nan")
+    tied = float(np.mean(s == top)) if s.size else float("nan")
+    return s, key, tied
+
+
 def _censor_classes(intervals_dir: Path | None, drug: str, sample_ids: np.ndarray) -> np.ndarray:
     """Each sample's censoring class from ``<drug>_mic_intervals.csv``; blank when the table is absent.
 
@@ -186,9 +202,11 @@ def lineage_table(arms: dict[str, Path], drugs: list[str], splits_dir: Path,
                 continue
             strata = np.array([st.get(s, "") for s in main["sample_ids"]], dtype=object)
             known = strata != ""
-            auroc_main = _auc(main["y_true"], main["score"])
-            auroc_st = _auc(st_out["y_true"], st_out["score"]) if st_out is not None else float("nan")
-            sa = stratified_auroc(main["y_true"][known], main["score"][known], strata[known])
+            score, score_key, tied_top = _score_of(main)
+            auroc_main = _auc(main["y_true"], score)
+            auroc_st = (_auc(st_out["y_true"], _score_of(st_out)[0])
+                        if st_out is not None else float("nan"))
+            sa = stratified_auroc(main["y_true"][known], score[known], strata[known])
             mic: dict = {"pearson_r": float("nan"), "slope_log2": float("nan"),
                          "n_strata": 0, "n_exact": 0}
             if "mu" in main and "hi" in main:
@@ -202,7 +220,7 @@ def lineage_table(arms: dict[str, Path], drugs: list[str], splits_dir: Path,
                 "auroc_within_st": sa["auroc"], "auroc_within_st_unweighted": sa["auroc_unweighted"],
                 "n_strata": sa["n_strata"], "n_pairs": sa["n_pairs"], "n_in_strata": sa["n_samples"],
                 "within_st_pearson_r": mic["pearson_r"], "within_st_slope_log2": mic["slope_log2"],
-                "n_exact_within_st": mic["n_exact"],
+                "n_exact_within_st": mic["n_exact"], "score_key": score_key, "frac_tied_at_top": tied_top,
             })
     return pd.DataFrame(rows)
 
@@ -236,10 +254,13 @@ def main(argv: list[str] | None = None) -> int:
     ok = df[df.get("status", pd.Series(dtype=str)) == "ok"]
     if not ok.empty:
         cols = ["drug", "arm", "auroc_holdout", "auroc_holdout_st", "st_gap", "auroc_within_st",
-                "n_strata", "n_pairs", "within_st_pearson_r", "within_st_slope_log2", "n_exact_within_st"]
+                "n_strata", "n_pairs", "within_st_pearson_r", "within_st_slope_log2", "n_exact_within_st",
+                "score_key", "frac_tied_at_top"]
         print("\n=== (d) the ST-holdout gap, and (e) within-ST discrimination ===")
         print("    st_gap  = holdout AUROC - held-out-ST AUROC; SMALLER means less reliant on lineage")
         print("    within  = P(a resistant genome outranks a susceptible one FROM THE SAME ST)")
+        print("    score_key=y_prob means that arm saved no raw score; frac_tied_at_top is the float32")
+        print("    saturation rate, which makes its AUROC a slight UNDERestimate")
         with pd.option_context("display.width", 300, "display.max_columns", 40):
             print(ok[cols].round(4).to_string(index=False))
     missing = df[df.get("status", pd.Series(dtype=str)) == "missing"]
