@@ -64,10 +64,22 @@ ASSAY_REPRODUCIBILITY_DILUTIONS = 1.0
 #: **But those are within-laboratory figures and this cohort is not.** `engine/ast_labels/mic_intervals`
 #: pools several sources (amr_gnn_nguyen2026, cabbage_v2, PATRIC, puffin, NCBI_antibiogram), so a cell's
 #: bounds can come from different labs on different panels, and the spread that matters is the between-lab
-#: one (David, 2026-11-28). Inverting that the same way: EA = 80% gives 0.552 and EA = 85% gives 0.491, so
-#: **0.5** is the round value in the plausible band. It also decomposes cleanly -- a within-lab 0.40 plus an
-#: independent 0.30 of pure lab effect is exactly 0.5 -- and it round-trips to 84.3% EA, a plausible
-#: between-lab agreement rate where 92.3% is a plausible within-lab one.
+#: one (David, 2026-11-28). Two independent lines of published evidence put it at 0.5:
+#:
+#: * a multicentre cefiderocol study reports *P. aeruginosa* EA of **83.3%** by CLSI reading across sites
+#:   (PubMed 39745470), which inverts to a single-read sigma of **0.512**;
+#: * the same AAC 2021 beta-lactam paper reports that **interlaboratory differences averaged up to roughly
+#:   0.65 log2 MIC**, and that most strains varying between laboratories were *not* variable within one even
+#:   on quadruplicate testing. Read as a mean absolute difference that is sigma 0.576; read as the SD of the
+#:   difference it is 0.460. Either way it is an "up to", so an upper bound for the worst agent.
+#:
+#: The bracket is therefore ~0.46-0.58 and the point estimate 0.512, so **0.5** is the number, not a rounding
+#: of a guess. It decomposes cleanly -- a within-lab 0.40 plus an independent 0.30 of pure lab effect is
+#: exactly 0.5 -- and round-trips to 84.3% EA against the 83.3% measured between sites.
+#:
+#: ⚠ TO VERIFY BEFORE PUBLICATION: every figure above is from an abstract or search snippet, not from a full
+#: text. The derivation is sound but the inputs must be read in the papers before this appears in a methods
+#: section.
 #:
 #: 0.4 stays defensible for single-source data and stays runnable: `--mic-sigma` overrides this constant, so
 #: the two are run as separate arms rather than argued about.

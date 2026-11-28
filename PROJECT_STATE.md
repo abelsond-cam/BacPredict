@@ -3864,22 +3864,13 @@ estimator change under test, not the switch from binary to continuous.
   arm 0 and arms A/B could be either.
 - **Arm A is David's long-standing hand rule** (`≥X`→X, `>X`→one dilution up, mirrored below), kept as the
   comparator censoring is tested against.
-- **σ is FIXED at 0.4 dilutions during training** (David, 2026-11-27) **and re-fitted once, on *validate*, at
-  the selected checkpoint.** 0.4 is the PsA MIC assay's **measured analytical reproducibility**, not a rule of
-  thumb. Essential agreement compares two independent reads, so their difference carries √2 × the single-read
-  SD; inverting the published PsA rates gives **0.430** at EA ≥ 90 % ([beta-lactam BMD, *AAC* 2021](https://journals.asm.org/doi/10.1128/aac.00640-21))
-  and **0.394** at EA = 92.7 % ([digital-dispense BMD, 2021](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8080699/)).
-  0.4 spans them and round-trips: two reads at σ = 0.4 agree within one dilution **92.3 %** of the time.
-  At it the latent value sits in μ's own dilution cell 78.9 % of the time, an adjacent cell 10.6 %, two or more
-  cells away 0.02 %, and a one-dilution miss costs **2.01 nats** — a real penalty, not a verdict.
-  ⚠ The earlier 0.5 (±1 dilution read as a ±2σ span) round-trips to only **84.3 %** EA, looser than the assay
-  actually is; it was replaced before arm B started. It is fixed rather than learned because μ and σ are **jointly non-identified** by
-  the cells with no MIC (see the σ caveat below). The re-fit is unchanged and is David's correction to the
-  first design, which read σ from holdout: that is leakage. Reading it from train inherits the weights' own
-  over-confidence. Re-fitting one scale parameter on held-out data is temperature scaling, and it is provably
-  safe here because σ cannot move a ranking metric — `P(R) = Φ(μ/σ)` is monotone in μ and crosses 0.5 at
-  μ = 0 for every σ. **Checkpoint selection stays `eval_auroc` for all four arms**, so the comparison varies
-  the objective and not the stopping rule.
+- **σ is FIXED at 0.5 dilutions during training** (David, 2026-11-28) **and re-fitted once, on *validate*, at
+  the selected checkpoint.** 0.5 is the **between-laboratory** reproducibility of the MIC measurements this
+  cohort is built from — the published 0.39–0.43 figures are within-lab, and `mic_intervals` pools five
+  sources. A multicentre PsA study gives EA 83.3 % across sites → σ = 0.512, and *AAC* 2021 reports
+  interlaboratory differences up to ~0.65 log₂ → σ 0.46–0.58. **0.4 runs as its own arm**
+  (`censored_interval_sigma04`) rather than being argued about; `--mic-sigma` makes the scale a run parameter.
+  Full derivation and the to-verify caveat: §6 and `engine/finetune/censored_mic_loss`.
 - **Five drugs, one seed** (David): seed-to-seed differences are small next to the effect sought. Chosen where
   v1→v2 PsA-only AUROC was moderate/poor → moderate/good, so there is room to move: amikacin (0.790→0.895),
   cefepime (0.714→0.820), ceftazidime (0.748→0.827), ciprofloxacin (0.817→0.866), meropenem (0.810→0.881).
@@ -3981,7 +3972,9 @@ own holdout and on the **intersection every arm scored**, because the holdouts a
 computed on two different sets is not a difference between arms.
 
 **Status (2026-11-27).** Arms 0′ and A **done**, all five drugs. Arm B **re-running** at `57f3082` with σ
-fixed (array 42097876, **18 h** wall), behind a fresh Stage A smoke (42096807). ⚠ The wall was raised from
+fixed. **Two σ arms** (David, 2026-11-28), identical but for the scale and from one SHA: `censored_interval`
+at σ = 0.5 (array **42104907**) and `censored_interval_sigma04` at σ = 0.4 (array **42104908**), both 18 h.
+Stage A and Stage B passed (42096807). ⚠ The wall was raised from
 12 h before arm B started: arms 0'/A ran 7:38–11:35 at 4.7–5.1 s/step, so the slowest was 25 minutes inside a
 12 h wall, and arm B trains on 14–26 % more cells per epoch (it keeps the bare calls), projecting ~13.1 h on
 ceftazidime and meropenem. There is no wall-aware stop, so a timeout writes no `results.json`. Arm 0 was never re-run.
@@ -4002,6 +3995,46 @@ scored; **until it has run over arm B, no arm-vs-arm claim should be made from t
 
 AUPRC, read the same way: arm 0′ 0.7741 / 0.8137 / 0.8207 / 0.9094 / 0.8281 and arm A 0.7594 / 0.7882 /
 0.8291 / 0.9108 / 0.8228, in the row order above.
+
+**Numbers of record — the paired comparison, on the subset every arm scored** (2026-11-28, from
+`psaonly_mic/models/mic_arm_metrics_3arms.csv` via `apps/pa/collect_mic_arms`). ⛔ **This is the table to read,
+not the per-arm holdouts above** — those are different cohorts. Arm 0 loses 0.6–1.8 points when restricted to
+the MIC-bearing cells, so most of its apparent edge was cohort, not model.
+
+| drug | n | arm 0 | arm 0′ | arm A | arm A − 0′ | arm A slope | arm A r |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| amikacin | 940 | 0.8889 | 0.8865 | 0.8844 | −0.0021 | 0.3625 | 0.4749 |
+| cefepime | 907 | 0.8020 | 0.7965 | 0.7870 | −0.0095 | 0.2759 | 0.4802 |
+| ceftazidime | 1,261 | 0.8152 | 0.8172 | 0.8254 | +0.0082 | 0.5279 | 0.6264 |
+| ciprofloxacin | 1,199 | 0.8542 | 0.8237 | 0.8304 | +0.0067 | 0.4541 | 0.6377 |
+| meropenem | 1,286 | 0.8648 | 0.8609 | 0.8785 | +0.0176 | 0.7470 | 0.7543 |
+| **mean** | | | | | **+0.0042** | **0.4735** | **0.5947** |
+
+- **The extra cells buy arm 0 about +0.8 pp over arm 0′ on average** (+0.0024/+0.0055/−0.0020/+0.0305/+0.0039),
+  and **+0.25 pp excluding ciprofloxacin**, which supplies almost all of it. This is the honest size of
+  mechanism 1 *for a binary loss*; arm B gets the same cells in a loss that can use them.
+- **Arm A beats arm 0′ by +0.4 pp on average, 3 drugs of 5.** Mixed, as expected.
+- **Arm A's MIC-scale slope is 0.28–0.75 (mean 0.47)** — the attenuation the simulation predicted (0.584),
+  now measured on real data. **This is the number arm B has to beat.**
+
+**Numbers of record — lineage stratification** (2026-11-28, `psaonly_mic/models/lineage_stratified_metrics.csv`
+via `apps/pa/lineage_stratified_metrics`). ⚠ Arm 0's rows are **not** on the same cells as arms 0′/A here (47
+strata / 4,467 pairs vs 44 / 3,020 on amikacin); the common-subset restriction has not been applied.
+
+| drug | within-ST AUROC (0 / 0′ / A) | arm A within-ST slope |
+|---|---|--:|
+| amikacin | 0.8602 / 0.8637 / 0.8273 | 0.2886 |
+| cefepime | 0.7444 / 0.7502 / 0.6907 | 0.1959 |
+| ceftazidime | 0.7648 / 0.7646 / 0.7963 | 0.3541 |
+| ciprofloxacin | 0.8504 / 0.8157 / 0.8054 | 0.2716 |
+| meropenem | 0.8121 / 0.8127 / 0.7921 | 0.5819 |
+
+**Within-ST AUROC is 0.69–0.86 against an overall 0.79–0.89.** A pure lineage model would score ~0.50, so
+**the binary arms are already discriminating inside a clone** — the lineage-shortcut story is weaker here than
+the TB-mini-set precedent suggested, and the headroom read-out (e) was built to find is smaller than hoped.
+The ST-gap (d) is **not usable in this form**: `holdout_st` is one ST (ST155, 117–207 cells), the ordering is
+inconsistent across arms, and ciprofloxacin's arm 0′ gap is negative. Arm A's **within-ST** slope (0.20–0.58)
+is lower than its overall slope (0.28–0.75), which is the cleanest target arm B has.
 
 **Numbers of record — arm 0's holdout calibration**, recomputed by `apps/pa/collect_mic_arms` from
 `$AMR/processed/cross_species_psaonly_v2/models/<drug>/eval_scores.npz` (2026-11-26). The AUROCs reproduce
@@ -4043,6 +4076,15 @@ in [`apps/pa/CLAUDE.md`](src/bacpredict/apps/pa/CLAUDE.md) § *How the MIC arms 
 | **d** | **The ST-holdout gap** — each arm's holdout AUROC minus its held-out-ST AUROC. An arm leaning on lineage has nothing to lean on for an unseen clone, so it should fall further. | **Ready, no new runs.** Every arm already writes `eval_scores_holdout_st.npz` (ST155; 207 meropenem cells). `apps/pa/lineage_stratified_metrics` computes it. The **gap** is the statistic — neither number alone, since the two sets differ in size and composition. |
 | **e** | **Within-ST discrimination** — `P(a resistant genome outranks a susceptible one from the same ST)`, and the MIC slope after centring within ST. Lineage is constant inside a stratum, so what still discriminates is genomic. | **Ready, no new runs.** `st_key` is in the split tables (936 STs; ST235 n=671, ST111 n=313, ST621 n=264, ST155 n=207). Strata pooled by discordant-pair count `n_pos×n_neg`, so a 3-genome ST cannot outvote ST235; the unweighted mean is reported beside it. ⚠ Within-ST MIC variation has an assay noise floor of σ ≈ 0.4 dilutions against a measured residual of ~2, so there is room — but the within-ST slope's ceiling is not exactly 1.0. |
 | **c** | **The same allowing ±1 dilution** (essential agreement). | **Ready, and deliberately last.** Already computed. ⚠ It is the field's convention but a fudge — it scores as correct what a clinician would reject, and it flatters every arm against a ceiling that is the assay's own reproducibility, which is exactly what σ was set to. Never lead with it; never let it stand in for a or b. |
+
+**Sequencing** (David, 2026-11-28). **Nail it on these five drugs → extend to all ten → then the held-out-ST
+experiment.** The overall holdout AUROC on the common subset is the most stable number and is what to read
+first; ST-holdout work is a *separate experiment*, properly done by restructuring the holdout to be several
+held-out STs (or SLs, if they are defined for PsA) rather than the single ST155 we have. Hypothesis
+dispositions from 2026-11-28: *the headroom is in the gradient rather than the call* — **partially accepted,
+but ST-by-binary already knows a lot, so left open pending arm B**; *ST is too coarse a stratification* —
+**deferred until the model is optimised**; the other two (resistance is within-clone by mechanism; (d) is
+underpowered) are **not being pursued now**.
 
 **Caveats.**
 - **`mic_undecided` cells are out of this experiment.** 101 PsA tests (101 cells over the five drugs) are
@@ -4219,7 +4261,7 @@ directory was consolidated. Several of these existed nowhere else.
 | 2026-11-18 | **Attribution's primary statistic is per-genome-normalised \|attribution\|; resistant-vs-susceptible per gene is secondary.** David's choice. Per-genome normalisation also makes the logit and probability scales interchangeable for ranking. Zero-variance genomes are **counted and reported**, never silently zeroed — that count is the saturation diagnostic. |
 | 2026-11-26 | **Predicting MIC means a censored estimator, not least squares.** A reported MIC is an interval — `≤`/`≥` bound it on one side, and even an exact `= X` means "growth at X/2, none at X" on a doubling ladder. 18.7–45.4 % of PsA tests per drug are censored. The estimator is an **interval-censored Gaussian (Tobit) likelihood on log₂ MIC** in dilutions from the EUCAST R breakpoint; a bare R/S call is the open interval on its side of the breakpoint, which makes **binary cross-entropy the all-censored special case of the same loss** (verified bit-for-bit, `tests/engine/finetune/test_censored_mic_loss.py`). Point imputation is kept **as the comparator** (arm A), not as the method: on known-truth simulation it recovers ~0.58 of the latent MIC scale while its AUROC stays within 0.005 of the censored fit's, so the harm is invisible to AUROC and shows only in the call and the calibration. |
 | 2026-11-27 | **The MIC arms are assessed on three read-outs, in order: (a) the R/S call as AUROC, (b) accuracy on the MIC scale against a point model, (c) the same allowing ±1 dilution.** (a) is the primary question and the one the experiment exists to answer — does training on the MIC predict the *call* better than training on the call. (b) is the comparison against arm A and against Maciek's published frozen point model, and needs a correlation **and a slope** added to `mic_agreement`, plus his predictions on our holdout; slope is the discriminating statistic because an attenuated model keeps its correlation. (c) runs only after (a) and (b): essential agreement is the field's convention but a fudge that scores as correct what a clinician would reject, against a ceiling that is the assay's own reproducibility — i.e. exactly what σ was set to — so it flatters every arm by construction. Rationale and references: [`apps/pa/CLAUDE.md`](src/bacpredict/apps/pa/CLAUDE.md). |
-| 2026-11-27 | **σ is fixed at 0.4 dilutions during training, not learned.** 0.4 is the PsA MIC assay's measured analytical reproducibility, derived from published essential agreement rather than from a convention: EA compares two reads, so their difference carries √2 × the single-read SD, and inverting the PsA rates gives 0.430 at EA ≥ 90 % ([*AAC* 2021](https://journals.asm.org/doi/10.1128/aac.00640-21)) and 0.394 at EA = 92.7 % ([digital-dispense BMD](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8080699/)); 0.4 spans them and round-trips to 92.3 % EA. A one-dilution miss then costs 2.01 nats — a real penalty, not a verdict — and the cliff falls at the assay's own resolution. ⚠ This is **analytical reproducibility, not the model's residual SD**, which arm A's validate re-fit measured at **1.74–2.49 dilutions**: holding σ at the assay scale is a deliberate weighting choice, not the MLE, and what remains unexplained is what the validate re-fit reports. Setting σ to the true residual instead would flatten the loss until the open-ended bare-call cells outvote the exact ones (1.8×10⁴× at σ = 0.5 vs 2.6× at σ = 2.0), washing out the dilution structure the experiment exists to test. (An earlier 0.5, from reading ±1 dilution as ±2σ, round-trips to only 84.3 % EA; replaced before arm B started.) It is fixed because μ and σ are **jointly non-identified**: a bare R/S call's likelihood is `Φ(±μ/σ)`, invariant under scaling the pair, and those are 20–40 % of cells; AdamW's scale-free update then marches the flat valley (measured: σ → 2.5×10⁵ on PsA amikacin, NLL flat, all five drugs). This is also the standard identification constraint for an ordered probit. **The validate re-fit is unchanged** — it holds μ fixed, which is the only condition under which σ *is* identified. Consequence: Stage B's `--max-loss` for the censored arm moves 0.1 → 0.45, because a width-1 exact cell floors at 0.3817 once σ cannot shrink. |
+| 2026-11-28 | **σ is fixed at 0.5 dilutions during training, not learned, and the alternative runs as its own arm.** σ is set to the reproducibility of the MIC *measurements this cohort is built from*. The published PsA figures that give 0.4 are **within-laboratory** ([*AAC* 2021](https://journals.asm.org/doi/10.1128/aac.00640-21) EA ≥ 90 % → 0.430; [digital-dispense BMD](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8080699/) EA = 92.7 % → 0.394), but `mic_intervals` pools amr_gnn_nguyen2026, cabbage_v2, PATRIC, puffin and NCBI_antibiogram, so the spread that matters is **between-lab** (David, 2026-11-28). Two published lines give it: a multicentre study reports PsA EA of **83.3 %** across sites by CLSI reading ([PubMed 39745470](https://pubmed.ncbi.nlm.nih.gov/39745470/)) → σ = **0.512**; and *AAC* 2021 reports **interlaboratory differences averaging up to ~0.65 log₂ MIC**, with strains varying between labs but not within one → σ 0.460–0.576 as an upper bound. Bracket ~0.46–0.58, point estimate 0.512, so **0.5**; it decomposes as within-lab 0.40 ⊕ between-lab 0.30 and round-trips to 84.3 % EA against 83.3 % measured. **0.4 stays defensible for single-source data, so it runs as `censored_interval_sigma04` rather than being argued about** — `--mic-sigma` makes the scale a run parameter. ⚠ Every figure here is from an abstract or snippet; **read the full texts before this reaches a methods section**. ⚠ This is **measurement reproducibility, not the model's residual SD**, which arm A's validate re-fit measured at **1.74–2.49 dilutions**: holding σ at the measurement scale is a weighting choice, not the MLE, and what remains unexplained is what the re-fit reports. Setting σ to the true residual would flatten the loss until the open-ended bare-call cells outvote the exact ones (1.8×10⁴× at σ = 0.5 vs 2.6× at σ = 2.0), washing out the dilution structure the experiment exists to test. It is **fixed** because μ and σ are jointly non-identified: a bare R/S call's likelihood is `Φ(±μ/σ)`, invariant under scaling the pair, and those are 20–40 % of cells; AdamW's scale-free update then marches the flat valley (measured: σ → 2.5×10⁵ on PsA amikacin, NLL flat, all five drugs). This is also the standard identification constraint for an ordered probit. **The validate re-fit is unchanged** — it holds μ fixed, the only condition under which σ *is* identified. Consequence: Stage B's `--max-loss` for the censored arm is 0.45, because a width-1 exact cell floors at 0.3817. |
 | 2026-11-26 | **Calibration is fitted the same way in every arm, or the comparison credits the estimator with the scaling.** The MIC arms re-fit σ on validate; a binary arm has no σ, so it gets the exact analogue — a **logit temperature** fitted on the same split (Guo et al. 2017, from recall). Like σ it is monotone in the score and crosses 0.5 where the score does, so it cannot move AUROC, AUPRC or the R/S call; it recovers injected over-confidences of 0.4/1.0/2.5 to within 5 % (`tests/engine/finetune/test_censored_mic_loss.py`). **Every arm reports calibration twice** — `*_raw` from the model's own probability, `brier`/`ece` after the validate-fitted scale. An arm with no validate scores reports the tempered figures as **NaN**, never its raw numbers. Storing only `y_prob` would not have sufficed: float32 `sigmoid` saturates to exactly 1.0 from a logit of ~17, so the raw score is saved as `score` in every npz. |
 | 2026-11-26 | **σ is re-fitted once, on *validate*, at the selected checkpoint — never on train, never on holdout.** David's correction to the first design, which read it from holdout (leakage). Train would inherit the weights' own over-confidence. Re-fitting one scale parameter on held-out data is temperature scaling, and it is safe because σ provably cannot move a ranking metric: `P(R) = Φ(μ/σ)` is monotone in μ and crosses 0.5 at μ = 0 for every σ, so AUROC, AUPRC and the R/S call are identical whatever σ is. **Checkpoint selection stays `eval_auroc` for every arm**, so the comparison varies the objective and not the stopping rule. The training σ is kept and reported beside the re-fitted one, so the size of the correction is on the record. |
 | 2026-11-18 | **A within-lineage repeat of the R-vs-S contrast is what licenses any causal reading of attribution.** A determinant signal survives stratification by TB lineage / Kp sublineage; a lineage marker collapses. Until it is read, attribution is descriptive only. This is why the cohort is stratified on lineage at selection time rather than sampled at random. |

@@ -106,7 +106,7 @@ Two things to know before reading any of it:
 - **A reported MIC is never a point.** `≤ 2` is an interval, `> 8` is an interval, and even `= 4` is `(2, 4]`
   because the assay reads a doubling ladder. Imputing a point throws that away and attenuates the fitted MIC
   scale by about half — invisibly to AUROC, which is rank-only.
-- **σ is fixed at 0.4 in training and re-fitted on *validate*, once, at the selected checkpoint.** The
+- **σ is fixed at 0.5 in training (the between-lab measurement scale; 0.4 runs as its own arm) and re-fitted once on *validate* at the selected checkpoint.** The
   training value is the assay's own measured reproducibility (below); the re-fit is the model's actual
   residual spread. Neither can move AUROC, AUPRC or the R/S call — σ only rescales `P(R) = Φ(μ/σ)`, which is
   monotone in μ and crosses 0.5 at μ = 0 for every σ.
