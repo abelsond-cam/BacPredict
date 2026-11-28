@@ -665,6 +665,7 @@ def run(
     mic_table: str | None = None,
     mic_cells: str = "all",
     mic_sigma_lr: float = 0.0,
+    mic_sigma: float | None = None,
 ):
     """Fine-tune Bacformer on TB AMR data with dynamic label injection.
 
@@ -1037,7 +1038,7 @@ def run(
         trainer = MicBacformerTrainer(
             model=bacformer_model, data_collator=collate_fn, train_dataset=train_dataset,
             eval_dataset=val_dataset, args=training_args, compute_metrics=MicEvalMetrics(trainer_ref),
-            callbacks=callbacks, objective=mic_objective, sigma_lr=mic_sigma_lr,
+            callbacks=callbacks, objective=mic_objective, sigma_lr=mic_sigma_lr, sigma=mic_sigma,
         )
         trainer_ref[0] = trainer
         if resume_from_checkpoint:
@@ -1241,6 +1242,10 @@ class ArgumentParser(Tap):
     """Which cells of the split table a --mic-table run keeps: 'all' (every cell with a usable interval, bare
     R/S calls included as open intervals) or 'mic_only' (cells with a measured MIC). Splits are never
     reassigned — cells are only dropped — so every arm is scored on a subset of the same holdout."""
+    mic_sigma: float | None = None
+    """The fixed sigma in doubling dilutions (--mic-objective censored). Default: the assay scale in
+    censored_mic_loss.ASSAY_SIGMA_DILUTIONS. Set it to sweep the scale as a run parameter -- 0.5 is the
+    between-lab reproducibility of a pooled cohort, 0.4 the within-lab figure for a single source."""
     mic_sigma_lr: float = 0.0
     """Learning rate for the drug's log sigma alone (--mic-objective censored). **0 = held fixed**, which is
     the default and what the experiment runs: mu and sigma are jointly non-identified by the bare R/S cells, so
@@ -1323,4 +1328,5 @@ if __name__ == "__main__":
         mic_table=args.mic_table,
         mic_cells=args.mic_cells,
         mic_sigma_lr=args.mic_sigma_lr,
+        mic_sigma=args.mic_sigma,
     )

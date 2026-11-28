@@ -155,23 +155,33 @@ class _TinyModel(torch.nn.Module):
         return {"logits": self.head(protein_embeddings.float().mean(dim=1))}
 
 
-def _trainer(tmp_path, objective="censored", sigma_lr=0.0):
+def _trainer(tmp_path, objective="censored", sigma_lr=0.0, sigma=None):
     from transformers import TrainingArguments
 
     from bacpredict.engine.finetune.mic_trainer import MicBacformerTrainer
     args = TrainingArguments(output_dir=str(tmp_path / "out"), report_to=[], use_cpu=True,
                              per_device_train_batch_size=2, remove_unused_columns=False)
-    return MicBacformerTrainer(model=_TinyModel(), args=args, objective=objective, sigma_lr=sigma_lr)
+    return MicBacformerTrainer(model=_TinyModel(), args=args, objective=objective, sigma_lr=sigma_lr,
+                               sigma=sigma)
 
 
-def test_sigma_is_the_measured_assay_scale(tmp_path):
-    """Inverting published PsA essential agreement over two reads gives 0.430 (EA>=90%) and 0.394 (EA=92.7%)."""
-    assert math.exp(INIT_LOG_SIGMA) == pytest.approx(0.4)
-    assert _trainer(tmp_path).sigma == pytest.approx(0.4)
+def test_sigma_is_the_between_lab_measurement_scale(tmp_path):
+    """This cohort pools several sources, so the spread that matters is between labs, not within one."""
+    assert math.exp(INIT_LOG_SIGMA) == pytest.approx(0.5)
+    assert _trainer(tmp_path).sigma == pytest.approx(0.5)
     # The round trip the number is justified by. Two independent reads differ with SD sigma*sqrt(2), so
-    # P(|difference| <= 1 dilution) = erf(1 / (2 sigma)); it must land in the published 90-92.7% range, or
-    # the constant is not the assay's reproducibility and the docstring's derivation is a story.
-    assert 0.90 <= math.erf(1 / (2 * math.exp(INIT_LOG_SIGMA))) <= 0.93
+    # P(|difference| <= 1 dilution) = erf(1 / (2 sigma)). Within one lab PsA measures 90-92.7%; between labs
+    # it is looser, and 0.5 lands at ~84%. A constant failing this band is not a reproducibility figure and
+    # the derivation beside it would be a story.
+    assert 0.80 <= math.erf(1 / (2 * math.exp(INIT_LOG_SIGMA))) <= 0.88
+
+
+def test_sigma_can_be_swept_as_a_run_parameter(tmp_path):
+    """0.5 (between-lab) and 0.4 (within-lab) are both defensible, so they run as arms, not as an edit."""
+    assert _trainer(tmp_path, sigma=0.4).sigma == pytest.approx(0.4)
+    assert _trainer(tmp_path, sigma=0.4).log_sigma.requires_grad is False
+    with pytest.raises(ValueError, match="sigma must be positive"):
+        _trainer(tmp_path, sigma=0.0)
 
 
 def test_sigma_round_trips_through_a_checkpoint(tmp_path):
@@ -256,7 +266,7 @@ def test_a_censored_step_runs_end_to_end_and_leaves_sigma_alone(tmp_path):
     loss.backward()
     assert t.log_sigma.grad is None          # not in the graph at all, so nothing can nudge it
     opt.step()
-    assert t.sigma == before == pytest.approx(0.4)
+    assert t.sigma == before == pytest.approx(0.5)
 
 
 def test_a_censored_step_moves_sigma_when_it_is_learned(tmp_path):

@@ -146,20 +146,28 @@ class MicBacformerTrainer(BacformerLargeTrainer):
     ----------
     objective : str
         ``"censored"`` or ``"mse"``.
+    sigma : float or None
+        The fixed ``sigma`` in doubling dilutions. ``None`` uses :data:`INIT_LOG_SIGMA`. It is a run
+        parameter rather than an edited constant because which scale is right for a pooled cohort is
+        empirical: 0.5 is the between-lab figure, 0.4 the within-lab one.
     sigma_lr : float
         Learning rate for ``log_sigma`` alone (``censored`` only). The network's own LR (1.5e-4) would move one
         scalar by about 0.5 in log-space over a whole run, so ``sigma`` would never reach its optimum; this
         parameter group gets its own, and still rides the warmup and linear decay.
     """
 
-    def __init__(self, *args, objective: str = "censored", sigma_lr: float = 0.0, **kwargs):
+    def __init__(self, *args, objective: str = "censored", sigma_lr: float = 0.0,
+                 sigma: float | None = None, **kwargs):
         if objective not in MIC_OBJECTIVES_HERE:
             raise ValueError(f"objective must be one of {MIC_OBJECTIVES_HERE}, got {objective!r}")
+        if sigma is not None and not sigma > 0:
+            raise ValueError(f"sigma must be positive, got {sigma!r}")
         super().__init__(*args, **kwargs)
         self.objective = objective
         self.sigma_lr = sigma_lr
+        log_sigma = INIT_LOG_SIGMA if sigma is None else math.log(float(sigma))
         self.log_sigma = torch.nn.Parameter(
-            torch.tensor(float(INIT_LOG_SIGMA)), requires_grad=objective == "censored" and sigma_lr > 0)
+            torch.tensor(float(log_sigma)), requires_grad=objective == "censored" and sigma_lr > 0)
 
     # ---- sigma ----------------------------------------------------------------------------------------
 

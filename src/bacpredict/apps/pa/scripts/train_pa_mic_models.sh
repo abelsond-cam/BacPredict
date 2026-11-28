@@ -90,7 +90,7 @@ set -euo pipefail
 
 # What the array reads from the environment (sbatch --export=ALL) must come from this driver, not a stale shell
 unset N_SAMPLES MODEL LR EVAL_STEPS MAX_STEPS MAX_EPOCHS PATIENCE THRESHOLD SEED NUM_WORKERS EXTRA_HOLDOUTS \
-      TASK DRUGS SPLIT_DIR SPLIT_MANIFEST_MD5 EMBEDDINGS_DIR OUT_ROOT REPO EXPECT_SHA \
+      TASK DRUGS SPLIT_DIR SPLIT_MANIFEST_MD5 EMBEDDINGS_DIR OUT_ROOT REPO EXPECT_SHA MIC_SIGMA \
       MIC_OBJECTIVE MIC_DIR MIC_CELLS MIC_SIGMA_LR
 
 ROOT=${BACPREDICT_AMR_ROOT:-$HOME/rds/rds-floto-bacterial-4k08a2yyQLw/david/amr_prediction}
@@ -121,7 +121,12 @@ declare -A ARM_SPEC=(
     [bce_mic_cells]="bce mic_only"          # arm 0': the incumbent loss, the MIC arms' cohort
     [mse_imputed_point]="mse mic_only"      # arm A : least squares on David's hand-imputed point
     [censored_interval]="censored all"      # arm B : the proposed estimator, every cell
+    [censored_interval_sigma04]="censored all"  # arm B': the same estimator at the WITHIN-lab sigma
 )
+# arm name -> the fixed sigma to train at, in doubling dilutions. Empty means the default assay scale in
+# censored_mic_loss.ASSAY_SIGMA_DILUTIONS (0.5, the between-lab figure for this pooled cohort). The 0.4 arm
+# is the within-lab figure, run as its own arm so the choice is settled by measurement, not by argument.
+declare -A ARM_SIGMA=([censored_interval_sigma04]=0.4)
 ARM_ORDER=(bce_mic_cells mse_imputed_point censored_interval)
 if [[ -n ${ARMS:-} ]]; then IFS=, read -r -a ARM_ORDER <<<"$ARMS"; fi
 SMOKE_DRUG=${SMOKE_DRUG:-ciprofloxacin}
@@ -263,7 +268,7 @@ smoke)
     # 42043628 was submitted with 12/96G and `scontrol` still reported cpu=32,mem=250G. The only lever a short
     # GPU job has on this queue is its WALL, which is why SMOKE_TIME is one hour and not the array's 35.
     submit --array=0 --time="${SMOKE_TIME:-01:00:00}" --job-name=pa-mic-finetune-smoke \
-        --export="ALL,REPO=$array_repo,EXPECT_SHA=$sha,TASK=$TASK_LABEL,DRUGS=$SMOKE_DRUG,SPLIT_DIR=$SPLITS,SPLIT_MANIFEST_MD5=$md5,EMBEDDINGS_DIR=$ESM,OUT_ROOT=$out_root,N_SAMPLES=10,PATIENCE=1000,MIC_DIR=$INTERVALS,MIC_OBJECTIVE=$objective,MIC_CELLS=$cells" \
+        --export="ALL,REPO=$array_repo,EXPECT_SHA=$sha,TASK=$TASK_LABEL,DRUGS=$SMOKE_DRUG,SPLIT_DIR=$SPLITS,SPLIT_MANIFEST_MD5=$md5,EMBEDDINGS_DIR=$ESM,OUT_ROOT=$out_root,N_SAMPLES=10,PATIENCE=1000,MIC_DIR=$INTERVALS,MIC_OBJECTIVE=$objective,MIC_CELLS=$cells,MIC_SIGMA=${ARM_SIGMA[$SMOKE_ARM]:-}" \
         "$array_repo/$ARRAY"
     mkdir -p "$MODELS/smoke"
     echo "$out_root/$SMOKE_DRUG" > "$MODELS/smoke/LATEST"
@@ -380,7 +385,7 @@ submit)
         echo "arm $a: --mic-objective $objective --mic-cells $cells -> $MODELS/$a/<drug>"
         submit --array=0-$((${#PA_DRUGS[@]} - 1))${ARRAY_CONCURRENT:+%$ARRAY_CONCURRENT} \
             --time="${TRAIN_TIME:-18:00:00}" --job-name=pa-mic-finetune \
-            --export="ALL,REPO=$array_repo,EXPECT_SHA=$sha,TASK=$TASK_LABEL,DRUGS=$drugs,SPLIT_DIR=$SPLITS,SPLIT_MANIFEST_MD5=$md5,EMBEDDINGS_DIR=$ESM,OUT_ROOT=$MODELS/$a,MIC_DIR=$INTERVALS,MIC_OBJECTIVE=$objective,MIC_CELLS=$cells" \
+            --export="ALL,REPO=$array_repo,EXPECT_SHA=$sha,TASK=$TASK_LABEL,DRUGS=$drugs,SPLIT_DIR=$SPLITS,SPLIT_MANIFEST_MD5=$md5,EMBEDDINGS_DIR=$ESM,OUT_ROOT=$MODELS/$a,MIC_DIR=$INTERVALS,MIC_OBJECTIVE=$objective,MIC_CELLS=$cells,MIC_SIGMA=${ARM_SIGMA[$a]:-}" \
             "$array_repo/$ARRAY"
     done
     echo "drugs (array index order): ${PA_DRUGS[*]}"

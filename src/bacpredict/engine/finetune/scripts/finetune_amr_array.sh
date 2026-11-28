@@ -19,6 +19,7 @@
 #                   MIC_OBJECTIVE=bce it only restricts which cells the incumbent loss sees (the control arm)
 #   MIC_CELLS       optional: 'all' (default; bare R/S calls kept as open intervals) or 'mic_only'
 #   MIC_SIGMA_LR    optional: learning rate for the drug's log sigma alone (MIC_OBJECTIVE=censored)
+#   MIC_SIGMA       optional: the fixed sigma in doubling dilutions; default is the assay scale
 #   EXTRA_HOLDOUTS  splits scored beside the holdout (default holdout_st; set it empty for the holdout only)
 #   MODEL LR EVAL_STEPS MAX_STEPS MAX_EPOCHS PATIENCE THRESHOLD SEED   optional; defaults are the deployed TB/Kp
 #                   settings. The trainer runs min(MAX_STEPS, steps_per_epoch * MAX_EPOCHS) and shapes warmup and the
@@ -128,5 +129,6 @@ uv run --project "$REPO" --no-sync python -X faulthandler -m bacpredict.engine.f
     --seed "${SEED:-1}" --num-workers "$workers" ${N_SAMPLES:+--n-samples "$N_SAMPLES"} \
     ${MIC_OBJECTIVE:+--mic-objective "$MIC_OBJECTIVE"} ${MIC_DIR:+--mic-table "$mic_table"} \
     ${MIC_CELLS:+--mic-cells "$MIC_CELLS"} ${MIC_SIGMA_LR:+--mic-sigma-lr "$MIC_SIGMA_LR"} \
+    ${MIC_SIGMA:+--mic-sigma "$MIC_SIGMA"} \
     --extra-holdouts ${extra[@]+"${extra[@]}"}
 echo "[$(date -Is)] done"
