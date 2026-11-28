@@ -166,6 +166,44 @@ inference pass writing the same npz schema (`mu`, `lo`, `hi`, `sigma`, `y_true`,
 `collect_mic_arms`. Nothing blocks it — it can be built while arm B trains, and because the npz files carry
 everything per cell, every statistic here is recomputable over saved artifacts after the fact.
 
+**(d) The ST-holdout gap, and (e) within-ST discrimination — the test of the lineage hypothesis**
+(David, 2026-11-28; [`lineage_stratified_metrics.py`](lineage_stratified_metrics.py)).
+
+The four things the censored arm is claimed to buy are not equally visible. Counting cells
+(`PROJECT_STATE.md` §3.8, *what the train split is actually made of*) settles the first two: arm B trains on
+**+18.1 %** more cells than arms 0′/A because a bare R/S call is an open interval to a censored likelihood and
+nothing to a point model, and **31.9 %** of arm A's own cells are bounds it must invent a point for. Only
+**57.7 %** of cells are genuinely exact. The third — flexibility about a prediction — is shared with any
+continuous loss, which is exactly why arm A exists to control for it.
+
+The fourth is the one worth the experiment: **a binary R/S label is well carried by population structure.** In
+PsA a few high-risk clones are predominantly resistant, so a model that learned only "which lineage is this"
+scores a respectable holdout AUROC having learned nothing about resistance — the failure this project has
+already measured twice (the TB mini-set at 0.977 → 0.574 once its clonal marker went, and the invasion GWAS
+whose bias vanished under within-sublineage shuffling). A graded MIC target cannot be supplied by a lineage
+label, so training on it should push the model onto the genome.
+
+⚠ **That gain can be entirely real and still not appear in read-out (a).** The main holdout carries the same
+lineage structure as training, so a lineage-shortcut model still scores well on it and the two arms can tie on
+overall AUROC while being very different models. A flat (a) is therefore not evidence of no effect; it is
+evidence that (a) cannot see this one. Two read-outs that can, both pure analysis over artifacts that already
+exist:
+
+- **(d) the ST-holdout gap** — `holdout AUROC − held-out-ST AUROC`, per arm. ST155 is held out of training
+  entirely and every arm already writes `eval_scores_holdout_st.npz`. An arm leaning on lineage has nothing to
+  lean on for an unseen clone, so it should fall further. **The gap is the statistic**, not either number: the
+  two sets differ in size and composition, so comparing raw ST-holdout AUROCs across arms compares cohorts.
+- **(e) within-ST discrimination** — `P(a resistant genome outranks a susceptible one drawn from the same
+  ST)`, plus the MIC slope after centring μ and the observed midpoint inside each ST. Lineage is constant in a
+  stratum by construction, so whatever still discriminates is genomic. `st_key` is already in the split tables
+  (936 STs; ST235 n=671, ST111 n=313, ST621 n=264). Strata are pooled by discordant-pair count
+  `n_pos × n_neg` — the concordance rate over all within-ST pairs — so a three-genome ST cannot outvote
+  ST235; the unweighted mean over strata is reported beside it for comparison.
+
+⚠ **The within-ST MIC slope has a noise floor.** Within-clone MIC variation is bounded below by the assay
+itself (σ ≈ 0.4 dilutions, above). The measured residual is ~2 dilutions so there is plenty of room, but the
+ceiling on a within-ST slope is not exactly 1.0 and it should not be read as though it were.
+
 **(c) The same, allowing ±1 dilution — essential agreement. A downstream check only.** It is the field's
 convention and `collect_mic_arms` already computes it, so it costs nothing, **but it is a fudge**: it scores
 as correct a prediction a clinician would not accept, and it flatters every arm by construction — the ceiling

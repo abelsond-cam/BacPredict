@@ -3935,6 +3935,29 @@ module never redefines a label: `engine.splits` stays the one authority.
 
 Arm B equals arm 0 everywhere but amikacin's validate split, which loses the one conflicting cell.
 
+**Numbers of record — what the train split is actually made of** (2026-11-28), by joining
+`psaonly_mic/intervals/<drug>_mic_intervals.csv` to `cross_species_psaonly_v2/splits/<drug>_split.csv` and
+counting the `censor` column over `split == "train"`. This is the table that says what each arm is really
+working with, and it is a publishable result in its own right.
+
+| drug | train cells | exact | left-cens. | right-cens. | bare call | % exact | % censored | % bare |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|
+| amikacin | 4,030 | 1,916 | 885 | 392 | 837 | 47.5 | 31.7 | 20.8 |
+| cefepime | 3,343 | 2,156 | 142 | 628 | 417 | 64.5 | 23.0 | 12.5 |
+| ceftazidime | 4,658 | 3,151 | 148 | 687 | 672 | 67.6 | 17.9 | 14.4 |
+| ciprofloxacin | 4,522 | 2,432 | 402 | 1,050 | 638 | 53.8 | 32.1 | 14.1 |
+| meropenem | 4,822 | 2,676 | 348 | 1,088 | 710 | 55.5 | 29.8 | 14.7 |
+| **all five** | **21,375** | **12,331** | 1,925 | 3,845 | **3,274** | **57.7** | **27.0** | **15.3** |
+
+Three consequences, and together they are the case for the censored arm rather than a description of it:
+
+- **Arm B trains on 21,375 cells against arms 0′/A's 18,101 — `+18.1 %`.** A bare R/S call is an open interval
+  to a censored likelihood and nothing at all to a point model.
+- **31.9 % of arm A's own cells are bounds it must invent a point for.** Nearly a third of the point model's
+  training data is not a point.
+- **Only 57.7 % of cells are genuinely exact.** A method that handles the other 42.3 % honestly is not making
+  a marginal correction.
+
 **⚠ Why the read-out is not AUROC alone.** On known-truth simulation driven through the shipped interval
 builder and losses (`tests/engine/finetune/test_mic_estimator_recovery.py`; truth σ = 1.5 dilutions, two label
 sources with different tested ranges, 25 % bare calls), regressing each fit's μ on the true latent mean gives:
@@ -4017,6 +4040,8 @@ in [`apps/pa/CLAUDE.md`](src/bacpredict/apps/pa/CLAUDE.md) § *How the MIC arms 
 |---|---|---|
 | **a** | **The R/S call as AUROC** — predicted MIC → EUCAST call, against the binary-trained arms. The primary question. | **Ready.** μ is in dilutions from the breakpoint, so μ > 0 *is* the R call; `collect_mic_arms` already reports it on each arm's own holdout and on the intersection every arm scored. The intersection column is the comparable one. |
 | **b** | **Accuracy on the MIC scale**, against arm A and against Maciek's frozen point model. | **Metrics ready.** `pearson_r` and `slope_log2` are now in `mic_agreement` and `collect_mic_arms`, over exact cells only. Read the **slope** first — an attenuated fit keeps its correlation and loses the scale (arm A: 0.584 of the latent scale, AUROC within 0.005 of the censored fit's); a test pins a half-scale prediction at `r = 1.000`, `slope = 0.500`. **Still to build:** Maciek's frozen point model **re-run on our holdout** (David, 2026-11-27 — a re-run, not his published figure, so cohort/split/metric match and only the estimator differs). Needs the frozen checkpoint, an inference pass writing the same npz schema, and a collector row. Buildable while arm B trains. |
+| **d** | **The ST-holdout gap** — each arm's holdout AUROC minus its held-out-ST AUROC. An arm leaning on lineage has nothing to lean on for an unseen clone, so it should fall further. | **Ready, no new runs.** Every arm already writes `eval_scores_holdout_st.npz` (ST155; 207 meropenem cells). `apps/pa/lineage_stratified_metrics` computes it. The **gap** is the statistic — neither number alone, since the two sets differ in size and composition. |
+| **e** | **Within-ST discrimination** — `P(a resistant genome outranks a susceptible one from the same ST)`, and the MIC slope after centring within ST. Lineage is constant inside a stratum, so what still discriminates is genomic. | **Ready, no new runs.** `st_key` is in the split tables (936 STs; ST235 n=671, ST111 n=313, ST621 n=264, ST155 n=207). Strata pooled by discordant-pair count `n_pos×n_neg`, so a 3-genome ST cannot outvote ST235; the unweighted mean is reported beside it. ⚠ Within-ST MIC variation has an assay noise floor of σ ≈ 0.4 dilutions against a measured residual of ~2, so there is room — but the within-ST slope's ceiling is not exactly 1.0. |
 | **c** | **The same allowing ±1 dilution** (essential agreement). | **Ready, and deliberately last.** Already computed. ⚠ It is the field's convention but a fudge — it scores as correct what a clinician would reject, and it flatters every arm against a ceiling that is the assay's own reproducibility, which is exactly what σ was set to. Never lead with it; never let it stand in for a or b. |
 
 **Caveats.**
@@ -4024,9 +4049,16 @@ in [`apps/pa/CLAUDE.md`](src/bacpredict/apps/pa/CLAUDE.md) § *How the MIC arms 
   censored MICs straddling the breakpoint: no binary label, so no split-table row, so no arm. The censored
   likelihood *could* use them — their interval is informative even when their call is not — but adding them
   would change the cohort and break the pairing with arm 0. Counted by `train_pa_mic_models.sh intervals`.
-- **The gain, if any, may be mostly calibration.** The simulation's AUROC gain for arm B over arm 0 shrinks
-  with n (+0.019 at n=800, +0.007 at n=2,000, +0.002 at n=6,000) while the calibration gain does not. The real
-  drugs train on 2,928–4,822 cells.
+- **⚠ The simulation's "the AUROC gain shrinks with n" must not be quoted as a forecast for PsA.** Its
+  numbers (+0.019 at n=800, +0.007 at n=2,000, +0.002 at n=6,000, with the calibration gain not shrinking) are
+  real and correctly scoped in `test_mic_estimator_recovery.py`, but that simulation generates
+  `X = rng.normal(size=(n, 66))` — **independent Gaussian features, linear additive effects, and no population
+  structure whatsoever.** It therefore cannot see three of the four mechanisms the censored arm is claimed to
+  address: the extra cells it recovers, the bounds it stops imputing, and — above all — the hypothesis that a
+  graded MIC target pushes the model off lineage and onto the genome (read-outs (d) and (e) below). With no
+  confounder available to a binary model, that simulation is the configuration *most* favourable to "no
+  difference". It bounds what censoring buys from the estimator alone; it says nothing about what it buys from
+  the data or from breaking population confounding.
 - **σ at a bound is not an estimate.** When every interval already contains its μ the likelihood is flat and σ
   is unidentified; `fit_sigma` returns `at_bound: True` and the number must be read as a bound.
 - **⛔ σ must not be learned jointly with μ — measured, not argued.** A bare R/S call is the interval
