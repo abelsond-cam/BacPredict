@@ -102,13 +102,18 @@ out=$OUT_ROOT/$drug
 # hours in. Opt-in (one stat per genome, ~1.5 ms warm) because the stores are normally complete; set it when the
 # store was just restored or rebuilt. The TB store was moved to RDV on 2026-11-02 and restored from a login node.
 if [[ -n "${REQUIRE_ALL_EMBEDDINGS:-}" ]]; then
-    n_missing=0
-    while IFS= read -r s; do
-        if [[ ! -s "$EMBEDDINGS_DIR/${s}_esm_embeddings.pt" ]]; then
-            n_missing=$((n_missing + 1))
-            if (( n_missing <= 3 )); then echo "missing embedding: $s"; fi
-        fi
-    done < <(awk -F, 'NR>1{print $1}' "$table")
+    # ONE readdir plus an in-memory join -- never one stat per genome. The per-genome form cost 21m54s of a
+    # GPU allocation to check 35,635 samples (job 42098950, 2026-11-28): a cold metadata lookup is ~28 ms, so
+    # the stats, not the training, were the job. A listing is a single metadata op (~150 ms at 88k entries).
+    # Existence is enough: generate_embeddings writes atomically, so a file that is there is a whole one.
+    n_missing=$(
+        { ls -U "$EMBEDDINGS_DIR" 2>/dev/null; echo "--END-OF-LISTING--"; awk -F, 'NR>1{print $1}' "$table"; } |
+        awk -v err=/dev/stderr '
+            $0 == "--END-OF-LISTING--" { want = 1; next }
+            want == 0 { if (sub(/_esm_embeddings\.pt$/, "")) have[$0] = 1; next }
+            !($0 in have) { n++; if (n <= 3) print "missing embedding: " $0 > err }
+            END { print n + 0 }'
+    )
     (( n_missing == 0 )) || {
         echo "$n_missing of $table's genomes have no .pt in $EMBEDDINGS_DIR — refusing to train a different cohort"
         exit 6; }
