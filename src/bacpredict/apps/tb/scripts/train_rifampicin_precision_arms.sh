@@ -39,7 +39,8 @@ TABLE=$SPLIT_DIR/rifampin_split.csv
 TABLE_MD5=${TABLE_MD5:-da18a9e73c19bf225d92a9828a5a2f31}
 ESM=$T/esm
 OUT=$T/models/precision_arms
-N_STORE=${N_STORE:-38248}          # files the RDV restore note records for esm/tb
+N_STORE=${N_STORE:-38317}          # esm/tb after the 2026-11-28 top-up: the 38,248 the RDV note
+                                   # recorded, plus the 69 parquets that had never been embedded
 HERE=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 export PYTHONPATH="$HERE/src${PYTHONPATH:+:$PYTHONPATH}"
 ARRAY=src/bacpredict/engine/finetune/scripts/finetune_amr_array.sh
@@ -99,14 +100,16 @@ smoke|submit)
         # Stage A and B in one run (root §0.2): 10 balanced genomes, train = validate = holdout, early stopping off.
         # A short wall backfills sooner, which matters on a queue 600 deep.
         submit --array=0 --job-name=tb-rif-smoke --time=00:30:00 ${BEGIN:+--begin="$BEGIN"} \
+            ${DEPEND:+--dependency="$DEPEND"} \
             --export="ALL,$common,OUT_ROOT=$OUT/_smoke,N_SAMPLES=10,PATIENCE=1000,PRECISION=bf16" "$ARRAY"
     else
         # The store may still be filling at submit time (the RDV restore). With BEGIN set, that is fine and
         # intended: the job itself re-checks every genome (REQUIRE_ALL_EMBEDDINGS) and exits 6 rather than
         # training a silently smaller cohort. Without BEGIN, a job could start immediately, so refuse.
         check_store || {
-            [[ -n ${BEGIN:-} ]] || { echo "refusing to submit against an incomplete store with no --begin"; exit 1; }
-            echo "store still filling; queued with --begin=$BEGIN and the job re-checks before it trains"; }
+            [[ -n ${BEGIN:-}${DEPEND:-} ]] || {
+                echo "refusing to submit against an incomplete store with no --begin and no --dependency"; exit 1; }
+            echo "store incomplete now; queued behind ${DEPEND:-$BEGIN} and the job re-checks before it trains"; }
         for a in "${ARMS[@]}"; do
             submit --array=0 --job-name="tb-rif-$a" ${BEGIN:+--begin="$BEGIN"} ${DEPEND:+--dependency="$DEPEND"} \
                 --export="ALL,$common,OUT_ROOT=$OUT/$a,MAX_STEPS=$MAX_STEPS,EVAL_STEPS=$EVAL_STEPS,PATIENCE=$PATIENCE,$(arm_env "$a")" \
